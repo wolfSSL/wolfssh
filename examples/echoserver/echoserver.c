@@ -2352,41 +2352,68 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
             fileName++;
 
             load_file(fileName, NULL, &bufSz);
-            buf = (byte*)WMALLOC(bufSz, NULL, 0);
-            bufSz = load_file(fileName, buf, &bufSz);
-            if (bufSz > 0) {
+            if (bufSz == 0) {
+                fprintf(stderr, "File error: %s\n", fileName);
+            }
+            else if ((buf = (byte*)WMALLOC(bufSz, NULL, 0)) == NULL) {
+                fprintf(stderr, "Memory error: %s\n", fileName);
+            }
+            else if ((bufSz = load_file(fileName, buf, &bufSz)) == 0) {
+                fprintf(stderr, "File error: %s\n", fileName);
+            }
+            else {
+                byte* out = NULL;
+                word32 outSz = 0;
+                int ok = 1;
+
                 if (format == WOLFSSH_FORMAT_SSH) {
                     const byte* type = NULL;
-                    byte* out = NULL;
-                    word32 typeSz, outSz;
+                    word32 typeSz = 0;
 
-                    wolfSSH_ReadKey_buffer(buf, bufSz, WOLFSSH_FORMAT_SSH,
-                            &out, &outSz, &type, &typeSz, NULL);
+                    if (wolfSSH_ReadKey_buffer(buf, bufSz, WOLFSSH_FORMAT_SSH,
+                                &out, &outSz, &type, &typeSz, NULL)
+                            != WS_SUCCESS || out == NULL) {
+                        fprintf(stderr, "ReadKey error: %s\n", fileName);
+                        ok = 0;
+                    }
 
                     (void)type;
                     (void)typeSz;
-
-                    WFREE(buf, NULL, 0);
-                    buf = out;
-                    bufSz = outSz;
                 }
                 else if (format == WOLFSSH_FORMAT_PEM) {
-                    byte* out = NULL;
-                    word32 outSz;
-
                     out = (byte*)WMALLOC(bufSz, NULL, 0);
-                    outSz = wc_CertPemToDer(buf, bufSz, out, bufSz, CERT_TYPE);
+                    if (out == NULL) {
+                        fprintf(stderr, "Memory error: %s\n", fileName);
+                        ok = 0;
+                    }
+                    else {
+                        int rc = wc_CertPemToDer(buf, bufSz, out, bufSz,
+                                CERT_TYPE);
 
-                    WFREE(buf, NULL, 0);
-                    buf = out;
-                    bufSz = outSz;
+                        if (rc <= 0) {
+                            fprintf(stderr, "PEM error: %s\n", fileName);
+                            ok = 0;
+                        }
+                        else {
+                            outSz = (word32)rc;
+                        }
+                    }
                 }
 
-                PwMapNew(mapList, WOLFSSH_USERAUTH_PUBLICKEY,
-                        (byte*)names, (word32)WSTRLEN(names), buf, bufSz);
-            }
-            else {
-                fprintf(stderr, "File error: %s\n", names);
+                if (ok) {
+                    /* Converted key replaces the raw file contents. */
+                    if (out != NULL) {
+                        WFREE(buf, NULL, 0);
+                        buf = out;
+                        bufSz = outSz;
+                        out = NULL;
+                    }
+
+                    PwMapNew(mapList, WOLFSSH_USERAUTH_PUBLICKEY,
+                            (byte*)names, (word32)WSTRLEN(names), buf, bufSz);
+                }
+
+                WFREE(out, NULL, 0);
             }
         }
         else {
