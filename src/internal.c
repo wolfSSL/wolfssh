@@ -1605,6 +1605,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpFileBufferSz = 0;
     ssh->scpFileName     = NULL;
     ssh->scpFileNameSz   = 0;
+    ssh->scpFileNameCap  = 0;
     ssh->scpTimestamp    = 0;
     ssh->scpATime        = 0;
     ssh->scpMTime        = 0;
@@ -1706,6 +1707,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         WFREE(ssh->scpFileName, heap, DYNTYPE_STRING);
         ssh->scpFileName = NULL;
         ssh->scpFileNameSz = 0;
+        ssh->scpFileNameCap = 0;
     }
     if (ssh->scpRecvMsg) {
         WFREE(ssh->scpRecvMsg, heap, DYNTYPE_STRING);

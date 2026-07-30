@@ -4082,6 +4082,141 @@ static int scpSendZeroFirst(WOLFSSH* ssh, int state, const char* peerRequest,
     }
 }
 
+/* Drives a real "scp -r" of a directory holding two files through the
+ * default filesystem send/recv callbacks. The header-dedup fix gates
+ * sending a file's header on a scpFileHeaderSent flag that gets reset when
+ * SCP_SEND_FILE loops back to SCP_TRANSFER for the next file in a recursive
+ * copy; this confirms that reset lets the second file get its own header
+ * instead of it being duplicated or skipped.
+ *
+ * Not run on Windows: this is the only end-to-end exercise of a recursive
+ * transfer anywhere in the suite (the example client cannot issue "scp -r -f",
+ * so scripts/scp.test never reaches it), and the received file does not match
+ * there. That is a Windows-side recursive SCP problem of its own, unrelated to
+ * the header fix, which reproduces on the default callbacks and needs its own
+ * investigation. */
+#ifndef USE_WINDOWS_API
+static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    word32 i;
+    WS_SOCKET_T clientFd;
+#ifdef USE_WINDOWS_API
+    DWORD rcvTimeout = 20000;
+#else
+    struct timeval rcvTimeout;
+#endif
+    const char* args[6];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    const char* dstDir = "./scp_recur_dst";
+    const char* out1   = "./scp_recur_dst/a_short.txt";
+    const char* out2   = "./scp_recur_dst/b_longer_name.txt";
+    byte data1[300];
+    byte data2[700];
+    char cmd[300];
+    char cwdBuf[200];
+    /* must hold all of srcBuf plus the longest name below, or gcc rejects the
+     * WSNPRINTF calls under -Werror=format-truncation */
+    char file1[300];
+    char file2[300];
+    /* wolfSSH_SCP_from() mutates its src/dst buffers in place (e.g.
+     * ScpCheckForRename() writes a NUL into the path), so these cannot be
+     * string literals. The client thread chdir()s into dstDir while
+     * receiving a directory; since the client and server here share one
+     * process (and thus one cwd), srcBuf must be absolute so the server
+     * thread's concurrent directory walk does not resolve relative to
+     * whatever directory the client just chdir()ed into. */
+    char srcBuf[256];
+    char dstBuf[32];
+    THREAD_TYPE serThread;
+
+    for (i = 0; i < sizeof(data1); i++)
+        data1[i] = (byte)((i * 3 + 1) & 0xff);
+    for (i = 0; i < sizeof(data2); i++)
+        data2[i] = (byte)((i * 5 + 2) & 0xff);
+
+    AssertNotNull(WGETCWD(NULL, cwdBuf, sizeof(cwdBuf)));
+    WSNPRINTF(srcBuf, sizeof(srcBuf), "%s/scp_recur_src", cwdBuf);
+    WSTRNCPY(dstBuf, dstDir, sizeof(dstBuf));
+    WSNPRINTF(file1, sizeof(file1), "%s/a_short.txt", srcBuf);
+    WSNPRINTF(file2, sizeof(file2), "%s/b_longer_name.txt", srcBuf);
+
+    /* full teardown first: a run that aborted mid-transfer leaves these
+     * behind, and then WMKDIR below fails with EEXIST, masking the real
+     * failure with a setup error */
+    WREMOVE(NULL, file1);
+    WREMOVE(NULL, file2);
+    WRMDIR(NULL, srcBuf);
+    WREMOVE(NULL, out1);
+    WREMOVE(NULL, out2);
+    WRMDIR(NULL, dstDir);
+
+    AssertIntEQ(WMKDIR(NULL, srcBuf, 0700), 0);
+    AssertIntEQ(scpWriteTestFile(file1, data1, sizeof(data1)), 0);
+    AssertIntEQ(scpWriteTestFile(file2, data2, sizeof(data2)), 0);
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv     = (char**)args;
+    ser.argc     = argsCount;
+    ser.signal   = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    WSNPRINTF(cmd, sizeof(cmd), "scp -r -f %s", srcBuf);
+    scp_client_connect(&ctx, &ssh, ready.port, cmd);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* bound the recv so a regression fails the match assert below, not CI */
+    clientFd = wolfSSH_get_fd(ssh);
+#ifdef USE_WINDOWS_API
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&rcvTimeout, sizeof(rcvTimeout));
+#else
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+#endif
+
+    ret = wolfSSH_SCP_from(ssh, srcBuf, dstBuf);
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    WCLOSESOCKET(wolfSSH_get_fd(ssh));
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+
+    /* a duplicated or skipped header on the second file corrupts the byte
+     * stream; an exact match on both files proves each got its own header */
+    AssertIntEQ(scpFilesMatch(out1, data1, sizeof(data1)), 0);
+    AssertIntEQ(scpFilesMatch(out2, data2, sizeof(data2)), 0);
+
+    WREMOVE(NULL, file1);
+    WREMOVE(NULL, file2);
+    WRMDIR(NULL, srcBuf);
+    WREMOVE(NULL, out1);
+    WREMOVE(NULL, out2);
+    WRMDIR(NULL, dstDir);
+}
+#else
+static void test_wolfSSH_SCP_RecursiveTwoFiles(void) { ; }
+#endif /* USE_WINDOWS_API */
+
 static void test_wolfSSH_SCP_SendZeroFirst(void)
 {
     func_args ser;
@@ -4175,6 +4310,7 @@ static void test_wolfSSH_SCP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_SendZeroFirst(void) { ; }
+static void test_wolfSSH_SCP_RecursiveTwoFiles(void) { ; }
 #endif
 
 
@@ -5377,6 +5513,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SCP_ReKey_ToServer();
     test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
     test_wolfSSH_SCP_SendZeroFirst();
+    test_wolfSSH_SCP_RecursiveTwoFiles();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
