@@ -12050,14 +12050,20 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
 
 
 #ifndef WOLFSSH_NO_AEAD
+/* Increment the explicit portion of the AEAD nonce. The carry runs the full
+ * width with no early exit, so the timing doesn't depend on the counter,
+ * which starts out as KDF output. */
 static INLINE void AeadIncrementExpIv(byte* iv)
 {
     int i;
+    unsigned int carry = 1;
 
     iv += AEAD_IMP_IV_SZ;
 
     for (i = AEAD_EXP_IV_SZ-1; i >= 0; i--) {
-        if (++iv[i]) return;
+        unsigned int sum = (unsigned int)iv[i] + carry;
+        iv[i] = (byte)sum;
+        carry = (sum >> 8) & 1u;
     }
 }
 
