@@ -708,7 +708,11 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
                 err_sys("some socket had an error");
             }
-        if (appFdSet && FD_ISSET(appFd, &rxFds)) {
+        /* Skip the read when the buffer is full, a zero length recv() returns
+         * 0 and would be mistaken for the peer closing. The buffer drains at
+         * the bottom of the loop. */
+        if (appFdSet && appBufferUsed < appBufferSz &&
+                FD_ISSET(appFd, &rxFds)) {
             int rxd;
             rxd = (int)recv(appFd,
                     appBuffer + appBufferUsed, appBufferSz - appBufferUsed, 0);
@@ -789,8 +793,12 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         }
         if (appBufferUsed > 0) {
             ret = wolfSSH_ChannelSend(fwdChannel, appBuffer, appBufferUsed);
-            if (ret > 0)
+            if (ret > 0) {
+                if ((word32)ret != appBufferUsed) {
+                    WMEMMOVE(appBuffer, appBuffer + ret, appBufferUsed - ret);
+                }
                 appBufferUsed -= ret;
+            }
             else if (ret == WS_CHANNEL_NOT_CONF || ret == WS_CHAN_RXD) {
             #ifdef SHELL_DEBUG
                 printf("Waiting for channel open confirmation.\n");
