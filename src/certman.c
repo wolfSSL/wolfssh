@@ -508,20 +508,24 @@ static int CheckProfile(DecodedCert* cert, int profile)
         const byte* date;
         int         dateSz;
         byte        dateFormat;
-        struct tm t;
+        struct tm t = { 0 };
 
         dateFormat = cert->afterDate[0]; /* i.e ASN_UTC_TIME */
         dateSz     = cert->afterDate[1];
         date       = &cert->afterDate[2];
 
-        wc_GetDateAsCalendarTime(date, dateSz, dateFormat, &t);
-        if (t.tm_year <= 149 && dateFormat != ASN_UTC_TIME) {
+        if (wc_GetDateAsCalendarTime(date, dateSz, dateFormat, &t) != 0) {
+            WLOG(WS_LOG_CERTMAN, "unable to get date");
+            valid = 0;
+        }
+
+        if (valid && t.tm_year <= 149 && dateFormat != ASN_UTC_TIME) {
             WLOG(WS_LOG_CERTMAN, "date format was not utc for year %d",
             t.tm_year);
             valid = 0;
         }
 
-        if (t.tm_year > 149 && dateFormat != ASN_GENERALIZED_TIME) {
+        if (valid && t.tm_year > 149 && dateFormat != ASN_GENERALIZED_TIME) {
             WLOG(WS_LOG_CERTMAN, "date format was not general for year %d",
             t.tm_year);
             valid = 0;
