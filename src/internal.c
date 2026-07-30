@@ -1650,7 +1650,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
-    WS_FORCEZERO(ssh->k, ssh->kSz);
+    /* Use the sizeof k, as kSz can change. */
+    WS_FORCEZERO(ssh->k, sizeof(ssh->k));
+    ssh->kSz = 0;
     HandshakeInfoFree(ssh->handshake, heap);
     WS_FORCEZERO(&ssh->keys, sizeof(Keys));
     WS_FORCEZERO(&ssh->peerKeys, sizeof(Keys));
