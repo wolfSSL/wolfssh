@@ -93,6 +93,7 @@ static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
     ret = cm;
     if (ret != NULL) {
         WMEMSET(ret, 0, sizeof(WOLFSSH_CERTMAN));
+        ret->heap = heap;
         ret->cm = wolfSSL_CertManagerNew_ex(heap);
         if (ret->cm == NULL) {
             ret = NULL;
