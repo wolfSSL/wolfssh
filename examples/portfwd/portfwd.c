@@ -690,17 +690,23 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         rxFds = templateFds;
         errFds = templateFds;
 
+        /* A readable appFd with a full buffer would spin select(). Mask the
+         * read set only, so errors are still noticed. */
+        if (appFdSet && appBufferUsed == appBufferSz)
+            FD_CLR(appFd, &rxFds);
+
         to.tv_sec = 1;
         to.tv_usec = 0;
         ret = select(nFds, &rxFds, NULL, &errFds, &to);
+        if (ret < 0)
+            err_sys("select failed\n");
         if (ret == 0) {
+            /* Fall through rather than continue, a short send leaves a tail
+             * owed another attempt. select() cleared the sets. */
             ret = wolfSSH_SendIgnore(ssh, NULL, 0);
             if (ret != WS_SUCCESS)
                 err_sys("Couldn't send an ignore message.");
-            continue;
         }
-        else if (ret < 0)
-            err_sys("select failed\n");
 
         if ((appFdSet && FD_ISSET(appFd, &errFds)) ||
             FD_ISSET(sshFd, &errFds) ||
@@ -709,8 +715,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 err_sys("some socket had an error");
             }
         /* Skip the read when the buffer is full, a zero length recv() returns
-         * 0 and would be mistaken for the peer closing. The buffer drains at
-         * the bottom of the loop. */
+         * 0 and would be mistaken for the peer closing. */
         if (appFdSet && appBufferUsed < appBufferSz &&
                 FD_ISSET(appFd, &rxFds)) {
             int rxd;
