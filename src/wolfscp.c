@@ -3103,13 +3103,15 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
     #else
         dNameLen   = (int)WSTRLEN(sendCtx->entry->d_name);
     #endif
-        if ((dirNameLen + 1 + dNameLen) > DEFAULT_SCP_FILE_NAME_SZ) {
+        /* need room for the separator and the terminating null */
+        if ((dirNameLen + 1 + dNameLen) >= DEFAULT_SCP_FILE_NAME_SZ) {
             WLOG(WS_LOG_ERROR, "scp: dir name length too long, abort");
             ret = WS_SCP_ABORT;
 
         } else {
             WSTRNCPY(filePath, sendCtx->dirName,
                      DEFAULT_SCP_FILE_NAME_SZ);
+            filePath[DEFAULT_SCP_FILE_NAME_SZ - 1] = '\0';
             WSTRNCAT(filePath, "/", DEFAULT_SCP_FILE_NAME_SZ);
 
         #ifdef WOLFSSL_NUCLEUS
