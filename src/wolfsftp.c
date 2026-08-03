@@ -6437,73 +6437,89 @@ int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh)
  * returns WS_SUCCESS on success
  */
 static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
-    int  len, ret;
+    enum {
+        RECV_INIT_SIZE = LENGTH_SZ + MSG_ID_SZ + UINT32_SZ
+    };
+
+    int  ret;
     byte id;
     word32 sz = 0;
     word32 version = 0;
-    byte buf[LENGTH_SZ + MSG_ID_SZ + UINT32_SZ];
+    WS_SFTP_RECV_INIT_STATE* state;
+
+    /* The VERSION message can arrive split over several reads, so the bytes
+     * seen so far are kept here instead of on the stack. */
+    state = ssh->recvInitState;
+    if (state == NULL) {
+        state = (WS_SFTP_RECV_INIT_STATE*)WMALLOC(
+                sizeof(WS_SFTP_RECV_INIT_STATE),
+                ssh->ctx->heap, DYNTYPE_SFTP_STATE);
+        if (state == NULL) {
+            ssh->error = WS_MEMORY_E;
+            return WS_FATAL_ERROR;
+        }
+        WMEMSET(state, 0, sizeof(WS_SFTP_RECV_INIT_STATE));
+        ssh->recvInitState = state;
+    }
 
     switch (ssh->sftpState) {
         case SFTP_RECV:
-            ret = wolfSSH_worker(ssh,NULL);
-            if (ret != 0 && ret != WS_CHAN_RXD) {
-                return ret;
+            ret = wolfSSH_SFTP_buffer_read(ssh,
+                    &state->buffer, RECV_INIT_SIZE);
+            if (ret < 0) {
+                return WS_FATAL_ERROR;
             }
 
-            if ((len = wolfSSH_stream_read(ssh, buf, sizeof(buf)))
-                    != sizeof(buf)) {
-                /* @TODO partial read on small packet */
-                return len;
+            if (ret < WOLFSSH_SFTP_HEADER) {
+                WLOG(WS_LOG_SFTP, "Unable to read SFTP VERSION message");
+                return WS_FATAL_ERROR;
             }
 
-            if (SFTP_GetSz(buf, &sz,
+            if (SFTP_GetSz(state->buffer.data, &sz,
                         MSG_ID_SZ + UINT32_SZ,
                         WOLFSSH_MAX_SFTP_RECV) != WS_SUCCESS) {
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
                 return WS_BUFFER_E;
             }
 
             /* expecting */
-            id = buf[LENGTH_SZ];
+            id = state->buffer.data[LENGTH_SZ];
             if (id != WOLFSSH_FTP_VERSION) {
                 WLOG(WS_LOG_SFTP, "Unexpected SFTP type received");
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
                 return WS_BUFFER_E;
             }
 
-            ato32(buf + LENGTH_SZ + MSG_ID_SZ, &version);
-            /* The server is supposed to reply with the lower of its own and
-             * our version, so a value above ours is a non-conforming server. In
-             * that case we continue on with the same v3 version. If the server
-             * replies with a version before v3 then return early here since
-             * there will be SSH_FXP_STATUS incompatibility issues. */
+            ato32(state->buffer.data + LENGTH_SZ + MSG_ID_SZ, &version);
+            /* A version above ours is non-conforming; continue with v3. A
+             * version below v3 has SSH_FXP_STATUS incompatibilities, bail. */
             if (version < WOLFSSH_SFTP_VERSION) {
                 WLOG(WS_LOG_SFTP, "Unsupported SFTP version from server");
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
                 return WS_VERSION_E;
             }
 
-            sz = sz - MSG_ID_SZ - UINT32_SZ;
-            ssh->sftpExtSz = sz;
+            wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
+
+            state->extSz = sz - MSG_ID_SZ - UINT32_SZ;
             ssh->sftpState = SFTP_EXT;
             FALL_THROUGH;
 
         case SFTP_EXT:
             /* silently ignore extensions if not supported */
-            if (ssh->sftpExtSz > 0) {
-                byte* data = (byte*)WMALLOC(ssh->sftpExtSz, ssh->ctx->heap,
-                        DYNTYPE_BUFFER);
-                if (data ==  NULL) return WS_MEMORY_E;
-                if ((len = wolfSSH_stream_read(ssh, data, ssh->sftpExtSz))
-                        <= 0) {
-                    WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-                    return len;
-                }
-                WFREE(data, ssh->ctx->heap, DYNTYPE_BUFFER);
-
-                /* case where expecting more */
-                if ((word32)len < ssh->sftpExtSz) {
-                    ssh->sftpExtSz -= len;
-                    ssh->error = WS_WANT_READ;
+            if (state->extSz > 0) {
+                ret = wolfSSH_SFTP_buffer_read(ssh,
+                        &state->buffer, (int)state->extSz);
+                if (ret < 0) {
                     return WS_FATAL_ERROR;
                 }
+
+                if (ret < (int)state->extSz) {
+                    WLOG(WS_LOG_SFTP, "Unable to read SFTP VERSION extensions");
+                    return WS_FATAL_ERROR;
+                }
+
+                wolfSSH_SFTP_buffer_free(ssh, &state->buffer);
             }
             break;
 
@@ -6579,11 +6595,18 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 
         case SFTP_RECV:
         case SFTP_EXT:
-            if (SFTP_ClientRecvInit(ssh) != WS_SUCCESS) {
+            ret = SFTP_ClientRecvInit(ssh);
+            if (ret != WS_SUCCESS) {
+                /* keep the buffered partial VERSION message when the read can
+                 * be retried, free it otherwise */
+                if (!NoticeError(ssh)) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+                }
                 return WS_FATAL_ERROR;
             }
             ssh->sftpState = SFTP_DONE;
             WLOG(WS_LOG_SFTP, "SFTP connection established");
+            wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV_INIT);
             break;
 
         default:
