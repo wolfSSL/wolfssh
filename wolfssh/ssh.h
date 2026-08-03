@@ -477,7 +477,17 @@ WOLFSSH_API void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh,
         void* userAuthResultCtx);
 WOLFSSH_API void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh);
 
-/* Public Key Check Callback */
+/* Public Key Check Callback
+ *
+ * A client-side callback that decides whether to trust the server's host
+ * key, the client's only defense against a man-in-the-middle. Return 0 to
+ * accept the key; return non-zero to reject it and fail the key exchange.
+ *
+ * WARNING: 0 accepts, so a stub that defaults to "return 0;" accepts any
+ * server host key and defeats MITM protection. The callback must match
+ * the key against a trust store, e.g. a known-hosts list; see
+ * ClientPublicKeyCheck() in the examples. If no callback is registered,
+ * the host key is rejected (WS_PUBKEY_REJECTED_E). */
 typedef int (*WS_CallbackPublicKeyCheck)(const byte* publicKey,
         word32 publicKeySz, void* ctx);
 WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX* ctx,
