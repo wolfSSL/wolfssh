@@ -10095,6 +10095,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         return WS_FATAL_ERROR;
                     }
                     WLOG(WS_LOG_SFTP, "Error getting handle");
+                    /* handleSz still holds the request buffer size, the
+                     * remote file was never opened */
+                    state->handleSz = 0;
                     state->state = STATE_PUT_CLOSE_LOCAL;
                     continue;
                 }
