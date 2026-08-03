@@ -3503,9 +3503,6 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 }
             }
 
-            if (ret != WS_BAD_ARGUMENT && sendCtx == NULL)
-                ret = WS_BAD_ARGUMENT;
-
             if (ret == WS_SUCCESS) {
                 ret = ScpProcessEntry(ssh, fileName,
                         mTime, aTime, fileMode, totalFileSz, buf,
