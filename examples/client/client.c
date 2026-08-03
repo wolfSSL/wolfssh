@@ -149,7 +149,6 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
     int ret;
     int error;
     SOCKET_T sockfd;
-    int select_ret = 0;
 
     ret = wolfSSH_connect(ssh);
     error = wolfSSH_get_error(ssh);
@@ -163,23 +162,13 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
         else if (error == WS_WANT_WRITE)
             printf("... client would write block\n");
 
-        select_ret = tcp_select(sockfd, 1);
+        /* tcp_select only throttles the loop, always retry. On want write
+         * there may be pending data to send, and on want read a test case
+         * may have forced the want read with no more data coming in. */
+        (void)tcp_select(sockfd, 1);
 
-        /* Continue in want write cases even if did not select on socket
-         * because there could be pending data to be written. Added continue
-         * on want write for test cases where a forced want read was introduced
-         * and the socket will not be receiving more data. */
-        if (error == WS_WANT_WRITE || error == WS_WANT_READ ||
-            select_ret == WS_SELECT_RECV_READY ||
-            select_ret == WS_SELECT_ERROR_READY)
-        {
-            ret = wolfSSH_connect(ssh);
-            error = wolfSSH_get_error(ssh);
-        }
-        else if (select_ret == WS_SELECT_TIMEOUT)
-            error = WS_WANT_READ;
-        else
-            error = WS_FATAL_ERROR;
+        ret = wolfSSH_connect(ssh);
+        error = wolfSSH_get_error(ssh);
     }
 
     return ret;
