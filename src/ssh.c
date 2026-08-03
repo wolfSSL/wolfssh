@@ -1786,6 +1786,9 @@ char* wolfSSH_GetUsername(WOLFSSH* ssh)
 #ifndef WOLFSSH_NO_MLDSA
     #include <wolfssl/wolfcrypt/dilithium.h>
 #endif
+#ifdef WOLFSSH_OSSH_CERTS
+    #include <wolfssh/ossh.h>
+#endif
 
 union wolfSSH_key {
 #ifndef WOLFSSH_NO_RSA
@@ -2373,33 +2376,264 @@ int wolfSSH_ReadPublicKey_buffer(const byte* in, word32 inSz, int format,
 }
 
 
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
+
+#ifdef WOLFSSH_CERTS
+    static const char* CertBeginPrefix = "-----BEGIN CERTIFICATE-----";
+#endif
+
+/* Longest algorithm name is ecdsa-sha2-nistp521-cert-v01@openssh.com. */
+#define WOLFSSH_MAX_CERT_ALGO_NAME_SZ 48
+
+/* Identifies a certificate from its content, without decoding or allocating.
+   An x509v3-* line holds a wire chain, not a certificate, so it is declined. */
+static int SniffCertForm(const byte* in, word32 inSz, byte* flavor,
+        byte* certId)
+{
+#ifdef WOLFSSH_OSSH_CERTS
+    word32 tokenSz = 0;
+    byte id;
+#endif
+    int ret = WS_BAD_FILETYPE_E;
+
+#ifdef WOLFSSH_CERTS
+    if (in[0] == 0x30) {
+        *flavor = WOLFSSH_CERT_FLAVOR_X509;
+        ret = WOLFSSH_FORMAT_ASN1;
+    }
+    /* Searched for, not anchored: openssl writes a dump ahead of the header. */
+    else if (WSTRNSTR((const char*)in, CertBeginPrefix, inSz) != NULL) {
+        *flavor = WOLFSSH_CERT_FLAVOR_X509;
+        ret = WOLFSSH_FORMAT_PEM;
+    }
+#endif /* WOLFSSH_CERTS */
+
+#ifdef WOLFSSH_OSSH_CERTS
+    if (ret == WS_BAD_FILETYPE_E) {
+        while (tokenSz < inSz && tokenSz < WOLFSSH_MAX_CERT_ALGO_NAME_SZ
+                && in[tokenSz] != ' ' && in[tokenSz] != '\t'
+                && in[tokenSz] != '\r' && in[tokenSz] != '\n') {
+            tokenSz++;
+        }
+
+        if (tokenSz > 0 && tokenSz < WOLFSSH_MAX_CERT_ALGO_NAME_SZ) {
+            id = NameToId((const char*)in, tokenSz);
+
+            switch (id) {
+                case ID_OSSH_CERT_RSA:
+                case ID_OSSH_CERT_ECDSA_SHA2_NISTP256:
+                case ID_OSSH_CERT_ECDSA_SHA2_NISTP384:
+                case ID_OSSH_CERT_ECDSA_SHA2_NISTP521:
+                case ID_OSSH_CERT_ED25519:
+                    *flavor = WOLFSSH_CERT_FLAVOR_OSSH;
+                    *certId = id;
+                    ret = WOLFSSH_FORMAT_SSH;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+#else
+    WOLFSSH_UNUSED(certId);
+#endif /* WOLFSSH_OSSH_CERTS */
+
+    return ret;
+}
+
+
+#ifdef WOLFSSH_CERTS
+
+/* Decodes a PEM certificate to DER and identifies it. */
+static int DoPemCert(const byte* in, word32 inSz, byte** out, word32* outSz,
+        const byte** outType, word32* outTypeSz, void* heap)
+{
+    byte* der;
+    word32 derSz = 0;
+    int ret;
+
+    der = (byte*)WMALLOC(inSz, heap, DYNTYPE_CERT);
+    if (der == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    ret = wc_CertPemToDer(in, (int)inSz, der, (int)inSz, CERT_TYPE);
+    if (ret <= 0) {
+        WLOG(WS_LOG_DEBUG, "PEM to DER of certificate failed.");
+        WFREE(der, heap, DYNTYPE_CERT);
+        return WS_BAD_FILE_E;
+    }
+    derSz = (word32)ret;
+
+    ret = IdentifyCert(der, derSz, heap);
+    if (ret < 0) {
+        WFREE(der, heap, DYNTYPE_CERT);
+    }
+    else {
+        *out = der;
+        *outSz = derSz;
+        *outType = (const byte*)IdToName((byte)ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+/* Identifies a DER certificate before copying it out. */
+static int DoDerCert(const byte* in, word32 inSz, byte** out, word32* outSz,
+        const byte** outType, word32* outTypeSz, void* heap)
+{
+    byte* der;
+    int ret;
+
+    ret = IdentifyCert(in, inSz, heap);
+
+    if (ret >= 0) {
+        der = (byte*)WMALLOC(inSz, heap, DYNTYPE_CERT);
+        if (der == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            WMEMCPY(der, in, inSz);
+            *out = der;
+            *outSz = inSz;
+            *outType = (const byte*)IdToName((byte)ret);
+            *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+            ret = WS_SUCCESS;
+        }
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
+
+
+#ifdef WOLFSSH_OSSH_CERTS
+
+/* Decodes an OpenSSH certificate line and checks that it parses. */
+static int DoOsshCert(const byte* in, word32 inSz, byte certId, byte** out,
+        word32* outSz, const byte** outType, word32* outTypeSz, void* heap)
+{
+    WS_OsshCert cert;
+    byte* blob;
+    int ret;
+
+    blob = (byte*)WMALLOC(inSz, heap, DYNTYPE_CERT);
+    if (blob == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    /* DoSshPubKey decodes into a non-NULL *out rather than allocating, so it
+       fills blob and leaves it ours to free. Were it to allocate instead,
+       blob would leak and the free below would take the wrong type. */
+    *out = blob;
+    *outSz = inSz;
+
+    ret = DoSshPubKey(in, inSz, out, outSz, outType, outTypeSz, heap);
+
+    if (ret == WS_SUCCESS) {
+        /* The blob has no envelope, so only a parse tells it from a key. */
+        ret = OsshCertParse(&cert, certId, *out, *outSz);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "OpenSSH certificate is malformed.");
+        }
+    }
+
+    if (ret != WS_SUCCESS) {
+        WFREE(blob, heap, DYNTYPE_CERT);
+        *out = NULL;
+        *outSz = 0;
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_OSSH_CERTS */
+
+
+/* Reads a certificate from the buffer in to out, detecting its form from the
+   content. See ssh.h for what the caller owns. */
+int wolfSSH_ReadCert_buffer(const byte* in, word32 inSz,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* flavor, void* heap)
+{
+    byte certId = ID_UNKNOWN;
+    int format;
+    int ret;
+
+    if (in == NULL || inSz == 0 || out == NULL || outSz == NULL ||
+            outType == NULL || outTypeSz == NULL || flavor == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    *out = NULL;
+    *outSz = 0;
+    *outType = NULL;
+    *outTypeSz = 0;
+    *flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+
+    format = SniffCertForm(in, inSz, flavor, &certId);
+    if (format < 0) {
+        WLOG(WS_LOG_DEBUG, "Unable to identify the certificate");
+        return format;
+    }
+
+    ret = WS_BAD_FILETYPE_E;
+
+    switch (format) {
+    #ifdef WOLFSSH_CERTS
+        case WOLFSSH_FORMAT_PEM:
+            ret = DoPemCert(in, inSz, out, outSz, outType, outTypeSz, heap);
+            break;
+
+        case WOLFSSH_FORMAT_ASN1:
+            ret = DoDerCert(in, inSz, out, outSz, outType, outTypeSz, heap);
+            break;
+    #endif /* WOLFSSH_CERTS */
+    #ifdef WOLFSSH_OSSH_CERTS
+        case WOLFSSH_FORMAT_SSH:
+            ret = DoOsshCert(in, inSz, certId, out, outSz, outType, outTypeSz,
+                    heap);
+            break;
+    #endif /* WOLFSSH_OSSH_CERTS */
+        default:
+            break;
+    }
+
+    /* The sniff names the form and a decoder may fill an out parameter before
+       failing, so a failure clears them all rather than leave a partial
+       answer. Decoders free whatever they allocated. */
+    if (ret != WS_SUCCESS) {
+        *out = NULL;
+        *outSz = 0;
+        *outType = NULL;
+        *outTypeSz = 0;
+        *flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS || WOLFSSH_OSSH_CERTS */
+
+
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
 
-/* Reads a key from the file name into a buffer. If the key starts with the
-   string "ssh-rsa" or "ecdsa-sha2-nistp256", it is considered an SSH format
-   public key, if it has "----BEGIN" it is considered PEM formatted,
-   otherwise it is considered an ASN.1 private key. The buffer is passed to
-   wolfSSH_ReadKey_buffer() for processing. */
-int wolfSSH_ReadKey_file(const char* name,
-        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
-        byte* isPrivate, void* heap)
+/* Reads the file name into a buffer allocated with an extra byte holding a
+   nul terminator. The caller frees out with DYNTYPE_FILE. */
+static int ReadFileIntoBuffer(const char* name, byte** out, word32* outSz,
+        void* heap)
 {
-
     WFILE* file;
 #ifdef MICROCHIP_MPLAB_HARMONY
     WFILE f = WBADFILE;
 #endif
     byte* in;
     word32 inSz;
-    int format;
     int ret;
-
-    if (name == NULL)
-        return WS_BAD_FILE_E;
-
-    if (out == NULL || outSz == NULL || outType == NULL || outTypeSz == NULL ||
-            isPrivate == NULL)
-        return WS_BAD_ARGUMENT;
 
 #ifdef MICROCHIP_MPLAB_HARMONY
     file = &f;
@@ -2429,10 +2663,43 @@ int wolfSSH_ReadKey_file(const char* name,
     }
 
     ret = (int)WFREAD(NULL, in, 1, inSz, file);
+    WFCLOSE(NULL, file);
+
     if (ret <= 0 || (word32)ret != inSz) {
-        ret = WS_BAD_FILE_E;
+        WS_FORCEZERO(in, inSz);
+        WFREE(in, heap, DYNTYPE_FILE);
+        return WS_BAD_FILE_E;
     }
-    else {
+
+    in[inSz] = 0;
+    *out = in;
+    *outSz = inSz;
+
+    return WS_SUCCESS;
+}
+
+
+/* Reads a key from the file name into a buffer. An SSH algorithm name marks
+   an SSH format public key and "-----BEGIN " a PEM one, otherwise it is an
+   ASN.1 private key. The buffer goes to wolfSSH_ReadKey_buffer_ex(). */
+int wolfSSH_ReadKey_file(const char* name,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* isPrivate, void* heap)
+{
+    byte* in;
+    word32 inSz;
+    int format;
+    int ret;
+
+    if (name == NULL)
+        return WS_BAD_FILE_E;
+
+    if (out == NULL || outSz == NULL || outType == NULL || outTypeSz == NULL ||
+            isPrivate == NULL)
+        return WS_BAD_ARGUMENT;
+
+    ret = ReadFileIntoBuffer(name, &in, &inSz, heap);
+    if (ret == WS_SUCCESS) {
         if (WSTRNSTR((const char*)in, "ssh-rsa", inSz) == (const char*)in
                 || WSTRNSTR((const char*)in,
                     "ecdsa-sha2-nistp", inSz) == (const char*)in
@@ -2444,7 +2711,6 @@ int wolfSSH_ReadKey_file(const char* name,
                     "x509v3-ssh-mldsa-", inSz) == (const char*)in) {
             *isPrivate = 0;
             format = WOLFSSH_FORMAT_SSH;
-            in[inSz] = 0;
         }
         else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL) {
             *isPrivate = 1;
@@ -2464,14 +2730,54 @@ int wolfSSH_ReadKey_file(const char* name,
 
         ret = wolfSSH_ReadKey_buffer_ex(in, inSz, format,
                 out, outSz, outType, outTypeSz, *isPrivate, heap);
-    }
 
-    WFCLOSE(NULL, file);
-    WS_FORCEZERO(in, inSz);
-    WFREE(in, heap, DYNTYPE_FILE);
+        WS_FORCEZERO(in, inSz);
+        WFREE(in, heap, DYNTYPE_FILE);
+    }
 
     return ret;
 }
+
+
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
+
+/* Reads a certificate file and passes it to wolfSSH_ReadCert_buffer(). */
+int wolfSSH_ReadCert_file(const char* name,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* flavor, void* heap)
+{
+    byte* in;
+    word32 inSz;
+    int ret;
+
+    if (name == NULL)
+        return WS_BAD_FILE_E;
+
+    if (out == NULL || outSz == NULL || outType == NULL || outTypeSz == NULL ||
+            flavor == NULL)
+        return WS_BAD_ARGUMENT;
+
+    *out = NULL;
+    *outSz = 0;
+    *outType = NULL;
+    *outTypeSz = 0;
+    *flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+
+    ret = ReadFileIntoBuffer(name, &in, &inSz, heap);
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_ReadCert_buffer(in, inSz,
+                out, outSz, outType, outTypeSz, flavor, heap);
+
+        /* A certificate is public, but the file may hold a private key
+           beside it, so scrub it like the key reader does. */
+        WS_FORCEZERO(in, inSz);
+        WFREE(in, heap, DYNTYPE_FILE);
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS || WOLFSSH_OSSH_CERTS */
 
 #endif
 
@@ -2929,6 +3235,81 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
             "Leaving wolfSSH_CTX_AddRootCert_buffer(), ret = %d", ret);
     return ret;
 }
+
+
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+
+/* Reads a certificate file and hands the PEM or DER it holds to the CTX. */
+static int UseCertFile(WOLFSSH_CTX* ctx, const char* name, int type)
+{
+    byte* in;
+    word32 inSz;
+    byte certId = ID_UNKNOWN;
+    byte flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+    int format;
+    int ret;
+
+    if (ctx == NULL || name == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = ReadFileIntoBuffer(name, &in, &inSz, ctx->heap);
+    if (ret == WS_SUCCESS) {
+        format = SniffCertForm(in, inSz, &flavor, &certId);
+
+        if (format < 0) {
+            ret = format;
+        }
+        else if (format == WOLFSSH_FORMAT_SSH) {
+            /* A CTX takes the certificate itself, not a public key line. */
+            WLOG(WS_LOG_DEBUG, "Certificate file is not PEM or DER");
+            ret = WS_BAD_FILETYPE_E;
+        }
+        else {
+            ret = wolfSSH_ProcessBuffer(ctx, in, inSz, format, type);
+        }
+
+        WS_FORCEZERO(in, inSz);
+        WFREE(in, ctx->heap, DYNTYPE_FILE);
+    }
+
+    return ret;
+}
+
+
+/* Load in a X509 certificate file that has public key to use
+ * return WS_SUCCESS on success
+ */
+int wolfSSH_CTX_UseCert_file(WOLFSSH_CTX* ctx, const char* name)
+{
+    int ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UseCert_file()");
+
+    ret = UseCertFile(ctx, name, BUFTYPE_CERT);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UseCert_file(), ret = %d", ret);
+    return ret;
+}
+
+
+/* Add a CA file for verifying the peer's certificate with.
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_CTX_AddRootCert_file(WOLFSSH_CTX* ctx, const char* name)
+{
+    int ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_AddRootCert_file()");
+
+    ret = UseCertFile(ctx, name, BUFTYPE_CA);
+
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_CTX_AddRootCert_file(), ret = %d", ret);
+    return ret;
+}
+
+#endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM */
 
 #endif /* WOLFSSH_CERTS */
 

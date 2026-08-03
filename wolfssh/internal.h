@@ -1328,6 +1328,9 @@ WOLFSSH_LOCAL int GetOpenSshKey(WS_KeySignature *key,
 WOLFSSH_LOCAL int GetOpenSshPublicKey(WS_KeySignature *key,
         const byte* buf, word32 len, word32* idx);
 #endif
+#ifdef WOLFSSH_CERTS
+WOLFSSH_LOCAL int IdentifyCert(const byte* in, word32 inSz, void* heap);
+#endif
 
 
 /* Parsing functions */

@@ -34,6 +34,16 @@ openssl req -subj '/C=US/ST=Washington/L=Seattle/O=Eliptic/OU=ECC/CN=www.wolfssl
 openssl x509 -req -in server-cert.csr -days 3650 -extfile "$CONFIG" -extensions v3_server -CA ca-cert-ecc.pem -CAkey ca-key-ecc.pem -text -out server-cert.pem -set_serial 8
 openssl x509 -in server-cert.pem -outform DER -out server-cert.der
 
+# renew server-cert-ed25519. Ed25519 has no x509v3-* SSH algorithm name, so
+# this certificate exercises the rejection of an unmappable key type. Its key
+# is not a host key, so it is dropped once the certificate is signed.
+openssl genpkey -algorithm ed25519 -out server-cert-ed25519-key.pem
+openssl req -subj '/C=US/ST=Washington/L=Seattle/O=Eliptic/OU=Ed25519/CN=www.wolfssl.com/emailAddress=server@example.com' -key server-cert-ed25519-key.pem -out server-cert-ed25519.csr -config "$CONFIG" -new -nodes
+
+openssl x509 -req -in server-cert-ed25519.csr -days 3650 -extfile "$CONFIG" -extensions v3_server -CA ca-cert-ecc.pem -CAkey ca-key-ecc.pem -text -out server-cert-ed25519.pem -set_serial 9
+openssl x509 -in server-cert-ed25519.pem -outform DER -out server-cert-ed25519.der
+rm -f server-cert-ed25519-key.pem server-cert-ed25519.csr
+
 rm index.*
 if [ -n "$1" ]; then
     rm -f "$CONFIG"

@@ -104,6 +104,19 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* isPrivate, void* heap);
 
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
+/* Decodes a PEM/DER X.509 cert or OpenSSH cert line, detected from content.
+ * Caller frees out via heap; on failure every out param is cleared. */
+WOLFSSH_API int wolfSSH_ReadCert_buffer(const byte* in, word32 inSz,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* flavor, void* heap);
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+WOLFSSH_API int wolfSSH_ReadCert_file(const char* name,
+        byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
+        byte* flavor, void* heap);
+#endif
+#endif /* WOLFSSH_CERTS || WOLFSSH_OSSH_CERTS */
+
 /* SetAlgoList* validate the list, returning WS_SUCCESS, WS_INVALID_ALGO_ID for
  * a bad list, or WS_SSH_CTX_NULL_E / WS_SSH_NULL_E for a NULL ctx / ssh.
  * Kex/Cipher/Mac reject NULL. Key accepts NULL only on a server, restoring the
@@ -494,6 +507,13 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
+    #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+    /* PEM or DER is detected from the file's content. */
+    WOLFSSH_API int wolfSSH_CTX_UseCert_file(WOLFSSH_CTX* ctx,
+            const char* name);
+    WOLFSSH_API int wolfSSH_CTX_AddRootCert_file(WOLFSSH_CTX* ctx,
+            const char* name);
+    #endif
 #endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
         word32 windowSz, word32 maxPacketSz);
@@ -597,6 +617,16 @@ enum WS_FormatTypes {
     WOLFSSH_FORMAT_RAW,
     WOLFSSH_FORMAT_SSH,
     WOLFSSH_FORMAT_OPENSSH
+};
+
+
+/* X.509 certificates are consumed by UseCert/AddRootCert, OpenSSH ones by
+   the trusted user CA machinery. UNKNOWN leads so that a zeroed flavor is
+   not a claim about the content. */
+enum WS_CertFlavors {
+    WOLFSSH_CERT_FLAVOR_UNKNOWN,
+    WOLFSSH_CERT_FLAVOR_X509,
+    WOLFSSH_CERT_FLAVOR_OSSH
 };
 
 
