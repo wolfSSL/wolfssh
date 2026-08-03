@@ -1388,6 +1388,26 @@ static int SHELL_IsPty(WOLFSSH* ssh)
     return ret;
 }
 
+/* set a descriptor to non blocking, returns 0 on success and -1 on failure */
+static int SHELL_SetNonBlocking(int fd)
+{
+    int flags;
+
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] fcntl get failed");
+        return -1;
+    }
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] fcntl set failed");
+        return -1;
+    }
+
+    return 0;
+}
+
+
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
@@ -2007,18 +2027,20 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     if (!ptyReq || forcedCmd) {
         int readSz;
 
-        fcntl(stdoutPipe[0], F_SETFL, fcntl(stdoutPipe[0], F_GETFL)
-            | O_NONBLOCK);
-        readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
-        if (readSz > 0) {
-            wolfSSH_ChannelIdSend(ssh, shellChannelId, shellBuffer, readSz);
+        /* when the pipe can not be made non blocking skip the drain, a
+         * blocking read here could hang the connection process */
+        if (SHELL_SetNonBlocking(stdoutPipe[0]) == 0) {
+            readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
+            if (readSz > 0) {
+                wolfSSH_ChannelIdSend(ssh, shellChannelId, shellBuffer, readSz);
+            }
         }
 
-        fcntl(stderrPipe[0], F_SETFL, fcntl(stderrPipe[0], F_GETFL)
-            | O_NONBLOCK);
-        readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
-        if (readSz > 0) {
-            wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
+        if (SHELL_SetNonBlocking(stderrPipe[0]) == 0) {
+            readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
+            if (readSz > 0) {
+                wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
+            }
         }
 
         close(stdoutPipe[0]);
