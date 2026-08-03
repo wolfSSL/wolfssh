@@ -6888,6 +6888,39 @@ static const byte unitTestRsaPrivKey[] = {
 };
 static const word32 unitTestRsaPrivKeySz =
         (word32)sizeof(unitTestRsaPrivKey);
+
+/* SubjectPublicKeyInfo DER for unitTestRsaPrivKey. Inlined so the ASN.1
+ * public-key test does not need wc_RsaKeyToPublicDer, which wolfSSL only
+ * builds under WOLFSSL_KEY_TO_DER or WOLFSSL_CERT_GEN. */
+static const byte unitTestRsaPubKey[] = {
+  0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+  0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00,
+  0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01, 0x00, 0xbd, 0x3f, 0x76,
+  0x45, 0xa3, 0x03, 0xac, 0x38, 0xd5, 0xc7, 0x0f, 0x93, 0x30, 0x5a, 0x20,
+  0x9c, 0x89, 0x7c, 0xad, 0x05, 0x16, 0x46, 0x86, 0x83, 0x0d, 0x8a, 0x2b,
+  0x16, 0x4a, 0x05, 0x2c, 0xe4, 0x77, 0x47, 0x70, 0x00, 0xae, 0x1d, 0x83,
+  0xe2, 0xd9, 0x6e, 0x99, 0xd4, 0xf0, 0x45, 0x98, 0x15, 0x93, 0xf6, 0x87,
+  0x4e, 0xac, 0x64, 0x63, 0xa1, 0x95, 0xc9, 0x7c, 0x30, 0xe8, 0x3e, 0x2f,
+  0xa3, 0xf1, 0x24, 0x9f, 0x0c, 0x6b, 0x1c, 0xfe, 0x1b, 0x02, 0x99, 0xcd,
+  0xc6, 0xa7, 0x6c, 0x84, 0x85, 0x46, 0x54, 0x12, 0x40, 0xe1, 0xb4, 0xe5,
+  0xf2, 0xaa, 0x39, 0xec, 0xd6, 0x27, 0x24, 0x0b, 0xd1, 0xa1, 0xe2, 0xef,
+  0x34, 0x69, 0x25, 0x6d, 0xc0, 0x74, 0x67, 0x25, 0x98, 0x7d, 0xc4, 0xf8,
+  0x52, 0xab, 0x9b, 0x4b, 0x3a, 0x12, 0x1d, 0xe1, 0xe3, 0xfa, 0xd6, 0xcf,
+  0x9a, 0xe6, 0x9c, 0x23, 0x4e, 0x39, 0xc4, 0x84, 0x16, 0x88, 0x3d, 0x42,
+  0x4e, 0xd8, 0x2f, 0xcc, 0xd2, 0x91, 0x67, 0x9d, 0xb6, 0x71, 0x2a, 0x02,
+  0x65, 0x5f, 0xbb, 0x75, 0x0e, 0x8c, 0xbb, 0x87, 0x97, 0x97, 0xc6, 0xf8,
+  0xb2, 0x98, 0xe2, 0x2f, 0x68, 0x26, 0x4a, 0x53, 0xec, 0x79, 0x3a, 0x8a,
+  0x5f, 0xcc, 0xcf, 0xf0, 0x16, 0x47, 0xb2, 0xd0, 0x43, 0xd6, 0x36, 0x6c,
+  0xc8, 0xe7, 0x2f, 0xfe, 0xa7, 0x35, 0x39, 0x69, 0xfb, 0x1d, 0x78, 0x45,
+  0x9d, 0x89, 0x00, 0xc8, 0x41, 0xcf, 0x34, 0x1f, 0xa3, 0xf3, 0xf1, 0xfb,
+  0x28, 0x14, 0xfb, 0xd8, 0x48, 0x6f, 0xac, 0xe3, 0xfc, 0x33, 0xd1, 0xdb,
+  0xae, 0xef, 0x27, 0x9e, 0x57, 0x56, 0x29, 0xa2, 0x1a, 0x3a, 0xe5, 0x9a,
+  0xfe, 0xa4, 0x49, 0xc8, 0x7f, 0xb7, 0x4e, 0xd0, 0x1f, 0x04, 0x6e, 0x58,
+  0x16, 0xb7, 0xeb, 0x9d, 0xf8, 0x92, 0x3c, 0xc2, 0xb0, 0x21, 0x7c, 0x4e,
+  0x31, 0x02, 0x03, 0x01, 0x00, 0x01,
+};
+static const word32 unitTestRsaPubKeySz =
+        (word32)sizeof(unitTestRsaPubKey);
 #endif /* WOLFSSH_NO_RSA */
 
 /* Keys for test_IdentifyAsn1Key: inline DER so the test is self-contained
@@ -9271,6 +9304,469 @@ static int test_IdentifyAsn1Key_MlDsaPrivOnlyDer(byte level,
     return 0;
 }
 #endif
+
+/* Set when at least one test_ReadPublicKeyAsn1 sub-test is compiled in. The
+ * blob helpers below are unused otherwise, which -Werror rejects. */
+#if !defined(WOLFSSH_NO_RSA) || \
+    (!defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)) || \
+    (!defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+     defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)) || \
+    (!defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSL_DILITHIUM_NO_MAKE_KEY))
+    #define WOLFSSH_TEST_PUBKEY_ASN1
+#endif
+
+#ifdef WOLFSSH_TEST_PUBKEY_ASN1
+/* Reads the 4-byte big-endian length prefix of an SSH wire string. */
+static word32 ReadPubBlobLen(const byte* b)
+{
+    return ((word32)b[0] << 24) | ((word32)b[1] << 16) |
+           ((word32)b[2] <<  8) | ((word32)b[3]);
+}
+
+/* Compares the SSH string at *idx in blob against expect, then advances
+ * *idx past it. Returns 0 on match, -1 otherwise. */
+static int CheckPubBlobStr(const byte* blob, word32 blobSz, word32* idx,
+        const byte* expect, word32 expectSz)
+{
+    word32 len;
+
+    if (*idx + LENGTH_SZ > blobSz) {
+        return -1;
+    }
+    len = ReadPubBlobLen(blob + *idx);
+    *idx += LENGTH_SZ;
+
+    if (len != expectSz || len > blobSz - *idx) {
+        return -1;
+    }
+    if (WMEMCMP(blob + *idx, expect, len) != 0) {
+        return -1;
+    }
+    *idx += len;
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_PUBKEY_ASN1 */
+
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)
+/* An SPKI public key must produce an ecdsa-sha2-nistpXXX blob with the curve
+ * name and x963 point, not an ssh-rsa blob. Return codes -6940..-6949 */
+static int test_ReadPublicKeyAsn1Ecc(int curveSz, const char* keyName,
+        const char* curveName)
+{
+    int result = 0;
+    int ret;
+    int derSz = 0;
+    ecc_key eccKey;
+    WC_RNG rng;
+    byte* der = NULL;
+    byte* blob = NULL;
+    word32 blobSz = 0;
+    const byte* blobType = NULL;
+    word32 blobTypeSz = 0;
+    byte q[257];
+    word32 qSz = (word32)sizeof(q);
+    word32 idx = 0;
+
+    WMEMSET(&eccKey, 0, sizeof(eccKey));
+    if (wc_ecc_init(&eccKey) != 0) {
+        return -6940;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        wc_ecc_free(&eccKey);
+        return -6941;
+    }
+    if (wc_ecc_make_key(&rng, curveSz, &eccKey) != 0) {
+        result = -6942;
+    }
+    wc_FreeRng(&rng);
+
+    if (result == 0) {
+        derSz = wc_EccPublicKeyDerSize(&eccKey, 1);
+        if (derSz <= 0) {
+            result = -6943;
+        }
+    }
+    if (result == 0) {
+        der = (byte*)WMALLOC((word32)derSz, NULL, 0);
+        if (der == NULL) {
+            result = -6944;
+        }
+    }
+    if (result == 0) {
+        derSz = wc_EccPublicKeyToDer(&eccKey, der, (word32)derSz, 1);
+        if (derSz <= 0) {
+            result = -6945;
+        }
+    }
+    if (result == 0) {
+        if (wc_ecc_export_x963(&eccKey, q, &qSz) != 0) {
+            result = -6946;
+        }
+    }
+
+    if (result == 0) {
+        ret = wolfSSH_ReadPublicKey_buffer(der, (word32)derSz,
+                WOLFSSH_FORMAT_ASN1, &blob, &blobSz, &blobType, &blobTypeSz,
+                NULL);
+        if (ret != WS_SUCCESS || blob == NULL) {
+            printf("ReadPublicKeyAsn1: ECC %s read failed, ret=%d\n",
+                   curveName, ret);
+            result = -6947;
+        }
+    }
+    if (result == 0) {
+        if (blobTypeSz != (word32)WSTRLEN(keyName) ||
+                WMEMCMP(blobType, keyName, blobTypeSz) != 0) {
+            printf("ReadPublicKeyAsn1: ECC %s expected type %s\n",
+                   curveName, keyName);
+            result = -6948;
+        }
+    }
+    if (result == 0) {
+        if (CheckPubBlobStr(blob, blobSz, &idx,
+                    (const byte*)keyName, (word32)WSTRLEN(keyName)) != 0 ||
+                CheckPubBlobStr(blob, blobSz, &idx,
+                    (const byte*)curveName, (word32)WSTRLEN(curveName)) != 0 ||
+                CheckPubBlobStr(blob, blobSz, &idx, q, qSz) != 0 ||
+                idx != blobSz) {
+            printf("ReadPublicKeyAsn1: ECC %s blob malformed\n", curveName);
+            result = -6949;
+        }
+    }
+
+    if (blob != NULL) {
+        WFREE(blob, NULL, DYNTYPE_PRIVKEY);
+    }
+    if (der != NULL) {
+        WFREE(der, NULL, 0);
+    }
+    wc_ecc_free(&eccKey);
+
+    return result;
+}
+#endif /* !WOLFSSH_NO_ECDSA && HAVE_ECC_KEY_EXPORT */
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+/* An SPKI public key must produce an ssh-ed25519 blob carrying the raw
+ * public key, not an ssh-rsa blob built from the overlaid union storage.
+ * Return codes -6950..-6957 */
+static int test_ReadPublicKeyAsn1Ed25519(void)
+{
+    static const char keyName[] = "ssh-ed25519";
+    int result = 0;
+    int ret;
+    int derSz = 0;
+    ed25519_key edKey;
+    WC_RNG rng;
+    byte der[128];
+    byte* blob = NULL;
+    word32 blobSz = 0;
+    const byte* blobType = NULL;
+    word32 blobTypeSz = 0;
+    byte q[ED25519_PUB_KEY_SIZE];
+    word32 qSz = (word32)sizeof(q);
+    word32 idx = 0;
+
+    if (wc_ed25519_init(&edKey) != 0) {
+        return -6950;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        wc_ed25519_free(&edKey);
+        return -6951;
+    }
+    if (wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &edKey) != 0) {
+        result = -6952;
+    }
+    wc_FreeRng(&rng);
+
+    if (result == 0) {
+        derSz = wc_Ed25519PublicKeyToDer(&edKey, der, (word32)sizeof(der), 1);
+        if (derSz <= 0) {
+            result = -6953;
+        }
+    }
+    if (result == 0) {
+        if (wc_ed25519_export_public(&edKey, q, &qSz) != 0) {
+            result = -6954;
+        }
+    }
+
+    if (result == 0) {
+        ret = wolfSSH_ReadPublicKey_buffer(der, (word32)derSz,
+                WOLFSSH_FORMAT_ASN1, &blob, &blobSz, &blobType, &blobTypeSz,
+                NULL);
+        if (ret != WS_SUCCESS || blob == NULL) {
+            printf("ReadPublicKeyAsn1: Ed25519 read failed, ret=%d\n", ret);
+            result = -6955;
+        }
+    }
+    if (result == 0) {
+        if (blobTypeSz != (word32)WSTRLEN(keyName) ||
+                WMEMCMP(blobType, keyName, blobTypeSz) != 0) {
+            printf("ReadPublicKeyAsn1: Ed25519 expected type %s\n", keyName);
+            result = -6956;
+        }
+    }
+    if (result == 0) {
+        if (CheckPubBlobStr(blob, blobSz, &idx,
+                    (const byte*)keyName, (word32)WSTRLEN(keyName)) != 0 ||
+                CheckPubBlobStr(blob, blobSz, &idx, q, qSz) != 0 ||
+                idx != blobSz) {
+            printf("ReadPublicKeyAsn1: Ed25519 blob malformed\n");
+            result = -6957;
+        }
+    }
+
+    if (blob != NULL) {
+        WFREE(blob, NULL, DYNTYPE_PRIVKEY);
+    }
+    wc_ed25519_free(&edKey);
+
+    return result;
+}
+#endif /* !WOLFSSH_NO_ED25519 && HAVE_ED25519 && ... */
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSL_DILITHIUM_NO_MAKE_KEY)
+/* A raw ML-DSA public key must produce an ssh-mldsa-NN blob carrying that
+ * same raw key. Return codes -6970..-6977 */
+static int test_ReadPublicKeyAsn1MlDsa(byte level, const char* keyName,
+        word32 rawSz)
+{
+    int result = 0;
+    int ret;
+    MlDsaKey mlKey;
+    WC_RNG rng;
+    byte* raw = NULL;
+    word32 gotSz = rawSz;
+    byte* blob = NULL;
+    word32 blobSz = 0;
+    const byte* blobType = NULL;
+    word32 blobTypeSz = 0;
+    word32 idx = 0;
+
+    if (wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID) != 0) {
+        return -6970;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        wc_MlDsaKey_Free(&mlKey);
+        return -6971;
+    }
+    if (wc_MlDsaKey_SetParams(&mlKey, level) != 0) {
+        result = -6972;
+    }
+    if (result == 0) {
+        if (wc_MlDsaKey_MakeKey(&mlKey, &rng) != 0) {
+            result = -6973;
+        }
+    }
+    wc_FreeRng(&rng);
+
+    if (result == 0) {
+        raw = (byte*)WMALLOC(rawSz, NULL, 0);
+        if (raw == NULL) {
+            result = -6974;
+        }
+    }
+    if (result == 0) {
+        if (wc_MlDsaKey_ExportPubRaw(&mlKey, raw, &gotSz) != 0 ||
+                gotSz != rawSz) {
+            result = -6975;
+        }
+    }
+
+    /* IdentifyAsn1Key falls back to a raw-length probe when the bytes are
+     * not an SPKI, which is what routes this to the ML-DSA arm. */
+    if (result == 0) {
+        ret = wolfSSH_ReadPublicKey_buffer(raw, rawSz, WOLFSSH_FORMAT_ASN1,
+                &blob, &blobSz, &blobType, &blobTypeSz, NULL);
+        if (ret != WS_SUCCESS || blob == NULL) {
+            printf("ReadPublicKeyAsn1: %s read failed, ret=%d\n",
+                   keyName, ret);
+            result = -6976;
+        }
+    }
+    if (result == 0) {
+        if (blobTypeSz != (word32)WSTRLEN(keyName) ||
+                WMEMCMP(blobType, keyName, blobTypeSz) != 0 ||
+                CheckPubBlobStr(blob, blobSz, &idx,
+                    (const byte*)keyName, (word32)WSTRLEN(keyName)) != 0 ||
+                CheckPubBlobStr(blob, blobSz, &idx, raw, rawSz) != 0 ||
+                idx != blobSz) {
+            printf("ReadPublicKeyAsn1: %s blob malformed\n", keyName);
+            result = -6977;
+        }
+    }
+
+    if (blob != NULL) {
+        WFREE(blob, NULL, DYNTYPE_PRIVKEY);
+    }
+    if (raw != NULL) {
+        WFREE(raw, NULL, 0);
+    }
+    wc_MlDsaKey_Free(&mlKey);
+
+    return result;
+}
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSL_DILITHIUM_NO_MAKE_KEY */
+
+#ifndef WOLFSSH_NO_RSA
+/* Regression guard: the RSA public path must keep producing an ssh-rsa blob
+ * of three strings once it is gated on its own key ID.
+ * Return codes -6960..-6967 */
+static int test_ReadPublicKeyAsn1Rsa(void)
+{
+    static const char keyName[] = "ssh-rsa";
+    int result = 0;
+    int ret;
+    RsaKey rsaKey;
+    byte e[8];
+    byte n[RSA_MAX_SIZE / 8 + 1];
+    word32 eSz = (word32)sizeof(e);
+    word32 nSz = (word32)sizeof(n) - 1;
+    byte* blob = NULL;
+    word32 blobSz = 0;
+    const byte* blobType = NULL;
+    word32 blobTypeSz = 0;
+    word32 idx = 0;
+
+    /* Recover the expected e and n the same way DoAsn1Key does, so the blob
+     * is checked against real key material and not just its framing. */
+    if (wc_InitRsaKey(&rsaKey, NULL) != 0) {
+        return -6960;
+    }
+    idx = 0;
+    if (wc_RsaPublicKeyDecode(unitTestRsaPubKey, &idx, &rsaKey,
+                unitTestRsaPubKeySz) != 0) {
+        result = -6961;
+    }
+    if (result == 0) {
+        if (wc_RsaFlattenPublicKey(&rsaKey, e, &eSz, n + 1, &nSz) != 0) {
+            result = -6962;
+        }
+    }
+    /* DoAsn1Key prepends a zero byte when the modulus MSB is set, so the
+     * mpint stays positive. Mirror that to compare bytes. */
+    if (result == 0) {
+        if (n[1] & 0x80) {
+            n[0] = 0;
+            nSz++;
+        }
+        else {
+            WMEMMOVE(n, n + 1, nSz);
+        }
+    }
+
+    if (result == 0) {
+        ret = wolfSSH_ReadPublicKey_buffer(unitTestRsaPubKey,
+                unitTestRsaPubKeySz,
+                WOLFSSH_FORMAT_ASN1, &blob, &blobSz, &blobType, &blobTypeSz,
+                NULL);
+        if (ret != WS_SUCCESS || blob == NULL) {
+            printf("ReadPublicKeyAsn1: RSA read failed, ret=%d\n", ret);
+            result = -6963;
+        }
+    }
+    if (result == 0) {
+        if (blobTypeSz != (word32)WSTRLEN(keyName) ||
+                WMEMCMP(blobType, keyName, blobTypeSz) != 0) {
+            printf("ReadPublicKeyAsn1: RSA expected type %s\n", keyName);
+            result = -6964;
+        }
+    }
+    if (result == 0) {
+        idx = 0;
+        if (CheckPubBlobStr(blob, blobSz, &idx,
+                    (const byte*)keyName, (word32)WSTRLEN(keyName)) != 0) {
+            printf("ReadPublicKeyAsn1: RSA blob name malformed\n");
+            result = -6965;
+        }
+    }
+    if (result == 0) {
+        if (CheckPubBlobStr(blob, blobSz, &idx, e, eSz) != 0) {
+            printf("ReadPublicKeyAsn1: RSA exponent mismatch\n");
+            result = -6966;
+        }
+    }
+    if (result == 0) {
+        if (CheckPubBlobStr(blob, blobSz, &idx, n, nSz) != 0 ||
+                idx != blobSz) {
+            printf("ReadPublicKeyAsn1: RSA modulus mismatch\n");
+            result = -6967;
+        }
+    }
+
+    if (blob != NULL) {
+        WFREE(blob, NULL, DYNTYPE_PRIVKEY);
+    }
+    wc_FreeRsaKey(&rsaKey);
+
+    return result;
+}
+#endif /* WOLFSSH_NO_RSA */
+
+/* wolfSSH_ReadPublicKey_buffer() with WOLFSSH_FORMAT_ASN1 must dispatch on the
+ * identified key type instead of assuming every DER public key is RSA. */
+static int test_ReadPublicKeyAsn1(void)
+{
+    int result = 0;
+
+#ifndef WOLFSSH_NO_RSA
+    result = test_ReadPublicKeyAsn1Rsa();
+#endif
+
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1Ecc(32, "ecdsa-sha2-nistp256",
+                "nistp256");
+    }
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1Ecc(48, "ecdsa-sha2-nistp384",
+                "nistp384");
+    }
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1Ecc(66, "ecdsa-sha2-nistp521",
+                "nistp521");
+    }
+#endif
+#endif /* !WOLFSSH_NO_ECDSA && HAVE_ECC_KEY_EXPORT */
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1Ed25519();
+    }
+#endif
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSL_DILITHIUM_NO_MAKE_KEY)
+#ifndef WOLFSSH_NO_MLDSA44
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1MlDsa(WC_ML_DSA_44, "ssh-mldsa-44",
+                WC_MLDSA_44_PUB_KEY_SIZE);
+    }
+#endif
+#ifndef WOLFSSH_NO_MLDSA65
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1MlDsa(WC_ML_DSA_65, "ssh-mldsa-65",
+                WC_MLDSA_65_PUB_KEY_SIZE);
+    }
+#endif
+#ifndef WOLFSSH_NO_MLDSA87
+    if (result == 0) {
+        result = test_ReadPublicKeyAsn1MlDsa(WC_ML_DSA_87, "ssh-mldsa-87",
+                WC_MLDSA_87_PUB_KEY_SIZE);
+    }
+#endif
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSL_DILITHIUM_NO_MAKE_KEY */
+
+    return result;
+}
 
 /* IdentifyAsn1Key unit test
  *
@@ -12968,6 +13464,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_IdentifyAsn1Key();
     printf("IdentifyAsn1Key: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ReadPublicKeyAsn1();
+    printf("ReadPublicKeyAsn1: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_SFTP
