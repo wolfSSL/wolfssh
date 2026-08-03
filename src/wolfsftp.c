@@ -1561,8 +1561,15 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         return WS_MEMORY_E;
     }
 
-    SFTP_SetHeader(ssh, reqId, WOLFSSH_FTP_NAME,
-            outSz - WOLFSSH_SFTP_HEADER, out);
+    if (SFTP_SetHeader(ssh, reqId, WOLFSSH_FTP_NAME,
+                outSz - WOLFSSH_SFTP_HEADER, out) != WS_SUCCESS) {
+        /* only free "out" when it was allocated here, otherwise it is the
+         * state buffer owned by "ssh" */
+        if (outSz > (word32)maxSz) {
+            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+        }
+        return WS_BUFFER_E;
+    }
     lidx += WOLFSSH_SFTP_HEADER;
 
     /* set number of files */
