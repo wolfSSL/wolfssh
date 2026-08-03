@@ -95,9 +95,16 @@ static void ShowUsage(char* appPath)
 
     printf("%s v%s linked with wolfSSL %s\n", appName,
         LIBWOLFSSH_VERSION_STRING, LIBWOLFSSL_VERSION_STRING);
-    printf("usage: %s [-E logfile] [-G] [-l login_name] [-N] [-p port] "
+    printf("usage: %s "
+#ifdef WOLFSSH_AGENT
+            "[-a] "
+#endif
+            "[-E logfile] [-G] [-l login_name] [-N] [-p port] "
             "[-V] destination\n",
             appName);
+#ifdef WOLFSSH_AGENT
+    printf("  -a  attempt to use SSH-AGENT\n");
+#endif
 }
 
 
@@ -726,6 +733,7 @@ struct config {
     char* command;
     word32 printConfig:1;
     word32 noCommand:1;
+    word32 useAgent:1;
     word16 port;
 };
 
@@ -783,8 +791,18 @@ static int config_parse_command_line(struct config* config,
 {
     int ch;
 
-    while ((ch = mygetopt(argc, argv, "E:Gl:Np:V")) != -1) {
+    while ((ch = mygetopt(argc, argv,
+#ifdef WOLFSSH_AGENT
+                "a"
+#endif
+                "E:Gl:Np:V")) != -1) {
         switch (ch) {
+        #ifdef WOLFSSH_AGENT
+            case 'a':
+                config->useAgent = 1;
+                break;
+        #endif
+
             case 'E':
                 config->logFile = myoptarg;
                 break;
@@ -887,6 +905,9 @@ static int config_print(struct config* config)
         printf("pubKeyFile %s\n",
                 config->pubKeyFile ? config->pubKeyFile : "none");
         printf("noCommand %s\n", config->noCommand ? "true" : "false");
+    #ifdef WOLFSSH_AGENT
+        printf("useAgent %s\n", config->useAgent ? "true" : "false");
+    #endif
         printf("logfile %s\n", config->logFile ? config->logFile : "default");
         printf("command %s\n", config->command ? config->command : "none");
     }
@@ -949,6 +970,10 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     config_parse_command_line(&config,
             ((func_args*)args)->argc, ((func_args*)args)->argv);
     config_print(&config);
+
+#ifdef WOLFSSH_AGENT
+    useAgent = (byte)config.useAgent;
+#endif
 
     if (config.user == NULL)
         err_sys("client requires a username parameter.");
