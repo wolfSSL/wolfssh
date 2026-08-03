@@ -83,6 +83,9 @@ keys/*-ossh-*cert.pub
 random-test.txt
 random-test-result.txt
 test.dat
+# Scratch file the api tests write in the working directory. Removed on a
+# clean run, left behind when one aborts.
+ossh-cert-line.tmp
 
 # test output
 tests/*.test

@@ -1951,13 +1951,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                     ret = wc_MlDsaKey_PublicKeyDecode(&key->ks.mldsa.key,
                                                       in, inSz, &idx);
                     if (ret != 0) {
-                        /* Length-only fallback for local key/cert loading
-                         * (wolfSSH_ReadKey_buffer_ex / IdentifyCert) when SPKI
-                         * OID decode fails: wc_MlDsaKey_ImportPubRaw accepts an
-                         * ML-DSA blob of exactly 1312/1952/2592 bytes and tags
-                         * it ID_MLDSA44/65/87. Not used on the remote user-auth
-                         * path; do not wire this probe into remote auth assuming
-                         * it cryptographically validates the key. */
+                        /* Local loading only: size alone tags a raw ML-DSA
+                         * blob when SPKI OID decode fails. This does not
+                         * validate the key, so keep it off remote auth. */
                         struct { byte level; byte id; } kProbe[3];
                         word32 nProbe = 0, li;
 #ifndef WOLFSSH_NO_MLDSA44
@@ -2076,17 +2072,10 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
 
 
 #ifdef WOLFSSH_CERTS
-/*
- * Identifies the flavor of an X.509 certificate, RSA, ML-DSA or ECDSA, returns
- * the key type ID. The process is to decode the certificate and pass the
- * public key to IdentifyAsn1Key.
- *
- * @param in        certificate to identify
- * @param inSz      size of certificate
- * @param heap      heap to use for memory allocation
- * @return          keyId as int, WS_MEMORY_E, WS_UNIMPLEMENTED_E
- */
-static int IdentifyCert(const byte* in, word32 inSz, void* heap)
+/* Identifies the key held inside an X.509 certificate, returning its plain
+   key type ID or a WS_ error. See IdentifyCert() for the x509v3-* algorithm
+   ID sent on the wire. */
+static int IdentifyCertKey(const byte* in, word32 inSz, void* heap)
 {
     struct DecodedCert* cert = NULL;
 #ifndef WOLFSSH_SMALL_STACK
@@ -2106,13 +2095,22 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
     }
 #endif
 
+    /* Each wolfSSL result below is mapped where it is produced, so this
+       function returns only a key ID or a WS_ code. */
     if (ret == 0) {
         wc_InitDecodedCert(cert, in, inSz, heap);
         ret = wc_ParseCert(cert, CERT_TYPE, 0, NULL);
+        if (ret != 0) {
+            ret = WS_PARSE_E;
+        }
     }
     if (ret == 0) {
+        /* Asking with no buffer answers with the length and LENGTH_ONLY_E. */
         ret = wc_GetPubKeyDerFromCert(cert, NULL, &keySz);
-        if (ret == LENGTH_ONLY_E) {
+        if (ret != LENGTH_ONLY_E) {
+            ret = WS_PARSE_E;
+        }
+        else {
             ret = 0;
             key = (byte*)WMALLOC(keySz, heap, DYNTYPE_PUBKEY);
             if (key == NULL) {
@@ -2123,6 +2121,9 @@ static int IdentifyCert(const byte* in, word32 inSz, void* heap)
 
     if (ret == 0) {
         ret = wc_GetPubKeyDerFromCert(cert, key, &keySz);
+        if (ret != 0) {
+            ret = WS_PARSE_E;
+        }
     }
 
     if (ret == 0) {
@@ -2233,6 +2234,31 @@ static INLINE byte CertTypeForId(byte id)
     return id;
 }
 
+
+/* Identifies an X.509 certificate, returning the x509v3-* algorithm ID sent
+   on the wire. A key type with no x509v3 name in this build is rejected
+   rather than reported under its plain key name. */
+int IdentifyCert(const byte* in, word32 inSz, void* heap)
+{
+    byte certId;
+    int ret;
+
+    ret = IdentifyCertKey(in, inSz, heap);
+
+    if (ret >= 0) {
+        certId = CertTypeForId((byte)ret);
+        if (certId == (byte)ret) {
+            WLOG(WS_LOG_DEBUG, "No x509v3 algorithm for this certificate");
+            ret = WS_INVALID_ALGO_ID;
+        }
+        else {
+            ret = (int)certId;
+        }
+    }
+
+    return ret;
+}
+
 #define HINTISSET(x) ((x) != WOLFSSH_MAX_PVT_KEYS)
 
 static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
@@ -2326,18 +2352,14 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
 }
 
 static int SetHostCertificate(WOLFSSH_CTX* ctx,
-        byte keyId, byte* der, word32 derSz, int dynamicType)
+        byte certId, byte* der, word32 derSz, int dynamicType)
 {
-    /*
-     * The keyId is for the key inside the certificate. wolfSSH_ProcessBuffer
-     * will decode the certificate, get the public key inside, and identify
-     * that. keyId will be: ssh-rsa, ecdsa-sha2-nistp256, etc.
-     */
+    /* The certId is the x509v3-* algorithm the certificate is presented as,
+     * identified by wolfSSH_ProcessBuffer before calling here. */
 
     word32 destIdx,
            certIdx = WOLFSSH_MAX_PVT_KEYS, keyIdx = WOLFSSH_MAX_PVT_KEYS;
     int ret = WS_SUCCESS;
-    byte certId = CertTypeForId(keyId);
 
     /* Look for the specified certId. Add it if not present,
      * replace it if present. Call UpdateHostCertificate().
@@ -2347,7 +2369,10 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
         if (ctx->privateKey[destIdx].publicKeyFmt == certId) {
             certIdx = destIdx;
         }
-        if (ctx->privateKey[destIdx].publicKeyFmt == keyId) {
+        /* The key for this certificate sits in the slot whose plain
+           algorithm maps onto certId. */
+        else if (CertTypeForId(ctx->privateKey[destIdx].publicKeyFmt)
+                == certId) {
             keyIdx = destIdx;
         }
     }
@@ -2618,12 +2643,16 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             WFREE(der, heap, dynamicType);
             return ret;
         }
-        keyId = (byte)ret;
-        ret = SetHostCertificate(ctx, keyId, der, derSz, dynamicType);
+        ret = SetHostCertificate(ctx, (byte)ret, der, derSz, dynamicType);
     }
     else if (type == BUFTYPE_CA) {
         if (ctx->certMan != NULL) {
             ret = wolfSSH_CERTMAN_LoadRootCA_buffer(ctx->certMan, der, derSz);
+            /* That call answers in wolfSSL codes apart from these two, so
+               anything else becomes one of ours. */
+            if (ret != WS_SUCCESS && ret != WS_BAD_ARGUMENT) {
+                ret = WS_PARSE_E;
+            }
         }
         else {
             WLOG(WS_LOG_DEBUG, "Error no cert manager set");

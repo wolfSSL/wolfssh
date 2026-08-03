@@ -53,6 +53,12 @@
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
     #include <wolfssh/ossh.h>
+    #ifdef WOLFSSL_BASE64_ENCODE
+        /* Declared rather than including coding.h, whose Base16_Decode
+         * collides with the one wolfssh/test.h defines. */
+        WOLFSSL_API int Base64_Encode_NoNl(const byte* in, word32 inLen,
+                byte* out, word32* outLen);
+    #endif
 #endif
 
 #if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
@@ -686,8 +692,10 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
     AssertIntEQ(WS_BAD_ARGUMENT,
             wolfSSH_CTX_UseCert_buffer(ctx, NULL, 0, WOLFSSH_FORMAT_PEM));
 
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     AssertIntEQ(WS_SUCCESS,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_PEM));
+#endif
 
     AssertIntEQ(WS_BAD_FILETYPE_E,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
@@ -703,13 +711,373 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
     AssertNotNull(cert);
     AssertIntNE(0, certSz);
 
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     AssertIntEQ(WS_SUCCESS,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+#endif
 
     wolfSSH_CTX_free(ctx);
     free(cert);
 #endif /* WOLFSSH_CERTS */
 }
+
+
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
+
+/* Public key lines. An x509v3-* line carries an RFC 6187 wire chain rather
+ * than a certificate, so this API declines it the same as a plain key. */
+static const char x509v3EccLine[] =
+    "x509v3-ecdsa-sha2-nistp256 AAAAB3NzaC1yc2EAAAA=\n";
+static const char sshRsaLine[] = "ssh-rsa AAAAB3NzaC1yc2EAAAA=\n";
+static const byte notACert[] = { 0x01, 0x02, 0x03, 0x04, 0x05 };
+
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_ED25519) && \
+    !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+#define WOLFSSH_TEST_OSSH_CERT_FILE
+
+/* The name routes the line. The blob behind it is not a certificate, so a
+ * reader that decodes the blob rejects it there instead. */
+static const char osshCertLine[] =
+    "ssh-ed25519-cert-v01@openssh.com AAAAB3NzaC1yc2EAAAA=\n";
+static const char osshCertPath[] = "./ossh-cert-line.tmp";
+
+/* Stages content in a file, the only form the file APIs take. Returns 0 on
+ * success. */
+static int writeTmpFile(const char* path, const void* data, size_t sz)
+{
+    FILE* f = NULL;
+    int ret = 0;
+
+    f = fopen(path, "wb");
+    if (f == NULL)
+        ret = -1;
+
+    if (ret == 0) {
+        if (fwrite(data, 1, sz, f) != sz)
+            ret = -2;
+        /* Close either way, but keep the write error as the reason. */
+        if (fclose(f) != 0 && ret == 0)
+            ret = -3;
+    }
+
+    return ret;
+}
+
+#endif /* OSSH_CERTS && ED25519 && FILESYSTEM */
+
+
+static void test_wolfSSH_ReadCert_buffer(void)
+{
+    byte* out = NULL;
+    word32 outSz = 0;
+    const byte* outType = NULL;
+    word32 outTypeSz = 0;
+    byte flavor = 0xFF;
+#ifdef WOLFSSH_CERTS
+    byte* cert = NULL;
+    word32 certSz = 0;
+#ifndef WOLFSSH_NO_ED25519
+    int ret;
+#endif
+#endif
+
+    /* Every out parameter is required, and so is a non-empty input. */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ReadCert_buffer(NULL,
+                sizeof(notACert), &out, &outSz, &outType, &outTypeSz,
+                &flavor, NULL));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ReadCert_buffer(notACert, 0,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ReadCert_buffer(notACert,
+                sizeof(notACert), NULL, &outSz, &outType, &outTypeSz,
+                &flavor, NULL));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ReadCert_buffer(notACert,
+                sizeof(notACert), &out, &outSz, &outType, &outTypeSz,
+                NULL, NULL));
+
+    /* Content that is not a certificate, a public key line included. */
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(notACert,
+                sizeof(notACert), &out, &outSz, &outType, &outTypeSz,
+                &flavor, NULL));
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(
+                (const byte*)sshRsaLine, (word32)WSTRLEN(sshRsaLine),
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(
+                (const byte*)x509v3EccLine, (word32)WSTRLEN(x509v3EccLine),
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    /* A rejection must not leave the caller's flavor standing as an answer. */
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+
+#ifdef WOLFSSH_CERTS
+    AssertIntEQ(0, load_file("./keys/server-cert.pem", &cert, &certSz));
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntGT(outSz, 0);
+    AssertIntEQ(out[0], 0x30);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_X509);
+    AssertStrEQ((const char*)outType, "x509v3-ecdsa-sha2-nistp256");
+    AssertIntEQ(outTypeSz, (word32)WSTRLEN((const char*)outType));
+    WFREE(out, NULL, DYNTYPE_CERT);
+    out = NULL;
+#else
+    /* Every fixture is ECDSA P-256. With its x509v3 name compiled out the key
+     * identifies but has no name to be reported under. */
+    AssertIntEQ(WS_INVALID_ALGO_ID, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+#endif
+
+    /* Half a PEM loses the CERTIFICATE header, so the sniff declines it. */
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(cert, certSz / 2,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    free(cert);
+    cert = NULL;
+
+    AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntEQ(outSz, certSz);
+    AssertIntEQ(0, WMEMCMP(out, cert, certSz));
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_X509);
+    AssertStrEQ((const char*)outType, "x509v3-ecdsa-sha2-nistp256");
+    WFREE(out, NULL, DYNTYPE_CERT);
+    out = NULL;
+#else
+    AssertIntEQ(WS_INVALID_ALGO_ID, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+#endif
+    free(cert);
+    cert = NULL;
+
+    /* Not a certificate behind the DER header. The wolfSSL error is mapped,
+     * so a WS_ code reaches the caller. The read above left a name behind, so
+     * this also shows a failure clearing one. */
+    AssertIntEQ(WS_PARSE_E, wolfSSH_ReadCert_buffer(
+                (const byte*)"\x30\x82\x01\x02",
+                4, &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+
+    /* A private key is the likeliest mistake, and the DER one also leads with
+     * 0x30, so only the parse tells them apart. */
+    AssertIntEQ(0, load_file("./keys/server-key-ecc.der", &cert, &certSz));
+    AssertIntEQ(WS_PARSE_E, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    free(cert);
+    cert = NULL;
+
+    /* The PEM one has no CERTIFICATE header, so the sniff declines it. Every
+     * out param goes in set to prove a rejection clears them all. */
+    AssertIntEQ(0, load_file("./keys/server-key-ecc.pem", &cert, &certSz));
+    out = cert;
+    outSz = 0xDEADBEEF;
+    outType = cert;
+    outTypeSz = 0xDEADBEEF;
+    flavor = WOLFSSH_CERT_FLAVOR_X509;
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+    free(cert);
+    cert = NULL;
+
+#ifndef WOLFSSH_NO_ED25519
+    /* Ed25519 must never load: it has no x509v3 name, and today the key
+     * inside is not identified either. Which of the two rejections lands
+     * depends on how wolfSSL returns a cert's public key, so accept both. */
+    AssertIntEQ(0, load_file("./keys/server-cert-ed25519.der",
+                &cert, &certSz));
+    ret = wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL);
+    AssertTrue(ret == WS_UNIMPLEMENTED_E || ret == WS_INVALID_ALGO_ID);
+    AssertNull(out);
+    free(cert);
+    cert = NULL;
+
+    /* The PEM form makes that same DER first, so rejecting it must free it. */
+    AssertIntEQ(0, load_file("./keys/server-cert-ed25519.pem",
+                &cert, &certSz));
+    ret = wolfSSH_ReadCert_buffer(cert, certSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL);
+    AssertTrue(ret == WS_UNIMPLEMENTED_E || ret == WS_INVALID_ALGO_ID);
+    AssertNull(out);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+    free(cert);
+    cert = NULL;
+#endif /* WOLFSSH_NO_ED25519 */
+#endif /* WOLFSSH_CERTS */
+}
+
+
+static void test_wolfSSH_ReadCert_file(void)
+{
+/* The arguments are checked ahead of any certificate, so those cases hold for
+ * an OpenSSH-only build too. */
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+    byte* out = NULL;
+    word32 outSz = 0;
+    const byte* outType = NULL;
+    word32 outTypeSz = 0;
+    byte flavor = 0xFF;
+    byte stale[1];
+
+    AssertIntEQ(WS_BAD_FILE_E, wolfSSH_ReadCert_file(NULL,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ReadCert_file("./keys/server-cert.pem",
+                NULL, &outSz, &outType, &outTypeSz, &flavor, NULL));
+
+    /* A file that never opens still clears every out parameter. Sentinels go
+       in, so a stale pointer surviving the call would fail here. */
+    out = stale;
+    outSz = 0xDEADBEEF;
+    outType = stale;
+    outTypeSz = 0xDEADBEEF;
+    flavor = 0xFF;
+    AssertIntEQ(WS_BAD_FILE_E, wolfSSH_ReadCert_file("./keys/no-such-cert.pem",
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+
+    /* A directory fails further in, opening but not reading. */
+    out = stale;
+    outSz = 0xDEADBEEF;
+    flavor = 0xFF;
+    AssertIntEQ(WS_BAD_FILE_E, wolfSSH_ReadCert_file("./keys",
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_file("./keys/server-cert.pem",
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntEQ(out[0], 0x30);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_X509);
+    AssertStrEQ((const char*)outType, "x509v3-ecdsa-sha2-nistp256");
+    WFREE(out, NULL, DYNTYPE_CERT);
+    out = NULL;
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_file("./keys/server-cert.der",
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntEQ(out[0], 0x30);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_X509);
+    WFREE(out, NULL, DYNTYPE_CERT);
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+#endif
+}
+
+
+static void test_wolfSSH_CTX_UseCert_file(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_NO_SERVER)
+    WOLFSSH_CTX* ctx = NULL;
+#ifndef WOLFSSH_NO_ED25519
+    int ret;
+#endif
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_UseCert_file(NULL, "./keys/server-cert.pem"));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_CTX_UseCert_file(ctx, NULL));
+    AssertIntEQ(WS_BAD_FILE_E,
+            wolfSSH_CTX_UseCert_file(ctx, "./keys/no-such-cert.pem"));
+
+    /* Both encodings load through the same call. */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_file(ctx, "./keys/server-cert.pem"));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_file(ctx, "./keys/server-cert.der"));
+#endif
+
+    /* A CTX takes the certificate itself, not a public key line. */
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_UseCert_file(ctx, "./keys/id_ecdsa.pub"));
+#ifdef WOLFSSH_TEST_OSSH_CERT_FILE
+    AssertIntEQ(0, writeTmpFile(osshCertPath, osshCertLine,
+                WSTRLEN(osshCertLine)));
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_CTX_UseCert_file(ctx, osshCertPath));
+    AssertIntEQ(0, remove(osshCertPath));
+#endif
+
+#ifndef WOLFSSH_NO_ED25519
+    /* Refused here too, on the same codes as wolfSSH_ReadCert_file(). */
+    ret = wolfSSH_CTX_UseCert_file(ctx, "./keys/server-cert-ed25519.der");
+    AssertTrue(ret == WS_UNIMPLEMENTED_E || ret == WS_INVALID_ALGO_ID);
+    ret = wolfSSH_CTX_UseCert_file(ctx, "./keys/server-cert-ed25519.pem");
+    AssertTrue(ret == WS_UNIMPLEMENTED_E || ret == WS_INVALID_ALGO_ID);
+#endif
+
+    wolfSSH_CTX_free(ctx);
+#endif
+}
+
+
+static void test_wolfSSH_CTX_AddRootCert_file(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_NO_SERVER)
+    WOLFSSH_CTX* ctx = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_AddRootCert_file(NULL, "./keys/ca-cert-ecc.pem"));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_CTX_AddRootCert_file(ctx, NULL));
+    AssertIntEQ(WS_BAD_FILE_E,
+            wolfSSH_CTX_AddRootCert_file(ctx, "./keys/no-such-ca.pem"));
+
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_file(ctx, "./keys/ca-cert-ecc.pem"));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_file(ctx, "./keys/ca-cert-ecc.der"));
+
+    /* A CTX takes the certificate itself, not a public key line. */
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_AddRootCert_file(ctx, "./keys/id_ecdsa.pub"));
+
+    /* The cert manager rejects a non-CA in wolfSSL's codes; this path maps. */
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_file(ctx, "./keys/server-key-ecc.der"));
+#ifdef WOLFSSH_TEST_OSSH_CERT_FILE
+    AssertIntEQ(0, writeTmpFile(osshCertPath, osshCertLine,
+                WSTRLEN(osshCertLine)));
+    AssertIntEQ(WS_BAD_FILETYPE_E,
+            wolfSSH_CTX_AddRootCert_file(ctx, osshCertPath));
+    AssertIntEQ(0, remove(osshCertPath));
+#endif
+
+    wolfSSH_CTX_free(ctx);
+#endif
+}
+
+#else
+
+static void test_wolfSSH_ReadCert_buffer(void) { ; }
+static void test_wolfSSH_ReadCert_file(void) { ; }
+static void test_wolfSSH_CTX_UseCert_file(void) { ; }
+static void test_wolfSSH_CTX_AddRootCert_file(void) { ; }
+
+#endif /* WOLFSSH_CERTS || WOLFSSH_OSSH_CERTS */
 
 
 static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
@@ -2203,6 +2571,124 @@ static const byte ossh_vec_ecc[] = {
   0x49, 0xda, 0x40, 0x97, 0x30
 };
 #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+#ifdef WOLFSSL_BASE64_ENCODE
+
+/* Renders a blob as the "name base64" line an authorized_keys style file
+ * holds. Returns the length written to line. */
+static word32 buildOsshCertLine(byte* line, word32 lineCap,
+        const byte* vec, word32 vecSz)
+{
+    static const char name[] = "ssh-ed25519-cert-v01@openssh.com ";
+    word32 nameSz, b64Sz;
+
+    nameSz = (word32)WSTRLEN(name);
+    AssertIntGT(lineCap, nameSz + 2);
+    WMEMCPY(line, name, nameSz);
+
+    b64Sz = lineCap - nameSz - 2;
+    AssertIntEQ(0, Base64_Encode_NoNl(vec, vecSz, line + nameSz, &b64Sz));
+    line[nameSz + b64Sz] = '\n';
+
+    return nameSz + b64Sz + 1;
+}
+
+
+/* Reads a certificate vector back through the public API in the "name base64"
+ * line form an authorized_keys style file holds. */
+static void test_wolfSSH_ReadCert_buffer_ossh(void)
+{
+    byte line[2048];
+    byte* out = NULL;
+    const byte* outType = NULL;
+    word32 outSz = 0, outTypeSz = 0, lineSz;
+    byte flavor = 0xFF;
+
+    lineSz = buildOsshCertLine(line, (word32)sizeof(line),
+            ossh_vec_ed, (word32)sizeof(ossh_vec_ed));
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_buffer(line, lineSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntEQ(outSz, (word32)sizeof(ossh_vec_ed));
+    AssertIntEQ(0, WMEMCMP(out, ossh_vec_ed, sizeof(ossh_vec_ed)));
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_OSSH);
+    AssertStrEQ((const char*)outType, "ssh-ed25519-cert-v01@openssh.com");
+    AssertIntEQ(outTypeSz, (word32)WSTRLEN((const char*)outType));
+    WFREE(out, NULL, DYNTYPE_CERT);
+    out = NULL;
+
+    /* Half a blob still forms a valid line, so the parse must reject it. The
+     * line names its algorithm, so outType is set before that parse runs and
+     * has to be taken back with the rest. */
+    lineSz = buildOsshCertLine(line, (word32)sizeof(line),
+            ossh_vec_ed, (word32)sizeof(ossh_vec_ed) / 2);
+
+    AssertIntLT(wolfSSH_ReadCert_buffer(line, lineSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL), 0);
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+}
+
+#else
+
+static void test_wolfSSH_ReadCert_buffer_ossh(void) { ; }
+
+#endif /* WOLFSSL_BASE64_ENCODE */
+
+#ifdef WOLFSSH_TEST_OSSH_CERT_FILE
+
+/* Reads the same line form from a file. This is the only certificate the
+ * file reader takes in a build without X.509 support. */
+static void test_wolfSSH_ReadCert_file_ossh(void)
+{
+    byte* out = NULL;
+    const byte* outType = NULL;
+    word32 outSz = 0, outTypeSz = 0;
+    byte flavor = 0xFF;
+#ifdef WOLFSSL_BASE64_ENCODE
+    byte line[2048];
+    word32 lineSz;
+
+    lineSz = buildOsshCertLine(line, (word32)sizeof(line),
+            ossh_vec_ed, (word32)sizeof(ossh_vec_ed));
+    AssertIntEQ(0, writeTmpFile(osshCertPath, line, lineSz));
+
+    AssertIntEQ(WS_SUCCESS, wolfSSH_ReadCert_file(osshCertPath,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNotNull(out);
+    AssertIntEQ(outSz, (word32)sizeof(ossh_vec_ed));
+    AssertIntEQ(0, WMEMCMP(out, ossh_vec_ed, sizeof(ossh_vec_ed)));
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_OSSH);
+    AssertStrEQ((const char*)outType, "ssh-ed25519-cert-v01@openssh.com");
+    AssertIntEQ(outTypeSz, (word32)WSTRLEN((const char*)outType));
+    WFREE(out, NULL, DYNTYPE_CERT);
+    out = NULL;
+    AssertIntEQ(0, remove(osshCertPath));
+#endif /* WOLFSSL_BASE64_ENCODE */
+
+    /* The name only routes the file; the blob still has to parse. Rejecting
+     * it clears the name the line had already supplied. */
+    AssertIntEQ(0, writeTmpFile(osshCertPath, osshCertLine,
+                WSTRLEN(osshCertLine)));
+    AssertIntLT(wolfSSH_ReadCert_file(osshCertPath,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL), 0);
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+    AssertIntEQ(0, remove(osshCertPath));
+}
+
+#else
+
+static void test_wolfSSH_ReadCert_file_ossh(void) { ; }
+
+#endif /* WOLFSSH_TEST_OSSH_CERT_FILE */
 
 /* Parse, verify the CA signature, and validate the options of each committed
  * certificate vector; then flip the final signature byte and confirm the
@@ -5773,6 +6259,10 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ConvertConsole();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
+    test_wolfSSH_CTX_UseCert_file();
+    test_wolfSSH_CTX_AddRootCert_file();
+    test_wolfSSH_ReadCert_buffer();
+    test_wolfSSH_ReadCert_file();
     test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
     test_wolfSSH_CTX_SetWindowPacketSize();
     test_wolfSSH_CertMan();
@@ -5801,6 +6291,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
 #ifndef WOLFSSH_NO_ED25519
+    test_wolfSSH_ReadCert_buffer_ossh();
+    test_wolfSSH_ReadCert_file_ossh();
     test_wolfSSH_OsshCert_valid();
 #ifdef WOLFSSH_TEST_OSSH_VEC_ECC
     test_wolfSSH_OsshCert_ecc_curve_mismatch();
