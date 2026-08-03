@@ -3352,6 +3352,99 @@ done:
     return result;
 }
 
+/* Sibling of test_MsgHighwater for the byte-count branch of HighwaterCheck
+ * (RFC 4253 Section 9 keystream/IV bound). Covers:
+ *   - Threshold boundary: mark-1 does not fire, mark fires (>= not >)
+ *   - Callback fires exactly once per epoch (highwaterFlag gates re-firing)
+ *   - Receive side fires independently after an epoch reset
+ *   - highwaterMark == 0 disables the byte check */
+static int test_ByteHighwater(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    HwTestCtx    hc;
+    int          result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -820;
+
+    WMEMSET(&hc, 0, sizeof(hc));
+    wolfSSH_SetHighwaterCb(ctx, 1024, HwTestCb);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -821;
+        goto done;
+    }
+    wolfSSH_SetHighwaterCtx(ssh, &hc);
+    /* Disable the packet-count branch so only the byte branch is under
+     * test. */
+    wolfSSH_SetMsgHighwater(ssh, 0);
+
+    if (wolfSSH_GetHighwater(ssh) != 1024) {
+        result = -822;
+        goto done;
+    }
+
+    /* One byte under the mark on both sides: must not fire. */
+    ssh->txCount = 1023;
+    ssh->rxCount = 1023;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 0) {
+        result = -823;
+        goto done;
+    }
+
+    /* At the mark: fires, with the transmit side reported. */
+    ssh->txCount = 1024;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1
+            || hc.lastSide != WOLFSSH_HWSIDE_TRANSMIT) {
+        result = -824;
+        goto done;
+    }
+
+    /* Flag-gated: more bytes in the same epoch must not re-fire. */
+    ssh->txCount = 4096;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1) {
+        result = -825;
+        goto done;
+    }
+
+    /* Fresh key epoch (highwaterFlag and tx/rxCount are reset by
+     * DoNewKeys/SendNewKeys): the receive side fires on its own. */
+    ssh->highwaterFlag = 0;
+    ssh->txCount = 0;
+    ssh->rxCount = 1024;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE) != WS_SUCCESS
+            || hc.count != 2
+            || hc.lastSide != WOLFSSH_HWSIDE_RECEIVE) {
+        result = -826;
+        goto done;
+    }
+
+    /* mark == 0 disables the byte check entirely. */
+    if (wolfSSH_SetHighwater(ssh, 0) != WS_SUCCESS) {
+        result = -827;
+        goto done;
+    }
+    ssh->highwaterFlag = 0;
+    ssh->txCount = 0xFFFFFFFFu;
+    ssh->rxCount = 0xFFFFFFFFu;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 2) {
+        result = -828;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 static int test_DoChannelSuccess(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -14512,6 +14605,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_MsgHighwater();
     printf("MsgHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ByteHighwater();
+    printf("ByteHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_DoUserAuthRequest_serviceName();
