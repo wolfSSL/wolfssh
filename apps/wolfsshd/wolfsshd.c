@@ -1408,6 +1408,88 @@ static int SHELL_SetNonBlocking(int fd)
 }
 
 
+#ifndef WOLFSSHD_SHELL_FLUSH_TRIES
+    #define WOLFSSHD_SHELL_FLUSH_TRIES 10
+#endif
+#ifndef WOLFSSHD_SHELL_FLUSH_WAIT_US
+    #define WOLFSSHD_SHELL_FLUSH_WAIT_US 50000
+#endif
+
+/* Send out the last of a shell's output once the child has been reaped. The
+ * SSH socket is non blocking, so retry a bounded number of times on a full
+ * window, a rekey or a would block. 'ext' selects the extended (stderr) data
+ * stream. Returns 0 on success and -1 when the data could not all be sent. */
+static int SHELL_FlushOut(WOLFSSH* ssh, WS_SOCKET_T sshFd, word32 channelId,
+    byte* buf, int sz, int ext)
+{
+    int tries = 0;
+
+    while (sz > 0 && tries < WOLFSSHD_SHELL_FLUSH_TRIES) {
+        int cnt_w;
+
+        if (ext) {
+            cnt_w = wolfSSH_extended_data_send(ssh, buf, sz);
+        }
+        else {
+            cnt_w = wolfSSH_ChannelIdSend(ssh, channelId, buf, sz);
+        }
+
+        if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING ||
+                cnt_w == WS_WANT_WRITE) {
+            fd_set fds;
+            struct timeval to;
+
+            FD_ZERO(&fds);
+            FD_SET(sshFd, &fds);
+            to.tv_sec  = 0;
+            to.tv_usec = WOLFSSHD_SHELL_FLUSH_WAIT_US;
+            if (cnt_w == WS_WANT_WRITE) {
+                select((int)sshFd + 1, NULL, &fds, NULL, &to);
+            }
+            else {
+                /* waiting on the peer's window adjust or kex packets */
+                select((int)sshFd + 1, &fds, NULL, NULL, &to);
+            }
+
+            /* process what came in, otherwise the window never opens and
+             * the rekey never finishes, and the send can not progress */
+            if (wolfSSH_worker(ssh, NULL) < 0) {
+                int err = wolfSSH_get_error(ssh);
+
+                if (err != WS_WANT_READ && err != WS_WANT_WRITE &&
+                        err != WS_CHAN_RXD && err != WS_REKEYING) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Issue draining connection on final flush");
+                    return -1;
+                }
+            }
+            tries++;
+            continue;
+        }
+
+        if (cnt_w < 0) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Issue sending final shell output");
+            return -1;
+        }
+
+        sz -= cnt_w;
+        if (sz > 0) {
+            WMEMMOVE(buf, buf + cnt_w, sz);
+            tries++;
+        }
+    }
+
+    if (sz > 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to send all of the final "
+            "shell output, %d bytes dropped", sz);
+        return -1;
+    }
+
+    return 0;
+}
+
+
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
@@ -2032,14 +2114,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (SHELL_SetNonBlocking(stdoutPipe[0]) == 0) {
             readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
             if (readSz > 0) {
-                wolfSSH_ChannelIdSend(ssh, shellChannelId, shellBuffer, readSz);
+                SHELL_FlushOut(ssh, sshFd, shellChannelId, shellBuffer, readSz,
+                    0);
             }
         }
 
         if (SHELL_SetNonBlocking(stderrPipe[0]) == 0) {
             readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
             if (readSz > 0) {
-                wolfSSH_extended_data_send(ssh, shellBuffer, readSz);
+                SHELL_FlushOut(ssh, sshFd, shellChannelId, shellBuffer, readSz,
+                    1);
             }
         }
 
