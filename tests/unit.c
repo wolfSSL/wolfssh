@@ -12158,6 +12158,264 @@ static int test_SftpRecvSizeBoundAccept(void)
 
     return 0;
 }
+
+#ifndef NO_WOLFSSH_CLIENT
+/* Builds an SFTP VERSION message in the outSz byte buffer "out", with the
+ * declared length "len", message type "type", "version", and extSz bytes of
+ * extension data. Returns the size written, or 0 if it does not fit. */
+static word32 SftpBuildVersion(byte* out, word32 outSz, word32 len, byte type,
+        word32 version, word32 extSz)
+{
+    word32 i;
+
+    if (WOLFSSH_SFTP_HEADER + extSz > outSz) {
+        return 0;
+    }
+
+    PutU32BE(out, len);
+    out[LENGTH_SZ] = type;
+    PutU32BE(out + LENGTH_SZ + MSG_ID_SZ, version);
+    for (i = 0; i < extSz; i++) {
+        out[WOLFSSH_SFTP_HEADER + i] = (byte)i;
+    }
+
+    return WOLFSSH_SFTP_HEADER + extSz;
+}
+
+/* Creates a client session sitting past channel setup and already waiting on
+ * the VERSION reply, so a connect call runs only the receive half of the
+ * negotiation. The caller frees ctx and ssh on every path. */
+static int SftpClientNewSession(WOLFSSH_CTX** ctxOut, WOLFSSH** sshOut)
+{
+    WOLFSSH_CTX*     ctx;
+    WOLFSSH*         ssh;
+    WOLFSSH_CHANNEL* ch;
+
+    *ctxOut = NULL;
+    *sshOut = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1010;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, RecvAlwaysWantRead);
+    *ctxOut = ctx;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL)
+        return -1011;
+    *sshOut = ssh;
+
+    ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_DONE;
+    ssh->sftpState = SFTP_RECV;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL)
+        return -1012;
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        return -1013;
+    }
+
+    return 0;
+}
+
+/* Drives wolfSSH_SFTP_connect() over a VERSION message delivered in two pieces,
+ * split after "split" bytes, with RecvAlwaysWantRead standing in for a
+ * non-blocking socket. Returns 0, or a negative sentinel on a setup failure. */
+static int SftpClientDriveVersion(word32 extSz, word32 split,
+        int* firstRet, int* firstErr, int* secondRet, int* endState)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    byte   msg[WOLFSSH_SFTP_HEADER + 16];
+    word32 msgSz;
+    int    result;
+
+    *firstRet  = WS_SUCCESS;
+    *firstErr  = WS_SUCCESS;
+    *secondRet = WS_SUCCESS;
+    *endState  = 0;
+
+    msgSz = SftpBuildVersion(msg, (word32)sizeof(msg),
+            MSG_ID_SZ + UINT32_SZ + extSz, WOLFSSH_FTP_VERSION,
+            (word32)WOLFSSH_SFTP_VERSION, extSz);
+    if (msgSz == 0)
+        return -1017;
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result == 0) {
+        if (wolfSSH_TestChannelPutData(ssh->channelList, msg, split)
+                != WS_SUCCESS) {
+            result = -1014;
+        }
+    }
+    if (result == 0) {
+        *firstRet = wolfSSH_SFTP_connect(ssh);
+        *firstErr = wolfSSH_get_error(ssh);
+
+        if (wolfSSH_TestChannelPutData(ssh->channelList, msg + split,
+                    msgSz - split) != WS_SUCCESS) {
+            result = -1015;
+        }
+    }
+    if (result == 0) {
+        *secondRet = wolfSSH_SFTP_connect(ssh);
+        *endState  = ssh->sftpState;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Delivers one complete VERSION message in a single read, reporting the connect
+ * result, whether the buffered init state was released, and the ending state. */
+static int SftpClientDriveOnce(word32 len, byte type, word32 version,
+        int* connectRet, int* stateFreed, int* endState)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    byte   msg[WOLFSSH_SFTP_HEADER];
+    word32 msgSz;
+    int    result;
+
+    *connectRet = WS_SUCCESS;
+    *stateFreed = 0;
+    *endState   = 0;
+
+    msgSz = SftpBuildVersion(msg, (word32)sizeof(msg), len, type, version, 0);
+    if (msgSz == 0)
+        return -1018;
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result == 0) {
+        if (wolfSSH_TestChannelPutData(ssh->channelList, msg, msgSz)
+                != WS_SUCCESS) {
+            result = -1016;
+        }
+    }
+    if (result == 0) {
+        *connectRet = wolfSSH_SFTP_connect(ssh);
+        *stateFreed = (ssh->recvInitState == NULL);
+        *endState   = ssh->sftpState;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Regression for the client SFTP negotiation losing bytes on a short read: a
+ * split VERSION message must report WS_WANT_READ, then complete on the retry.
+ * The splits cover the SFTP_RECV arm (header) and the SFTP_EXT arm. */
+static int test_SftpClientRecvInitSplit(void)
+{
+    int rc;
+    int firstRet;
+    int firstErr;
+    int secondRet;
+    int endState;
+
+    /* split inside the header, no extensions */
+    rc = SftpClientDriveVersion(0, LENGTH_SZ,
+            &firstRet, &firstErr, &secondRet, &endState);
+    if (rc != 0)
+        return rc;
+    if (firstRet != WS_FATAL_ERROR)
+        return -960;
+    if (firstErr != WS_WANT_READ)
+        return -961;
+    if (secondRet != WS_SUCCESS)
+        return -962;
+    if (endState != SFTP_DONE)
+        return -963;
+
+    /* split inside the extension data following a complete header */
+    rc = SftpClientDriveVersion(8, WOLFSSH_SFTP_HEADER + 3,
+            &firstRet, &firstErr, &secondRet, &endState);
+    if (rc != 0)
+        return rc;
+    if (firstRet != WS_FATAL_ERROR)
+        return -964;
+    if (firstErr != WS_WANT_READ)
+        return -965;
+    if (secondRet != WS_SUCCESS)
+        return -966;
+    if (endState != SFTP_DONE)
+        return -967;
+
+    return 0;
+}
+
+/* Covers the VERSION checks on a complete message: each rejection must fail the
+ * connect and release the buffered init state, while a version above ours must
+ * still negotiate, keeping the bound a "<" rather than a "<=". */
+static int test_SftpClientRecvInitVersion(void)
+{
+    int rc;
+    int connectRet;
+    int stateFreed;
+    int endState;
+
+    /* declared size smaller than the type and version fields */
+    rc = SftpClientDriveOnce(1, WOLFSSH_FTP_VERSION,
+            (word32)WOLFSSH_SFTP_VERSION, &connectRet, &stateFreed, &endState);
+    if (rc != 0)
+        return rc;
+    if (connectRet != WS_FATAL_ERROR)
+        return -970;
+    if (!stateFreed)
+        return -971;
+
+    /* declared size past the largest inbound message accepted */
+    rc = SftpClientDriveOnce((word32)WOLFSSH_MAX_SFTP_RECV + 1,
+            WOLFSSH_FTP_VERSION, (word32)WOLFSSH_SFTP_VERSION,
+            &connectRet, &stateFreed, &endState);
+    if (rc != 0)
+        return rc;
+    if (connectRet != WS_FATAL_ERROR)
+        return -979;
+    if (!stateFreed)
+        return -980;
+
+    /* INIT echoed back where a VERSION reply is expected */
+    rc = SftpClientDriveOnce(MSG_ID_SZ + UINT32_SZ, WOLFSSH_FTP_INIT,
+            (word32)WOLFSSH_SFTP_VERSION, &connectRet, &stateFreed, &endState);
+    if (rc != 0)
+        return rc;
+    if (connectRet != WS_FATAL_ERROR)
+        return -972;
+    if (!stateFreed)
+        return -973;
+
+    /* server reporting a version wolfSSH cannot talk to */
+    rc = SftpClientDriveOnce(MSG_ID_SZ + UINT32_SZ, WOLFSSH_FTP_VERSION,
+            (word32)WOLFSSH_SFTP_VERSION - 1, &connectRet, &stateFreed,
+            &endState);
+    if (rc != 0)
+        return rc;
+    if (connectRet != WS_FATAL_ERROR)
+        return -974;
+    if (!stateFreed)
+        return -975;
+
+    /* server above our version: continue on with ours */
+    rc = SftpClientDriveOnce(MSG_ID_SZ + UINT32_SZ, WOLFSSH_FTP_VERSION,
+            (word32)WOLFSSH_SFTP_VERSION + 1, &connectRet, &stateFreed,
+            &endState);
+    if (rc != 0)
+        return rc;
+    if (connectRet != WS_SUCCESS)
+        return -976;
+    if (!stateFreed)
+        return -977;
+    if (endState != SFTP_DONE)
+        return -978;
+
+    return 0;
+}
+#endif /* NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_SFTP */
 
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP) && \
@@ -12984,6 +13242,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("SftpRecvSizeBoundAccept: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SftpClientRecvInitSplit();
+    printf("SftpClientRecvInitSplit: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpClientRecvInitVersion();
+    printf("SftpClientRecvInitVersion: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
