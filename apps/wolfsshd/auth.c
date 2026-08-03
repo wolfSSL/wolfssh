@@ -2088,20 +2088,22 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
         /* compare user name to UPN in certificate */
         if (authData->sf.publicKey.isCert) {
-            DecodedCert* dCert;
         #ifdef WOLFSSH_SMALL_STACK
+            DecodedCert* dCert;
+
             dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL,
                 DYNTYPE_CERT);
-        #else
-            DecodedCert sdCert;
-            dCert = &sdCert;
-        #endif
-
             if (dCert == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error creating cert struct");
                 ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
             }
-            else {
+        #else
+            DecodedCert sdCert;
+            DecodedCert* dCert = &sdCert;
+        #endif
+
+            /* ret is still success unless the allocation above failed */
+            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
                 wc_InitDecodedCert(dCert, authData->sf.publicKey.publicKey,
                         authData->sf.publicKey.publicKeySz, NULL);
                 if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
