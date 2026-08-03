@@ -1907,6 +1907,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
     }
 
     if (ret > 0 && !isPrivate) {
+        *outType = (const byte*)IdToName(ret);
+        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
+
 #ifndef WOLFSSH_NO_MLDSA
         if (
 #ifndef WOLFSSH_NO_MLDSA44
@@ -1928,12 +1931,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 #else
                 WC_MLDSA_44_PUB_KEY_SIZE;
 #endif
-            const char* name = IdToName(ret);
-            word32 nameLen = (word32)WSTRLEN(name);
+            const char* name = (const char*)*outType;
+            word32 nameLen = *outTypeSz;
             word32 localIdx = 0;
-
-            *outType = (const byte*)name;
-            *outTypeSz = nameLen;
 
             rawPub = (byte*)WMALLOC(rawPubSz, heap, DYNTYPE_PUBKEY);
             if (rawPub == NULL) {
@@ -1947,7 +1947,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 }
                 else {
                     *outSz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
-                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PUBKEY);
+                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
                     if (newKey == NULL) {
                         ret = WS_MEMORY_E;
                     }
@@ -1966,68 +1966,169 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 WFREE(rawPub, heap, DYNTYPE_PUBKEY);
             }
         }
-        /* The else below intentionally straddles a preprocessor boundary:
-         * when WOLFSSH_NO_MLDSA is defined the entire if/else is removed and
-         * the RSA block becomes a standalone scope, which is harmless. */
+        /* Each arm's else sits inside that arm's guard, so a disabled key
+         * type drops its if and its else together and the chain stays
+         * well formed. */
         else
 #endif /* WOLFSSH_NO_MLDSA */
-#ifndef WOLFSSH_NO_RSA
-        {
-        long e;
-        byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
-        word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
-        const char* keyFormat = "ssh-rsa";
-        word32 idx = 0;
-        int nMsb = 0;
+#ifndef WOLFSSH_NO_ECDSA
+        if (ret == ID_ECDSA_SHA2_NISTP256 ||
+            ret == ID_ECDSA_SHA2_NISTP384 ||
+            ret == ID_ECDSA_SHA2_NISTP521) {
+            byte* q = NULL;
+            /* uncompressed x963 point: leading tag byte plus X and Y */
+            word32 qSz = 1 + 2 * MAX_ECC_BYTES;
+            const char* curveName;
+            word32 curveNameSz;
+            word32 localIdx = 0;
 
-        *outType = (const byte*)IdToName(ret);
-        *outTypeSz = (word32)WSTRLEN((const char*)*outType);
-
-        ret = wc_RsaFlattenPublicKey(&key->ks.rsa.key, (byte*)&e, &eSz, n, &nSz);
-        if (ret == 0) {
-            if (n[0] & 0x80) {
-                /* if MSB is set need leading zero */
-                nMsb = 1;
+            if (ret == ID_ECDSA_SHA2_NISTP384) {
+                curveName = IdToName(ID_CURVE_NISTP384);
             }
-            *outSz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
-                LENGTH_SZ + eSz +
-                LENGTH_SZ + nSz + nMsb;
+            else if (ret == ID_ECDSA_SHA2_NISTP521) {
+                curveName = IdToName(ID_CURVE_NISTP521);
+            }
+            else {
+                curveName = IdToName(ID_CURVE_NISTP256);
+            }
+            curveNameSz = (word32)WSTRLEN(curveName);
 
-            newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-            if (newKey == NULL) {
+            q = (byte*)WMALLOC(qSz, heap, DYNTYPE_PUBKEY);
+            if (q == NULL) {
                 ret = WS_MEMORY_E;
             }
-        }
-        if (ret == 0) {
-            /* encode the key format string */
-            c32toa((word32)WSTRLEN(keyFormat), &newKey[idx]);
-            idx += LENGTH_SZ;
-            WMEMCPY(&newKey[idx], keyFormat, (word32)WSTRLEN(keyFormat));
-            idx += (word32)WSTRLEN(keyFormat);
+            else {
+                int wcRet;
 
-            /* encode public exponent (e) */
-            c32toa(eSz, &newKey[idx]);
-            idx += LENGTH_SZ;
-            WMEMCPY(&newKey[idx], &e, eSz);
-            idx += eSz;
+                PRIVATE_KEY_UNLOCK();
+                wcRet = wc_ecc_export_x963(&key->ks.ecc.key, q, &qSz);
+                PRIVATE_KEY_LOCK();
 
-            /* encode public modulus (n) */
-            c32toa(nSz + nMsb, &newKey[idx]);
-            idx += LENGTH_SZ;
-            if (nMsb) {
-                newKey[idx++] = 0;
+                if (wcRet != 0) {
+                    ret = WS_CRYPTO_FAILED;
+                }
+                else {
+                    *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + curveNameSz +
+                        LENGTH_SZ + qSz;
+                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                    if (newKey == NULL) {
+                        ret = WS_MEMORY_E;
+                    }
+                    else {
+                        c32toa(*outTypeSz, &newKey[localIdx]);
+                        localIdx += LENGTH_SZ;
+                        WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
+                        localIdx += *outTypeSz;
+                        c32toa(curveNameSz, &newKey[localIdx]);
+                        localIdx += LENGTH_SZ;
+                        WMEMCPY(&newKey[localIdx], curveName, curveNameSz);
+                        localIdx += curveNameSz;
+                        c32toa(qSz, &newKey[localIdx]);
+                        localIdx += LENGTH_SZ;
+                        WMEMCPY(&newKey[localIdx], q, qSz);
+                        *out = newKey;
+                        ret = WS_SUCCESS;
+                    }
+                }
+                WFREE(q, heap, DYNTYPE_PUBKEY);
             }
-            WMEMCPY(&newKey[idx], n, nSz);
+        }
+        else
+#endif /* WOLFSSH_NO_ECDSA */
+#ifndef WOLFSSH_NO_ED25519
+        if (ret == ID_ED25519) {
+            byte q[ED25519_PUB_KEY_SIZE];
+            word32 qSz = (word32)sizeof(q);
+            word32 localIdx = 0;
+            int wcRet;
 
-            *out = newKey;
+            wcRet = wc_ed25519_export_public(&key->ks.ed25519.key, q, &qSz);
+            if (wcRet != 0) {
+                ret = WS_CRYPTO_FAILED;
+            }
+            else {
+                *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + qSz;
+                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                if (newKey == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+                else {
+                    c32toa(*outTypeSz, &newKey[localIdx]);
+                    localIdx += LENGTH_SZ;
+                    WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
+                    localIdx += *outTypeSz;
+                    c32toa(qSz, &newKey[localIdx]);
+                    localIdx += LENGTH_SZ;
+                    WMEMCPY(&newKey[localIdx], q, qSz);
+                    *out = newKey;
+                    ret = WS_SUCCESS;
+                }
+            }
         }
+        else
+#endif /* WOLFSSH_NO_ED25519 */
+#ifndef WOLFSSH_NO_RSA
+        if (ret == ID_SSH_RSA) {
+            long e;
+            byte n[RSA_MAX_SIZE]; /* TODO: Handle small stack */
+            word32 nSz = (word32)sizeof(n), eSz = (word32)sizeof(e);
+            const char* keyFormat = "ssh-rsa";
+            word32 idx = 0;
+            int nMsb = 0;
+            int wcRet;
+
+            wcRet = wc_RsaFlattenPublicKey(&key->ks.rsa.key, (byte*)&e, &eSz,
+                    n, &nSz);
+            if (wcRet != 0) {
+                ret = WS_CRYPTO_FAILED;
+            }
+            else {
+                ret = WS_SUCCESS;
+            }
+            if (ret == WS_SUCCESS) {
+                if (n[0] & 0x80) {
+                    /* if MSB is set need leading zero */
+                    nMsb = 1;
+                }
+                *outSz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
+                    LENGTH_SZ + eSz +
+                    LENGTH_SZ + nSz + nMsb;
+
+                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
+                if (newKey == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+            }
+            if (ret == WS_SUCCESS) {
+                /* encode the key format string */
+                c32toa((word32)WSTRLEN(keyFormat), &newKey[idx]);
+                idx += LENGTH_SZ;
+                WMEMCPY(&newKey[idx], keyFormat, (word32)WSTRLEN(keyFormat));
+                idx += (word32)WSTRLEN(keyFormat);
+
+                /* encode public exponent (e) */
+                c32toa(eSz, &newKey[idx]);
+                idx += LENGTH_SZ;
+                WMEMCPY(&newKey[idx], &e, eSz);
+                idx += eSz;
+
+                /* encode public modulus (n) */
+                c32toa(nSz + nMsb, &newKey[idx]);
+                idx += LENGTH_SZ;
+                if (nMsb) {
+                    newKey[idx++] = 0;
+                }
+                WMEMCPY(&newKey[idx], n, nSz);
+
+                *out = newKey;
+            }
         }
-#else
+        else
+#endif /* WOLFSSH_NO_RSA */
         {
-        WLOG(WS_LOG_DEBUG, "DoAsn1Key failed; WOLFSSH_NO_RSA disabled RSA");
-        ret = WS_UNIMPLEMENTED_E;
+            WLOG(WS_LOG_DEBUG, "DoAsn1Key unsupported public key type");
+            ret = WS_UNIMPLEMENTED_E;
         }
-#endif
     }
     else if (ret > 0 && isPrivate) {
         if (*out == NULL) {
