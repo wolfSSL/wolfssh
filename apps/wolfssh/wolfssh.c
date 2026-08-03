@@ -402,6 +402,7 @@ static THREAD_RET readInput(void* in)
     int  bufSz = sizeof(buf);
     thread_args* args = (thread_args*)in;
     int ret = 0;
+    int err = 0;
     word32 sz = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
@@ -420,15 +421,28 @@ static THREAD_RET readInput(void* in)
     #endif
         if (ret <= 0) {
             fprintf(stderr, "Error reading stdin\n");
-            return THREAD_RET_SUCCESS;
+            break;
         }
-        /* lock SSH structure access */
-        wc_LockMutex(&args->lock);
-        ret = wolfSSH_stream_send(args->ssh, buf, sz);
-        wc_UnLockMutex(&args->lock);
+        do {
+            /* lock SSH structure access */
+            wc_LockMutex(&args->lock);
+            ret = wolfSSH_stream_send(args->ssh, buf, sz);
+            err = (ret == WS_FATAL_ERROR) ?
+                wolfSSH_get_error(args->ssh) : ret;
+            wc_UnLockMutex(&args->lock);
+            if (err == WS_REKEYING) {
+                /* give readPeer() the lock to finish the rekey, then
+                 * send this buffer again */
+            #ifdef USE_WINDOWS_API
+                Sleep(1);
+            #else
+                usleep(1000);
+            #endif
+            }
+        } while (err == WS_REKEYING);
         if (ret <= 0) {
             fprintf(stderr, "Couldn't send data\n");
-            return THREAD_RET_SUCCESS;
+            break;
         }
     }
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
