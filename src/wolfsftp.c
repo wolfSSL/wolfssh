@@ -10053,7 +10053,15 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 #if SIZEOF_OFF_T == 8
                     offset = (((word64)state->pOfst[1]) << 32) | offset;
                 #endif
-                    WFSEEK(ssh->fs, state->fl, offset, 0);
+                    if (WFSEEK(ssh->fs, state->fl, offset, 0) != 0) {
+                        WLOG(WS_LOG_SFTP, "Unable to seek input file");
+                        ssh->error = WS_BAD_FILE_E;
+                        ret = WS_FATAL_ERROR;
+                        /* no remote handle to close yet */
+                        state->handleSz = 0;
+                        state->state = STATE_PUT_CLOSE_LOCAL;
+                        continue;
+                    }
                 }
             #else /* USE_WINDOWS_API */
                 state->fileHandle = WS_CreateFileA(from, GENERIC_READ,
