@@ -150,6 +150,7 @@ WOLFSSH_API void  wolfSSH_SetScpSendCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetScpRecvCtx(WOLFSSH* ssh);
 WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh);
 
+/* NULL ssh or message returns WS_BAD_ARGUMENT */
 WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message);
 
 WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd);
