@@ -2738,6 +2738,15 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         int outSz = 18;
         int rxSz;
         const word32 ofst[2] = {0};
+        char rdName[] = "wolfssh_5574_read.tmp";
+        byte rdHandle[WOLFSSH_MAX_HANDLE];
+        word32 rdHandleSz;
+        word32 rdOfst[2] = {0, 0};
+        word32 rdSz = 0;
+        byte rdData[4096];
+        int rdTries;
+        int rdWrote;
+        int rdErr;
 #ifdef WOLFSSH_TEST_INTERNAL
         int err;
         int tries;
@@ -2749,15 +2758,45 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         char wrName[] = "wolfssh_5574_write.tmp";
 #endif
 
+        /* Stage the file to read.  Opening the listing's first entry raced
+         * with tests/testsuite.test, which creates and removes files in the
+         * same directory under "make -j check".  Skipped if create is
+         * denied. */
+        rdHandleSz = WOLFSSH_MAX_HANDLE;
+        WMEMSET(rdData, 'a', sizeof(rdData));
+        if (wolfSSH_SFTP_Open(ssh, rdName,
+                WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+                NULL, rdHandle, &rdHandleSz) == WS_SUCCESS) {
+            for (rdTries = 0;
+                    rdTries < 1000 && rdSz < WOLFSSH_MAX_SFTP_RW;
+                    rdTries++) {
+                rdOfst[0] = rdSz;
+                rdWrote = wolfSSH_SFTP_SendWritePacket(ssh, rdHandle,
+                        rdHandleSz, rdOfst, rdData, (word32)sizeof(rdData));
+                if (rdWrote > 0) {
+                    rdSz += (word32)rdWrote;
+                    continue;
+                }
+                rdErr = wolfSSH_get_error(ssh);
+                if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
+                        rdErr != WS_REKEYING) {
+                    break; /* unexpected error */
+                }
+            }
+            wolfSSH_SFTP_Close(ssh, rdHandle, rdHandleSz);
+            AssertIntEQ(rdSz, WOLFSSH_MAX_SFTP_RW);
+        }
+
         current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
         tmp = current;
         while (tmp != NULL) {
-            if ((tmp->atrb.sz[0] > 0) &&
-                    (tmp->atrb.flags & WOLFSSH_FILEATRB_PERM) &&
-                    !(tmp->atrb.per & 040000)) {
+            if (WSTRCMP(tmp->fName, rdName) == 0) {
                 break;
             }
             tmp = tmp->next;
+        }
+        if (rdSz > 0) {
+            AssertNotNull(tmp);
         }
 
         if (tmp != NULL) {
@@ -2846,6 +2885,10 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
         }
         wolfSSH_SFTPNAME_list_free(current);
+
+        if (rdSz > 0) {
+            wolfSSH_SFTP_Remove(ssh, rdName);
+        }
 
 #ifdef WOLFSSH_TEST_INTERNAL
         /* Issue 5574: exercise the partial-send resume path for
