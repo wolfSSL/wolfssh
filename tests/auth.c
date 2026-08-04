@@ -53,6 +53,9 @@
 #endif
 #include <wolfssh/test.h>
 #include "tests/auth.h"
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+    #include "examples/client/common.h"
+#endif
 
 #ifndef WOLFSSH_NO_ABORT
     #define WABORT() abort()
@@ -2265,6 +2268,125 @@ static void test_invalid_cb_keyboard(void)
 
 #endif /* WOLFSSH_TEST_BLOCK */
 
+/* The last four conditions are not used by these tests directly, but they
+ * gate the body of wolfSSH_AuthTest() that calls them. Without them the
+ * definitions go unreferenced and -Wunused-function fails the build. */
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE) && \
+    !defined(USE_WINDOWS_API) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
+
+/* Fills in an authData for an INFO_REQUEST carrying promptCount prompts. */
+static void KbSetupAuthData(WS_UserAuthData* authData, word32 promptCount,
+        byte** prompts, byte* promptEcho)
+{
+    WMEMSET(authData, 0, sizeof(*authData));
+    authData->type = WOLFSSH_USERAUTH_KEYBOARD;
+    authData->sf.keyboard.promptCount = promptCount;
+    authData->sf.keyboard.prompts = prompts;
+    authData->sf.keyboard.promptEcho = promptEcho;
+}
+
+
+/* A server offering more prompts than stdin can answer must leave no
+ * unpopulated response slot for ClientFreeBuffers() to walk. stdin is
+ * redirected here, so ClientSetEcho() logs terminal-settings warnings. */
+static void test_ClientUserAuth_keyboardEof(void)
+{
+    WS_UserAuthData authData;
+    byte* prompts[2];
+    byte  promptEcho[2];
+    int   ret;
+
+    printf("Testing keyboard-interactive with EOF on stdin\n");
+
+    prompts[0] = (byte*)"first: ";
+    prompts[1] = (byte*)"second: ";
+    promptEcho[0] = 1;
+    promptEcho[1] = 1;
+
+    KbSetupAuthData(&authData, 2, prompts, promptEcho);
+
+    AssertNotNull(freopen("/dev/null", "r", stdin));
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, NULL);
+    AssertIntNE(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.keyboard.responseCount, 0);
+
+    ClientFreeBuffers(NULL, NULL, NULL);
+}
+
+
+/* An INFO_REQUEST with no prompts allocates nothing, so the response arrays
+ * stay NULL and the library must not walk them. */
+static void test_ClientUserAuth_keyboardZeroPrompts(void)
+{
+    WS_UserAuthData authData;
+    int ret;
+
+    printf("Testing keyboard-interactive with no prompts\n");
+
+    KbSetupAuthData(&authData, 0, NULL, NULL);
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.keyboard.responseCount, 0);
+    AssertNull(authData.sf.keyboard.responses);
+    AssertNull(authData.sf.keyboard.responseLengths);
+
+    ClientFreeBuffers(NULL, NULL, NULL);
+}
+
+
+/* The server may send an INFO_REQUEST for every round; each one must
+ * release the previous round's responses. The leak is only observable
+ * under a sanitizer; these asserts cover the per-round responses. */
+static void test_ClientUserAuth_keyboardRounds(void)
+{
+    WS_UserAuthData authData;
+    byte* prompts[1];
+    byte  promptEcho[1];
+    const char* fname = "keyboard_rounds.txt";
+    WFILE* f = NULL;
+    int   ret;
+
+    printf("Testing keyboard-interactive over multiple rounds\n");
+
+    prompts[0] = (byte*)"password: ";
+    promptEcho[0] = 0;
+
+    AssertIntEQ(WFOPEN(NULL, &f, fname, "w"), 0);
+    AssertNotNull(f);
+    AssertIntGT(fprintf(f, "roundone\nroundtwo\n"), 0);
+    WFCLOSE(NULL, f);
+
+    AssertNotNull(freopen(fname, "r", stdin));
+    /* Unlink while stdin holds it open. The data stays readable and no file
+     * is left in the CWD if an assert below aborts the test. Avoids WREMOVE,
+     * which port.h only defines for SFTP, SCP, and SSHD builds. */
+    AssertIntEQ(remove(fname), 0);
+
+    KbSetupAuthData(&authData, 1, prompts, promptEcho);
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.keyboard.responseCount, 1);
+    AssertIntEQ(authData.sf.keyboard.responseLengths[0], 8);
+    AssertIntEQ(WSTRCMP((char*)authData.sf.keyboard.responses[0],
+                "roundone"), 0);
+
+    KbSetupAuthData(&authData, 1, prompts, promptEcho);
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.keyboard.responseCount, 1);
+    AssertIntEQ(authData.sf.keyboard.responseLengths[0], 8);
+    AssertIntEQ(WSTRCMP((char*)authData.sf.keyboard.responses[0],
+                "roundtwo"), 0);
+
+    ClientFreeBuffers(NULL, NULL, NULL);
+    /* Leave stdin somewhere harmless for whatever test runs next. */
+    AssertNotNull(freopen("/dev/null", "r", stdin));
+}
+
+#endif /* keyboard-interactive ClientUserAuth tests */
+
 int wolfSSH_AuthTest(int argc, char** argv)
 {
     (void) argc;
@@ -2333,6 +2455,13 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_multi_prompt_KeyboardInteractive();
     test_multi_round_KeyboardInteractive();
     test_unbalanced_client_KeyboardInteractive();
+#endif
+
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE) && \
+    !defined(USE_WINDOWS_API) && !defined(NO_FILESYSTEM)
+    test_ClientUserAuth_keyboardEof();
+    test_ClientUserAuth_keyboardZeroPrompts();
+    test_ClientUserAuth_keyboardRounds();
 #endif
 
     /* Unknown callback return value must not grant auth (issue 2486) */
