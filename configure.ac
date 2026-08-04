@@ -299,8 +299,8 @@ AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
         [AC_MSG_ERROR([--enable-windows-cert-store requires X.509 cert support (--enable-certs)])])
      AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WINDOWS_CERT_STORE"
      AS_CASE([$host],
-         [*mingw*|*msys*|*cygwin*],[LIBS="$LIBS -lcrypt32 -lncrypt"],
-         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on Windows hosts (mingw/msys/cygwin)])])])
+         [*mingw*|*msys*],[LIBS="$LIBS -lcrypt32 -lncrypt"],
+         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw/msys)])])])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_NONE_CIPHER" = "xyes"],

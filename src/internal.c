@@ -2751,6 +2751,11 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
         pvtKey->key = NULL;
         pvtKey->keySz = 0;
         pvtKey->isTpm = 1;
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* The slot is now TPM backed; drop any cert-store state so signing
+         * and K_S do not use a stale certificate context. */
+        ClearCertStoreKey(ctx, pvtKey);
+    #endif
 
     #ifdef WOLFSSH_CERTS
         /* Mark the matching certificate slot TPM-backed so certificate KEX
@@ -2767,6 +2772,9 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
                     ctx->privateKey[certIdx].keySz = 0;
                 }
                 ctx->privateKey[certIdx].isTpm = 1;
+            #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                ClearCertStoreKey(ctx, &ctx->privateKey[certIdx]);
+            #endif
                 break;
             }
         }

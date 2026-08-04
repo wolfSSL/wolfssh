@@ -1271,6 +1271,20 @@ static int SetListString(char** dst, const char* value, int valueSz,
     return ret;
 }
 
+/* CA trust sources are loaded once at startup from the global config; a
+ * Match-scoped setting would be silently ignored at authentication time.
+ * Reject such options at parse time instead of failing open. Returns
+ * WS_SUCCESS when conf is the global config. */
+static int CheckNotInMatch(const WOLFSSHD_CONFIG* conf, const char* option)
+{
+    if (conf->usrAppliesTo != NULL || conf->groupAppliesTo != NULL) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Option %s is not supported inside a Match block", option);
+        return WS_BAD_ARGUMENT;
+    }
+    return WS_SUCCESS;
+}
+
 /* returns WS_SUCCESS on success */
 /* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
 static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
@@ -1362,7 +1376,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
         case OPT_TRUSTED_SYSTEM_CA_KEYS:
-            ret = wolfSSHD_ConfigSetSystemCA(*conf, value);
+            ret = CheckNotInMatch(*conf, "wolfSSH_TrustedSystemCAKeys");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetSystemCA(*conf, value);
             break;
         case OPT_PIDFILE:
             ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
@@ -1374,17 +1390,25 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             ret = HandleStrictModes(*conf, value);
             break;
         case OPT_TRUSTED_USER_CA_STORE:
-            ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
+            ret = CheckNotInMatch(*conf, "wolfSSH_TrustedUserCAStore");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
             break;
     #ifdef USE_WINDOWS_API
         case OPT_WIN_USER_STORES:
-            ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserStores");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
             break;
         case OPT_WIN_USER_DW_FLAGS:
-            ret = wolfSSHD_ConfigSetWinUserDwFlags(*conf, value);
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserDwFlags");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserDwFlags(*conf, value);
             break;
         case OPT_WIN_USER_PV_PARA:
-            ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserPvPara");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
             break;
     #endif /* USE_WINDOWS_API */
         case OPT_AUTHORIZED_UPN_DOMAINS:
@@ -1400,7 +1424,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_HOST_KEY_STORE_SUBJECT:
             wolfSSH_Log(WS_LOG_INFO,
                 "[SSHD] Parsed HostKeyStoreSubject = '%s'", value);
-            ret = SetFileString(&(*conf)->hostKeyStoreSubject, value,
+            /* use the full line remainder so a CN containing spaces is
+             * kept instead of being cut at the first token */
+            ret = SetListString(&(*conf)->hostKeyStoreSubject, full, fullSz,
                 (*conf)->heap);
             break;
         case OPT_HOST_KEY_STORE_FLAGS:

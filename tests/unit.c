@@ -12932,10 +12932,17 @@ static int test_ParseCertStoreSpec(void)
         result = certStoreSpecCheck("My:server", WS_SUCCESS,
                 L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
 
-    /* numeric flags value */
+    /* numeric flags: only system-store location bits are accepted */
     if (result == 0)
-        result = certStoreSpecCheck("My:server:12345", WS_SUCCESS,
-                L"My", L"server", 12345);
+        result = certStoreSpecCheck("My:server:393216", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_USERS);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:12345", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    /* location plus a control flag (CERT_STORE_DELETE_FLAG) is rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:65552", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
 
     /* missing or empty fields are rejected */
     if (result == 0)

@@ -733,11 +733,14 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                 *dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
             }
             else {
-                /* fall back to a raw numeric value; a result of 0 means the
-                 * string was not a recognized name or valid number, which is
-                 * never a usable store-location flag */
+                /* Fall back to a raw numeric value, but only accept
+                 * system-store location bits. Anything else is either not a
+                 * location or a control flag (e.g. CERT_STORE_DELETE_FLAG)
+                 * that would make CertOpenStore destructive. */
                 *dwFlags = (word32)atoi(flagsStr);
-                if (*dwFlags == 0) {
+                if ((*dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0
+                        || (*dwFlags &
+                            ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
                     WFREE(specCopy, heap, DYNTYPE_TEMP);
                     return WS_BAD_ARGUMENT;
                 }

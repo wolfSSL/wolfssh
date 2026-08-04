@@ -378,12 +378,15 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    /* Only the system-store provider is supported here. */
+    /* Only the system-store provider is supported here. Fail rather than
+     * silently load trust anchors from a different provider than the one
+     * configured. */
     if (providerStr != NULL &&
             WSTRCMP(providerStr, "CERT_STORE_PROV_SYSTEM") != 0) {
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] wolfSSH_WinUserStores='%s' ignored; only "
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] wolfSSH_WinUserStores='%s' is not supported; only "
             "CERT_STORE_PROV_SYSTEM is supported", providerStr);
+        return WS_BAD_ARGUMENT;
     }
 
     if (dwFlagsStr != NULL) {
@@ -396,11 +399,13 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
             dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
         }
         else {
-            /* fall back to a raw numeric value; a result of 0 means the string
-             * was not a recognized name or valid number, which is never a
-             * usable store-location flag */
+            /* Fall back to a raw numeric value, but only accept system-store
+             * location bits. Anything else is either not a location or a
+             * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make
+             * CertOpenStore destructive. */
             dwFlags = (word32)atoi(dwFlagsStr);
-            if (dwFlags == 0) {
+            if ((dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
+                    (dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Unrecognized user CA store flags '%s'", dwFlagsStr);
                 return WS_BAD_ARGUMENT;
@@ -550,11 +555,16 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                 } else if (WSTRCMP(hostKeyStoreFlags, "LOCAL_MACHINE") == 0) {
                     dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
                 } else {
-                    /* fall back to a raw numeric value; a result of 0 means the
-                     * string was not a recognized name or valid number, which
-                     * is never a usable store-location flag */
+                    /* Fall back to a raw numeric value, but only accept
+                     * system-store location bits. Anything else is either not
+                     * a location or a control flag (e.g.
+                     * CERT_STORE_DELETE_FLAG) that would make CertOpenStore
+                     * destructive. */
                     dwFlags = (word32)atoi(hostKeyStoreFlags);
-                    if (dwFlags == 0) {
+                    if ((dwFlags &
+                            (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
+                        (dwFlags &
+                            ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
                         wolfSSH_Log(WS_LOG_ERROR,
                             "[SSHD] Unrecognized host key store flags '%s'",
                             hostKeyStoreFlags);

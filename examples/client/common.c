@@ -1283,8 +1283,13 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
         }
         userPublicKeyTypeSz = (word32)WSTRLEN((const char*)userPublicKeyType);
 
-        /* No in-memory private key — signing goes through the cert store. */
-        userPrivateKey = NULL;
+        /* No in-memory private key — signing goes through the cert store.
+         * Keep the static-buffer invariant (only replace the pointer when it
+         * is not a heap allocation) so a later key load or
+         * ClientFreeBuffers call remains valid. */
+        if (!userPrivateKeyAlloc) {
+            userPrivateKey = userPrivateKeyBuf;
+        }
         userPrivateKeySz = 0;
 
         pubKeyLoaded = 1;
