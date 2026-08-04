@@ -2144,11 +2144,19 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                             "not set; certificate UPN domain is not checked");
                     }
                 #else
-                    /* Without FPKI compare subject CN with user name */
+                    /* Without FPKI compare subject CN with user name.
+                     * Windows account names are case-insensitive, so match
+                     * the CN the same way there. */
                     if (dCert->subjectCN != NULL &&
                             (int)XSTRLEN(usr) == dCert->subjectCNLen &&
+                        #ifdef _WIN32
+                            WSTRNCASECMP(usr, dCert->subjectCN,
+                                (size_t)dCert->subjectCNLen) == 0
+                        #else
                             XSTRNCMP(usr, dCert->subjectCN,
-                                (size_t)dCert->subjectCNLen) == 0) {
+                                (size_t)dCert->subjectCNLen) == 0
+                        #endif
+                            ) {
                         usrMatch = 1;
                     }
                 #endif

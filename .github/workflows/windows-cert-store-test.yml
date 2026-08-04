@@ -260,6 +260,10 @@ jobs:
           $subject = $serverCert.Subject
           if ($subject -match "^CN=(.+)$") { $subject = $matches[1] }
           Add-Content -Path $env:GITHUB_ENV -Value "SERVER_CERT_SUBJECT=$subject"
+
+          # Export the (self-signed) server cert as DER so the client can use
+          # it as the trust anchor when negotiating an x509v3-* host key.
+          Export-Certificate -Cert $serverCert -FilePath "server-store-cert.der" | Out-Null
         }
 
         # Client user key: import the CA-signed testuser cert+key into
@@ -568,6 +572,59 @@ jobs:
             exit 1
         }
         Write-Host "SFTP against echoserver succeeded"
+
+    - name: Test SFTP against echoserver with x509v3 host key
+      if: matrix.server_key_source == 'store' && matrix.key_algorithm == 'ecdsa'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        # Force the x509v3 host key algorithm so the cert store certificate
+        # itself is sent as K_S and verified by the client, exercising the
+        # X.509 host-key slot instead of the plain-key slot. The server cert
+        # is self-signed, so it is its own trust anchor (-A).
+        $testPort = ${{env.TEST_PORT}}
+        $sftpPath = $env:SFTP_PATH
+
+        @"
+        pwd
+        ls
+        quit
+        "@ | Out-File -FilePath sftp_x509_commands.txt -Encoding ASCII
+
+        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        if ("${{ matrix.client_key_source }}" -eq "store") {
+            $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
+        } else {
+            $sftpArgs += "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path
+            $sftpArgs += "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path
+        }
+        $sftpArgs += "-A", (Resolve-Path "server-store-cert.der").Path, "-X"
+        $sftpArgs += "-k", "x509v3-ecdsa-sha2-nistp256"
+
+        Write-Host "Running: $sftpPath $($sftpArgs -join ' ')"
+        $process = Start-Process -FilePath $sftpPath `
+            -ArgumentList $sftpArgs `
+            -RedirectStandardInput "sftp_x509_commands.txt" `
+            -RedirectStandardOutput "sftp_x509_output.txt" `
+            -RedirectStandardError "sftp_x509_error.txt" `
+            -Wait -NoNewWindow -PassThru
+
+        Write-Host "SFTP (x509v3 host key) exit code: $($process.ExitCode)"
+        Write-Host "=== SFTP Output ==="
+        if (Test-Path sftp_x509_output.txt) { Get-Content sftp_x509_output.txt }
+        Write-Host "=== SFTP Error ==="
+        if (Test-Path sftp_x509_error.txt)  { Get-Content sftp_x509_error.txt  }
+
+        if ($process.ExitCode -ne 0) {
+            $echoLog = $env:ECHOSERVER_LOG
+            if (-not [string]::IsNullOrEmpty($echoLog) -and (Test-Path $echoLog)) {
+                Write-Host "=== Echoserver Log ==="
+                Get-Content $echoLog
+            }
+            Write-Host "ERROR: SFTP with x509v3 host key failed"
+            exit 1
+        }
+        Write-Host "SFTP with x509v3 host key succeeded"
 
     - name: Stop echoserver before wolfsshd test
       if: matrix.server_key_source == 'store'

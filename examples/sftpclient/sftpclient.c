@@ -410,6 +410,8 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
+    printf(" -k <list>     set the comma separated list of public key "
+           "algos to offer\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
@@ -1582,6 +1584,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
+    const char* keyList = NULL;
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     const char* certStoreSpec = NULL;  /* Format: "store:subject:flags" */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
@@ -1591,7 +1594,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X"
+    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:X"
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
             "W:"
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
@@ -1655,6 +1658,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
             case 'j':
                 pubKeyName = myoptarg;
+                break;
+
+            case 'k':
+                keyList = myoptarg;
                 break;
 
         #ifdef WOLFSSH_CERTS
@@ -1793,6 +1800,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
+
+    if (keyList) {
+        if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
+            err_sys("Error setting key list.");
+        }
+    }
 
     if (((func_args*)args)->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, ClientUserAuth);

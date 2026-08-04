@@ -2846,12 +2846,15 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
  * CERT_FIND_SUBJECT_STR_W is only used as a substring pre-filter to
  * enumerate candidates; each candidate's CN is then compared exactly so
  * that a lookup for "server1" does not select "server1.example" or
- * "myserver1". Returns the certificate context (caller must free with
- * CertFreeCertificateContext) or NULL when no exact match exists. */
+ * "myserver1". A currently time-valid match is preferred over an expired
+ * one so a renewal's leftover certificate is not selected. Returns the
+ * certificate context (caller must free with CertFreeCertificateContext)
+ * or NULL when no exact match exists. */
 static PCCERT_CONTEXT FindCertByExactCN(HCERTSTORE hStore,
         const wchar_t* subjectName)
 {
     PCCERT_CONTEXT pCertContext;
+    PCCERT_CONTEXT firstMatch;
     const wchar_t* cn;
     wchar_t* certCn;
     DWORD certCnSz;
@@ -2865,6 +2868,7 @@ static PCCERT_CONTEXT FindCertByExactCN(HCERTSTORE hStore,
     }
 
     pCertContext = NULL;
+    firstMatch = NULL;
     for (;;) {
         /* Passing the previous context frees it and continues the search. */
         pCertContext = CertFindCertificateInStore(hStore,
@@ -2890,8 +2894,21 @@ static PCCERT_CONTEXT FindCertByExactCN(HCERTSTORE hStore,
         match = (certCnSz > 1 && wcscmp(certCn, cn) == 0);
         WFREE(certCn, NULL, DYNTYPE_TEMP);
         if (match) {
-            break;
+            if (CertVerifyTimeValidity(NULL, pCertContext->pCertInfo) == 0) {
+                break;
+            }
+            if (firstMatch == NULL) {
+                firstMatch = CertDuplicateCertificateContext(pCertContext);
+            }
         }
+    }
+
+    /* No time-valid match; fall back to the first exact match, if any. */
+    if (pCertContext == NULL) {
+        pCertContext = firstMatch;
+    }
+    else if (firstMatch != NULL) {
+        CertFreeCertificateContext(firstMatch);
     }
 
     return pCertContext;
@@ -3008,6 +3025,10 @@ static int UseCertStoreSlot(WOLFSSH_CTX* ctx, byte keyId,
 
     /* Set up the private key structure */
     pvtKey->publicKeyFmt     = keyId;
+#ifdef WOLFSSH_TPM
+    /* A stale TPM mark would route signing through the TPM. */
+    pvtKey->isTpm            = 0;
+#endif
     pvtKey->useCertStore     = 1;
     pvtKey->certStoreContext = (void*)slotContext;
     pvtKey->storeName        = storeNameCopy;
@@ -3072,65 +3093,76 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     /* Get the public key info to determine algorithm */
     pPubKeyInfo = &pCertContext->pCertInfo->SubjectPublicKeyInfo;
 
-    /* Check algorithm OID to determine key type */
+    /* Check algorithm OID to determine key type. Only algorithms and
+     * curves compiled into this build are accepted; anything else leaves
+     * keyId as ID_NONE and is rejected below rather than registering a
+     * host key type that cannot be used for signing. */
     if (pPubKeyInfo->Algorithm.pszObjId != NULL) {
         /* Compare OID strings (they are ASCII, not wide) */
         if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ||
             strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_ENCRYPT) == 0) {
+        #ifndef WOLFSSH_NO_RSA
             keyId = ID_SSH_RSA;
+        #else
+            WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                "RSA is not compiled in");
+        #endif
         }
         else if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_ECC_PUBLIC_KEY) == 0) {
-            /* Decode the curve OID from the algorithm parameters to select
-             * the correct ECDSA key type.  The Parameters field contains
-             * a DER-encoded OID identifying the named curve. */
-            char* curveOid = NULL;
-            DWORD curveOidSz = 0;
+            /* The algorithm parameters hold the DER-encoded named-curve
+             * OID; match its raw bytes to select the ECDSA key type. */
+            static const byte oidP256[] = {
+                0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07
+            };
+            static const byte oidP384[] = {
+                0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22
+            };
+            static const byte oidP521[] = {
+                0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23
+            };
+            const byte* params = pPubKeyInfo->Algorithm.Parameters.pbData;
+            DWORD paramsSz = pPubKeyInfo->Algorithm.Parameters.cbData;
 
-            if (pPubKeyInfo->Algorithm.Parameters.cbData > 0 &&
-                CryptDecodeObjectEx(X509_ASN_ENCODING,
-                        X509_OBJECT_IDENTIFIER,
-                        pPubKeyInfo->Algorithm.Parameters.pbData,
-                        pPubKeyInfo->Algorithm.Parameters.cbData,
-                        CRYPT_DECODE_ALLOC_FLAG, NULL,
-                        &curveOid, &curveOidSz)) {
-                /* Compare against well-known curve OIDs */
-                if (strcmp(curveOid, "1.2.840.10045.3.1.7") == 0) {
-                    keyId = ID_ECDSA_SHA2_NISTP256;
-                }
-                else if (strcmp(curveOid, "1.3.132.0.34") == 0) {
-                    keyId = ID_ECDSA_SHA2_NISTP384;
-                }
-                else if (strcmp(curveOid, "1.3.132.0.35") == 0) {
-                    keyId = ID_ECDSA_SHA2_NISTP521;
-                }
-                else {
-                    WLOG(WS_LOG_DEBUG,
-                        "wolfSSH_CTX_UsePrivateKey_fromStore: "
-                        "Unrecognized ECC curve OID: %s, "
-                        "defaulting to P-256", curveOid);
-                    keyId = ID_ECDSA_SHA2_NISTP256;
-                }
-                LocalFree(curveOid);
+            if (params == NULL) {
+                paramsSz = 0;
             }
-            else {
-                WLOG(WS_LOG_DEBUG,
-                    "wolfSSH_CTX_UsePrivateKey_fromStore: "
-                    "Failed to decode ECC curve parameters, "
-                    "defaulting to P-256");
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+            if (paramsSz == sizeof(oidP256) &&
+                    WMEMCMP(params, oidP256, sizeof(oidP256)) == 0) {
                 keyId = ID_ECDSA_SHA2_NISTP256;
+            }
+        #endif
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+            if (paramsSz == sizeof(oidP384) &&
+                    WMEMCMP(params, oidP384, sizeof(oidP384)) == 0) {
+                keyId = ID_ECDSA_SHA2_NISTP384;
+            }
+        #endif
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+            if (paramsSz == sizeof(oidP521) &&
+                    WMEMCMP(params, oidP521, sizeof(oidP521)) == 0) {
+                keyId = ID_ECDSA_SHA2_NISTP521;
+            }
+        #endif
+            if (keyId == ID_NONE) {
+                WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                    "Unsupported ECC curve parameters");
             }
         }
         else {
-            CertFreeCertificateContext(pCertContext);
-            CertCloseStore(hStore, 0);
-            WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Unsupported key algorithm: %s", pPubKeyInfo->Algorithm.pszObjId);
-            return WS_BAD_ARGUMENT;
+            WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: "
+                "Unsupported key algorithm: %s",
+                pPubKeyInfo->Algorithm.pszObjId);
         }
     }
     else {
+        WLOG(WS_LOG_ERROR,
+            "wolfSSH_CTX_UsePrivateKey_fromStore: No algorithm OID");
+    }
+
+    if (keyId == ID_NONE) {
         CertFreeCertificateContext(pCertContext);
         CertCloseStore(hStore, 0);
-        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: No algorithm OID");
         return WS_BAD_ARGUMENT;
     }
 
