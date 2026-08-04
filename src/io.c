@@ -408,12 +408,13 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     }
 
     /* not enough space to send */
-    if ((sent = TCPIP_TCP_PutIsReady(sd)) < sz) {
-        sz = sent;
-    }
+    sent = (int)TCPIP_TCP_PutIsReady(sd);
     if (sent == 0) {
         /* In the case that 0 is returned the main TCP loop needs to be called */
         return WS_CBIO_ERR_WANT_WRITE;
+    }
+    if ((word32)sent < sz) {
+        sz = (word32)sent;
     }
 #endif /* MICROCHIP_MPLAB_HARMONY */
 
