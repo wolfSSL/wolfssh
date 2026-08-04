@@ -2741,7 +2741,8 @@ int GenerateKey(byte hashId, byte keyId,
             runningKeySz = digestSz;
             ret = wc_HashFinal(&hash, enmhashId, key);
 
-            for (curBlock = 1; curBlock < blocks; curBlock++) {
+            for (curBlock = 1; ret == WS_SUCCESS && curBlock < blocks;
+                    curBlock++) {
                 ret = wc_HashInit(&hash, enmhashId);
                 if (ret != WS_SUCCESS) break;
                 ret = HashUpdate(&hash, enmhashId, kSzFlat, LENGTH_SZ);
