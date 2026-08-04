@@ -20,6 +20,12 @@
 
 #ifndef WOLFSSH_COMMON_H
 #define WOLFSSH_COMMON_H
+
+#include <wolfssh/ssh.h>
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wchar.h>
+#endif
+
 int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert);
 int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap);
 int ClientSetPrivateKey(const char* privKeyName, int userEcc,
@@ -38,7 +44,12 @@ int ClientSetTpm(WOLFSSH* ssh);
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName);
-int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx);
+/* Supersedes ClientUseCert()/ClientUsePubKey()/ClientSetPrivateKey(), any key
+ * they loaded is released. Copies the certificate out of ctx; call
+ * ClientFreeBuffers() to release the copy. heap must be the same heap
+ * previously passed to those loaders and later to ClientFreeBuffers(),
+ * since buffers they allocated are freed here. */
+int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap);
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #endif /* WOLFSSH_COMMON_H */

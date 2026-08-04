@@ -6,6 +6,11 @@ example and test programs. The solution provides both Debug and Release
 builds of Static and Dynamic 32- or 64-bit libraries. The file
 `user_settings.h` should be used in the wolfSSL build to configure it.
 
+The projects link against the Windows `crypt32.lib` and `ncrypt.lib`
+import libraries for the MS Certificate Store support
+(`WOLFSSH_WINDOWS_CERT_STORE`; see the comment block in
+`user_settings.h`).
+
 
 This project assumes that the wolfSSH and wolfSSL source directories
 are installed side-by-side and do not have the version number in their

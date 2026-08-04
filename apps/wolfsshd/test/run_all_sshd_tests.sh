@@ -183,6 +183,61 @@ EOF
     rm -f strictmodes_hostkey.pem sshd_config_test_strictmodes strictmodes_log.txt
 }
 
+# Negative test: on a build that cannot enforce AuthorizedUPNDomains (wolfSSL
+# without FPKI), wolfSSHd must refuse to start rather than silently ignore the
+# configured realm policy. The directive is placed inside a Match block so the
+# config-node traversal in SetupCTX is exercised, not just the head node. On
+# an FPKI build the directive is enforced instead of rejected, so skip.
+run_upn_unenforceable_negative_test() {
+    printf "AuthorizedUPNDomains unenforceable-build negative test ... "
+    TOTAL=$((TOTAL+1))
+    if wolfssh_has FPKI; then
+        printf "SKIPPED (FPKI build enforces the directive)\n"
+        SKIPPED=$((SKIPPED+1))
+        return
+    fi
+    # The host key must clear the secure-file gate (owner-only perms), which
+    # runs before the UPN gate in SetupCTX; the checked-in key is 0644, so use
+    # a local mode-600 copy like run_strictmodes_negative_test does.
+    cp ../../../keys/server-key.pem upn_hostkey.pem
+    chmod 600 upn_hostkey.pem
+    cat <<EOF > sshd_config_test_upn_nofpki
+Port 22623
+UsePrivilegeSeparation no
+HostKey upn_hostkey.pem
+Match User $USER
+AuthorizedUPNDomains example
+EOF
+    rm -f upn_nofpki_log.txt
+    # Without a timeout wrapper a regression that lets the daemon start would
+    # hang the suite indefinitely, so skip rather than run unbounded.
+    if ! command -v timeout >/dev/null 2>&1; then
+        printf "SKIPPED (no timeout command)\n"
+        SKIPPED=$((SKIPPED+1))
+        rm -f upn_hostkey.pem sshd_config_test_upn_nofpki
+        return
+    fi
+    timeout 30 ../wolfsshd -D -d -f sshd_config_test_upn_nofpki \
+        -E upn_nofpki_log.txt
+    # Match the fail-closed wording only: the WOLFSSH_IGNORE_UNKNOWN_CONFIG
+    # branch logs "Ignoring AuthorizedUPNDomains ... cannot enforce it" and
+    # keeps running, which must not pass as the startup refusal. Also require
+    # that the host key loaded: a "Refusing to load" failure would exit before
+    # the UPN gate.
+    if grep -q "AuthorizedUPNDomains is set" upn_nofpki_log.txt &&
+            grep -q "but this build cannot enforce it" upn_nofpki_log.txt &&
+            ! grep -q "Refusing to load" upn_nofpki_log.txt; then
+        printf "PASSED\n"
+    else
+        printf "FAILED!\n"
+        cat upn_nofpki_log.txt
+        rm -f upn_hostkey.pem sshd_config_test_upn_nofpki upn_nofpki_log.txt
+        stop_wolfsshd
+        exit 1
+    fi
+    rm -f upn_hostkey.pem sshd_config_test_upn_nofpki upn_nofpki_log.txt
+}
+
 # Negative authorized_keys StrictModes test: a group/world writable
 # authorized_keys file must make public-key authentication fail (exercises the
 # StrictModes branch in SearchForPubKey). Uses the already-running local sshd,
@@ -434,11 +489,12 @@ else
         run_test "sshd_permitroot_prohibit_password.sh"
         run_test "sshd_permitroot_forced_cmd.sh"
         run_strictmodes_negative_test
+        run_upn_unenforceable_negative_test
         run_test "sshd_login_grace_test.sh"
         run_test "sshd_privdrop_fail_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+9))
+        SKIPPED=$((SKIPPED+10))
     fi
 
     # these tests run with X509 sshd-config loaded

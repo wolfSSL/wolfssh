@@ -25,6 +25,23 @@
  */
 
 
+/* SignWithCertStoreKey() uses Vista-only CNG/NCrypt declarations
+ * (HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, NCryptSignHash); mingw-w64 has
+ * historically defaulted _WIN32_WINNT to pre-Vista, so raise the floor
+ * before the first header that pulls in <windows.h> (wolfssh/ssh.h via
+ * port.h does). Same rules as the pin in src/ssh.c: the undefined case is
+ * raised only under mingw, since MSVC's SDK defaults an undefined
+ * _WIN32_WINNT to its newest profile, and WINVER is pinned alongside so
+ * the two cannot disagree. */
+#if defined(_WIN32) && \
+    ((defined(__MINGW32__) && !defined(_WIN32_WINNT)) || \
+     (defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0600))
+    #undef  _WIN32_WINNT
+    #define _WIN32_WINNT 0x0600
+    #undef  WINVER
+    #define WINVER 0x0600
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -89,21 +106,22 @@
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
-    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-    #endif
+    /* Fallbacks for SDKs that predate these wincrypt.h/ncrypt.h
+     * definitions. The values must match the SDK headers exactly. */
     #ifndef CERT_NCRYPT_KEY_SPEC
-        #define CERT_NCRYPT_KEY_SPEC 0x00000003
+        #define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
+    #endif
+    #ifndef CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
+        #define CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG 0x00040000
     #endif
     #ifndef BCRYPT_PAD_PKCS1
         #define BCRYPT_PAD_PKCS1 0x00000002
     #endif
 
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
         byte** outDer, word32* outDerSz, void* heap);
+#endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #ifdef NO_INLINE
@@ -1166,6 +1184,12 @@ static const char cannedKeyAlgoNames[] =
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         "x509v3-ecdsa-sha2-nistp256,"
     #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+        "x509v3-ecdsa-sha2-nistp384,"
+    #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP384 */
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+        "x509v3-ecdsa-sha2-nistp521,"
+    #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP521 */
     #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
         "x509v3-ssh-rsa,"
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
@@ -1269,6 +1293,12 @@ static const char cannedKeyAlgoNamesHostKey[] =
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
         "x509v3-ecdsa-sha2-nistp256,"
     #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+        "x509v3-ecdsa-sha2-nistp384,"
+    #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP384 */
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+        "x509v3-ecdsa-sha2-nistp521,"
+    #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP521 */
     #ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
         "x509v3-ssh-rsa,"
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
@@ -1382,27 +1412,6 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-/* Release any MS Certificate Store state held by a private key slot and reset
- * the cert-store fields so the slot is no longer treated as cert-store backed.
- * Safe to call on a slot that never held cert-store state. */
-static void ClearCertStoreKey(WOLFSSH_CTX* ctx, WOLFSSH_PVT_KEY* pvtKey)
-{
-    if (pvtKey->certStoreContext != NULL) {
-        CertFreeCertificateContext((PCCERT_CONTEXT)pvtKey->certStoreContext);
-        pvtKey->certStoreContext = NULL;
-    }
-    if (pvtKey->storeName != NULL) {
-        WFREE(pvtKey->storeName, ctx->heap, DYNTYPE_STRING);
-        pvtKey->storeName = NULL;
-    }
-    if (pvtKey->subjectName != NULL) {
-        WFREE(pvtKey->subjectName, ctx->heap, DYNTYPE_STRING);
-        pvtKey->subjectName = NULL;
-    }
-    pvtKey->useCertStore = 0;
-}
-
-
 /* Returns 1 if the slot is genuinely backed by the MS Certificate Store.
  * Requires a live cert context and no in-memory private key, so a slot that
  * was later overwritten by a file-based key (which clears these) is not
@@ -1411,6 +1420,42 @@ static INLINE int IsCertStoreKey(const WOLFSSH_PVT_KEY* pvtKey)
 {
     return pvtKey != NULL && pvtKey->useCertStore
             && pvtKey->certStoreContext != NULL && pvtKey->key == NULL;
+}
+
+
+/* Release any MS Certificate Store state held by a private key slot and reset
+ * the cert-store fields so the slot is no longer treated as cert-store backed.
+ * The certificate DER copied out of the store is released as well, so a slot
+ * can never pair a store certificate with a key from another source. Only a
+ * slot that is cert-store backed is touched, so a file certificate installed
+ * on the slot is left alone. */
+static void ClearCertStoreKey(WOLFSSH_CTX* ctx, WOLFSSH_PVT_KEY* pvtKey)
+{
+    if (!pvtKey->useCertStore) {
+        return;
+    }
+
+    /* Deliberately keyed on useCertStore alone, wider than IsCertStoreKey():
+     * a slot in a broken half-store state (flag set, context or key state
+     * inconsistent) still gets its store resources released here even though
+     * the signing paths would no longer treat it as store backed. */
+    if (!IsCertStoreKey(pvtKey)) {
+        WLOG(WS_LOG_DEBUG, "ClearCertStoreKey: releasing a slot with "
+             "inconsistent cert-store state");
+    }
+
+    if (pvtKey->certStoreContext != NULL) {
+        CertFreeCertificateContext((PCCERT_CONTEXT)pvtKey->certStoreContext);
+        pvtKey->certStoreContext = NULL;
+    }
+#ifdef WOLFSSH_CERTS
+    if (pvtKey->cert != NULL) {
+        WFREE(pvtKey->cert, ctx->heap, DYNTYPE_CERT);
+        pvtKey->cert = NULL;
+        pvtKey->certSz = 0;
+    }
+#endif
+    pvtKey->useCertStore = 0;
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -2428,16 +2473,67 @@ static int IdentifyCertKey(const byte* in, word32 inSz, void* heap)
 
     return ret;
 }
+
+
+/* Returns 1 when id names an x509v3 host key algorithm. */
+static int IsCertKeyId(byte id)
+{
+    int ret;
+
+    switch (id) {
+        case ID_X509V3_SSH_RSA:
+        case ID_X509V3_ECDSA_SHA2_NISTP256:
+        case ID_X509V3_ECDSA_SHA2_NISTP384:
+        case ID_X509V3_ECDSA_SHA2_NISTP521:
+    #ifndef WOLFSSH_NO_MLDSA
+        case ID_X509V3_MLDSA44:
+        case ID_X509V3_MLDSA65:
+        case ID_X509V3_MLDSA87:
+    #endif
+            ret = 1;
+            break;
+        default:
+            ret = 0;
+    }
+
+    return ret;
+}
 #endif /* WOLFSSH_CERTS */
 
 
-void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
+WOLFSSH_LOCAL void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
 {
     WOLFSSH_PVT_KEY* key;
     byte* publicKeyAlgo = ctx->publicKeyAlgo;
     word32 keyCount = ctx->privateKeyCount, publicKeyAlgoCount = 0, idx;
 
     for (idx = 0, key = ctx->privateKey; idx < keyCount; idx++, key++) {
+    #ifdef WOLFSSH_CERTS
+        /* An x509v3 slot whose certificate was dropped cannot produce a K_S,
+         * so do not advertise it. */
+        if (IsCertKeyId(key->publicKeyFmt) && key->cert == NULL) {
+            WLOG(WS_LOG_DEBUG, "RefreshPublicKeyAlgo: skipping %s, "
+                 "no certificate", IdToName(key->publicKeyFmt));
+            continue;
+        }
+    #endif
+        /* A slot with no signing source at all cannot answer a KEXDH_INIT.
+         * This happens when a file HostCertificate lands on a slot whose
+         * paired key is TPM or cert-store backed, leaving a certificate with
+         * no key behind it. Advertising it would abort the handshake instead
+         * of falling back to an algorithm that does work. */
+        if (key->key == NULL
+        #ifdef WOLFSSH_TPM
+                && !key->isTpm
+        #endif
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                && !IsCertStoreKey(key)
+        #endif
+                ) {
+            WLOG(WS_LOG_DEBUG, "RefreshPublicKeyAlgo: skipping %s, "
+                 "no signing source", IdToName(key->publicKeyFmt));
+            continue;
+        }
         if (key->publicKeyFmt == ID_SSH_RSA) {
         #ifndef WOLFSSH_NO_RSA_SHA2_512
             if (publicKeyAlgoCount < WOLFSSH_MAX_PUB_KEY_ALGO) {
@@ -2470,6 +2566,13 @@ void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
                 publicKeyAlgoCount++;
             }
         }
+    }
+    if (publicKeyAlgoCount == 0 && keyCount > 0) {
+        /* DEBUG, not ERROR: this state is transient on the documented
+         * "certificate first, then private key" load order and only becomes
+         * a failure if it persists to SendKexInit, which rejects it there. */
+        WLOG(WS_LOG_DEBUG, "RefreshPublicKeyAlgo: No usable host key; every "
+             "loaded slot lacks a certificate or signing source");
     }
     ctx->publicKeyAlgoCount = publicKeyAlgoCount;
 }
@@ -2588,14 +2691,20 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
     if (HINTISSET(keyHint) && HINTISSET(certHint)) {
         byte* key = NULL;
         word32 keySz;
+        int copyKey;
 #ifdef WOLFSSH_TPM
         int keyIsTpm = ctx->privateKey[keyHint].isTpm;
 #endif
+
+        /* A cert-store or TPM slot has no software key bytes to copy. */
+        copyKey = ctx->privateKey[keyHint].key != NULL
+                && ctx->privateKey[keyHint].keySz > 0;
 
 #ifdef WOLFSSH_TPM
         /* A TPM-backed key has no software bytes to copy; clear any stale
          * software key on the certificate slot and mark it TPM-backed. */
         if (keyIsTpm) {
+            copyKey = 0;
             if (ctx->privateKey[certHint].key != NULL) {
                 WS_FORCEZERO(ctx->privateKey[certHint].key,
                         ctx->privateKey[certHint].keySz);
@@ -2604,14 +2713,14 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
                 ctx->privateKey[certHint].key = NULL;
                 ctx->privateKey[certHint].keySz = 0;
             }
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            /* A slot is never both TPM- and cert-store backed. */
+            ClearCertStoreKey(ctx, &ctx->privateKey[certHint]);
+        #endif
             ctx->privateKey[certHint].isTpm = 1;
         }
 #endif
-        if (ret == WS_SUCCESS
-#ifdef WOLFSSH_TPM
-                && !keyIsTpm
-#endif
-                ) {
+        if (ret == WS_SUCCESS && copyKey) {
             keySz = ctx->privateKey[keyHint].keySz;
             key = (byte*)WMALLOC(keySz, ctx->heap, DYNTYPE_PRIVKEY);
             if (key == NULL) {
@@ -2625,7 +2734,24 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
                             ctx->privateKey[certHint].keySz);
                     WFREE(ctx->privateKey[certHint].key,
                             ctx->heap, DYNTYPE_PRIVKEY);
+                    ctx->privateKey[certHint].key = NULL;
+                    ctx->privateKey[certHint].keySz = 0;
                 }
+            #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                /* Defensive only: SetHostPrivateKey() and
+                 * SetHostCertificate() both reject mixing a file credential
+                 * with a cert-store slot before reaching here, so this can
+                 * only clear a state no writer currently produces. The
+                 * slot's key material and its cert-store state change
+                 * together, so the store certificate is never sent as K_S
+                 * with a signature made by this software key. */
+                if (IsCertStoreKey(&ctx->privateKey[certHint])) {
+                    WLOG(WS_LOG_DEBUG, "UpdateHostCertificates: Dropping "
+                         "the cert-store x509v3 host key; the loaded file "
+                         "key replaces it");
+                }
+                ClearCertStoreKey(ctx, &ctx->privateKey[certHint]);
+            #endif
                 ctx->privateKey[certHint].key = key;
                 ctx->privateKey[certHint].keySz = keySz;
             #ifdef WOLFSSH_TPM
@@ -2668,9 +2794,24 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
     destIdx = HINTISSET(certIdx) ? certIdx : ctx->privateKeyCount;
 
     if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        /* der not taken on this path; free it to avoid a leak */
         WFREE(der, ctx->heap, dynamicType);
         ret = WS_CTX_KEY_COUNT_E;
     }
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* A file certificate cannot be paired with a cert-store host key: the
+     * store slot holds no software key to copy onto the certificate slot,
+     * and clearing the store state below would tear down the only signing
+     * source this algorithm has. Report the misconfiguration instead. */
+    else if (IsCertStoreKey(ctx->privateKey + destIdx)
+            || (HINTISSET(keyIdx) && IsCertStoreKey(ctx->privateKey + keyIdx))) {
+        WLOG(WS_LOG_ERROR, "SetHostCertificate: The host key for this "
+             "algorithm comes from the certificate store, which supplies its "
+             "own certificate; do not also load a host certificate file");
+        WFREE(der, ctx->heap, dynamicType);
+        ret = WS_BAD_ARGUMENT;
+    }
+    #endif
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
@@ -2681,6 +2822,13 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
             WFREE(der, ctx->heap, dynamicType);
         }
         else {
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            /* Defensive only: the else-if above already rejects a cert-store
+             * slot, so this can only clear a slot in a state no writer
+             * currently produces. */
+            ClearCertStoreKey(ctx, pvtKey);
+        #endif
+
             if (pvtKey->publicKeyFmt == certId) {
                 if (pvtKey->cert != NULL) {
                     WFREE(pvtKey->cert, ctx->heap, dynamicType);
@@ -2690,13 +2838,6 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
                 ctx->privateKeyCount++;
                 pvtKey->publicKeyFmt = certId;
             }
-
-        #ifdef WOLFSSH_WINDOWS_CERT_STORE
-            /* A file-based certificate is replacing this slot's contents;
-             * drop any cert-store state so it is not mistaken for a
-             * cert-store key. */
-            ClearCertStoreKey(ctx, pvtKey);
-        #endif
 
             pvtKey->cert = der;
             pvtKey->certSz = derSz;
@@ -2710,6 +2851,54 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
 }
 
 #endif
+
+
+#if defined(WOLFSSH_WINDOWS_CERT_STORE) && defined(WOLFSSH_CERTS)
+/* Index of the claimed slot holding fmt, or WOLFSSH_MAX_PVT_KEYS. Shared
+ * with the cert-store slot bookkeeping in src/ssh.c so the two lookups
+ * cannot drift. */
+WOLFSSH_LOCAL word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt)
+{
+    word32 i;
+
+    for (i = 0; i < ctx->privateKeyCount; i++) {
+        if (ctx->privateKey[i].publicKeyFmt == fmt) {
+            return i;
+        }
+    }
+
+    return WOLFSSH_MAX_PVT_KEYS;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE && WOLFSSH_CERTS */
+
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* True when loading a key for keyId over the slot at destIdx would clobber
+ * a cert-store-backed credential: either the slot itself or the x509v3
+ * certificate slot paired with keyId. Shared by SetHostPrivateKey() and
+ * wolfSSH_SetHostTpmKey() so the two rejections cannot drift. */
+static int CertStoreSlotConflict(const WOLFSSH_CTX* ctx, word32 destIdx,
+        byte keyId)
+{
+    int conflict;
+
+    conflict = IsCertStoreKey(ctx->privateKey + destIdx);
+#ifdef WOLFSSH_CERTS
+    if (!conflict) {
+        word32 certIdx;
+
+        certIdx = FindPvtKeyIdx(ctx, CertTypeForId(keyId));
+        if (certIdx < WOLFSSH_MAX_PVT_KEYS) {
+            conflict = IsCertStoreKey(ctx->privateKey + certIdx);
+        }
+    }
+#else
+    WOLFSSH_UNUSED(keyId);
+#endif
+
+    return conflict;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 
 static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
@@ -2733,6 +2922,21 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         WFREE(der, ctx->heap, dynamicType);
         ret = WS_CTX_KEY_COUNT_E;
     }
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Mirror of SetHostCertificate()'s rejection so the two load orders
+     * agree: a file key over a cert-store slot would silently tear down the
+     * store's x509v3 slot and its certificate while still reporting
+     * WS_SUCCESS. Refuse the mixed configuration instead; clear the store
+     * key first if replacing it is intended. */
+    else if (CertStoreSlotConflict(ctx, destIdx, keyId)) {
+        WLOG(WS_LOG_ERROR, "SetHostPrivateKey: The host key for this "
+             "algorithm comes from the certificate store; do not also load "
+             "a host key file");
+        WS_FORCEZERO(der, derSz);
+        WFREE(der, ctx->heap, dynamicType);
+        ret = WS_BAD_ARGUMENT;
+    }
+#endif
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
@@ -2740,19 +2944,14 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
             if (pvtKey->key != NULL) {
                 WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
                 WFREE(pvtKey->key, ctx->heap, dynamicType);
+                pvtKey->key = NULL;
+                pvtKey->keySz = 0;
             }
         }
         else {
             ctx->privateKeyCount++;
             pvtKey->publicKeyFmt = keyId;
         }
-
-        #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* This slot is now backed by an in-memory key; drop any cert-store
-         * state it may have carried so signing/K_S do not use a stale
-         * certificate context. */
-        ClearCertStoreKey(ctx, pvtKey);
-        #endif
 
         pvtKey->key = der;
         pvtKey->keySz = derSz;
@@ -2795,6 +2994,19 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
     if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
         ret = WS_CTX_KEY_COUNT_E;
     }
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Mirror of SetHostPrivateKey()/SetHostCertificate()'s rejection: a TPM
+     * key over a cert-store slot would silently tear down the store's
+     * x509v3 slot and its certificate while still reporting WS_SUCCESS.
+     * Refuse the mixed configuration instead; clear the store key first if
+     * replacing it is intended. */
+    else if (CertStoreSlotConflict(ctx, destIdx, keyId)) {
+        WLOG(WS_LOG_ERROR, "wolfSSH_SetHostTpmKey: The host key for this "
+             "algorithm comes from the certificate store; do not also "
+             "register a TPM key for it");
+        ret = WS_BAD_ARGUMENT;
+    }
+#endif
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
@@ -2810,6 +3022,12 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
         pvtKey->key = NULL;
         pvtKey->keySz = 0;
         pvtKey->isTpm = 1;
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* Defensive only: the else-if above already rejects a cert-store
+         * slot, so this can only clear a slot in a state no writer
+         * currently produces. */
+        ClearCertStoreKey(ctx, pvtKey);
+    #endif
 
     #ifdef WOLFSSH_CERTS
         /* Mark the matching certificate slot TPM-backed so certificate KEX
@@ -2826,6 +3044,9 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
                     ctx->privateKey[certIdx].keySz = 0;
                 }
                 ctx->privateKey[certIdx].isTpm = 1;
+            #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                ClearCertStoreKey(ctx, &ctx->privateKey[certIdx]);
+            #endif
                 break;
             }
         }
@@ -6080,6 +6301,10 @@ int wcPrimeForId(byte id)
         case ID_ECDSA_SHA2_NISTP256:
             return ECC_SECP256R1;
 #endif
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+        case ID_X509V3_ECDSA_SHA2_NISTP256:
+            return ECC_SECP256R1;
+#endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP384
         case ID_ECDH_SHA2_NISTP384:
             return ECC_SECP384R1;
@@ -6090,6 +6315,10 @@ int wcPrimeForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
         case ID_ECDSA_SHA2_NISTP384:
+            return ECC_SECP384R1;
+#endif
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
+        case ID_X509V3_ECDSA_SHA2_NISTP384:
             return ECC_SECP384R1;
 #endif
 #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
@@ -6107,6 +6336,10 @@ int wcPrimeForId(byte id)
 #endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
         case ID_ECDSA_SHA2_NISTP521:
+            return ECC_SECP521R1;
+#endif
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+        case ID_X509V3_ECDSA_SHA2_NISTP521:
             return ECC_SECP521R1;
 #endif
         default:
@@ -7408,7 +7641,19 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
 #ifndef WOLFSSH_NO_ECDSA
     byte* der = NULL;
     word32 derSz, idx = 0;
+    int expectedCurve;
+    int actualCurve;
     int error;
+
+    /* One id-to-curve map for plain and certificate keys: wcPrimeForId()
+     * covers the ID_X509V3_ECDSA_* ids. An unhandled id is rejected before
+     * the decode, matching ParseECCPubKey(), so the ECC_CURVE_INVALID
+     * sentinel can never compare equal in the binding check below. */
+    expectedCurve = wcPrimeForId(ssh->handshake->pubKeyId);
+    if (expectedCurve == ECC_CURVE_INVALID) {
+        /* Same code ParseECCPubKey() reports for an unmapped id. */
+        return WS_INVALID_PRIME_CURVE;
+    }
 
     ret = ParsePubKeyCert(ssh, pubKey, pubKeySz, &der, &derSz);
     if (ret == WS_SUCCESS) {
@@ -7420,6 +7665,24 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
         if (error == 0)
             error = wc_EccPublicKeyDecode(der, &idx,
                 &sigKeyBlock_ptr->sk.ecc.key, derSz);
+        /* Bind the certificate's key to the negotiated curve, as
+         * ParseECCPubKey does for plain keys. Prefer the decoded domain
+         * parameters over the ecc_sets table index so a key that did not
+         * resolve to a table entry still binds correctly. */
+        if (error == 0) {
+            if (sigKeyBlock_ptr->sk.ecc.key.dp != NULL) {
+                actualCurve = sigKeyBlock_ptr->sk.ecc.key.dp->id;
+            }
+            else {
+                actualCurve =
+                    wc_ecc_get_curve_id(sigKeyBlock_ptr->sk.ecc.key.idx);
+            }
+            if (actualCurve != expectedCurve) {
+                WLOG(WS_LOG_DEBUG, "ParseECCPubKeyCert: certificate key "
+                     "curve does not match the negotiated algorithm");
+                error = WS_INVALID_PRIME_CURVE;
+            }
+        }
         if (error == 0) {
             sigKeyBlock_ptr->keySz = (word32)sizeof(sigKeyBlock_ptr->sk.ecc.key);
         }
@@ -10382,6 +10645,29 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = WS_CRYPTO_FAILED;
     }
 
+    /* Bind the certificate's key to the declared algorithm so one credential
+     * cannot authenticate under multiple x509v3-ecdsa-* names, matching the
+     * ParseECCPubKeyCert() binding on the host-key path. */
+    if (ret == WS_SUCCESS) {
+        int expectedCurve;
+        int actualCurve;
+
+        expectedCurve = wcPrimeForId(NameToId(
+                (const char*)pk->publicKeyType, pk->publicKeyTypeSz));
+        if (key_ptr->dp != NULL) {
+            actualCurve = key_ptr->dp->id;
+        }
+        else {
+            actualCurve = wc_ecc_get_curve_id(key_ptr->idx);
+        }
+        if (expectedCurve == ECC_CURVE_INVALID ||
+                actualCurve != expectedCurve) {
+            WLOG(WS_LOG_DEBUG, "DUAREC: certificate key curve does not "
+                    "match the declared algorithm");
+            ret = WS_INVALID_PRIME_CURVE;
+        }
+    }
+
     if (ret == WS_SUCCESS) {
         i = 0;
         /* First check that the signature's public key type matches the one
@@ -11785,8 +12071,19 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
             }
         }
         else {
-            WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting request. "
-                "Set one with wolfSSH_CTX_SetFwdCb().");
+            /* States a fixed property of the app's configuration but fires
+             * per peer request: WARN once per session so the operator error
+             * stays visible in release builds, DEBUG for the repeats so a
+             * peer cannot grow the log with every tcpip-forward request. */
+            if (!ssh->fwdCbMissingWarned) {
+                ssh->fwdCbMissingWarned = 1;
+                WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting "
+                    "request. Set one with wolfSSH_CTX_SetFwdCb().");
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "No forwarding callback set, rejecting "
+                    "request. Set one with wolfSSH_CTX_SetFwdCb().");
+            }
             ret = WS_UNIMPLEMENTED_E;
         }
     }
@@ -12077,7 +12374,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
              * forward. */
             if (typeId == ID_CHANTYPE_TCPIP_FORWARD &&
                     ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-                WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
+                /* Fires per peer open request, so DEBUG: at WARN an app
+                 * that logs warnings unconditionally (e.g. wolfsshd) would
+                 * let a peer grow the log with every open. */
+                WLOG(WS_LOG_DEBUG, "Rejecting forwarded-tcpip channel open "
                         "received by a server (wrong direction)");
                 fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                 ret = WS_ERROR;
@@ -12105,11 +12405,27 @@ static int DoChannelOpen(WOLFSSH* ssh,
                             ssh->channelOpenCtx);
                 }
                 else {
-                    WLOG(WS_LOG_WARN, "No channel open callback set "
-                            "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
-                            "channel open by default; typeId=%u, "
-                            "peerChannelId=%u",
-                            (word32)typeId, peerChannelId);
+                    /* Fires per channel open and announces a fail-open
+                     * policy, so WARN once per session (visible in release
+                     * builds) and DEBUG for the repeats, so a peer cannot
+                     * grow the log with every open request. The
+                     * accept-by-default policy itself is documented at
+                     * wolfSSH_CTX_SetChannelOpenCb() in ssh.h. */
+                    if (!ssh->chanOpenCbMissingWarned) {
+                        ssh->chanOpenCbMissingWarned = 1;
+                        WLOG(WS_LOG_WARN, "No channel open callback set "
+                                "(call wolfSSH_CTX_SetChannelOpenCb()), "
+                                "accepting channel open by default; "
+                                "typeId=%u, peerChannelId=%u",
+                                (word32)typeId, peerChannelId);
+                    }
+                    else {
+                        WLOG(WS_LOG_DEBUG, "No channel open callback set "
+                                "(call wolfSSH_CTX_SetChannelOpenCb()), "
+                                "accepting channel open by default; "
+                                "typeId=%u, peerChannelId=%u",
+                                (word32)typeId, peerChannelId);
+                    }
                 }
                 if (ssh->channelListSz == 0)
                     ssh->defaultPeerChannelId = peerChannelId;
@@ -12132,9 +12448,20 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 else {
                     /* Both forwarding channel types require an explicit policy
                      * callback; without one, fail closed rather than letting
-                     * the default-accept channelOpenCb path admit them. */
-                    WLOG(WS_LOG_WARN, "No forward callback set for forwarding "
-                            "channel, failing channel open");
+                     * the default-accept channelOpenCb path admit them.
+                     * Fires per peer open request: WARN once per session so
+                     * the operator error stays visible in release builds,
+                     * DEBUG for the repeats so a peer cannot grow the log
+                     * with every open request. */
+                    if (!ssh->fwdCbMissingWarned) {
+                        ssh->fwdCbMissingWarned = 1;
+                        WLOG(WS_LOG_WARN, "No forward callback set for "
+                                "forwarding channel, failing channel open");
+                    }
+                    else {
+                        WLOG(WS_LOG_DEBUG, "No forward callback set for "
+                                "forwarding channel, failing channel open");
+                    }
                     fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                     ret = WS_ERROR;
                 }
@@ -14565,6 +14892,19 @@ int SendKexInit(WOLFSSH* ssh)
         ret = WS_BAD_ARGUMENT;
     }
 
+    /* Loaded slots can all lack a signing source (RefreshPublicKeyAlgo
+     * skips them); fail here rather than send an empty, RFC 4253
+     * violating, server-host-key-algorithms list. Only applies when the
+     * advertised list is derived from ctx->publicKeyAlgo: an application
+     * that set its own algoListKey supplies the list directly and never
+     * reads these slots. */
+    if (ret == WS_SUCCESS && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
+            ssh->algoListKey == NULL && ssh->ctx->publicKeyAlgoCount == 0) {
+        WLOG(WS_LOG_ERROR, "No usable host key: every loaded slot lacks a "
+             "certificate or signing source");
+        ret = WS_BAD_ARGUMENT;
+    }
+
     if (ret == WS_SUCCESS) {
         /* Set self is keying flag since we started sending the KEX init msg */
         ssh->isKeying |= WOLFSSH_SELF_IS_KEYING;
@@ -15130,7 +15470,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     if (pubKeyDer != NULL)
                         WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
 
-                    if (ret != 0) {
+                    if (ret != 0 && ret != WS_MEMORY_E) {
                         WLOG(WS_LOG_DEBUG,
                             "SendKexDhReply: cert store RSA pubkey "
                             "decode failed %d", ret);
@@ -15271,17 +15611,10 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
                     INVALID_DEVID);
             scratch = 0;
-        #ifdef WOLFSSH_TPM
-            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
-                /* No private key in RAM; take the public point from the TPM. */
-                ret = wolfTPM2_EccKey_TpmToWolf(ssh->ctx->tpmDev,
-                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.ecc.key);
-                if (ret != 0)
-                    ret = WS_ECC_E;
-            }
-            else
-        #endif /* WOLFSSH_TPM */
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            /* A slot is never both cert-store and TPM backed; testing the
+             * cert store first matches the RSA case above and both SignH*
+             * helpers. */
             if (ret == 0 && IsCertStoreKey(&ssh->ctx->privateKey[keyIdx])) {
                 /* For cert store keys, extract the ECC public key from the
                  * DER certificate.  Signing uses the cert store handle via
@@ -15305,7 +15638,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     if (pubKeyDer != NULL)
                         WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
 
-                    if (ret != 0) {
+                    if (ret != 0 && ret != WS_MEMORY_E) {
                         WLOG(WS_LOG_DEBUG,
                             "SendKexDhReply: cert store ECC pubkey "
                             "decode failed %d", ret);
@@ -15320,6 +15653,16 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             }
             else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+        #ifdef WOLFSSH_TPM
+            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
+                /* No private key in RAM; take the public point from the TPM. */
+                ret = wolfTPM2_EccKey_TpmToWolf(ssh->ctx->tpmDev,
+                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.ecc.key);
+                if (ret != 0)
+                    ret = WS_ECC_E;
+            }
+            else
+        #endif /* WOLFSSH_TPM */
             if (ret == 0)
                 ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key,
                         &scratch, &sigKeyBlock_ptr->sk.ecc.key,
@@ -16574,51 +16917,74 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
 
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Every caller of these helpers sits in an RSA- or ECDSA-only region, so
+ * guard them the same way to avoid unused-static warnings on a build with
+ * both disabled (a degenerate combination the store loader rejects). */
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 /* Extract DER-encoded public key from a DER certificate.
  * Caller must WFREE(*outDer, heap, DYNTYPE_PUBKEY) on success.
- * Returns 0 on success. */
+ * Returns WS_SUCCESS on success, otherwise a WS_ error code. */
 static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
         byte** outDer, word32* outDerSz, void* heap)
 {
-    struct DecodedCert dCert;
+    struct DecodedCert* dCert = NULL;
     byte* pubKeyDer = NULL;
     word32 pubKeyDerSz = 0;
-    int ret;
+    int ret = 0;
 
     if (certDer == NULL || certDerSz == 0 || outDer == NULL ||
             outDerSz == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
-    wc_InitDecodedCert(&dCert, certDer, certDerSz, heap);
-    ret = wc_ParseCert(&dCert, CERT_TYPE, 0, NULL);
+    /* Heap-allocate unconditionally; DecodedCert is several KB and this is
+     * called on an already deep KEX path. */
+    dCert = (struct DecodedCert*)WMALLOC(sizeof(struct DecodedCert),
+            heap, DYNTYPE_CERT);
+    if (dCert == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    wc_InitDecodedCert(dCert, certDer, certDerSz, heap);
+    ret = wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL);
     if (ret == 0) {
-        ret = wc_GetPubKeyDerFromCert(&dCert, NULL, &pubKeyDerSz);
-        if (ret == LENGTH_ONLY_E) {
+        ret = wc_GetPubKeyDerFromCert(dCert, NULL, &pubKeyDerSz);
+        if (ret == WC_NO_ERR_TRACE(LENGTH_ONLY_E) && pubKeyDerSz > 0) {
             ret = 0;
             pubKeyDer = (byte*)WMALLOC(pubKeyDerSz, heap, DYNTYPE_PUBKEY);
             if (pubKeyDer == NULL)
                 ret = WS_MEMORY_E;
         }
+        else {
+            /* The sizing call must report LENGTH_ONLY_E and a non-zero
+             * size; anything else is an error, so the copy call below can
+             * never run with a NULL destination. */
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
+        }
     }
     if (ret == 0)
-        ret = wc_GetPubKeyDerFromCert(&dCert, pubKeyDer, &pubKeyDerSz);
-    wc_FreeDecodedCert(&dCert);
+        ret = wc_GetPubKeyDerFromCert(dCert, pubKeyDer, &pubKeyDerSz);
+    wc_FreeDecodedCert(dCert);
+    WFREE(dCert, heap, DYNTYPE_CERT);
 
     if (ret == 0) {
         *outDer = pubKeyDer;
         *outDerSz = pubKeyDerSz;
+        ret = WS_SUCCESS;
     }
     else {
         if (pubKeyDer != NULL)
             WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
+        /* Keep wolfCrypt codes out of the wolfSSH error space. */
+        if (ret != WS_MEMORY_E)
+            ret = WS_CRYPTO_FAILED;
     }
 
     return ret;
 }
 
 
-#ifdef WOLFSSH_CERTS
 /* Map a public key algorithm ID to the base key format ID stored in a
  * private key slot's publicKeyFmt. The RSA signature variants and the
  * X509 form collapse to ID_SSH_RSA, and the X509 ECDSA forms collapse to
@@ -16649,22 +17015,50 @@ static byte CertStoreBaseKeyId(byte id)
 }
 
 
-/* Find the cert-store-backed private key slot whose key type matches the
- * public key algorithm keyId being used, so that a config holding both an
- * RSA and an ECC cert-store key selects the correct slot. Returns NULL
- * when no cert-store slot matches. */
-static const WOLFSSH_PVT_KEY* FindCertStoreKey(const WOLFSSH_CTX* ctx,
-        byte keyId)
+#ifdef WOLFSSH_CERTS
+/* Resolve the cert-store slot to sign a client user-auth request with. The
+ * slot must match the key type of the public key algorithm keyId AND hold
+ * the exact certificate being offered, so a credential the application
+ * supplied itself is never silently signed with a store key, and several
+ * slots sharing a base key type do not shadow one another. Returns NULL
+ * when the request is not a cert-store request, in which case the caller
+ * falls back to the in-memory key. */
+static const WOLFSSH_PVT_KEY* FindCertStoreAuthKey(const WOLFSSH_CTX* ctx,
+        byte keyId, const byte* cert, word32 certSz)
 {
     const WOLFSSH_PVT_KEY* pvtKey;
     byte baseId;
     word32 i;
 
+    if (ctx == NULL || cert == NULL || certSz == 0) {
+        return NULL;
+    }
+
+    /* Prefer the slot registered under the exact algorithm id: the store
+     * loader registers the same certificate under both the plain and x509v3
+     * ids, so a base-id match alone cannot tell those two slots apart. */
+    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
+        pvtKey = &ctx->privateKey[i];
+        if (IsCertStoreKey(pvtKey) && pvtKey->publicKeyFmt == keyId &&
+                pvtKey->cert != NULL && pvtKey->certSz == certSz &&
+                WMEMCMP(pvtKey->cert, cert, certSz) == 0) {
+            return pvtKey;
+        }
+    }
+
+    /* Base-id fallback pass. Currently unreachable: every caller passes a
+     * keyId from NameToId() of the declared x509v3 name, and the loader
+     * registers the certificate under that exact id too, so any slot this
+     * pass could match already matched above. Kept as future-proofing for
+     * signature-variant ids (e.g. ID_RSA_SHA2_256 resolving to the
+     * ID_SSH_RSA slot) if a caller ever passes one. */
     baseId = CertStoreBaseKeyId(keyId);
-    for (i = 0; i < ctx->privateKeyCount; i++) {
+    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
         pvtKey = &ctx->privateKey[i];
         if (IsCertStoreKey(pvtKey) &&
-                CertStoreBaseKeyId(pvtKey->publicKeyFmt) == baseId) {
+                CertStoreBaseKeyId(pvtKey->publicKeyFmt) == baseId &&
+                pvtKey->cert != NULL && pvtKey->certSz == certSz &&
+                WMEMCMP(pvtKey->cert, cert, certSz) == 0) {
             return pvtKey;
         }
     }
@@ -16675,11 +17069,30 @@ static const WOLFSSH_PVT_KEY* FindCertStoreKey(const WOLFSSH_CTX* ctx,
 
 
 #ifndef WOLFSSH_NO_ECDSA
+/* Field size in bytes of the curve behind an ECDSA key id, 0 when the id
+ * is not an ECDSA type. */
+static word32 CertStoreCurveSzForId(byte id)
+{
+    switch (CertStoreBaseKeyId(id)) {
+        case ID_ECDSA_SHA2_NISTP256:
+            return 32;
+        case ID_ECDSA_SHA2_NISTP384:
+            return 48;
+        case ID_ECDSA_SHA2_NISTP521:
+            return 66;
+    }
+    return 0;
+}
+
+
 /* Convert an ECDSA signature from NCryptSignHash, which is raw r||s with
- * each component exactly half of sigSz (not DER), into separate minimal
- * mpint components with leading zeros trimmed. On input rSz and sSz hold
- * the capacities of r and s; on output they hold the trimmed sizes. */
-static int CertStoreEccSigToRs(const byte* sig, word32 sigSz,
+ * each component exactly the curve field size (not DER), into separate
+ * minimal mpint components with leading zeros trimmed. curveSz is the
+ * expected field size; a blob of any other length (e.g. a DER SEQUENCE
+ * from a misbehaving KSP) is rejected rather than split blindly. On input
+ * rSz and sSz hold the capacities of r and s; on output they hold the
+ * trimmed sizes. */
+static int CertStoreEccSigToRs(const byte* sig, word32 sigSz, word32 curveSz,
         byte* r, word32* rSz, byte* s, word32* sSz)
 {
     word32 halfSz;
@@ -16691,12 +17104,13 @@ static int CertStoreEccSigToRs(const byte* sig, word32 sigSz,
     sOff = 0;
     ret = WS_SUCCESS;
 
-    if (sigSz < 2 || (sigSz & 1) != 0) {
-        WLOG(WS_LOG_DEBUG, "CertStoreEccSigToRs: Invalid signature size");
+    if (curveSz == 0 || sigSz != curveSz * 2) {
+        WLOG(WS_LOG_DEBUG, "CertStoreEccSigToRs: Signature size does not "
+             "match the curve");
         ret = WS_ECC_E;
     }
     if (ret == WS_SUCCESS) {
-        halfSz = sigSz / 2;
+        halfSz = curveSz;
         if (halfSz > *rSz || halfSz > *sSz) {
             WLOG(WS_LOG_DEBUG, "CertStoreEccSigToRs: Signature too large");
             ret = WS_ECC_E;
@@ -16716,19 +17130,74 @@ static int CertStoreEccSigToRs(const byte* sig, word32 sigSz,
 
     return ret;
 }
+
+
+/* Self-verify a cert-store ECDSA signature (raw r and s) against the
+ * certificate's public key, shared by the KEX (SignHEcdsa) and user-auth
+ * (BuildUserAuthRequestEccCert) signing paths. Returns WS_SUCCESS when the
+ * signature verifies, WS_ECC_E when it does not, WS_MEMORY_E on allocation
+ * failure. */
+static int CertStoreEccSelfVerify(const byte* r, word32 rSz,
+        const byte* s, word32 sSz, const byte* digest, word32 digestSz,
+        ecc_key* key, void* heap)
+{
+    byte* derSig;
+    word32 derSigSz;
+    int verified;
+    int ret;
+#ifndef WOLFSSH_SMALL_STACK
+    byte derSig_s[ECC_MAX_SIG_SIZE];
+#endif
+
+    ret = WS_SUCCESS;
+    verified = 0;
+    WOLFSSH_UNUSED(heap);
+#ifdef WOLFSSH_SMALL_STACK
+    derSig = (byte*)WMALLOC(ECC_MAX_SIG_SIZE, heap, DYNTYPE_TEMP);
+    if (derSig == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    derSig = derSig_s;
+#endif
+
+    if (ret == WS_SUCCESS) {
+        derSigSz = ECC_MAX_SIG_SIZE;
+        ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz, derSig, &derSigSz);
+        if (ret == 0) {
+            ret = wc_ecc_verify_hash(derSig, derSigSz, digest, digestSz,
+                    &verified, key);
+        }
+        if (ret != 0 || verified != 1) {
+            WLOG(WS_LOG_DEBUG, "CertStoreEccSelfVerify: Cert store "
+                 "signature failed self-verify");
+            ret = WS_ECC_E;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
+    }
+#ifdef WOLFSSH_SMALL_STACK
+    if (derSig != NULL)
+        WFREE(derSig, heap, DYNTYPE_TEMP);
+#endif
+
+    return ret;
+}
 #endif /* !WOLFSSH_NO_ECDSA */
 
 
 /* Signing abstraction for MS Certificate Store support
  * This function provides a clean abstraction for signing that can use
  * either traditional keys or keys from the MS Certificate Store.
- * For RSA, expects encoded signature (digest + OID) in digest parameter.
- * For ECDSA, expects raw hash in digest parameter.
+ * For RSA, expects encoded signature (digest + OID) in the data parameter.
+ * For ECDSA, expects raw hash in the data parameter.
+ * sigSz is in/out: on input the capacity of sig, which NCryptSignHash uses
+ * as the output buffer size; on output the produced signature length.
  */
 static int SignWithCertStoreKey(WOLFSSH* ssh,
         const WOLFSSH_PVT_KEY* pvtKey,
         const byte* data, word32 dataSz,
-        enum wc_HashType hashId,
         byte* sig, word32* sigSz)
 {
     int ret = WS_SUCCESS;
@@ -16741,14 +17210,14 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
 
     WLOG(WS_LOG_DEBUG, "Entering SignWithCertStoreKey()");
 
-    /* hashId is no longer needed now that only the NCRYPT signing path
-     * (which derives the algorithm from the key/DigestInfo) is used. */
     WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(hashId);
 
-    if (pvtKey == NULL || !pvtKey->useCertStore ||
-        pvtKey->certStoreContext == NULL) {
+    if (!IsCertStoreKey(pvtKey)) {
         WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Not a cert store key");
+        return WS_BAD_ARGUMENT;
+    }
+    if (sig == NULL || sigSz == NULL || *sigSz == 0) {
+        WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Bad signature buffer");
         return WS_BAD_ARGUMENT;
     }
 
@@ -16760,8 +17229,8 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
     if (!CryptAcquireCertificatePrivateKey(pCertContext,
             CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
             NULL, &hCryptProv, &dwKeySpec, &fCallerFreeProv)) {
-        DWORD dwErr = GetLastError();
-        WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Failed to acquire NCRYPT private key, error: %lu", dwErr);
+        WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Failed to acquire NCRYPT "
+                "private key, error: %lu", (unsigned long)GetLastError());
         return WS_CRYPTO_FAILED;
     }
 
@@ -16808,7 +17277,15 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
 
         if (ret == WS_SUCCESS) {
             if (nCryptRet != 0) {
-                WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: NCryptSignHash failed, error: 0x%08x", nCryptRet);
+                WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: NCryptSignHash "
+                        "failed, error: 0x%08lx", (unsigned long)nCryptRet);
+                ret = WS_CRYPTO_FAILED;
+            } else if (dwSigLen == 0 || dwSigLen > cbSignature) {
+                /* Do not trust a KSP-reported length past the caller's
+                 * capacity; downstream copies *sigSz bytes from sig. */
+                WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Bad signature "
+                        "length %lu (capacity %lu)", (unsigned long)dwSigLen,
+                        (unsigned long)cbSignature);
                 ret = WS_CRYPTO_FAILED;
             } else {
                 *sigSz = dwSigLen;
@@ -16817,14 +17294,21 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
         }
     }
 
-    /* Free the key handle if we acquired it */
+    /* Free the key handle if we acquired it. Only NCRYPT keys are acquired
+     * above; the CSP release is kept for the flags changing. */
     if (fCallerFreeProv) {
-        NCryptFreeObject(hCryptProv);
+        if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
+            NCryptFreeObject(hCryptProv);
+        }
+        else {
+            CryptReleaseContext(hCryptProv, 0);
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SignWithCertStoreKey(), ret = %d", ret);
     return ret;
 }
+#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 
@@ -16879,8 +17363,31 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_TPM
+        byte signedByTpm = 0;
+    #endif
+
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
             IdToName(ssh->handshake->pubKeyId));
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* A slot is never both cert-store and TPM backed; testing the
+         * cert-store first matches SendKexGetSigningKey()'s dispatch. */
+        if (IsCertStoreKey(sigKey->pvtKey)) {
+            /* Use cert store signing abstraction; *sigSz carries the sig
+             * buffer capacity in and the produced length out. */
+            ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, encSig, encSigSz,
+                    sig, sigSz);
+            if (ret == WS_SUCCESS && *sigSz == 0) {
+                WLOG(WS_LOG_DEBUG, "SignHRsa: Cert store sign gave no "
+                        "signature");
+                ret = WS_RSA_E;
+            }
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SignHRsa: Cert store sign failed");
+            }
+        }
+        else
+        #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         #ifdef WOLFSSH_TPM
         if (ssh->handshake->useTpm && ssh->ctx->tpmDev != NULL
                 && ssh->ctx->tpmKey != NULL) {
@@ -16888,32 +17395,24 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
             ret = wolfTPM2_SignHashScheme(ssh->ctx->tpmDev,
                 ssh->ctx->tpmKey, digest, (int)digestSz, sig, (int*)sigSz,
                 TPM_ALG_RSASSA, TPM2_GetTpmHashType(hashId));
-            if (ret == 0) {
+            /* The self-check below is skipped for the TPM, so a zero-length
+             * signature would otherwise be emitted in the KEXDH_REPLY. */
+            if (ret == 0 && *sigSz > 0) {
                 ret = WS_SUCCESS;
             }
             else {
                 WLOG(WS_LOG_DEBUG, "SignHRsa: Bad TPM Sign");
                 ret = WS_RSA_E;
             }
+            signedByTpm = 1;
         }
         else
         #endif /* WOLFSSH_TPM */
-        #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* Check if this is a cert store key */
-        if (IsCertStoreKey(sigKey->pvtKey)) {
-            /* Use cert store signing abstraction */
-            ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, encSig, encSigSz,
-                    hashId, sig, sigSz);
-            if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SignHRsa: Cert store sign failed");
-            }
-        }
-        else
-        #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
-            /* Use traditional key signing */
+            /* Use traditional key signing; *sigSz holds the capacity the
+             * caller gave the sig buffer, same as the cert-store branch. */
             ret = wc_RsaSSL_Sign(encSig, encSigSz, sig,
-                    KEX_SIG_SIZE, &sigKey->sk.rsa.key,
+                    *sigSz, &sigKey->sk.rsa.key,
                     ssh->rng);
             if (ret <= 0) {
                 WLOG(WS_LOG_DEBUG, "SignHRsa: Bad RSA Sign");
@@ -16924,27 +17423,18 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
                 ret = WS_SUCCESS;
             }
         }
-    }
 
-    if (ret == WS_SUCCESS
-    #ifdef WOLFSSH_TPM
-            && !ssh->handshake->useTpm
-    #endif
-            ) {
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* For cert store keys the private key lives in the Windows cert
-         * store and the in-memory RsaKey may only contain the public
-         * half extracted from the certificate.  The self-verify step
-         * still works because the public key was decoded from the cert
-         * in SendKexDhReply. */
-        if (IsCertStoreKey(sigKey->pvtKey)) {
-            /* Verify using the public-key-only RsaKey decoded from
-             * the cert store certificate. */
-            ret = wolfSSH_RsaVerify(sig, *sigSz, encSig, encSigSz,
-                    &sigKey->sk.rsa.key, heap, "SignHRsa(certStore)");
-        } else
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
-        {
+        /* Self-verify keyed to the branch that actually signed, not to the
+         * handshake flag, so a future divergence between the two cannot skip
+         * the check. */
+        if (ret == WS_SUCCESS
+        #ifdef WOLFSSH_TPM
+                && !signedByTpm
+        #endif
+                ) {
+            /* For a cert store key the RsaKey holds only the public half
+             * decoded from the certificate by SendKexGetSigningKey(), which
+             * is all the self-verify needs. */
             ret = wolfSSH_RsaVerify(sig, *sigSz, encSig, encSigSz,
                     &sigKey->sk.rsa.key, heap, "SignHRsa");
         }
@@ -17053,6 +17543,20 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "Signing hash with %s.",
                 IdToName(ssh->handshake->pubKeyId));
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* A slot is never both cert-store and TPM backed; testing the
+         * cert-store first matches SignHRsa() and SendKexGetSigningKey(). */
+        if (IsCertStoreKey(sigKey->pvtKey)) {
+            /* Use cert store signing abstraction - ECDSA uses raw hash.
+             * The signature is self-verified after the r/s split below. */
+            ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, digest, digestSz,
+                    sig, sigSz);
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SignHEcdsa: Cert store sign failed");
+            }
+        }
+        else
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
     #ifdef WOLFSSH_TPM
         if (useTpm) {
             ret = wolfTPM2_SignHashScheme(ssh->ctx->tpmDev, ssh->ctx->tpmKey,
@@ -17068,23 +17572,6 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         }
         else
     #endif /* WOLFSSH_TPM */
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* Check if this is a cert store key */
-        if (IsCertStoreKey(sigKey->pvtKey)) {
-            /* Use cert store signing abstraction - ECDSA uses raw hash.
-             * Note: unlike the RSA path, ECDSA does not self-verify here
-             * because NCryptSignHash returns raw r||s (not DER), and
-             * converting back for wc_ecc_verify_hash would add complexity.
-             * The key exchange hash comparison by the peer serves as
-             * the primary verification. */
-            ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, digest, digestSz,
-                    hashId, sig, sigSz);
-            if (ret != WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "SignHEcdsa: Cert store sign failed");
-            }
-        }
-        else
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
             /* Use traditional key signing */
             ret = wc_ecc_sign_hash(digest, digestSz, sig, sigSz, ssh->rng,
@@ -17114,6 +17601,24 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* NCryptSignHash for ECDSA returns raw r||s (each half the curve
+         * size), NOT DER-encoded.  Split directly. Same branch order as the
+         * signing dispatch above. */
+        if (IsCertStoreKey(sigKey->pvtKey)) {
+            ret = CertStoreEccSigToRs(sig, *sigSz,
+                    CertStoreCurveSzForId(sigKey->pvtKey->publicKeyFmt),
+                    r, &rSz, s, &sSz);
+            if (ret == WS_SUCCESS) {
+                /* Self-verify with the certificate public key decoded into
+                 * sk.ecc.key by SendKexGetSigningKey(), matching the RSA
+                 * path's wolfSSH_RsaVerify() check. */
+                ret = CertStoreEccSelfVerify(r, rSz, s, sSz, digest, digestSz,
+                        &sigKey->sk.ecc.key, ssh->ctx->heap);
+            }
+        }
+        else
+    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
     #ifdef WOLFSSH_TPM
         if (useTpm) {
             /* TPM returns raw R||S, each half left-padded to the curve size. */
@@ -17136,13 +17641,6 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         }
         else
     #endif /* WOLFSSH_TPM */
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* NCryptSignHash for ECDSA returns raw r||s (each half of sigSz),
-         * NOT DER-encoded.  Split directly. */
-        if (IsCertStoreKey(sigKey->pvtKey)) {
-            ret = CertStoreEccSigToRs(sig, *sigSz, r, &rSz, s, &sSz);
-        } else
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
             ret = wc_ecc_sig_to_rs(sig, *sigSz, r, &rSz, s, &sSz);
             if (ret != 0) {
@@ -17236,6 +17734,12 @@ static int SignHMlDsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #endif
 
 
+/* Sign the session hash with the negotiated host key. sigSz is in/out: on
+ * input the capacity of the sig buffer, which the signing backends (e.g.
+ * wc_RsaSSL_Sign, NCryptSignHash) trust as the output buffer size; on
+ * output the produced signature length. Callers must set *sigSz before
+ * every call -- a prior call rewrites it to the produced length, which is
+ * smaller than the capacity. */
 static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
         struct wolfSSH_sigKeyBlockFull *sigKey)
 {
@@ -19516,6 +20020,14 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
 
     if (ret == WS_SUCCESS) {
         word32 idx = 0;
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* Note: already inside #ifdef WOLFSSH_CERTS */
+        const WOLFSSH_PVT_KEY* pvtKey;
+
+        pvtKey = FindCertStoreAuthKey(ssh->ctx, keySig->keyId,
+                authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz);
+#endif
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled)
             ret = wc_RsaPublicKeyDecode(authData->sf.publicKey.publicKey,
@@ -19524,34 +20036,44 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
         else
         #endif /* WOLFSSH_AGENT */
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* Note: already inside #ifdef WOLFSSH_CERTS */
-        if (authData->sf.publicKey.privateKey == NULL) {
+        if (pvtKey != NULL) {
             /* Cert store: decode public key from the stored certificate */
-            const WOLFSSH_PVT_KEY* pvtKey;
+            byte*  pubKeyDer = NULL;
+            word32 pubKeyDerSz = 0;
 
-            pvtKey = FindCertStoreKey(ssh->ctx, keySig->keyId);
-            if (pvtKey == NULL || pvtKey->cert == NULL) {
-                ret = WS_BAD_ARGUMENT;
-            }
-            else {
-                byte*  pubKeyDer = NULL;
-                word32 pubKeyDerSz = 0;
-
-                ret = ExtractPubKeyDerFromCert(pvtKey->cert, pvtKey->certSz,
-                        &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
-                if (ret == 0) {
-                    idx = 0;
-                    ret = wc_RsaPublicKeyDecode(pubKeyDer, &idx,
-                            &keySig->ks.rsa.key, pubKeyDerSz);
+            ret = ExtractPubKeyDerFromCert(pvtKey->cert, pvtKey->certSz,
+                    &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
+            if (ret == WS_SUCCESS) {
+                idx = 0;
+                ret = wc_RsaPublicKeyDecode(pubKeyDer, &idx,
+                        &keySig->ks.rsa.key, pubKeyDerSz);
+                /* Keep wolfCrypt codes out of the wolfSSH error space,
+                 * matching the KEX cert-store call sites. */
+                if (ret != 0 && ret != WS_MEMORY_E) {
+                    WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestRsaCert: "
+                         "Bad public key decode from cert");
+                    ret = WS_CRYPTO_FAILED;
                 }
-                if (pubKeyDer != NULL)
-                    WFREE(pubKeyDer, ssh->ctx->heap, DYNTYPE_PUBKEY);
             }
-        } else
+            if (pubKeyDer != NULL)
+                WFREE(pubKeyDer, ssh->ctx->heap, DYNTYPE_PUBKEY);
+        }
+        else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+        if (authData->sf.publicKey.privateKey == NULL ||
+                authData->sf.publicKey.privateKeySz == 0) {
+            /* A cert-store-only client has no in-memory key; a decode of
+             * the empty buffer would report a misleading wolfCrypt ASN
+             * error. */
+            WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestRsaCert: No private "
+                 "key; the offered certificate matched no cert-store slot");
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
             ret = wc_RsaPrivateKeyDecode(authData->sf.publicKey.privateKey,
                     &idx, &keySig->ks.rsa.key,
                     authData->sf.publicKey.privateKeySz);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -19675,45 +20197,46 @@ static int BuildUserAuthRequestRsaCert(WOLFSSH* ssh,
             }
             if (ret == WS_SUCCESS) {
                 int sigSz;
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+                const WOLFSSH_PVT_KEY* pvtKey;
+#endif
+
                 WLOG(WS_LOG_INFO, "Signing hash with RSA.");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-                if (authData->sf.publicKey.privateKey == NULL) {
+                pvtKey = FindCertStoreAuthKey(ssh->ctx, keySig->keyId,
+                        authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz);
+                if (pvtKey != NULL) {
                     /* Cert store: sign with NCryptSignHash via
                      * SignWithCertStoreKey (pszAlgId=NULL, data is
                      * the already-encoded DigestInfo). */
-                    const WOLFSSH_PVT_KEY* pvtKey;
+                    word32 outSigSz;
 
-                    pvtKey = FindCertStoreKey(ssh->ctx, keySig->keyId);
-                    if (pvtKey != NULL) {
-                        word32 outSigSz = keySig->sigSz;
-                        ret = SignWithCertStoreKey(ssh, pvtKey,
-                                encDigest, encDigestSz, hashId,
-                                output + begin, &outSigSz);
-                        if (ret == WS_SUCCESS) {
-                            sigSz = (int)outSigSz;
-                            if (sigSz <= 0 ||
-                                    (word32)sigSz != keySig->sigSz) {
-                                WLOG(WS_LOG_DEBUG,
-                                    "SUAR: Cert store RSA sig length mismatch");
-                                ret = WS_RSA_E;
-                            }
-                            else {
-                                ret = wolfSSH_RsaVerify(output + begin,
-                                        outSigSz, encDigest, encDigestSz,
-                                        &keySig->ks.rsa.key, ssh->ctx->heap,
-                                        "SUAR(certStore)");
-                            }
-                        } else {
+                    outSigSz = keySig->sigSz;
+                    ret = SignWithCertStoreKey(ssh, pvtKey,
+                            encDigest, encDigestSz,
+                            output + begin, &outSigSz);
+                    if (ret == WS_SUCCESS) {
+                        sigSz = (int)outSigSz;
+                        if (sigSz <= 0 || (word32)sigSz != keySig->sigSz) {
                             WLOG(WS_LOG_DEBUG,
-                                "SUAR: Cert store RSA sign failed");
+                                "SUAR: Cert store RSA sig length mismatch");
                             ret = WS_RSA_E;
                         }
-                    } else {
-                        WLOG(WS_LOG_DEBUG,
-                            "SUAR: Cert store key not found for RSA");
-                        ret = WS_BAD_ARGUMENT;
+                        else {
+                            ret = wolfSSH_RsaVerify(output + begin,
+                                    outSigSz, encDigest, encDigestSz,
+                                    &keySig->ks.rsa.key, ssh->ctx->heap,
+                                    "SUAR(certStore)");
+                        }
                     }
-                } else
+                    else {
+                        WLOG(WS_LOG_DEBUG,
+                            "SUAR: Cert store RSA sign failed");
+                        ret = WS_RSA_E;
+                    }
+                }
+                else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
                 {
                     sigSz = wc_RsaSSL_Sign(encDigest, encDigestSz,
@@ -20066,31 +20589,36 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
     if (ret == WS_SUCCESS) {
         word32 idx = 0;
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* Note: already inside #ifdef WOLFSSH_CERTS.
-         * Cert store: no in-memory private key — decode public key from
+        /* Note: already inside #ifdef WOLFSSH_CERTS */
+        const WOLFSSH_PVT_KEY* pvtKey;
+
+        pvtKey = FindCertStoreAuthKey(ssh->ctx, keySig->keyId,
+                authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz);
+        /* Cert store: no in-memory private key, decode the public key from
          * the DER certificate that UsePrivateKey_fromStore saved. */
-        if (authData->sf.publicKey.privateKey == NULL) {
-            const WOLFSSH_PVT_KEY* pvtKey;
+        if (pvtKey != NULL) {
+            byte*  pubKeyDer = NULL;
+            word32 pubKeyDerSz = 0;
 
-            pvtKey = FindCertStoreKey(ssh->ctx, keySig->keyId);
-            if (pvtKey == NULL || pvtKey->cert == NULL) {
-                ret = WS_BAD_ARGUMENT;
-            }
-            else {
-                byte*  pubKeyDer = NULL;
-                word32 pubKeyDerSz = 0;
-
-                ret = ExtractPubKeyDerFromCert(pvtKey->cert, pvtKey->certSz,
-                        &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
-                if (ret == 0) {
-                    idx = 0;
-                    ret = wc_EccPublicKeyDecode(pubKeyDer, &idx,
-                            &keySig->ks.ecc.key, pubKeyDerSz);
+            ret = ExtractPubKeyDerFromCert(pvtKey->cert, pvtKey->certSz,
+                    &pubKeyDer, &pubKeyDerSz, ssh->ctx->heap);
+            if (ret == WS_SUCCESS) {
+                idx = 0;
+                ret = wc_EccPublicKeyDecode(pubKeyDer, &idx,
+                        &keySig->ks.ecc.key, pubKeyDerSz);
+                /* Keep wolfCrypt codes out of the wolfSSH error space,
+                 * matching the KEX cert-store call sites. */
+                if (ret != 0 && ret != WS_MEMORY_E) {
+                    WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestEccCert: "
+                         "Bad public key decode from cert");
+                    ret = WS_CRYPTO_FAILED;
                 }
-                if (pubKeyDer != NULL)
-                    WFREE(pubKeyDer, ssh->ctx->heap, DYNTYPE_PUBKEY);
             }
-        } else
+            if (pubKeyDer != NULL)
+                WFREE(pubKeyDer, ssh->ctx->heap, DYNTYPE_PUBKEY);
+        }
+        else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
         #if 0
@@ -20114,10 +20642,22 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
             else
         #endif
         #endif
-                ret = wc_EccPrivateKeyDecode(
-                        authData->sf.publicKey.privateKey,
-                        &idx, &keySig->ks.ecc.key,
-                        authData->sf.publicKey.privateKeySz);
+                if (authData->sf.publicKey.privateKey == NULL ||
+                        authData->sf.publicKey.privateKeySz == 0) {
+                    /* A cert-store-only client has no in-memory key; a
+                     * decode of the empty buffer would report a misleading
+                     * wolfCrypt ASN error. */
+                    WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestEccCert: No "
+                         "private key; the offered certificate matched no "
+                         "cert-store slot");
+                    ret = WS_BAD_ARGUMENT;
+                }
+                else {
+                    ret = wc_EccPrivateKeyDecode(
+                            authData->sf.publicKey.privateKey,
+                            &idx, &keySig->ks.ecc.key,
+                            authData->sf.publicKey.privateKeySz);
+                }
         }
     }
 
@@ -20221,6 +20761,13 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
     #endif
     #endif
     {
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+        const WOLFSSH_PVT_KEY* pvtKey;
+
+        pvtKey = FindCertStoreAuthKey(ssh->ctx, keySig->keyId,
+                authData->sf.publicKey.publicKey,
+                authData->sf.publicKey.publicKeySz);
+#endif
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_INFO, "Signing hash with ECDSA cert.");
             ret = wc_HashInit(&hash, hashId);
@@ -20230,39 +20777,46 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                     ret = wc_HashFinal(&hash, hashId, digest);
                 wc_HashFree(&hash, hashId);
             }
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Bad ECC Cert Hash");
+                ret = WS_ECC_E;
+            }
         }
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
         /* Cert store signing: NCryptSignHash returns raw r||s */
-        if (ret == WS_SUCCESS &&
-                authData->sf.publicKey.privateKey == NULL) {
-            const WOLFSSH_PVT_KEY* pvtKey;
-
-            pvtKey = FindCertStoreKey(ssh->ctx, keySig->keyId);
-            if (pvtKey != NULL) {
+        if (pvtKey != NULL) {
+            if (ret == WS_SUCCESS) {
                 ret = SignWithCertStoreKey(ssh, pvtKey,
-                        digest, digestSz, hashId, sig, &sigSz);
+                        digest, digestSz, sig, &sigSz);
                 if (ret == WS_SUCCESS) {
                     /* NCryptSignHash ECDSA output is raw r||s, each
-                     * component is half the total signature size. */
+                     * component is the curve field size. */
                     rSz = sSz = (word32)sizeof(rs) / 2;
                     r = rs;
                     s = rs + rSz;
-                    ret = CertStoreEccSigToRs(sig, sigSz, r, &rSz, s, &sSz);
+                    ret = CertStoreEccSigToRs(sig, sigSz,
+                            CertStoreCurveSzForId(pvtKey->publicKeyFmt),
+                            r, &rSz, s, &sSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG,
                                 "SUAR: Bad cert store ECC signature");
                     }
-                } else {
+                }
+                else {
                     WLOG(WS_LOG_DEBUG, "SUAR: Cert store ECC sign failed");
                     ret = WS_ECC_E;
                 }
-            } else {
-                WLOG(WS_LOG_DEBUG,
-                        "SUAR: Cert store key not found for ECC");
-                ret = WS_BAD_ARGUMENT;
             }
-        } else
+            if (ret == WS_SUCCESS) {
+                /* Self-verify against the certificate public key decoded by
+                 * PrepareUserAuthRequestEccCert(), matching every other
+                 * cert-store signing path. */
+                ret = CertStoreEccSelfVerify(r, rSz, s, sSz, digest, digestSz,
+                        &keySig->ks.ecc.key, ssh->ctx->heap);
+            }
+        }
+        else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
         {
             if (ret == WS_SUCCESS) {
@@ -25209,6 +25763,25 @@ int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
 
     return ret;
 }
+
+#ifdef WOLFSSH_CERTS
+/* Test hook for the certificate host key parser and its curve binding. The
+ * caller sets ssh->handshake->pubKeyId to the negotiated algorithm; pubKey
+ * holds an RFC 6187 chain blob whose chain must verify against the CTX's
+ * cert manager. */
+int wolfSSH_TestParseECCPubKeyCert(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useEcc = 1;
+    ret = ParseECCPubKeyCert(ssh, &sigKeyBlock, pubKey, pubKeySz);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
+#endif /* WOLFSSH_CERTS */
 
 #endif /* !WOLFSSH_NO_ECDSA */
 

@@ -33,7 +33,9 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
-#include <wolfssh/certman.h>
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wolfssh/certman.h>
+#endif
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -47,18 +49,15 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        #include <windows.h>
-        #include <wincrypt.h>
-        #include <ncrypt.h>
-        #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-            #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-        #endif
-        #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-            #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-        #endif
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
+
+/* Shared by sftpclient_test() and the -W pre-scan in main(). */
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #define SFTPC_OPTLIST_STORE "W:"
+#else
+    #define SFTPC_OPTLIST_STORE ""
+#endif
+#define SFTPC_OPTLIST "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:X" SFTPC_OPTLIST_STORE
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 
@@ -410,9 +409,22 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
+    printf(" -k <list>     set the comma separated list of server host key "
+           "algos to accept\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
+    printf(" -W <spec>     Windows cert store: \"store:subject[:flags]\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
+    printf("               flags: CURRENT_USER (default), LOCAL_MACHINE,\n");
+    printf("               USERS, CURRENT_SERVICE, SERVICES,\n");
+    printf("               CURRENT_USER_GROUP_POLICY,\n");
+    printf("               LOCAL_MACHINE_GROUP_POLICY,\n");
+    printf("               LOCAL_MACHINE_ENTERPRISE, each also with a\n");
+    printf("               CERT_SYSTEM_STORE_ prefix, or a number.\n");
+    printf("               -W supplies both keys; it can not be used with "
+           "-i, -j or -J.\n");
+    printf("               -W also skips the wolfssh home directory search,\n");
+    printf("               so -A/-d/-l resolve against the current "
+           "directory\n");
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
@@ -485,24 +497,24 @@ static int sftpParseModeAndPath(char* pt, char* modeBuf, char** pathOut,
         sz--;
     }
 
-    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+    for (idx = 0; idx < sz && (pt[0] == ' ' || pt[0] == '\t'); idx++, pt++);
     sz = (word32)WSTRLEN(pt);
 
     sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1) ? sz : WOLFSSH_MAX_OCTET_LEN - 1;
     WMEMCPY(modeBuf, pt, sz);
     modeBuf[sz] = '\0';
     for (idx = 0; idx < sz; idx++) {
-        if (modeBuf[idx] == ' ') {
+        if (modeBuf[idx] == ' ' || modeBuf[idx] == '\t') {
             modeBuf[idx] = '\0';
             break;
         }
     }
-    if (idx == 0 || (idx == sz && pt[sz] != ' '))
+    if (idx == 0 || (idx == sz && pt[sz] != ' ' && pt[sz] != '\t'))
         return 1;
 
     pt += (word32)WSTRLEN(modeBuf);
     sz = (word32)WSTRLEN(pt);
-    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+    for (idx = 0; idx < sz && (pt[0] == ' ' || pt[0] == '\t'); idx++, pt++);
 
     if (pt[0] == '\0')
         return 1;
@@ -559,6 +571,100 @@ static int doCmds(func_args* args)
             return -1;
         }
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
+
+        /* Anchored to the start of the line so a file name containing
+         * "creat" in another command does not match, and dispatched ahead
+         * of the unanchored substring matchers below so none of them can
+         * steal a creat line whose mode or path contains "get", "cd", etc.
+         * The keyword may be followed by a space, tab, or end of line; the
+         * bare-keyword form still reaches sftpParseModeAndPath so its
+         * empty-argument handling stays covered. */
+        pt = msg;
+        while (*pt == ' ' || *pt == '\t')
+            pt++;
+        if (WSTRNCMP(pt, "creat", 5) == 0 &&
+                (pt[5] == '\0' || pt[5] == ' ' || pt[5] == '\t' ||
+                 pt[5] == '\n')) {
+            char*            f = NULL;
+            char*            path;
+            char             mode[WOLFSSH_MAX_OCTET_LEN];
+            byte             handle[WOLFSSH_MAX_HANDLE];
+            word32           handleSz = WOLFSSH_MAX_HANDLE;
+            WS_SFTP_FILEATRB atr;
+            int              parseRet;
+            int              openRet = WS_FATAL_ERROR;
+            unsigned long    perVal;
+            char*            modeEnd;
+
+            pt += 5;
+            while (*pt == ' ' || *pt == '\t')
+                pt++;
+            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
+            if (parseRet == 1) {
+                printf("error with getting mode\r\n");
+                continue;
+            }
+            if (parseRet == -1) {
+                err_msg("Error malloc'ing");
+                return -1;
+            }
+
+            /* build permission attribute from octal mode string;
+             * wolfSSH_oct2dec is internal scope so strtoul is used here */
+            perVal = strtoul(mode, &modeEnd, 8);
+            if (*modeEnd == '\0' && perVal <= 07777) {
+                WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
+                atr.flags = WOLFSSH_FILEATRB_PERM;
+                atr.per   = (word32)perVal;
+
+                /* open (create) remote file with the given permissions */
+                handleSz = WOLFSSH_MAX_HANDLE;
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Open(ssh, path,
+                            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+                            WOLFSSH_FXF_TRUNC, &atr, handle, &handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                openRet = ret;
+            }
+            if (openRet == WS_SUCCESS) {
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                if (ret != WS_SUCCESS) {
+                    if (SFTP_FPUTS(args, "Unable to close file handle\n") < 0) {
+                        err_msg("fputs error");
+                        WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                        return -1;
+                    }
+                }
+            }
+            else {
+                if (SFTP_FPUTS(args, "Unable to create file\n") < 0) {
+                    err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    return -1;
+                }
+            }
+
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            continue;
+        }
 
         if ((pt = WSTRNSTR(msg, "mkdir", sizeof(msg))) != NULL) {
             WS_SFTP_FILEATRB atrb;
@@ -957,86 +1063,6 @@ static int doCmds(func_args* args)
                     return -1;
                 }
                 if (SFTP_FPUTS(args, "\n") < 0) {
-                    err_msg("fputs error");
-                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                    return -1;
-                }
-            }
-
-            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            continue;
-        }
-
-        if ((pt = WSTRNSTR(msg, "creat", MAX_CMD_SZ)) != NULL) {
-            char*            f = NULL;
-            char*            path;
-            char             mode[WOLFSSH_MAX_OCTET_LEN];
-            byte             handle[WOLFSSH_MAX_HANDLE];
-            word32           handleSz = WOLFSSH_MAX_HANDLE;
-            WS_SFTP_FILEATRB atr;
-            int              parseRet;
-            int              openRet = WS_FATAL_ERROR;
-            unsigned long    perVal;
-            char*            modeEnd;
-
-            pt += sizeof("creat");
-            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
-            if (parseRet == 1) {
-                printf("error with getting mode\r\n");
-                continue;
-            }
-            if (parseRet == -1) {
-                err_msg("Error malloc'ing");
-                return -1;
-            }
-
-            /* build permission attribute from octal mode string;
-             * wolfSSH_oct2dec is internal scope so strtoul is used here */
-            perVal = strtoul(mode, &modeEnd, 8);
-            if (*modeEnd == '\0' && perVal <= 07777) {
-                WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
-                atr.flags = WOLFSSH_FILEATRB_PERM;
-                atr.per   = (word32)perVal;
-
-                /* open (create) remote file with the given permissions */
-                handleSz = WOLFSSH_MAX_HANDLE;
-                do {
-                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
-                        ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
-                    }
-                    ret = wolfSSH_SFTP_Open(ssh, path,
-                            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
-                            WOLFSSH_FXF_TRUNC, &atr, handle, &handleSz);
-                    err = wolfSSH_get_error(ssh);
-                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                            err == WS_REKEYING) && ret != WS_SUCCESS);
-                openRet = ret;
-            }
-            if (openRet == WS_SUCCESS) {
-                do {
-                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
-                        ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
-                    }
-                    ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
-                    err = wolfSSH_get_error(ssh);
-                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                            err == WS_REKEYING) && ret != WS_SUCCESS);
-                if (ret != WS_SUCCESS) {
-                    if (SFTP_FPUTS(args, "Unable to close file handle\n") < 0) {
-                        err_msg("fputs error");
-                        WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                        return -1;
-                    }
-                }
-            }
-            else {
-                if (SFTP_FPUTS(args, "Unable to create file\n") < 0) {
                     err_msg("fputs error");
                     WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     return -1;
@@ -1582,6 +1608,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char* pubKeyName = NULL;
     char* certName = NULL;
     char* caCert   = NULL;
+    const char* keyList = NULL;
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     const char* certStoreSpec = NULL;  /* Format: "store:subject:flags" */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
@@ -1591,11 +1618,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X"
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
-            "W:"
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
-            )) != -1) {
+    while ((ch = mygetopt(argc, argv, SFTPC_OPTLIST)) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1657,6 +1680,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 pubKeyName = myoptarg;
                 break;
 
+            case 'k':
+                keyList = myoptarg;
+                break;
+
         #ifdef WOLFSSH_CERTS
             case 'J':
                 certName = myoptarg;
@@ -1692,6 +1719,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     if (username == NULL)
         err_sys("client requires a username parameter.");
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    if (certStoreSpec != NULL && (privKeyName != NULL || pubKeyName != NULL ||
+            certName != NULL)) {
+        err_sys("-W provides both keys, it can not be used with -i, -j "
+                "or -J.");
+    }
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
     if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
         err_sys("If setting priv key, need pub key.");
@@ -1733,7 +1768,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         word32 dwFlags = 0;
 
         ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
-                &wSubjectName, &dwFlags, NULL);
+                &wSubjectName, &dwFlags, heap);
         if (ret != WS_SUCCESS) {
             err_sys("Invalid cert store spec. Use: store:subject:flags");
         }
@@ -1741,32 +1776,31 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         /* Create context first */
         ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
         if (ctx == NULL) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
             err_sys("Couldn't create wolfSSH client context.");
         }
 
-        /* Set private key from cert store */
+        /* Set private key from cert store. The names are only needed for
+         * this call, so release them here and leave the error paths with
+         * nothing to clean up. */
         ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
             wSubjectName);
+        wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
+        wStoreName = NULL;
+        wSubjectName = NULL;
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            wolfSSH_CTX_free(ctx);
             err_sys("Error setting private key from certificate store");
         }
 
         /* Set up auth callback globals (public key type, cert DER) so
          * that ClientUserAuth presents the certificate for public key
          * authentication. */
-        ret = ClientSetupCertStoreAuth(ctx);
+        ret = ClientSetupCertStoreAuth(ctx, heap);
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            wolfSSH_CTX_free(ctx);
             err_sys("Error setting up cert store auth");
         }
-
-        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
     } else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {
@@ -1793,6 +1827,12 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
     if (ctx == NULL)
         err_sys("Couldn't create wolfSSH client context.");
+
+    if (keyList) {
+        if (wolfSSH_CTX_SetAlgoListKey(ctx, keyList) != WS_SUCCESS) {
+            err_sys("Error setting key list.");
+        }
+    }
 
     if (((func_args*)args)->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, ClientUserAuth);
@@ -1851,8 +1891,16 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = wolfSSH_SFTP_connect(ssh);
     else
         ret = NonBlockSSH_connect();
-    if (ret != WS_SUCCESS)
+    if (ret != WS_SUCCESS) {
+        /* the return is a generic failure code; the real cause is kept in
+         * the session error */
+        int err;
+
+        err = wolfSSH_get_error(ssh);
+        fprintf(stderr, "wolfSSH_SFTP_connect failed: %d, %s\n", err,
+                wolfSSH_ErrorToName(err));
         err_sys("Couldn't connect SFTP");
+    }
 
     {
         /* get current working directory */
@@ -1938,13 +1986,17 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
+
+    /* ClientFreeBuffers() releases the certificate copy
+     * ClientSetupCertStoreAuth() made; it must use the same heap that was
+     * passed there. */
+    ClientFreeBuffers(pubKeyName, privKeyName, heap);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS) {
         printf("error %d encountered\n", ret);
         ((func_args*)args)->return_code = ret;
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName, heap);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
@@ -1999,7 +2051,30 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
         wolfSSH_Init();
 
-        ChangeToWolfSshRoot();
+        {
+            int useStore = 0;
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            {
+                int ch;
+
+                /* With -W the keys come from the Windows certificate store
+                 * and no file-based keys are needed, so skip the root
+                 * directory search. Parse rather than match on argv, an
+                 * option value could start with "-W". */
+                myoptind = 0;
+                while ((ch = mygetopt(argc, argv, SFTPC_OPTLIST)) != -1) {
+                    if (ch == 'W') {
+                        useStore = 1;
+                        break;
+                    }
+                }
+                myoptind = 0;
+            }
+        #endif
+            if (!useStore) {
+                ChangeToWolfSshRoot();
+            }
+        }
         sftpclient_test(&args);
 
         wolfSSH_Cleanup();

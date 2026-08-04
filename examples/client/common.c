@@ -48,17 +48,11 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        #include <windows.h>
-        #include <wincrypt.h>
-        #include <ncrypt.h>
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 static byte userPublicKeyBuf[512];
 static byte* userPublicKey = userPublicKeyBuf;
 static byte userPublicKeyAlloc = 0;
-static int userPublicKeyCtxOwned = 0; /* userPublicKey aliases CTX memory */
 static const byte* userPublicKeyType = NULL;
 static byte userPassword[256];
 static const byte* userPrivateKeyType = NULL;
@@ -1180,18 +1174,15 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
      * name being given. */
     (void)pubKeyName;
 
-    if (userPublicKeyCtxOwned) {
-        /* Aliases CTX-owned memory; the CTX frees it, not us. */
-        userPublicKey = userPublicKeyBuf;
-        userPublicKeySz = 0;
-        userPublicKeyCtxOwned = 0;
-        userPublicKeyAlloc = 0;
-    }
-    else if (userPublicKeyAlloc && userPublicKey != NULL) {
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
         WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
         userPublicKey = userPublicKeyBuf;
         userPublicKeySz = 0;
         userPublicKeyAlloc = 0;
+        /* The type points at a static name owned by the freed credential's
+         * loader; clear it with the key so nothing reads it stale. */
+        userPublicKeyType = NULL;
+        userPublicKeyTypeSz = 0;
     }
 
     if (privKeyName != NULL && userPrivateKey != NULL) {
@@ -1202,6 +1193,10 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
             userPrivateKeyAlloc = 0;
         }
         userPrivateKeySz = 0;
+        /* The type points at a static name owned by the freed credential's
+         * loader; clear it with the key so nothing reads it stale. */
+        userPrivateKeyType = NULL;
+        userPrivateKeyTypeSz = 0;
     }
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
@@ -1217,15 +1212,17 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
 int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName)
 {
-    int ret = WS_SUCCESS;
+    int ret;
 
     if (ctx == NULL || storeName == NULL || subjectName == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
-    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags, subjectName);
+    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags,
+            subjectName);
     if (ret != WS_SUCCESS) {
-        fprintf(stderr, "Error loading private key from certificate store: %d\n", ret);
+        fprintf(stderr,
+                "Error loading private key from certificate store: %d\n", ret);
     }
 
     return ret;
@@ -1237,61 +1234,72 @@ int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
  * the certificate for public key authentication.
  * For x509 cert auth the "public key" is the DER certificate, and the type
  * is the x509v3 name that matches the key algorithm. */
-int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
+int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
 {
-    word32 i;
+    const char* keyType = NULL;
+    const byte* cert = NULL;
+    word32 certSz = 0;
+    byte* certCopy = NULL;
 
     if (ctx == NULL)
         return WS_BAD_ARGUMENT;
 
-    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
-        WOLFSSH_PVT_KEY* pvtKey = &ctx->privateKey[i];
-        if (!pvtKey->useCertStore)
-            continue;
-
-        /* Point userPublicKey at the DER certificate stored in the CTX.
-         * This is safe because the CTX outlives the auth callback. The
-         * ctx-owned flag stops ClientFreeBuffers from freeing CTX memory. */
-        userPublicKey = pvtKey->cert;
-        userPublicKeySz = pvtKey->certSz;
-        userPublicKeyCtxOwned = 1;
-
-        /* Map the internal key format to the x509v3 SSH type name. */
-        switch (pvtKey->publicKeyFmt) {
-            case ID_SSH_RSA:
-            case ID_X509V3_SSH_RSA:
-            case ID_RSA_SHA2_256:
-            case ID_RSA_SHA2_512:
-                userPublicKeyType = (const byte*)"x509v3-ssh-rsa";
-                break;
-            case ID_ECDSA_SHA2_NISTP256:
-            case ID_X509V3_ECDSA_SHA2_NISTP256:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
-                break;
-            case ID_ECDSA_SHA2_NISTP384:
-            case ID_X509V3_ECDSA_SHA2_NISTP384:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
-                break;
-            case ID_ECDSA_SHA2_NISTP521:
-            case ID_X509V3_ECDSA_SHA2_NISTP521:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
-                break;
-            default:
-                fprintf(stderr, "Unsupported cert store key type: %d\n",
-                        pvtKey->publicKeyFmt);
-                return WS_BAD_ARGUMENT;
-        }
-        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)userPublicKeyType);
-
-        /* No in-memory private key — signing goes through the cert store. */
-        userPrivateKey = NULL;
-        userPrivateKeySz = 0;
-
-        pubKeyLoaded = 1;
-        return WS_SUCCESS;
+    /* wolfSSH_CTX_UsePrivateKey_fromStore() registers a store key under its
+     * plain key type and, when the build has one, under the matching x509v3
+     * type. Only the x509v3 slot can be offered for certificate user auth;
+     * the accessor reports that slot's certificate and algorithm name. */
+    if (wolfSSH_CTX_GetCertStoreCert(ctx, &cert, &certSz, &keyType)
+            != WS_SUCCESS || cert == NULL || certSz == 0) {
+        fprintf(stderr, "No cert store key with an x509v3 algorithm found in "
+                "CTX. In the default build RSA cert store keys carry no "
+                "x509v3 slot because x509v3-ssh-rsa signs with SHA-1, which "
+                "is soft disabled; define WOLFSSH_NO_SHA1_SOFT_DISABLE (and "
+                "keep WOLFSSH_NO_SSH_RSA_SHA1 undefined) to enable it, see "
+                "ide/winvs/user_settings.h.\n");
+        return WS_BAD_ARGUMENT;
     }
 
-    fprintf(stderr, "No cert store key found in CTX\n");
-    return WS_BAD_ARGUMENT;
+    /* Copy the DER certificate before touching the globals so a failure
+     * leaves them alone. ClientFreeBuffers() frees the copy. */
+    certCopy = (byte*)WMALLOC(certSz, heap, DYNTYPE_PRIVKEY);
+    if (certCopy == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(certCopy, cert, certSz);
+
+    /* Drop anything an earlier file based load left behind, the cert
+     * store key replaces it. Freed with the same heap the loaders in this
+     * file allocate with. */
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
+        WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
+        userPublicKey = userPublicKeyBuf;
+        userPublicKeyAlloc = 0;
+    }
+    if (userPrivateKeyAlloc && userPrivateKey != NULL) {
+        wc_ForceZero(userPrivateKey, userPrivateKeySz);
+        WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
+    }
+
+    userPublicKey = certCopy;
+    userPublicKeySz = certSz;
+    userPublicKeyAlloc = 1;
+    userPublicKeyType = (const byte*)keyType;
+    userPublicKeyTypeSz = (word32)WSTRLEN(keyType);
+
+    /* No in-memory private key, signing goes through the cert store. Clear
+     * the alloc flag unconditionally alongside the pointer: a failed
+     * ClientSetPrivateKey() can leave the flag set with a NULL pointer, and
+     * the flag must never be set while the pointer targets the static
+     * buffer (ClientFreeBuffers would WFREE it). */
+    userPrivateKey = userPrivateKeyBuf;
+    userPrivateKeySz = 0;
+    userPrivateKeyAlloc = 0;
+    /* Clear the type a superseded ClientSetPrivateKey() left behind so it
+     * cannot be read against the now-absent in-memory key. */
+    userPrivateKeyType = NULL;
+    userPrivateKeyTypeSz = 0;
+
+    pubKeyLoaded = 1;
+    return WS_SUCCESS;
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
