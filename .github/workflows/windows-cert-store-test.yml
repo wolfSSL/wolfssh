@@ -61,7 +61,11 @@ jobs:
         # Enable the Windows cert store API (not in the repo user_settings.h).
         # Appended to wolfssh/ide/winvs/user_settings.h, which the VS projects
         # put on the include path before wolfssl/IDE/WIN.
-        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        # WC_SIG_MIN_HASH_TYPE: x509v3-ssh-rsa signs H with SHA-1 (RFC 6187
+        # names no other RSA form), which wc_SignatureVerify rejects at its
+        # default SHA-256 floor. Needed for the RSA x509v3 host key step; see
+        # the same define in tpm-ssh.yml.
+        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA\n' >> ${{env.USER_SETTINGS_H_NEW}}
         cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     - name: Build wolfssl library
