@@ -41,7 +41,9 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/agent.h>
-#include <wolfssh/certman.h>
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wolfssh/certman.h>
+#endif
 #include <wolfssh/port.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -128,6 +130,9 @@
         #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
     #endif
 #endif
+
+/* Shared by echoserver_test() and the -W pre-scan in wolfSSH_Echoserver(). */
+#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -2890,7 +2895,12 @@ static void ShowUsage(void)
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    printf(" -W <spec>     Windows cert store: \"store:subject:flags\" (e.g. My:CN=Server:CURRENT_USER)\n");
+    printf(" -W <spec>     Windows cert store: \"store:subject:flags\" "
+           "(e.g. My:CN=Server:CURRENT_USER)\n");
+    printf("               also read from the WOLFSSH_CERT_STORE environment "
+           "variable\n");
+    printf("               with either set, file names are relative to the "
+           "current directory\n");
 #endif
     printf(" -b <num>      test user auth would block\n");
     printf(" -H            set test highwater callback\n");
@@ -3017,11 +3027,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 #endif
 
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        certStoreSpec = getenv("WOLFSSH_CERT_STORE");
-    #endif
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:";
+        const char* optlist = ES_OPTLIST;
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -3146,11 +3153,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     useCustomHighWaterCb = 1;
                     break;
 
-                #ifdef WOLFSSH_WINDOWS_CERT_STORE
                 case 'W':
-                    certStoreSpec = myoptarg;
+                    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                        certStoreSpec = myoptarg;
+                    #else
+                        ES_ERROR("-W requires wolfSSH built with "
+                                 "WOLFSSH_WINDOWS_CERT_STORE\n");
+                    #endif
                     break;
-                #endif
 
                 default:
                     ShowUsage();
@@ -3160,6 +3170,17 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
     }
     myoptind = 0;      /* reset for test cases */
+
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* -W takes priority over the environment. */
+        if (certStoreSpec == NULL) {
+            certStoreSpec = getenv("WOLFSSH_CERT_STORE");
+            if (certStoreSpec != NULL) {
+                printf("Taking the host key from the WOLFSSH_CERT_STORE "
+                       "environment variable\n");
+            }
+        }
+    #endif
     wc_InitMutex(&doneLock);
 
 #ifdef WOLFSSH_TEST_BLOCK
@@ -3360,16 +3381,24 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             int ret;
 
             ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
-                    &wSubjectName, &dwFlags, NULL);
+                    &wSubjectName, &dwFlags, heap);
             if (ret != WS_SUCCESS) {
+                #ifdef WOLFSSH_SMALL_STACK
+                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
             }
 
             ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
                     dwFlags, wSubjectName);
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            WFREE(wStoreName, heap, DYNTYPE_TEMP);
+            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             if (ret != WS_SUCCESS) {
+                #ifdef WOLFSSH_SMALL_STACK
+                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
                 ES_ERROR("Couldn't load host key from certificate store.\n");
             }
             loadDefaultHostKeys = 0;
@@ -3790,13 +3819,18 @@ int wolfSSH_Echoserver(int argc, char** argv)
             useStore = 1;
         }
         else {
-            int i;
-            for (i = 1; i < argc; i++) {
-                if (WSTRNCMP(argv[i], "-W", 2) == 0) {
+            int ch;
+
+            /* Parse rather than match on argv, an option value could
+             * start with "-W" too. */
+            myoptind = 0;
+            while ((ch = mygetopt(argc, argv, ES_OPTLIST)) != -1) {
+                if (ch == 'W') {
                     useStore = 1;
                     break;
                 }
             }
+            myoptind = 0;
         }
     #endif
         if (!useStore) {

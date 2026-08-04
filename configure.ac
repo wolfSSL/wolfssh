@@ -298,9 +298,11 @@ AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
     [AS_IF([test "x$ENABLED_CERTS" != "xyes"],
         [AC_MSG_ERROR([--enable-windows-cert-store requires X.509 cert support (--enable-certs)])])
      AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WINDOWS_CERT_STORE"
+     dnl Only the mingw triplets define _WIN32, which wolfssh/internal.h
+     dnl requires. MSYS/Cygwin toolchains do not.
      AS_CASE([$host],
-         [*mingw*|*msys*],[LIBS="$LIBS -lcrypt32 -lncrypt"],
-         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw/msys)])])])
+         [*mingw*],[LIBS="$LIBS -lcrypt32 -lncrypt"],
+         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw)])])])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_NONE_CIPHER" = "xyes"],

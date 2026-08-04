@@ -64,6 +64,8 @@
     #ifndef _WIN32
         #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows (_WIN32) target"
     #endif
+    /* the cert store fields below are wchar_t strings */
+    #include <wchar.h>
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #ifdef WOLFSSH_TPM

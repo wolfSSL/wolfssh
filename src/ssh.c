@@ -41,8 +41,22 @@
     #include <ncrypt.h>
     #include <string.h>
     #include <wchar.h>
+    /* Fallbacks for SDKs that predate these wincrypt.h definitions. The
+     * values must match wincrypt.h exactly. */
     #ifndef CERT_NCRYPT_KEY_SPEC
-        #define CERT_NCRYPT_KEY_SPEC 0x00000003
+        #define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
+        #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_USERS
+        #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -2841,34 +2855,48 @@ int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
 }
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-/* Find the certificate in hStore whose Common Name exactly matches
- * subjectName. subjectName may include a leading "CN=" prefix.
+/* Find the certificate in hStore whose Common Name matches subjectName.
+ * subjectName may include a leading "CN=" prefix.
  * CERT_FIND_SUBJECT_STR_W is only used as a substring pre-filter to
- * enumerate candidates; each candidate's CN is then compared exactly so
+ * enumerate candidates; each candidate's CN is then compared in full so
  * that a lookup for "server1" does not select "server1.example" or
- * "myserver1". A currently time-valid match is preferred over an expired
- * one so a renewal's leftover certificate is not selected. Returns the
- * certificate context (caller must free with CertFreeCertificateContext)
- * or NULL when no exact match exists. */
-static PCCERT_CONTEXT FindCertByExactCN(HCERTSTORE hStore,
-        const wchar_t* subjectName)
+ * "myserver1". The compare is case insensitive, matching both the
+ * pre-filter and X.500 name semantics. A candidate that is currently
+ * time-valid and has a private key is preferred, so that neither a
+ * renewal's leftover certificate nor a public-only duplicate ends the
+ * search. The selected certificate is stored in out, and is NULL when no
+ * match exists. The caller frees it with CertFreeCertificateContext.
+ * Returns WS_SUCCESS on success. */
+static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
+        const wchar_t* subjectName, PCCERT_CONTEXT* out)
 {
     PCCERT_CONTEXT pCertContext;
-    PCCERT_CONTEXT firstMatch;
+    PCCERT_CONTEXT validMatch;
+    PCCERT_CONTEXT expiredMatch;
     const wchar_t* cn;
     wchar_t* certCn;
     DWORD certCnSz;
+    DWORD propSz;
     int match;
+    int hasKey;
+    int ret;
+
+    *out = NULL;
+    ret = WS_SUCCESS;
 
     /* Strip an optional "CN=" prefix from the requested name. */
     cn = subjectName;
-    if (wcslen(cn) > 3 &&
-            (wcsncmp(cn, L"CN=", 3) == 0 || wcsncmp(cn, L"cn=", 3) == 0)) {
+    if (wcslen(cn) >= 3 && _wcsnicmp(cn, L"CN=", 3) == 0) {
         cn = cn + 3;
+    }
+    if (*cn == L'\0') {
+        WLOG(WS_LOG_ERROR, "FindCertByExactCN: Empty common name requested");
+        return WS_BAD_ARGUMENT;
     }
 
     pCertContext = NULL;
-    firstMatch = NULL;
+    validMatch = NULL;
+    expiredMatch = NULL;
     for (;;) {
         /* Passing the previous context frees it and continues the search. */
         pCertContext = CertFindCertificateInStore(hStore,
@@ -2882,65 +2910,93 @@ static PCCERT_CONTEXT FindCertByExactCN(HCERTSTORE hStore,
         if (certCnSz <= 1) {
             continue;
         }
-        certCn = (wchar_t*)WMALLOC(certCnSz * sizeof(wchar_t), NULL,
+        certCn = (wchar_t*)WMALLOC(certCnSz * sizeof(wchar_t), heap,
                 DYNTYPE_TEMP);
         if (certCn == NULL) {
             CertFreeCertificateContext(pCertContext);
             pCertContext = NULL;
+            ret = WS_MEMORY_E;
             break;
         }
         certCnSz = CertGetNameStringW(pCertContext, CERT_NAME_ATTR_TYPE, 0,
                 (void*)szOID_COMMON_NAME, certCn, certCnSz);
-        match = (certCnSz > 1 && wcscmp(certCn, cn) == 0);
-        WFREE(certCn, NULL, DYNTYPE_TEMP);
-        if (match) {
-            if (CertVerifyTimeValidity(NULL, pCertContext->pCertInfo) == 0) {
+        match = (certCnSz > 1 && _wcsicmp(certCn, cn) == 0);
+        WFREE(certCn, heap, DYNTYPE_TEMP);
+        if (!match) {
+            continue;
+        }
+
+        /* A duplicate that cannot sign must not end the search. */
+        propSz = 0;
+        hasKey = CertGetCertificateContextProperty(pCertContext,
+                CERT_KEY_PROV_INFO_PROP_ID, NULL, &propSz);
+        if (CertVerifyTimeValidity(NULL, pCertContext->pCertInfo) == 0) {
+            if (hasKey) {
                 break;
             }
-            if (firstMatch == NULL) {
-                firstMatch = CertDuplicateCertificateContext(pCertContext);
+            if (validMatch == NULL) {
+                validMatch = CertDuplicateCertificateContext(pCertContext);
             }
+        }
+        else if (expiredMatch == NULL) {
+            expiredMatch = CertDuplicateCertificateContext(pCertContext);
         }
     }
 
-    /* No time-valid match; fall back to the first exact match, if any. */
-    if (pCertContext == NULL) {
-        pCertContext = firstMatch;
+    /* An allocation failure is reported as such rather than falling back
+     * to a candidate the enumeration had already rejected. */
+    if (ret == WS_SUCCESS && pCertContext == NULL) {
+        if (validMatch != NULL) {
+            WLOG(WS_LOG_WARN, "FindCertByExactCN: No match with a private "
+                    "key, using '%ls' anyway", subjectName);
+            pCertContext = validMatch;
+            validMatch = NULL;
+        }
+        else if (expiredMatch != NULL) {
+            WLOG(WS_LOG_WARN, "FindCertByExactCN: No time-valid match, "
+                    "using an expired '%ls'", subjectName);
+            pCertContext = expiredMatch;
+            expiredMatch = NULL;
+        }
     }
-    else if (firstMatch != NULL) {
-        CertFreeCertificateContext(firstMatch);
+    if (validMatch != NULL) {
+        CertFreeCertificateContext(validMatch);
+    }
+    if (expiredMatch != NULL) {
+        CertFreeCertificateContext(expiredMatch);
     }
 
-    return pCertContext;
+    if (ret == WS_MEMORY_E) {
+        WLOG(WS_LOG_ERROR, "FindCertByExactCN: Memory allocation failed");
+    }
+    else {
+        *out = pCertContext;
+    }
+
+    return ret;
 }
 
 
-/* Fill the private key slot for keyId with cert-store backed state. Any
- * existing file-based or cert-store resources in the slot are replaced.
- * The slot takes its own reference on pCertContext and its own copies of
- * the name strings and certificate DER so that every slot can be freed
- * independently by CtxResourceFree. On failure the slot and
- * ctx->privateKeyCount are left unchanged.
- * Returns WS_SUCCESS on success. */
-static int UseCertStoreSlot(WOLFSSH_CTX* ctx, byte keyId,
-        PCCERT_CONTEXT pCertContext, const wchar_t* storeName,
-        const wchar_t* subjectName, word32 dwFlags)
-{
-    WOLFSSH_PVT_KEY* pvtKey;
-    PCCERT_CONTEXT   slotContext;
-    wchar_t* storeNameCopy;
-    wchar_t* subjectNameCopy;
-    byte*  certBuf;
-    size_t storeNameLen;
-    size_t subjectNameLen;
+/* Resources for one cert-store backed private key slot. Everything is
+ * allocated before any slot is modified so that registering the plain key
+ * type and the matching X.509 type is all or nothing. */
+typedef struct CertStoreSlot {
+    PCCERT_CONTEXT context;
+    wchar_t* storeName;
+    wchar_t* subjectName;
+    byte*  cert;
     word32 certSz;
     word32 keyIdx;
+    byte   keyId;
+} CertStoreSlot;
+
+
+/* Index of the slot holding keyId, WOLFSSH_MAX_PVT_KEYS when not found. */
+static word32 FindKeySlot(WOLFSSH_CTX* ctx, byte keyId)
+{
     word32 i;
-    void* heap;
+    word32 keyIdx;
 
-    heap = ctx->heap;
-
-    /* Find an existing slot of the same type or an available new slot */
     keyIdx = WOLFSSH_MAX_PVT_KEYS;
     for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
         if (ctx->privateKey[i].publicKeyFmt == keyId) {
@@ -2948,68 +3004,90 @@ static int UseCertStoreSlot(WOLFSSH_CTX* ctx, byte keyId,
             break;
         }
     }
-    if (keyIdx == WOLFSSH_MAX_PVT_KEYS
-            && ctx->privateKeyCount >= WOLFSSH_MAX_PVT_KEYS) {
-        WLOG(WS_LOG_DEBUG, "UseCertStoreSlot: No available key slot");
-        return WS_CTX_KEY_COUNT_E;
-    }
 
-    /* Allocate every new resource before modifying the slot so a failure
-     * leaves the context untouched. */
+    return keyIdx;
+}
+
+
+/* Release resources of a slot that was prepared but never committed. */
+static void FreeCertStoreSlot(void* heap, CertStoreSlot* slot)
+{
+    if (slot->context != NULL) {
+        CertFreeCertificateContext(slot->context);
+    }
+    if (slot->storeName != NULL) {
+        WFREE(slot->storeName, heap, DYNTYPE_STRING);
+    }
+    if (slot->subjectName != NULL) {
+        WFREE(slot->subjectName, heap, DYNTYPE_STRING);
+    }
+    if (slot->cert != NULL) {
+        WFREE(slot->cert, heap, DYNTYPE_CERT);
+    }
+    WMEMSET(slot, 0, sizeof(*slot));
+}
+
+
+/* Allocate the resources slot keyIdx needs, without modifying the
+ * context. The slot takes its own reference on pCertContext and its own
+ * copies of the name strings and certificate DER so that every slot can
+ * be freed independently by CtxResourceFree.
+ * Returns WS_SUCCESS on success. */
+static int PrepCertStoreSlot(void* heap, byte keyId, word32 keyIdx,
+        PCCERT_CONTEXT pCertContext, const wchar_t* storeName,
+        const wchar_t* subjectName, CertStoreSlot* slot)
+{
+    size_t storeNameLen;
+    size_t subjectNameLen;
+
+    WMEMSET(slot, 0, sizeof(*slot));
+    slot->keyId = keyId;
+    slot->keyIdx = keyIdx;
+    slot->certSz = pCertContext->cbCertEncoded;
+
     storeNameLen   = wcslen(storeName)   + 1;
     subjectNameLen = wcslen(subjectName) + 1;
-    certSz = pCertContext->cbCertEncoded;
-    storeNameCopy   = (wchar_t*)WMALLOC(storeNameLen * sizeof(wchar_t),
+    slot->storeName   = (wchar_t*)WMALLOC(storeNameLen * sizeof(wchar_t),
             heap, DYNTYPE_STRING);
-    subjectNameCopy = (wchar_t*)WMALLOC(subjectNameLen * sizeof(wchar_t),
+    slot->subjectName = (wchar_t*)WMALLOC(subjectNameLen * sizeof(wchar_t),
             heap, DYNTYPE_STRING);
-    certBuf = (byte*)WMALLOC(certSz, heap, DYNTYPE_CERT);
-    if (storeNameCopy == NULL || subjectNameCopy == NULL || certBuf == NULL) {
-        if (storeNameCopy != NULL)
-            WFREE(storeNameCopy, heap, DYNTYPE_STRING);
-        if (subjectNameCopy != NULL)
-            WFREE(subjectNameCopy, heap, DYNTYPE_STRING);
-        if (certBuf != NULL)
-            WFREE(certBuf, heap, DYNTYPE_CERT);
-        WLOG(WS_LOG_DEBUG, "UseCertStoreSlot: Memory allocation failed");
+    slot->cert = (byte*)WMALLOC(slot->certSz, heap, DYNTYPE_CERT);
+    slot->context = CertDuplicateCertificateContext(pCertContext);
+    if (slot->storeName == NULL || slot->subjectName == NULL
+            || slot->cert == NULL || slot->context == NULL) {
+        FreeCertStoreSlot(heap, slot);
+        WLOG(WS_LOG_ERROR, "PrepCertStoreSlot: Memory allocation failed");
         return WS_MEMORY_E;
     }
-    WMEMCPY(storeNameCopy, storeName, storeNameLen * sizeof(wchar_t));
-    WMEMCPY(subjectNameCopy, subjectName, subjectNameLen * sizeof(wchar_t));
-    WMEMCPY(certBuf, pCertContext->pbCertEncoded, certSz);
+    WMEMCPY(slot->storeName, storeName, storeNameLen * sizeof(wchar_t));
+    WMEMCPY(slot->subjectName, subjectName, subjectNameLen * sizeof(wchar_t));
+    WMEMCPY(slot->cert, pCertContext->pbCertEncoded, slot->certSz);
 
-    /* Each slot holds its own reference on the certificate context */
-    slotContext = CertDuplicateCertificateContext(pCertContext);
-    if (slotContext == NULL) {
-        WFREE(storeNameCopy,   heap, DYNTYPE_STRING);
-        WFREE(subjectNameCopy, heap, DYNTYPE_STRING);
-        WFREE(certBuf,         heap, DYNTYPE_CERT);
-        WLOG(WS_LOG_DEBUG, "Failed CertDuplicateCertificateContext");
-        return WS_FATAL_ERROR;
-    }
+    return WS_SUCCESS;
+}
 
-    /* if no existing matching key id was found append the key to the end */
-    if (keyIdx == WOLFSSH_MAX_PVT_KEYS) {
-        keyIdx = ctx->privateKeyCount;
-        ctx->privateKeyCount++;
-    }
-    pvtKey = &ctx->privateKey[keyIdx];
 
-    /* Free existing resources if replacing an existing slot. The slot may
-     * previously have held either a cert-store key or a file-based
-     * key/cert, so clear both kinds of resources. */
+/* Move the prepared resources into the context. The slot may previously
+ * have held either a cert-store key or a file-based key/cert, so clear
+ * both kinds of resources. Cannot fail. */
+static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot,
+        word32 dwFlags)
+{
+    WOLFSSH_PVT_KEY* pvtKey;
+    void* heap;
+
+    heap = ctx->heap;
+    pvtKey = &ctx->privateKey[slot->keyIdx];
+
     if (pvtKey->certStoreContext != NULL) {
         CertFreeCertificateContext(
                 (PCCERT_CONTEXT)pvtKey->certStoreContext);
-        pvtKey->certStoreContext = NULL;
     }
     if (pvtKey->storeName != NULL) {
         WFREE(pvtKey->storeName, heap, DYNTYPE_STRING);
-        pvtKey->storeName = NULL;
     }
     if (pvtKey->subjectName != NULL) {
         WFREE(pvtKey->subjectName, heap, DYNTYPE_STRING);
-        pvtKey->subjectName = NULL;
     }
     if (pvtKey->key != NULL) {
         WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
@@ -3019,38 +3097,41 @@ static int UseCertStoreSlot(WOLFSSH_CTX* ctx, byte keyId,
     }
     if (pvtKey->cert != NULL) {
         WFREE(pvtKey->cert, heap, DYNTYPE_CERT);
-        pvtKey->cert = NULL;
-        pvtKey->certSz = 0;
     }
 
-    /* Set up the private key structure */
-    pvtKey->publicKeyFmt     = keyId;
+    pvtKey->publicKeyFmt     = slot->keyId;
 #ifdef WOLFSSH_TPM
     /* A stale TPM mark would route signing through the TPM. */
     pvtKey->isTpm            = 0;
 #endif
     pvtKey->useCertStore     = 1;
-    pvtKey->certStoreContext = (void*)slotContext;
-    pvtKey->storeName        = storeNameCopy;
-    pvtKey->subjectName      = subjectNameCopy;
+    pvtKey->certStoreContext = (void*)slot->context;
+    pvtKey->storeName        = slot->storeName;
+    pvtKey->subjectName      = slot->subjectName;
     pvtKey->dwFlags          = dwFlags;
-    pvtKey->cert             = certBuf;
-    pvtKey->certSz           = certSz;
+    pvtKey->cert             = slot->cert;
+    pvtKey->certSz           = slot->certSz;
 
-    return WS_SUCCESS;
+    /* Ownership moved to the context. */
+    WMEMSET(slot, 0, sizeof(*slot));
 }
 
 
 /* Load a private key from MS Certificate Store
  * storeName: Certificate store name (e.g., L"My", L"Root")
- * dwFlags: Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER)
+ * dwFlags: Certificate store location, and only a location (e.g.
+ *     CERT_SYSTEM_STORE_CURRENT_USER). Control flags such as
+ *     CERT_STORE_DELETE_FLAG would make CertOpenStore destructive and are
+ *     rejected. The store is opened read-only.
  * subjectName: Certificate subject Common Name for lookup, with or without
- *     a "CN=" prefix. The CN must match exactly; thumbprint lookup is not
- *     currently implemented.
+ *     a "CN=" prefix. The CN must match in full, case insensitively;
+ *     thumbprint lookup is not currently implemented.
  * The key is registered both as its plain key type and, mirroring the
  * file-based HostKey plus HostCertificate pairing, as the matching
  * RFC6187 x509v3-* type so the store certificate itself can be sent as
  * the public host key to peers that negotiate certificate algorithms.
+ * The x509v3-* registration is skipped when the build has no such
+ * algorithm for the key type, e.g. RSA with SHA-1 disabled.
  * returns WS_SUCCESS on success
  */
 int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
@@ -3061,7 +3142,13 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     HCERTSTORE hStore = NULL;
     PCCERT_CONTEXT pCertContext = NULL;
     byte keyId = ID_NONE;
+    byte certId = ID_NONE;
     PCERT_PUBLIC_KEY_INFO pPubKeyInfo = NULL;
+    CertStoreSlot keySlot;
+    CertStoreSlot certSlot;
+    word32 keyIdx;
+    word32 certIdx;
+    word32 newCount;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_UsePrivateKey_fromStore()");
 
@@ -3070,18 +3157,34 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    /* Open the certificate store */
+    /* Only accept system-store location bits. Anything else is either not
+     * a location or a control flag (e.g. CERT_STORE_DELETE_FLAG) that
+     * would make CertOpenStore destructive. */
+    if ((dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
+            (dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Store "
+             "flags are not a system store location");
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Open the certificate store. Read-only, both because nothing here
+     * writes to it and because a read/write open of a LOCAL_MACHINE store
+     * fails for a non-administrator service account. */
     hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, (HCRYPTPROV_LEGACY)0,
-            (DWORD)dwFlags | CERT_STORE_OPEN_EXISTING_FLAG, storeName);
+            (DWORD)dwFlags | CERT_STORE_OPEN_EXISTING_FLAG
+            | CERT_STORE_READONLY_FLAG, storeName);
     if (hStore == NULL) {
-        DWORD dwErr = GetLastError();
-        WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Failed to open store, error: %lu", dwErr);
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Failed to "
+             "open store, error: %lu", (unsigned long)GetLastError());
         return WS_FATAL_ERROR;
     }
 
-    /* Find the certificate by exact Common Name match. */
-    pCertContext = FindCertByExactCN(hStore, subjectName);
-
+    /* Find the certificate by full Common Name match. */
+    ret = FindCertByExactCN(ctx->heap, hStore, subjectName, &pCertContext);
+    if (ret != WS_SUCCESS) {
+        CertCloseStore(hStore, 0);
+        return ret;
+    }
     if (pCertContext == NULL) {
         CertCloseStore(hStore, 0);
         WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate "
@@ -3099,8 +3202,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
      * host key type that cannot be used for signing. */
     if (pPubKeyInfo->Algorithm.pszObjId != NULL) {
         /* Compare OID strings (they are ASCII, not wide) */
-        if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0 ||
-            strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_ENCRYPT) == 0) {
+        if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
         #ifndef WOLFSSH_NO_RSA
             keyId = ID_SSH_RSA;
         #else
@@ -3180,15 +3282,17 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         if (!CryptAcquireCertificatePrivateKey(pCertContext,
                 CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
                 NULL, &hKey, &dwKeySpec, &fCallerFree)) {
-            DWORD dwErr = GetLastError();
             WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Cannot "
                  "access private key, error: %lu. Check that the current user "
-                 "or service account has permission to access the key.", dwErr);
+                 "or service account has permission to access the key.",
+                 (unsigned long)GetLastError());
             CertFreeCertificateContext(pCertContext);
             CertCloseStore(hStore, 0);
             return WS_CRYPTO_FAILED;
         }
-        /* Release the key handle since we just needed to verify access */
+        /* Release the key handle since we just needed to verify access.
+         * CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG makes the CNG case the only
+         * reachable one; the CSP release is kept for the flags changing. */
         if (fCallerFree) {
             if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
                 NCryptFreeObject(hKey);
@@ -3204,21 +3308,57 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     /* Register the key under its plain type so peers without RFC6187
      * support get a raw public key, and under the matching X.509 type so
      * the store certificate can be sent as K_S when a peer negotiates an
-     * x509v3-* algorithm. On failure of the second registration the first
-     * slot stays in the context; it is fully owned by the context and is
-     * released by CtxResourceFree. */
-    ret = UseCertStoreSlot(ctx, keyId, pCertContext, storeName, subjectName,
-            dwFlags);
-    if (ret == WS_SUCCESS) {
-        byte certId;
+     * x509v3-* algorithm. Both slots are located and prepared before
+     * either is committed, so a failure leaves the context, including any
+     * host key already in these slots, exactly as it was. */
+    WMEMSET(&keySlot, 0, sizeof(keySlot));
+    WMEMSET(&certSlot, 0, sizeof(certSlot));
+    newCount = ctx->privateKeyCount;
+    keyIdx = FindKeySlot(ctx, keyId);
+    if (keyIdx == WOLFSSH_MAX_PVT_KEYS) {
+        keyIdx = newCount++;
+    }
 
-        certId = CertTypeForId(keyId);
-        /* CertTypeForId returns keyId unchanged when no X509 equivalent was
-         * found; skip adding the X509 ID slot in that case. */
-        if (certId != keyId) {
-            ret = UseCertStoreSlot(ctx, certId, pCertContext, storeName,
-                    subjectName, dwFlags);
+    /* CertTypeForId returns keyId unchanged when the build has no X509
+     * equivalent; skip the X509 ID slot in that case. */
+    certId = CertTypeForId(keyId);
+    certIdx = WOLFSSH_MAX_PVT_KEYS;
+    if (certId != keyId) {
+        certIdx = FindKeySlot(ctx, certId);
+        if (certIdx == WOLFSSH_MAX_PVT_KEYS) {
+            certIdx = newCount++;
         }
+    }
+    else {
+        WLOG(WS_LOG_INFO, "wolfSSH_CTX_UsePrivateKey_fromStore: No x509v3 "
+             "algorithm for key type %d in this build, registering the "
+             "plain host key only", keyId);
+    }
+
+    if (newCount > WOLFSSH_MAX_PVT_KEYS) {
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: No "
+             "available key slot");
+        ret = WS_CTX_KEY_COUNT_E;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = PrepCertStoreSlot(ctx->heap, keyId, keyIdx, pCertContext,
+                storeName, subjectName, &keySlot);
+    }
+    if (ret == WS_SUCCESS && certIdx != WOLFSSH_MAX_PVT_KEYS) {
+        ret = PrepCertStoreSlot(ctx->heap, certId, certIdx, pCertContext,
+                storeName, subjectName, &certSlot);
+    }
+
+    if (ret == WS_SUCCESS) {
+        CommitCertStoreSlot(ctx, &keySlot, dwFlags);
+        if (certIdx != WOLFSSH_MAX_PVT_KEYS) {
+            CommitCertStoreSlot(ctx, &certSlot, dwFlags);
+        }
+        ctx->privateKeyCount = newCount;
+    }
+    else {
+        FreeCertStoreSlot(ctx->heap, &keySlot);
+        FreeCertStoreSlot(ctx->heap, &certSlot);
     }
 
     /* Each registered slot holds its own reference on the certificate

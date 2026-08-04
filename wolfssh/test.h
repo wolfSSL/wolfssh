@@ -1148,9 +1148,10 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
 
 #ifdef WOLFSSH_TEST_HEX2BIN
 
+#ifndef WOLFSSL_BASE16
+
 #define BAD 0xFF
 
-#ifndef WOLFSSL_BASE16
 static const byte hexDecode[] =
 {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
@@ -1220,6 +1221,9 @@ static int Base16_Decode(const byte* in, word32 inLen,
     *outLen = outIdx;
     return 0;
 }
+
+#undef BAD
+
 #else
     #include <wolfssl/wolfcrypt/coding.h>
 #endif /* !WOLFSSL_BASE16 */
