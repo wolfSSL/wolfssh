@@ -2697,6 +2697,20 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 }
 
 
+/* The staged read target is filled with 'a'; every read starts at offset 0,
+ * so all returned bytes must be 'a'.  A macro so a failure reports the
+ * calling read's line. */
+#define SFTP_CHECK_READ_PAYLOAD(out, rxSz) do {     \
+    int _i;                                         \
+    for (_i = 0; _i < (rxSz); _i++) {               \
+        if ((out)[_i] != 'a') {                     \
+            break;                                  \
+        }                                           \
+    }                                               \
+    AssertIntEQ(_i, (rxSz));                        \
+} while (0)
+
+
 static void test_wolfSSH_SFTP_SendReadPacket(void)
 {
     func_args ser;
@@ -2743,10 +2757,12 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         word32 rdHandleSz;
         word32 rdOfst[2] = {0, 0};
         word32 rdSz = 0;
+        word32 rdChunk;
         byte rdData[4096];
         int rdTries;
         int rdWrote;
         int rdErr;
+        int rdRet;
 #ifdef WOLFSSH_TEST_INTERNAL
         int err;
         int tries;
@@ -2760,51 +2776,77 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 
         /* Stage the file to read.  Opening the listing's first entry raced
          * with tests/testsuite.test, which creates and removes files in the
-         * same directory under "make -j check".  Skipped if create is
-         * denied. */
-        rdHandleSz = WOLFSSH_MAX_HANDLE;
+         * same directory under "make -j check".  The staging is asserted
+         * rather than skipped on failure; skipping would drop the read
+         * coverage below without failing the test. */
         WMEMSET(rdData, 'a', sizeof(rdData));
-        if (wolfSSH_SFTP_Open(ssh, rdName,
-                WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
-                NULL, rdHandle, &rdHandleSz) == WS_SUCCESS) {
-            for (rdTries = 0;
-                    rdTries < 1000 && rdSz < WOLFSSH_MAX_SFTP_RW;
-                    rdTries++) {
-                rdOfst[0] = rdSz;
-                rdWrote = wolfSSH_SFTP_SendWritePacket(ssh, rdHandle,
-                        rdHandleSz, rdOfst, rdData, (word32)sizeof(rdData));
-                if (rdWrote > 0) {
-                    rdSz += (word32)rdWrote;
-                    continue;
-                }
-                rdErr = wolfSSH_get_error(ssh);
-                if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
-                        rdErr != WS_REKEYING) {
-                    break; /* unexpected error */
-                }
+        wolfSSH_SFTP_Remove(ssh, rdName); /* clear any stale file */
+        rdRet = WS_FATAL_ERROR;
+        for (rdTries = 0; rdTries < 1000; rdTries++) {
+            rdHandleSz = WOLFSSH_MAX_HANDLE;
+            rdRet = wolfSSH_SFTP_Open(ssh, rdName,
+                    WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+                    NULL, rdHandle, &rdHandleSz);
+            if (rdRet == WS_SUCCESS) {
+                break;
             }
-            wolfSSH_SFTP_Close(ssh, rdHandle, rdHandleSz);
-            AssertIntEQ(rdSz, WOLFSSH_MAX_SFTP_RW);
+            rdErr = wolfSSH_get_error(ssh);
+            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
+                    rdErr != WS_REKEYING) {
+                break; /* create failed */
+            }
         }
+        AssertIntEQ(rdRet, WS_SUCCESS);
 
-        current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
+        /* one try per full chunk plus slack for transient errors */
+        rdTries = (int)(WOLFSSH_MAX_SFTP_RW / sizeof(rdData)) + 1000;
+        for (; rdTries > 0 && rdSz < WOLFSSH_MAX_SFTP_RW; rdTries--) {
+            rdChunk = (word32)sizeof(rdData);
+            if (rdChunk > WOLFSSH_MAX_SFTP_RW - rdSz) {
+                rdChunk = WOLFSSH_MAX_SFTP_RW - rdSz;
+            }
+            rdOfst[0] = rdSz;
+            rdWrote = wolfSSH_SFTP_SendWritePacket(ssh, rdHandle,
+                    rdHandleSz, rdOfst, rdData, rdChunk);
+            if (rdWrote > 0) {
+                rdSz += (word32)rdWrote;
+                continue;
+            }
+            rdErr = wolfSSH_get_error(ssh);
+            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
+                    rdErr != WS_REKEYING) {
+                break; /* unexpected error */
+            }
+        }
+        wolfSSH_SFTP_Close(ssh, rdHandle, rdHandleSz);
+        AssertIntEQ(rdSz, WOLFSSH_MAX_SFTP_RW);
+
+        current = NULL;
+        for (rdTries = 0; rdTries < 1000; rdTries++) {
+            current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
+            if (current != NULL) {
+                break;
+            }
+            rdErr = wolfSSH_get_error(ssh);
+            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
+                    rdErr != WS_REKEYING) {
+                break;
+            }
+        }
+        AssertNotNull(current);
         tmp = current;
         while (tmp != NULL) {
-            if (WSTRCMP(tmp->fName, rdName) == 0) {
+            if (tmp->fName != NULL && WSTRCMP(tmp->fName, rdName) == 0) {
                 break;
             }
             tmp = tmp->next;
         }
-        if (rdSz > 0) {
-            AssertNotNull(tmp);
-        }
+        AssertNotNull(tmp);
 
-        if (tmp != NULL) {
-            /* Allocate buffer large enough for maximum read size */
-            word32 allocSz = tmp->atrb.sz[0];
-            if (allocSz < WOLFSSH_MAX_SFTP_RW)
-                allocSz = WOLFSSH_MAX_SFTP_RW;
-            out = (byte*)malloc(allocSz);
+        {
+            /* The staging above wrote WOLFSSH_MAX_SFTP_RW bytes, and no read
+             * below asks for more, so that is the buffer size needed. */
+            out = (byte*)malloc(WOLFSSH_MAX_SFTP_RW);
             AssertNotNull(out);
             AssertIntEQ(wolfSSH_SFTP_Open(ssh, tmp->fName, WOLFSSH_FXF_READ,
                         NULL, handle, &handleSz), WS_SUCCESS);
@@ -2818,13 +2860,12 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
              */
 
             /* read 18 bytes */
-            if (tmp->atrb.sz[0] >= 18) {
-                outSz = 18;
-                rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
-                        ofst, out, outSz);
-                AssertIntGT(rxSz, 0);
-                AssertIntLE(rxSz, outSz);
-            }
+            outSz = 18;
+            rxSz = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz,
+                    ofst, out, outSz);
+            AssertIntGT(rxSz, 0);
+            AssertIntLE(rxSz, outSz);
+            SFTP_CHECK_READ_PAYLOAD(out, rxSz);
 
             /* partial read */
             outSz = WOLFSSH_MAX_SFTP_RW / 2;
@@ -2833,6 +2874,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             if (wolfSSH_get_error(ssh) != WS_REKEYING) {
                 AssertIntGT(rxSz, 0);
                 AssertIntLE(rxSz, outSz);
+                SFTP_CHECK_READ_PAYLOAD(out, rxSz);
             }
 
             /* read all */
@@ -2842,6 +2884,7 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             if (wolfSSH_get_error(ssh) != WS_REKEYING) {
                 AssertIntGT(rxSz, 0);
                 AssertIntLE(rxSz, outSz);
+                SFTP_CHECK_READ_PAYLOAD(out, rxSz);
             }
 
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -2879,16 +2922,14 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             AssertIntLT(tries, 1000);
             AssertIntGT(rxSz, 0);
             AssertIntLE(rxSz, outSz);
+            SFTP_CHECK_READ_PAYLOAD(out, rxSz);
 #endif /* WOLFSSH_TEST_INTERNAL */
 
             free(out);
             wolfSSH_SFTP_Close(ssh, handle, handleSz);
         }
         wolfSSH_SFTPNAME_list_free(current);
-
-        if (rdSz > 0) {
-            wolfSSH_SFTP_Remove(ssh, rdName);
-        }
+        wolfSSH_SFTP_Remove(ssh, rdName);
 
 #ifdef WOLFSSH_TEST_INTERNAL
         /* Issue 5574: exercise the partial-send resume path for
