@@ -136,6 +136,36 @@ static int checkLsSize(void)
                 sizeof(inBuf)) == NULL) ? 1 : 0;
 }
 
+/* a creat parse failure prints an error and creates nothing, so verify the
+ * tab-separated form actually created the file */
+static int checkLsHasCreatMtab(void)
+{
+    return (WSTRNSTR(inBuf, "test-creat-mtab",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+/* same for the leading-whitespace form */
+static int checkLsHasCreatWs(void)
+{
+    return (WSTRNSTR(inBuf, "test-creat-ws",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+/* same for the tab-separator form */
+static int checkLsHasCreatTab(void)
+{
+    return (WSTRNSTR(inBuf, "test-creat-tab",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
+/* guards the anchored creat matcher: if "rm mycreat" were mis-dispatched to
+ * creat, its argument parse would fail and the rm would silently never run,
+ * leaving mycreat behind for this check to find */
+static int checkLsHasNoMycreat(void)
+{
+    return (WSTRNSTR(inBuf, "mycreat", sizeof(inBuf)) != NULL) ? 1 : 0;
+}
+
 static int checkCdNonexistent(void)
 {
     if (WSTRNSTR(inBuf, "Error changing directory",
@@ -294,6 +324,10 @@ static const SftpTestCmd cmds[] = {
     { "rm test-get-2",         NULL },
     { "rm test-creat-special", NULL },
     { "rmdir test-chmod-dir",  NULL },
+    { "rm test-creat-ws",      NULL },
+    { "rm test-creat-tab",     NULL },
+    { "rm test-creat-mtab",    NULL },
+    { "rm mycreat",            NULL },
 
     /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
@@ -335,6 +369,27 @@ static const SftpTestCmd cmds[] = {
 #endif
     { "chmod 600 test-get-2", NULL },
     { "rm test-get-2",  NULL },
+    /* the creat matcher is anchored to the line start: an argument
+     * containing the substring must stay with its own command. A
+     * mis-dispatched "rm mycreat" would fail creat's argument parse and
+     * silently skip the rm, so the ls check would still find mycreat. */
+    { "creat 0644 mycreat", NULL },
+    { "rm mycreat",     NULL },
+    { "ls",             checkLsHasNoMycreat },
+    /* leading whitespace and a tab separator both reach the creat handler;
+     * a parse failure would skip creation silently (rm ignores a missing
+     * file), so check each with ls before removing */
+    { "  creat 0644 test-creat-ws",  NULL },
+    { "ls",                          checkLsHasCreatWs },
+    { "rm test-creat-ws",            NULL },
+    { "creat\t0644 test-creat-tab",  NULL },
+    { "ls",                          checkLsHasCreatTab },
+    { "rm test-creat-tab",           NULL },
+    /* tab between mode and path must also parse; a parse failure would skip
+     * creation silently (rm ignores a missing file), so check with ls */
+    { "creat 0644\ttest-creat-mtab", NULL },
+    { "ls",                          checkLsHasCreatMtab },
+    { "rm test-creat-mtab",          NULL },
     { "ls -s",          checkLsSize },
     { "cd /nonexistent_path_xyz", checkCdNonexistent },
 #if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)

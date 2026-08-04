@@ -254,7 +254,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\Debug\Win32;..\Debug\Win32</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DLL DebugFIPS|Win32'">
@@ -269,7 +269,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Debug\Win32;..\Debug\Win32</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DebugFIPS|Win32'">
@@ -284,7 +284,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Debug\Win32;..\Debug\Win32</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -303,7 +303,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\Release\Win32;..\Release\Win32</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='ReleaseFIPS|Win32'">
@@ -322,7 +322,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Release\Win32;..\Release\Win32</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -352,7 +352,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Debug\x64;..\Debug\x64</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DebugFIPS|x64'">
@@ -367,7 +367,7 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Debug\x64;..\Debug\x64</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -404,7 +404,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\..\..\wolfssl\IDE\WIN10\Release\x64;..\Release\x64</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -433,7 +433,7 @@
       <WarningLevel>Level3</WarningLevel>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(wolfCryptDLLRelease64FIPS)</AdditionalLibraryDirectories>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -442,7 +442,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='DLL ReleaseFIPS|Win32'">
     <Link>
-      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl-fips.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(wolfCryptDLLRelease32FIPS)</AdditionalLibraryDirectories>
     </Link>
     <ClCompile>
@@ -456,7 +456,7 @@
       <AdditionalIncludeDirectories>..;..\..\..;$(wolfCryptDir);..\..\..\apps\wolfsshd\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wolfssl.lib;ws2_32.lib;secur32.lib;userenv.lib;crypt32.lib;ncrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(wolfCryptDLLRelease32FIPS)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
