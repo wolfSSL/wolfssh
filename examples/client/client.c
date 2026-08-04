@@ -420,17 +420,12 @@ static THREAD_RET readPeer(void* in)
     thread_args* args = (thread_args*)in;
     int ret = 0;
     int fd = (int)wolfSSH_get_fd(args->ssh);
-    word32 bytes;
+    int  bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 #endif
     fd_set readSet;
     fd_set errSet;
-
-    FD_ZERO(&readSet);
-    FD_ZERO(&errSet);
-    FD_SET(fd, &readSet);
-    FD_SET(fd, &errSet);
 
 #ifdef USE_WINDOWS_API
     if (args->rawMode == 0) {
@@ -464,7 +459,26 @@ static THREAD_RET readPeer(void* in)
         (void)windowMonitor(args);
     #endif
 
+        /* select() clears the sets, re-arm them every pass. */
+        FD_ZERO(&readSet);
+        FD_ZERO(&errSet);
+        FD_SET(fd, &readSet);
+        FD_SET(fd, &errSet);
+
         bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
+        if (bytes < 0) {
+        #ifdef USE_WINDOWS_API
+            if (WSAGetLastError() == WSAEINTR)
+                continue;
+            fprintf(stderr, "select on peer socket failed, error %d\n",
+                    WSAGetLastError());
+        #else
+            if (errno == EINTR)
+                continue;
+            perror("select on peer socket failed ");
+        #endif
+            break;
+        }
         wc_LockMutex(&args->lock);
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
             /* there is something to read off the wire */
