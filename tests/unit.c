@@ -7389,6 +7389,115 @@ static const byte unitTestEd25519PrivKey[] = {
 };
 #endif /* !WOLFSSH_NO_ED25519 */
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* Each OpenSSH-certificate key ID must free the key it was loaded into. One
+ * case per branch of wolfSSH_KEY_clean(), so a cert ID landing in the wrong
+ * branch frees the wrong union member and shows up here. */
+static int test_KEY_clean_osshCert(void)
+{
+    WS_KeySignature keySig;
+    word32 idx;
+    int    ret;
+
+    /* Every case below is optional; keep the locals used if all compile out. */
+    (void)keySig;
+    (void)idx;
+    (void)ret;
+
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_RSA;
+
+    if (wc_InitRsaKey(&keySig.ks.rsa.key, NULL) != 0)
+        return -7200;
+
+    ret = wc_RsaPrivateKeyDecode(unitTestRsaPrivKey, &idx,
+            &keySig.ks.rsa.key, (word32)sizeof(unitTestRsaPrivKey));
+    if (ret != 0) {
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        printf("KEY_clean_osshCert: RSA decode failed (%d)\n", ret);
+        return -7201;
+    }
+    if (keySig.ks.rsa.key.n.used == 0) {
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        printf("KEY_clean_osshCert: RSA key did not load\n");
+        return -7202;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.rsa.key.n.used != 0) {
+        printf("KEY_clean_osshCert: RSA key was not freed\n");
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        return -7203;
+    }
+#endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_OSSH_CERT_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_ECDSA_SHA2_NISTP256;
+
+    if (wc_ecc_init(&keySig.ks.ecc.key) != 0)
+        return -7204;
+
+    ret = wc_EccPrivateKeyDecode(unitTestEcc256PrivKey, &idx,
+            &keySig.ks.ecc.key, (word32)sizeof(unitTestEcc256PrivKey));
+    if (ret != 0) {
+        wc_ecc_free(&keySig.ks.ecc.key);
+        printf("KEY_clean_osshCert: ECC decode failed (%d)\n", ret);
+        return -7205;
+    }
+    if (keySig.ks.ecc.key.pubkey.x->used == 0) {
+        wc_ecc_free(&keySig.ks.ecc.key);
+        printf("KEY_clean_osshCert: ECC key did not load\n");
+        return -7206;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.ecc.key.pubkey.x->used != 0) {
+        printf("KEY_clean_osshCert: ECC key was not freed\n");
+        wc_ecc_free(&keySig.ks.ecc.key);
+        return -7207;
+    }
+#endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+#ifndef WOLFSSH_NO_ED25519
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_ED25519;
+
+    if (wc_ed25519_init(&keySig.ks.ed25519.key) != 0)
+        return -7208;
+
+    ret = wc_Ed25519PrivateKeyDecode(unitTestEd25519PrivKey, &idx,
+            &keySig.ks.ed25519.key, (word32)sizeof(unitTestEd25519PrivKey));
+    if (ret != 0) {
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        printf("KEY_clean_osshCert: Ed25519 decode failed (%d)\n", ret);
+        return -7209;
+    }
+    if (keySig.ks.ed25519.key.privKeySet == 0) {
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        printf("KEY_clean_osshCert: Ed25519 key did not load\n");
+        return -7210;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.ed25519.key.privKeySet != 0) {
+        printf("KEY_clean_osshCert: Ed25519 key was not freed\n");
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        return -7211;
+    }
+#endif /* !WOLFSSH_NO_ED25519 */
+
+    return 0;
+}
+#endif /* WOLFSSH_OSSH_CERTS */
+
 #if !defined(WOLFSSH_NO_MLDSA)
 /* keys/server-key-mldsa44.der - MlDsa44 OneAsymmetricKey */
 static const byte unitTestMlDsaPrivKey[] = {
@@ -7849,6 +7958,7 @@ static const byte unitTestEd25519Pub[32] = {
     0xd3, 0x9e, 0x85, 0x87, 0xf3, 0x0e, 0x72, 0x6c,
     0x1e, 0xc0, 0x01, 0xe2, 0x81, 0x96, 0xb8, 0x49
 };
+
 
 /* Write a 32-bit big-endian length prefix at out. */
 static void Ed25519Test_PutLen(byte* out, word32 v)
@@ -13869,6 +13979,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("PrepareUserAuthRequestPassword: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_OSSH_CERTS
+    unitResult = test_KEY_clean_osshCert();
+    printf("KEY_clean_osshCert: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #ifdef WOLFSSH_CERTS
     unitResult = test_ParseLeafCert_certCount();

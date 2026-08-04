@@ -545,6 +545,10 @@ int GetOpenSshKey(WS_KeySignature *key,
                                 break;
                         #endif
                             default:
+                                /* No union member was loaded for this name,
+                                 * so leave no keyId for wolfSSH_KEY_clean()
+                                 * to free the caller's key as. */
+                                key->keyId = ID_NONE;
                                 ret = WS_UNIMPLEMENTED_E;
                                 break;
                         }

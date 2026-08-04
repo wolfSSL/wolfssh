@@ -1755,12 +1755,20 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
         if (key->keyId == ID_SSH_RSA ||
-            key->keyId == ID_X509V3_SSH_RSA) {
+            key->keyId == ID_X509V3_SSH_RSA
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+            || key->keyId == ID_OSSH_CERT_RSA
+#endif
+            ) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&key->ks.rsa.key);
 #endif
         }
-        else if (key->keyId == ID_ED25519) {
+        else if (key->keyId == ID_ED25519
+#ifdef WOLFSSH_OSSH_CERTS
+                 || key->keyId == ID_OSSH_CERT_ED25519
+#endif
+                 ) {
 #ifndef WOLFSSH_NO_ED25519
             wc_ed25519_free(&key->ks.ed25519.key);
 #endif
@@ -1780,7 +1788,13 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
                  key->keyId == ID_ECDSA_SHA2_NISTP521 ||
                  key->keyId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
                  key->keyId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
-                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP521
+#ifdef WOLFSSH_OSSH_CERTS
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP256
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP384
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP521
+#endif
+                 ) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&key->ks.ecc.key);
 #endif
@@ -18636,8 +18650,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_FORCEZERO(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
 
-    if (keySig_ptr)
+    if (keySig_ptr) {
+        WS_FORCEZERO(keySig_ptr, sizeof(WS_KeySignature));
         WFREE(keySig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
 
     return ret;
 }
