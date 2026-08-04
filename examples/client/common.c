@@ -70,6 +70,36 @@ static byte isPrivate = 0;
 static word32 keyboardResponseCount = 0;
 static byte** keyboardResponses;
 static word32* keyboardResponseLengths;
+
+
+/* Releases the responses from the previous INFO_REQUEST, if any. Only the
+ * keyboardResponseCount entries that were filled in are touched. */
+static void ClientFreeKeyboardResponses(void)
+{
+    word32 entry;
+
+    if (keyboardResponses != NULL) {
+        for (entry = 0; entry < keyboardResponseCount; entry++) {
+            if (keyboardResponses[entry] == NULL)
+                continue;
+            if (keyboardResponseLengths != NULL &&
+                    keyboardResponseLengths[entry] != 0) {
+                wc_ForceZero(keyboardResponses[entry],
+                        keyboardResponseLengths[entry]);
+            }
+            WFREE(keyboardResponses[entry], NULL, 0);
+        }
+        WFREE(keyboardResponses, NULL, 0);
+        keyboardResponses = NULL;
+    }
+
+    if (keyboardResponseLengths != NULL) {
+        WFREE(keyboardResponseLengths, NULL, 0);
+        keyboardResponseLengths = NULL;
+    }
+
+    keyboardResponseCount = 0;
+}
 #endif
 
 #ifdef WOLFSSH_CERTS
@@ -555,6 +585,8 @@ int ClientUserAuth(byte authType,
     }
 #if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        word32 promptCount = authData->sf.keyboard.promptCount;
+
         if (authData->sf.keyboard.promptName &&
             authData->sf.keyboard.promptName[0] != '\0') {
             printf("%s\n", authData->sf.keyboard.promptName);
@@ -563,50 +595,69 @@ int ClientUserAuth(byte authType,
             authData->sf.keyboard.promptInstruction[0] != '\0') {
             printf("%s\n", authData->sf.keyboard.promptInstruction);
         }
-        keyboardResponseCount = authData->sf.keyboard.promptCount;
-        keyboardResponses =
-            (byte**)WMALLOC(sizeof(byte*) * keyboardResponseCount, NULL, 0);
-        if (keyboardResponses == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        if (ret == WS_SUCCESS) {
-            authData->sf.keyboard.responses = (byte**)keyboardResponses;
-            keyboardResponseLengths = (word32*)WMALLOC(
-                sizeof(word32) * keyboardResponseCount, NULL, 0);
-            authData->sf.keyboard.responseLengths = keyboardResponseLengths;
-        }
 
-        if (keyboardResponseLengths == NULL) {
-            ret = WS_MEMORY_E;
-        }
+        /* The server may send another INFO_REQUEST at any time. */
+        ClientFreeKeyboardResponses();
 
-        for (entry = 0; entry < authData->sf.keyboard.promptCount; entry++) {
-            if (ret == WS_SUCCESS) {
-                printf("%s", authData->sf.keyboard.prompts[entry]);
-                if (!authData->sf.keyboard.promptEcho[entry]) {
-                    ClientSetEcho(0);
-                }
-                if (WFGETS((char*)userPassword, sizeof(userPassword), stdin)
-                        == NULL) {
-                    fprintf(stderr, "Getting response failed.\n");
-                    ret = WOLFSSH_USERAUTH_FAILURE;
+        if (promptCount > 0) {
+            keyboardResponses =
+                (byte**)WMALLOC(sizeof(byte*) * promptCount, NULL, 0);
+            if (keyboardResponses == NULL) {
+                ret = WS_MEMORY_E;
+            }
+            else {
+                WMEMSET(keyboardResponses, 0, sizeof(byte*) * promptCount);
+                keyboardResponseLengths =
+                    (word32*)WMALLOC(sizeof(word32) * promptCount, NULL, 0);
+                if (keyboardResponseLengths == NULL) {
+                    ret = WS_MEMORY_E;
                 }
                 else {
-                    char* c = strpbrk((char*)userPassword, "\r\n");
-                    if (c != NULL)
-                        *c = '\0';
+                    WMEMSET(keyboardResponseLengths, 0,
+                            sizeof(word32) * promptCount);
                 }
-                passwordSz = (word32)strlen((const char*)userPassword);
-                ClientSetEcho(1);
-                #ifdef USE_WINDOWS_API
-                    printf("\r\n");
-                #endif
-                WFFLUSH(stdout);
-                authData->sf.keyboard.responses[entry] =
-                    (byte*) WSTRDUP((char*)userPassword, NULL, 0);
-                authData->sf.keyboard.responseLengths[entry] = passwordSz;
-                authData->sf.keyboard.responseCount++;
             }
+        }
+
+        authData->sf.keyboard.responses = keyboardResponses;
+        authData->sf.keyboard.responseLengths = keyboardResponseLengths;
+
+        /* ret is a WS_UserAuthResults value here. The allocations above set
+         * WS_MEMORY_E to report OOM distinctly; both spaces put success at 0,
+         * but test the one this function actually returns. */
+        for (entry = 0; ret == WOLFSSH_USERAUTH_SUCCESS && entry < promptCount;
+                entry++) {
+            printf("%s", authData->sf.keyboard.prompts[entry]);
+            if (!authData->sf.keyboard.promptEcho[entry]) {
+                ClientSetEcho(0);
+            }
+            if (WFGETS((char*)userPassword, sizeof(userPassword), stdin)
+                    == NULL) {
+                fprintf(stderr, "Getting response failed.\n");
+                ClientSetEcho(1);
+                ret = WOLFSSH_USERAUTH_FAILURE;
+                break;
+            }
+            else {
+                char* c = strpbrk((char*)userPassword, "\r\n");
+                if (c != NULL)
+                    *c = '\0';
+            }
+            passwordSz = (word32)strlen((const char*)userPassword);
+            ClientSetEcho(1);
+            #ifdef USE_WINDOWS_API
+                printf("\r\n");
+            #endif
+            WFFLUSH(stdout);
+            keyboardResponses[entry] =
+                (byte*) WSTRDUP((char*)userPassword, NULL, 0);
+            if (keyboardResponses[entry] == NULL) {
+                ret = WS_MEMORY_E;
+                break;
+            }
+            keyboardResponseLengths[entry] = passwordSz;
+            keyboardResponseCount = entry + 1;
+            authData->sf.keyboard.responseCount++;
         }
     }
 #elif defined(WOLFSSH_KEYBOARD_INTERACTIVE)
@@ -1147,9 +1198,6 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap)
 {
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    word32 entry;
-#endif
 #ifdef WOLFSSH_TPM
     wolfSSH_TPM_Cleanup(&tpmDev, &tpmKey);
 #endif
@@ -1176,25 +1224,7 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     }
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    if (keyboardResponses != NULL && keyboardResponseLengths != NULL) {
-        for (entry = 0; entry < keyboardResponseCount; entry++) {
-            if (keyboardResponses[entry] != NULL &&
-                    keyboardResponseLengths[entry] != 0) {
-                wc_ForceZero(keyboardResponses[entry],
-                        keyboardResponseLengths[entry]);
-            }
-            WFREE(keyboardResponses[entry], NULL, 0);
-        }
-    }
-    if (keyboardResponses != NULL) {
-        WFREE(keyboardResponses, NULL, 0);
-        keyboardResponses = NULL;
-    }
-    if (keyboardResponseLengths != NULL) {
-        WFREE(keyboardResponseLengths, NULL, 0);
-        keyboardResponseLengths = NULL;
-    }
-    keyboardResponseCount = 0;
+    ClientFreeKeyboardResponses();
 #endif
     wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
     userPrivateKeySz = 0;
