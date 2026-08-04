@@ -5742,6 +5742,15 @@ static int ParseCertChain(byte* in, word32 inSz,
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", count);
+
+        /* RFC 6187 section 2.1, the chain must carry at least the leaf */
+        if (count == 0) {
+            WLOG(WS_LOG_ERROR, "Peer sent an empty certificate chain");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         chain = in + idx;
 
         for (countIdx = count; countIdx > 0; countIdx--) {
@@ -9343,7 +9352,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ret = ParseLeafCert((byte*)pubKeyBlob, pubKeyBlobSz,
                         &cert, &certSz);
             }
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS && cert != NULL && certSz != 0) {
                 authData->sf.publicKey.publicKey = cert;
                 authData->sf.publicKey.publicKeySz = certSz;
                 authData->sf.publicKey.isCert = 1;
@@ -20943,6 +20952,16 @@ int wolfSSH_TestParseRSAPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
 }
 
 #endif /* !WOLFSSH_NO_RSA */
+
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_TestParseLeafCert(byte* in, word32 inSz,
+        byte** leafOut, word32* leafOutSz)
+{
+    return ParseLeafCert(in, inSz, leafOut, leafOutSz);
+}
+
+#endif /* WOLFSSH_CERTS */
 
 #ifndef WOLFSSH_NO_ECDSA
 
