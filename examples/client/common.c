@@ -1217,7 +1217,7 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
 int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName)
 {
-    int ret = WS_SUCCESS;
+    int ret;
 
     if (ctx == NULL || storeName == NULL || subjectName == NULL) {
         return WS_BAD_ARGUMENT;
@@ -1239,6 +1239,7 @@ int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
  * is the x509v3 name that matches the key algorithm. */
 int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
 {
+    const byte* keyType;
     word32 i;
 
     if (ctx == NULL)
@@ -1249,47 +1250,58 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx)
         if (!pvtKey->useCertStore)
             continue;
 
-        /* Point userPublicKey at the DER certificate stored in the CTX.
-         * This is safe because the CTX outlives the auth callback. The
-         * ctx-owned flag stops ClientFreeBuffers from freeing CTX memory. */
-        userPublicKey = pvtKey->cert;
-        userPublicKeySz = pvtKey->certSz;
-        userPublicKeyCtxOwned = 1;
-
-        /* Map the internal key format to the x509v3 SSH type name. */
+        /* Map the internal key format to the x509v3 SSH type name. Resolve
+         * it before touching the globals so a failure leaves them alone. */
         switch (pvtKey->publicKeyFmt) {
             case ID_SSH_RSA:
             case ID_X509V3_SSH_RSA:
             case ID_RSA_SHA2_256:
             case ID_RSA_SHA2_512:
-                userPublicKeyType = (const byte*)"x509v3-ssh-rsa";
+                keyType = (const byte*)"x509v3-ssh-rsa";
                 break;
             case ID_ECDSA_SHA2_NISTP256:
             case ID_X509V3_ECDSA_SHA2_NISTP256:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
                 break;
             case ID_ECDSA_SHA2_NISTP384:
             case ID_X509V3_ECDSA_SHA2_NISTP384:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
                 break;
             case ID_ECDSA_SHA2_NISTP521:
             case ID_X509V3_ECDSA_SHA2_NISTP521:
-                userPublicKeyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
                 break;
             default:
                 fprintf(stderr, "Unsupported cert store key type: %d\n",
                         pvtKey->publicKeyFmt);
                 return WS_BAD_ARGUMENT;
         }
-        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)userPublicKeyType);
 
-        /* No in-memory private key — signing goes through the cert store.
-         * Keep the static-buffer invariant (only replace the pointer when it
-         * is not a heap allocation) so a later key load or
-         * ClientFreeBuffers call remains valid. */
-        if (!userPrivateKeyAlloc) {
-            userPrivateKey = userPrivateKeyBuf;
+        /* Drop anything an earlier file based load left behind, the cert
+         * store key replaces it. */
+        if (userPublicKeyAlloc && userPublicKey != NULL) {
+            WFREE(userPublicKey, ctx->heap, DYNTYPE_PRIVKEY);
+            userPublicKeyAlloc = 0;
         }
+        if (userPrivateKeyAlloc && userPrivateKey != NULL) {
+            wc_ForceZero(userPrivateKey, userPrivateKeySz);
+            WFREE(userPrivateKey, ctx->heap, DYNTYPE_PRIVKEY);
+            userPrivateKeyAlloc = 0;
+        }
+
+        /* Point userPublicKey at the DER certificate stored in the CTX. The
+         * ctx-owned flag stops ClientFreeBuffers from freeing CTX memory.
+         * The alias is only valid while the slot keeps its certificate:
+         * re-loading a host key onto this slot frees it, so do not mix this
+         * with the file-key loaders on the same CTX. */
+        userPublicKey = pvtKey->cert;
+        userPublicKeySz = pvtKey->certSz;
+        userPublicKeyCtxOwned = 1;
+        userPublicKeyType = keyType;
+        userPublicKeyTypeSz = (word32)WSTRLEN((const char*)keyType);
+
+        /* No in-memory private key, signing goes through the cert store. */
+        userPrivateKey = userPrivateKeyBuf;
         userPrivateKeySz = 0;
 
         pubKeyLoaded = 1;

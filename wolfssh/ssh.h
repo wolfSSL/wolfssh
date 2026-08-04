@@ -557,6 +557,15 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
             const char* name);
     #endif
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Use the certificate with Common Name subjectName, and its private
+     * key, from the storeName system certificate store as the host key.
+     * subjectName may carry a "CN=" prefix and matches in full, case
+     * insensitively. dwFlags selects the store location and must hold
+     * only CERT_SYSTEM_STORE_* location bits, e.g.
+     * CERT_SYSTEM_STORE_CURRENT_USER; control flags such as
+     * CERT_STORE_DELETE_FLAG are rejected with WS_BAD_ARGUMENT. The store
+     * is opened read-only. Returns WS_SUCCESS on success; on any failure
+     * the context is left unchanged. */
     WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             const wchar_t* storeName, word32 dwFlags,
             const wchar_t* subjectName);

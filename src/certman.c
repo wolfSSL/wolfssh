@@ -36,6 +36,7 @@
 #endif
 
 
+#include <wolfssl/ssl.h>
 #include <wolfssl/ocsp.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
@@ -45,13 +46,21 @@
 #include <wolfssh/certman.h>
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <stdlib.h>
+    #include <errno.h>
     #include <windows.h>
     #include <wincrypt.h>
+    #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
+        #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
+    #endif
     #ifndef CERT_SYSTEM_STORE_CURRENT_USER
         #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
     #endif
     #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
         #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_USERS
+        #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
 #endif
 
@@ -94,11 +103,22 @@ struct WOLFSSH_CERTMAN {
 };
 
 
+/* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
+#define WOLFSSL_V4_6_0 0x04006000
+
+
 /* used to import an external cert manager, frees and replaces existing manager
  * returns WS_SUCCESS on success
  */
 int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
 {
+#if LIBWOLFSSL_VERSION_HEX < WOLFSSL_V4_6_0
+    WOLFSSH_UNUSED(ctx);
+    WOLFSSH_UNUSED(cm);
+
+    WLOG(WS_LOG_CERTMAN, "Importing a cert manager needs wolfSSL 4.6.0");
+    return WS_NOT_COMPILED;
+#else
     if (ctx == NULL || cm == NULL || ctx->certMan == NULL) {
         return WS_BAD_ARGUMENT;
     }
@@ -113,6 +133,17 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
         return WS_FATAL_ERROR;
     }
 
+#ifdef HAVE_OCSP
+    /* an imported manager gets the same policy _CertMan_init() applies, and
+     * is rejected if it can't, rather than silently skipping revocation */
+    if (wolfSSL_CertManagerEnableOCSP(cm, WOLFSSL_OCSP_CHECKALL)
+            != WOLFSSL_SUCCESS) {
+        WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP on imported cert manager");
+        wolfSSL_CertManagerFree(cm);
+        return WS_FATAL_ERROR;
+    }
+#endif
+
     /* free up existing cm if present */
     if (ctx->certMan->cm != NULL) {
         wolfSSL_CertManagerFree(ctx->certMan->cm);
@@ -120,6 +151,7 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
     ctx->certMan->cm = cm;
 
     return WS_SUCCESS;
+#endif
 }
 
 
@@ -684,9 +716,10 @@ static int CheckProfile(DecodedCert* cert, int profile)
 
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-/* Parse a cert store spec string "store:subject:flags" into wide-string
- * components.  Allocates wStoreName and wSubjectName via WMALLOC; caller
- * must WFREE them.  dwFlags is set to the parsed flags value.
+/* Parse a cert store spec string "store:subject[:flags]" into wide-string
+ * components.  The subject may not contain ':'.  Allocates wStoreName and
+ * wSubjectName via WMALLOC; caller must WFREE them.  On success dwFlags is
+ * set to the parsed flags value, on failure it is left alone.
  * Returns WS_SUCCESS on success. */
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
@@ -696,6 +729,10 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
     char* storeName = NULL;
     char* subjectName = NULL;
     char* flagsStr = NULL;
+    char* flagsEnd = NULL;
+    unsigned long flagsVal;
+    unsigned long locationMask;
+    word32 flags;
     int wStoreNameLen, wSubjectNameLen;
     size_t specLen;
 
@@ -706,7 +743,8 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
 
     *wStoreName = NULL;
     *wSubjectName = NULL;
-    *dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+    flags = CERT_SYSTEM_STORE_CURRENT_USER;
+    locationMask = (unsigned long)CERT_SYSTEM_STORE_LOCATION_MASK;
 
     specLen = WSTRLEN(spec) + 1;
     specCopy = (char*)WMALLOC(specLen, heap, DYNTYPE_TEMP);
@@ -726,24 +764,50 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                 WFREE(specCopy, heap, DYNTYPE_TEMP);
                 return WS_BAD_ARGUMENT;
             }
-            if (WSTRCMP(flagsStr, "CURRENT_USER") == 0) {
-                *dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            if (WSTRCHR(flagsStr, ':') != NULL) {
+                WLOG(WS_LOG_CERTMAN,
+                        "Cert store subject may not contain a ':'");
+                WFREE(specCopy, heap, DYNTYPE_TEMP);
+                return WS_BAD_ARGUMENT;
             }
-            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0) {
-                *dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+            /* Accept the same spellings as wolfsshd's HostKeyStoreFlags and
+             * wolfSSH_WinUserDwFlags so one name works everywhere. */
+            if (WSTRCMP(flagsStr, "CURRENT_USER") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_CURRENT_USER") == 0) {
+                flags = CERT_SYSTEM_STORE_CURRENT_USER;
+            }
+            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_LOCAL_MACHINE") == 0) {
+                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
+            }
+            else if (WSTRCMP(flagsStr, "USERS") == 0
+                    || WSTRCMP(flagsStr, "CERT_SYSTEM_STORE_USERS") == 0) {
+                flags = CERT_SYSTEM_STORE_USERS;
             }
             else {
-                /* Fall back to a raw numeric value, but only accept
-                 * system-store location bits. Anything else is either not a
-                 * location or a control flag (e.g. CERT_STORE_DELETE_FLAG)
-                 * that would make CertOpenStore destructive. */
-                *dwFlags = (word32)atoi(flagsStr);
-                if ((*dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0
-                        || (*dwFlags &
-                            ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+                /* Fall back to a raw numeric value, decimal or 0x hex, that
+                 * has to be consumed whole. Only system-store location bits
+                 * are accepted. Anything else is either not a location or a
+                 * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make
+                 * CertOpenStore destructive. */
+                errno = 0;
+                flagsVal = strtoul(flagsStr, &flagsEnd, 0);
+                if (flagsEnd == flagsStr || *flagsEnd != '\0'
+                        || errno == ERANGE) {
+                    WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value");
                     WFREE(specCopy, heap, DYNTYPE_TEMP);
                     return WS_BAD_ARGUMENT;
                 }
+                if ((flagsVal & locationMask) == 0
+                        || (flagsVal & ~locationMask) != 0) {
+                    WLOG(WS_LOG_CERTMAN,
+                            "Cert store flags are not a store location");
+                    WFREE(specCopy, heap, DYNTYPE_TEMP);
+                    return WS_BAD_ARGUMENT;
+                }
+                flags = (word32)flagsVal;
             }
         }
     }
@@ -786,6 +850,8 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
             *wStoreName, wStoreNameLen);
     MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
             *wSubjectName, wSubjectNameLen);
+
+    *dwFlags = flags;
 
     WFREE(specCopy, heap, DYNTYPE_TEMP);
     return WS_SUCCESS;

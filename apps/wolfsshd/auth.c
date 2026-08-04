@@ -55,7 +55,7 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 
-#if defined(WOLFSSL_FPKI) || defined(_WIN32)
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
 /* Used to bind a client certificate to the requested user name: by UPN
  * with FPKI, by subject CN on Windows builds without FPKI. */
 #include <wolfssl/wolfcrypt/asn.h>
@@ -2311,7 +2311,8 @@ static int CAKeysFileDiffers(const char* a, const char* b)
 /* Returns 1 when the certificate UPN <user>@<domain> in name[0..nameSz)
  * authorizes login as 'usr'. allowList is a whitespace/comma list of permitted
  * realms; NULL/empty matches the local part only, else domain must be listed. */
-#if defined(WOLFSSL_FPKI) || defined(WOLFSSHD_UNIT_TEST)
+#if (defined(WOLFSSL_FPKI) && defined(WOLFSSH_CERTS)) || \
+    defined(WOLFSSHD_UNIT_TEST)
 WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
                                    int nameSz, const char* allowList)
 {
@@ -2369,7 +2370,7 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
 
     return ret;
 }
-#endif /* WOLFSSL_FPKI || WOLFSSHD_UNIT_TEST */
+#endif /* (WOLFSSL_FPKI && WOLFSSH_CERTS) || WOLFSSHD_UNIT_TEST */
 
 
 #ifdef WOLFSSHD_UNIT_TEST
@@ -2599,12 +2600,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         ret = WOLFSSH_USERAUTH_REJECTED;
     }
 
-    #if defined(WOLFSSL_FPKI) || defined(_WIN32)
+    #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
         /* Bind the certificate to the requested user name via UPN with FPKI or
-         * CN without FPKI. */
-        if (authData->sf.publicKey.isCert) {
+         * CN without FPKI. Only done when relying on the CA; an
+         * AuthorizedKeysFile entry is itself an explicit user to cert binding
+         * and is checked below. */
+        if (authData->sf.publicKey.isCert &&
+                !wolfSSHD_ConfigGetAuthKeysFileSet(usrConf)) {
         #ifdef WOLFSSH_SMALL_STACK
             DecodedCert* dCert;
 
@@ -2660,12 +2664,18 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                             "not set; certificate UPN domain is not checked");
                     }
                 #else
-                    /* Without FPKI compare subject CN with user name.
-                     * Windows account names are case-insensitive, so match
-                     * the CN the same way there. */
-                    if (dCert->subjectCN != NULL &&
+                    /* Without FPKI compare subject CN with user name. Only
+                     * reachable on Windows, where account names are
+                     * case-insensitive, so match the CN the same way when the
+                     * Windows string API is available.
+                     *
+                     * This is a name match only. There is no analogue of
+                     * AuthorizedUPNDomains here, so any CA in the trust store
+                     * may assert any CN; the trusted user CA set is the whole
+                     * of the issuer policy. */
+                    if (dCert->subjectCN != NULL && dCert->subjectCNLen > 0 &&
                             (int)XSTRLEN(usr) == dCert->subjectCNLen &&
-                        #ifdef _WIN32
+                        #ifdef USE_WINDOWS_API
                             WSTRNCASECMP(usr, dCert->subjectCN,
                                 (size_t)dCert->subjectCNLen) == 0
                         #else
@@ -2674,12 +2684,18 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         #endif
                             ) {
                         usrMatch = 1;
+                        /* warn per auth attempt so the weaker binding is
+                         * visible, no shared state */
+                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] certificate bound to "
+                            "user by subject CN only; no issuer constraint is "
+                            "applied, keep the trusted user CA set narrow");
                     }
                 #endif
 
                     if (usrMatch == 0) {
                         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
-                            "sent");
+                            "sent; certificate identity does not match the "
+                            "requested user (user=%s)", usr);
                         ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                     }
                 }
@@ -2712,10 +2728,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
-            #ifdef _WIN32
-                /* The UPN/CN-vs-username check above already bound the
-                 * certificate to the requested user. Still need to get
-                 * the users token on Windows. */
+            #if defined(WOLFSSH_CERTS) && defined(_WIN32)
+                /* Bound to the requested user above by certificate UPN with
+                 * FPKI, or by subject CN otherwise; which of the two is in
+                 * force is fixed by the wolfSSL build, not by configuration.
+                 * Still need to get the users token on Windows. */
                 wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] Relying on CA for public key check");
                 rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
@@ -2729,7 +2746,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         "[SSHD] Error getting users token.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
-            #elif defined(WOLFSSL_FPKI)
+            #elif defined(WOLFSSH_CERTS) && defined(WOLFSSL_FPKI)
                 /* The UPN-vs-username check above already bound the certificate
                  * to the requested user, so the CA-verified chain is
                  * sufficient. */
@@ -2737,10 +2754,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Relying on CA for public key check");
                 ret = WOLFSSH_USERAUTH_SUCCESS;
             #else
-                /* Without FPKI the certificate UPN/principal cannot be read, so
-                 * the requested user cannot be bound to the certificate. Fail
-                 * closed: require AuthorizedKeysFile (per-user key/cert mapping)
-                 * or a wolfSSL build with FPKI. */
+                /* No binding ran above: either the certificate UPN/principal
+                 * cannot be read without FPKI, or this build has no
+                 * certificate support at all. Fail closed: require
+                 * AuthorizedKeysFile (per-user key/cert mapping) or a wolfSSL
+                 * build with FPKI. */
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Certificate authentication cannot bind the requested "
                     "user without FPKI or AuthorizedKeysFile; rejecting "

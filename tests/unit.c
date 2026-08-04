@@ -55,13 +55,20 @@
     defined(WOLFSSL_CERT_GEN) && !defined(WOLFSSH_NO_ECDSA) && \
     !defined(NO_FILESYSTEM)
     #define WOLFSSH_TEST_CERTMAN_PROMOTE
+    #include <wolfssl/wolfcrypt/asn_public.h>
+    #include <wolfssl/wolfcrypt/ecc.h>
+#endif
+
+/* Cert manager tests that read a test cert off disk. A superset of the
+ * WOLFSSH_TEST_CERTMAN_PROMOTE conditions above. */
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA) && \
+    !defined(NO_FILESYSTEM)
+    #define WOLFSSH_TEST_CERTMAN_ROOTCA
     /* The certman helpers use malloc/free and LONG_MAX; pull these in here so
      * the tests build even when the SCP block below is not compiled.
      * certman.h itself comes from the WOLFSSH_CERTS block below. */
     #include <limits.h>
     #include <stdlib.h>
-    #include <wolfssl/wolfcrypt/asn_public.h>
-    #include <wolfssl/wolfcrypt/ecc.h>
 #endif
 
 #ifdef WOLFSSH_CERTS
@@ -78,6 +85,9 @@
     #endif
     #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
         #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_USERS
+        #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
 #endif
 
@@ -12320,7 +12330,13 @@ done:
     return result;
 }
 
-#ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+/* The cert manager tests below use only public API, so they are outside the
+ * WOLFSSH_TEST_INTERNAL section. Each carries its own feature guard;
+ * WOLFSSH_TEST_CERTMAN_PROMOTE still implies WOLFSSH_TEST_INTERNAL. */
+
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
 
 /* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
 static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
@@ -12368,6 +12384,10 @@ static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
     *bufSz = (word32)sz;
     return 0;
 }
+
+#endif /* WOLFSSH_TEST_CERTMAN_ROOTCA */
+
+#ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
 
 /* Forge an end-entity cert whose issuer is the supplied cert and which is
  * signed with the supplied (non-CA) key. Fills der/derSz on success. */
@@ -12785,34 +12805,42 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 #ifdef WOLFSSH_CERTS
 /* wolfSSH_SetCertManager imports a WOLFSSL_CERT_MANAGER by reference into
  * the wolfSSH context. Test argument checking, importing the same manager
- * twice, replacing an already-imported manager, and the reference count
- * that keeps the manager alive after the WOLFSSL_CTX that created it is
- * freed (a missing reference shows up as a use-after-free/double-free
- * under the sanitizer builds). */
+ * twice, replacing an already-imported manager, and the reference counting
+ * on both sides of the import: the imported manager must outlive the
+ * reference it was created with, and must outlive the wolfSSH context. Each
+ * of those is checked by loading a root CA through the manager afterwards,
+ * so a missing up_ref shows up as a failure or as a use-after-free under
+ * the sanitizer builds. */
 static int test_SetCertManager(void)
 {
     int result = 0;
     WOLFSSH_CTX* ctx = NULL;
-    WOLFSSL_CTX* sslCtx = NULL;
-    WOLFSSL_CTX* sslCtx2 = NULL;
     WOLFSSL_CERT_MANAGER* cm = NULL;
+    WOLFSSL_CERT_MANAGER* cm2 = NULL;
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+    byte* root = NULL;
+    word32 rootSz = 0;
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
-    if (ctx == NULL)
+    /* run from the source root so ./keys resolves */
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0) {
+        printf("SetCertManager: can't load root cert\n");
         result = -1;
+    }
+#endif
 
     if (result == 0) {
-        sslCtx = wolfSSL_CTX_new(wolfSSLv23_server_method());
-        if (sslCtx == NULL)
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL)
             result = -2;
     }
 
-    /* bad arguments */
     if (result == 0) {
-        cm = wolfSSL_CTX_GetCertManager(sslCtx);
+        cm = wolfSSL_CertManagerNew();
         if (cm == NULL)
             result = -3;
     }
+
+    /* bad arguments */
     if (result == 0 && wolfSSH_SetCertManager(NULL, cm) != WS_BAD_ARGUMENT)
         result = -4;
     if (result == 0 && wolfSSH_SetCertManager(ctx, NULL) != WS_BAD_ARGUMENT)
@@ -12824,34 +12852,50 @@ static int test_SetCertManager(void)
     if (result == 0 && wolfSSH_SetCertManager(ctx, cm) != WS_SUCCESS)
         result = -7;
 
-    /* the context must hold its own reference: freeing the WOLFSSL_CTX
-     * that created the manager must leave the imported manager usable */
+    /* the context holds its own reference: dropping the creating reference
+     * must leave the imported manager usable */
     if (result == 0) {
-        wolfSSL_CTX_free(sslCtx);
-        sslCtx = NULL;
+        wolfSSL_CertManagerFree(cm);
+        cm = NULL;
     }
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+    if (result == 0 && wolfSSH_CTX_AddRootCert_buffer(ctx, root, rootSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS)
+        result = -8;
+#endif
 
-    /* replace the imported manager with one from a second WOLFSSL_CTX,
-     * releasing the reference on the first manager */
+    /* replacing the imported manager releases the reference on the old one */
     if (result == 0) {
-        sslCtx2 = wolfSSL_CTX_new(wolfSSLv23_server_method());
-        if (sslCtx2 == NULL)
-            result = -8;
-    }
-    if (result == 0) {
-        cm = wolfSSL_CTX_GetCertManager(sslCtx2);
-        if (cm == NULL)
+        cm2 = wolfSSL_CertManagerNew();
+        if (cm2 == NULL)
             result = -9;
-        else if (wolfSSH_SetCertManager(ctx, cm) != WS_SUCCESS)
+        else if (wolfSSH_SetCertManager(ctx, cm2) != WS_SUCCESS)
             result = -10;
     }
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+    if (result == 0 && wolfSSH_CTX_AddRootCert_buffer(ctx, root, rootSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS)
+        result = -11;
+#endif
 
-    if (sslCtx != NULL)
-        wolfSSL_CTX_free(sslCtx);
-    if (sslCtx2 != NULL)
-        wolfSSL_CTX_free(sslCtx2);
+    /* the caller's reference outlives the context that imported it */
     if (ctx != NULL)
         wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+    if (result == 0 && cm2 != NULL &&
+            wolfSSL_CertManagerLoadCABuffer(cm2, root, rootSz,
+                WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS)
+        result = -12;
+#endif
+
+    if (cm != NULL)
+        wolfSSL_CertManagerFree(cm);
+    if (cm2 != NULL)
+        wolfSSL_CertManagerFree(cm2);
+#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+    if (root != NULL)
+        free(root);
+#endif
 
     return result;
 }
@@ -12960,6 +13004,8 @@ static int test_ParseCertStoreSpec(void)
     return result;
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
+#ifdef WOLFSSH_TEST_INTERNAL
 
 /* Tests below install a custom allocator via wolfSSL_SetAllocators. The
  * wolfSSL_Malloc_cb / wolfSSL_Free_cb / wolfSSL_Realloc_cb typedefs gain
@@ -16878,13 +16924,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
 #endif
 
-#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS)
+#ifdef WOLFSSH_CERTS
     unitResult = test_SetCertManager();
     printf("SetCertManager: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 
-#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
     unitResult = test_ParseCertStoreSpec();
     printf("ParseCertStoreSpec: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));

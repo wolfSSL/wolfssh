@@ -33,7 +33,9 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
-#include <wolfssh/certman.h>
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wolfssh/certman.h>
+#endif
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -415,6 +417,8 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
+    printf("               supplies both keys, can not be used with "
+           "-i, -j or -J\n");
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
@@ -1700,6 +1704,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    if (certStoreSpec != NULL && (privKeyName != NULL || pubKeyName != NULL ||
+            certName != NULL)) {
+        err_sys("-W provides both keys, it can not be used with -i, -j "
+                "or -J.");
+    }
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
     if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
         err_sys("If setting priv key, need pub key.");
     }
@@ -1740,7 +1752,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         word32 dwFlags = 0;
 
         ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
-                &wSubjectName, &dwFlags, NULL);
+                &wSubjectName, &dwFlags, heap);
         if (ret != WS_SUCCESS) {
             err_sys("Invalid cert store spec. Use: store:subject:flags");
         }
@@ -1748,8 +1760,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         /* Create context first */
         ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
         if (ctx == NULL) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            WFREE(wStoreName, heap, DYNTYPE_TEMP);
+            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             err_sys("Couldn't create wolfSSH client context.");
         }
 
@@ -1757,8 +1769,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
             wSubjectName);
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            WFREE(wStoreName, heap, DYNTYPE_TEMP);
+            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             err_sys("Error setting private key from certificate store");
         }
 
@@ -1767,13 +1779,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
          * authentication. */
         ret = ClientSetupCertStoreAuth(ctx);
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-            WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+            WFREE(wStoreName, heap, DYNTYPE_TEMP);
+            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             err_sys("Error setting up cert store auth");
         }
 
-        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+        WFREE(wStoreName, heap, DYNTYPE_TEMP);
+        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
     } else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {
@@ -1949,13 +1961,16 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
+
+    /* Clear the auth globals before the CTX, with a cert store key they
+     * alias memory owned by the CTX. */
+    ClientFreeBuffers(pubKeyName, privKeyName, heap);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS) {
         printf("error %d encountered\n", ret);
         ((func_args*)args)->return_code = ret;
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName, heap);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif

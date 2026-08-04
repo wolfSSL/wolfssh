@@ -30,8 +30,10 @@
 
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
-#include <wolfssh/ssh.h> /* included for WOLFSSH_CTX */
-#include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
+#ifdef WOLFSSH_CERTS
+    #include <wolfssh/ssh.h> /* included for WOLFSSH_CTX */
+    #include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,8 +44,12 @@ struct WOLFSSH_CERTMAN;
 typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
 
 
+#ifdef WOLFSSH_CERTS
+/* Replaces the CTX's cert manager with cm, taking a reference on it and
+ * applying wolfSSH's revocation policy. */
 WOLFSSH_API
 int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm);
+#endif /* WOLFSSH_CERTS */
 
 WOLFSSH_API
 WOLFSSH_CERTMAN* wolfSSH_CERTMAN_new(void* heap);
@@ -60,12 +66,15 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* cert, word32 certSz, word32 certCount);
 
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+/* Splits "store:subject[:flags]", where flags is CURRENT_USER,
+ * LOCAL_MACHINE, or a decimal or 0x hex CERT_SYSTEM_STORE_* location, and
+ * defaults to CURRENT_USER. The subject may not contain a ':'. */
 WOLFSSH_API
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
         word32* dwFlags, void* heap);
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
 
 
 #ifdef __cplusplus

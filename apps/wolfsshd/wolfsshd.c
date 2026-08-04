@@ -37,16 +37,28 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/logging.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
+#ifdef WOLFSSH_CERTS
+    #include <wolfssl/ssl.h>
+#endif
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
+    #include <stdlib.h>
+    #include <errno.h>
+    #include <wolfssl/wolfcrypt/asn.h>
+    #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
+        #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
+    #endif
     #ifndef CERT_SYSTEM_STORE_CURRENT_USER
         #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
     #endif
     #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
         #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_USERS
+        #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -353,11 +365,86 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 }
 
 #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
-/* Add every certificate in the configured Windows store (winUserPvPara name,
- * winUserDwFlags location) as a trusted root CA. Returns WS_SUCCESS on
+/* Parse a Windows system store location, given either as a CERT_SYSTEM_STORE_*
+ * name (long or short form) or as a number in strtoul() base 0 form, so both
+ * 65536 and 0x00010000 work. Only location bits are accepted; anything else is
+ * either not a location or a control flag (e.g. CERT_STORE_DELETE_FLAG) that
+ * would make CertOpenStore destructive. Returns WS_SUCCESS on success. */
+static int ParseCertStoreLocation(const char* in, word32* out)
+{
+    int ret = WS_SUCCESS;
+    unsigned long val;
+    char* end;
+
+    if (in == NULL || out == NULL || *in == '\0') {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (WSTRCMP(in, "CURRENT_USER") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_CURRENT_USER") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_CURRENT_USER;
+    }
+    else if (WSTRCMP(in, "LOCAL_MACHINE") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_LOCAL_MACHINE") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE;
+    }
+    else if (WSTRCMP(in, "USERS") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_USERS") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_USERS;
+    }
+    else {
+        end = NULL;
+        errno = 0;
+        val = strtoul(in, &end, 0);
+        if (end == in || *end != '\0' || errno == ERANGE) {
+            ret = WS_BAD_ARGUMENT;
+        }
+        else if ((val & (unsigned long)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
+                (val & ~(unsigned long)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            *out = (word32)val;
+        }
+    }
+
+    return ret;
+}
+
+/* Returns 1 when der holds an X.509 certificate with basicConstraints
+ * CA:TRUE, 0 otherwise. */
+static int CertIsCA(const byte* der, word32 derSz)
+{
+    DecodedCert* dCert;
+    int isCA = 0;
+#ifdef WOLFSSH_SMALL_STACK
+    dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL, DYNTYPE_CERT);
+    if (dCert == NULL) {
+        return 0;
+    }
+#else
+    DecodedCert sdCert;
+
+    dCert = &sdCert;
+#endif
+
+    wc_InitDecodedCert(dCert, der, derSz, NULL);
+    if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) == 0) {
+        isCA = (dCert->isCA != 0);
+    }
+    FreeDecodedCert(dCert);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(dCert, NULL, DYNTYPE_CERT);
+#endif
+
+    return isCA;
+}
+
+/* Add every CA certificate in the configured Windows store (winUserPvPara
+ * name, winUserDwFlags location) as a trusted root CA. Returns WS_SUCCESS on
  * success. */
-static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
-        void* heap)
+static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
+        WOLFSSH_CTX* ctx, void* heap)
 {
     int    ret = WS_SUCCESS;
     char*  storeNameStr;
@@ -369,18 +456,27 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
     HCERTSTORE     hStore = NULL;
     PCCERT_CONTEXT pCertContext = NULL;
     word32 loaded = 0;
+    word32 skipped = 0;
 
     storeNameStr = wolfSSHD_ConfigGetWinUserPvPara(conf);
     dwFlagsStr   = wolfSSHD_ConfigGetWinUserDwFlags(conf);
     providerStr  = wolfSSHD_ConfigGetWinUserStores(conf);
+
+    /* Every certificate in this store becomes a trust anchor for client
+     * authentication, so the administrator must name it. There is no default:
+     * guessing one silently would pick a store the administrator never
+     * reviewed. */
     if (storeNameStr == NULL) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No user CA store name configured");
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] wolfSSH_TrustedUserCAStore is enabled but no store name "
+            "is configured. Set wolfSSH_WinUserPvPara to the store holding "
+            "the client CA certificates to trust, e.g. 'Root' or 'CA'.");
         return WS_BAD_ARGUMENT;
     }
 
-    /* Only the system-store provider is supported here. Fail rather than
-     * silently load trust anchors from a different provider than the one
-     * configured. */
+    /* Only the system-store provider is supported here. NULL means the option
+     * was not given, which is that same provider. Fail rather than silently
+     * load trust anchors from a different provider than the one configured. */
     if (providerStr != NULL &&
             WSTRCMP(providerStr, "CERT_STORE_PROV_SYSTEM") != 0) {
         wolfSSH_Log(WS_LOG_ERROR,
@@ -389,28 +485,13 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    if (dwFlagsStr != NULL) {
-        if (WSTRCMP(dwFlagsStr, "CURRENT_USER") == 0 ||
-                WSTRCMP(dwFlagsStr, "CERT_SYSTEM_STORE_CURRENT_USER") == 0) {
-            dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-        }
-        else if (WSTRCMP(dwFlagsStr, "LOCAL_MACHINE") == 0 ||
-                WSTRCMP(dwFlagsStr, "CERT_SYSTEM_STORE_LOCAL_MACHINE") == 0) {
-            dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-        }
-        else {
-            /* Fall back to a raw numeric value, but only accept system-store
-             * location bits. Anything else is either not a location or a
-             * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make
-             * CertOpenStore destructive. */
-            dwFlags = (word32)atoi(dwFlagsStr);
-            if ((dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
-                    (dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Unrecognized user CA store flags '%s'", dwFlagsStr);
-                return WS_BAD_ARGUMENT;
-            }
-        }
+    /* An unset location keeps the CERT_SYSTEM_STORE_CURRENT_USER default set
+     * above. */
+    if (dwFlagsStr != NULL &&
+            ParseCertStoreLocation(dwFlagsStr, &dwFlags) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Unrecognized user CA store flags '%s'", dwFlagsStr);
+        return WS_BAD_ARGUMENT;
     }
 
     wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, NULL, 0);
@@ -448,6 +529,16 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
                 pCertContext->cbCertEncoded == 0) {
             continue;
         }
+        /* wolfSSL does not enforce basicConstraints CA:TRUE for user-loaded
+         * trust anchors, so an end-entity certificate sitting in the store
+         * would become a login authority. Filter it out here. */
+        if (!CertIsCA(pCertContext->pbCertEncoded,
+                (word32)pCertContext->cbCertEncoded)) {
+            skipped++;
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Skipping a non-CA cert in store '%s'", storeNameStr);
+            continue;
+        }
         if (wolfSSH_CTX_AddRootCert_buffer(ctx,
                 (const byte*)pCertContext->pbCertEncoded,
                 (word32)pCertContext->cbCertEncoded,
@@ -466,14 +557,15 @@ static int LoadUserCACertsFromStore(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX* ctx,
 
     if (loaded == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] No usable CA certificates found in store '%s'",
-            storeNameStr);
+            "[SSHD] No usable CA certificates found in store '%s' (%u non-CA "
+            "cert(s) skipped)", storeNameStr, skipped);
         ret = WS_FATAL_ERROR;
     }
     else {
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] Loaded %u CA certificate(s) from store '%s'",
-            loaded, storeNameStr);
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Trusting %u CA certificate(s) from store '%s' "
+            "(location 0x%08lx) for client authentication, %u non-CA cert(s) "
+            "skipped", loaded, storeNameStr, (unsigned long)dwFlags, skipped);
     }
 
     return ret;
@@ -522,21 +614,21 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
         char* hostKeyStore = wolfSSHD_ConfigGetHostKeyStore(conf);
         char* hostKeyStoreSubject = wolfSSHD_ConfigGetHostKeyStoreSubject(conf);
         char* hostKeyStoreFlags = wolfSSHD_ConfigGetHostKeyStoreFlags(conf);
 
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] Cert store code compiled in. "
-            "hostKeyStore=%s, hostKeyStoreSubject=%s, hostKeyStoreFlags=%s",
-            hostKeyStore ? hostKeyStore : "(null)",
-            hostKeyStoreSubject ? hostKeyStoreSubject : "(null)",
-            hostKeyStoreFlags ? hostKeyStoreFlags : "(null)");
-
         if (hostKeyStore != NULL && hostKeyStoreSubject == NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] HostKeyStore set but HostKeyStoreSubject is missing");
+            ret = WS_BAD_ARGUMENT;
+        }
+        else if (hostKeyStore == NULL &&
+                (hostKeyStoreSubject != NULL || hostKeyStoreFlags != NULL)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] HostKeyStoreSubject/HostKeyStoreFlags set but "
+                "HostKeyStore is missing");
             ret = WS_BAD_ARGUMENT;
         }
 
@@ -548,29 +640,14 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             word32 dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
             int storeNameLen, subjectNameLen;
 
-            /* Parse flags if provided */
-            if (hostKeyStoreFlags != NULL) {
-                if (WSTRCMP(hostKeyStoreFlags, "CURRENT_USER") == 0) {
-                    dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-                } else if (WSTRCMP(hostKeyStoreFlags, "LOCAL_MACHINE") == 0) {
-                    dwFlags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-                } else {
-                    /* Fall back to a raw numeric value, but only accept
-                     * system-store location bits. Anything else is either not
-                     * a location or a control flag (e.g.
-                     * CERT_STORE_DELETE_FLAG) that would make CertOpenStore
-                     * destructive. */
-                    dwFlags = (word32)atoi(hostKeyStoreFlags);
-                    if ((dwFlags &
-                            (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
-                        (dwFlags &
-                            ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
-                        wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Unrecognized host key store flags '%s'",
-                            hostKeyStoreFlags);
-                        ret = WS_BAD_ARGUMENT;
-                    }
-                }
+            /* An unset location keeps the CURRENT_USER default set above. */
+            if (hostKeyStoreFlags != NULL &&
+                    ParseCertStoreLocation(hostKeyStoreFlags, &dwFlags)
+                        != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Unrecognized host key store flags '%s'",
+                    hostKeyStoreFlags);
+                ret = WS_BAD_ARGUMENT;
             }
 
             /* Convert to wide strings */
@@ -621,19 +698,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
         }
         else if (ret == WS_SUCCESS)
-#elif defined(WOLFSSH_CERTS)
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] WOLFSSH_WINDOWS_CERT_STORE not defined - cert store support disabled");
-#else
-        wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] WOLFSSH_CERTS not defined - cert store support disabled");
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
         {
             char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
-
-            wolfSSH_Log(WS_LOG_INFO,
-                "[SSHD] File-based host key path entered. hostKey=%s",
-                hostKey ? hostKey : "(null)");
 
             if (hostKey == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
@@ -797,12 +864,29 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
 #ifdef WOLFSSH_CERTS
     /* Load system CA certs from the OS trust store via wolfSSL into a
-     * temporary WOLFSSL_CTX, then import its cert manager. */
+     * temporary WOLFSSL_CTX, then import its cert manager. That cert manager
+     * verifies *client* certificates during user authentication, so every CA
+     * in the OS trust store becomes a login authority for this daemon. On a
+     * public trust store that is every commercial root CA, and the only
+     * remaining binding to an account is the certificate subject. Intended for
+     * a store that holds nothing but the organization's own CA. */
     #ifdef WOLFSSL_SYS_CA_CERTS
     if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
         WOLFSSL_CTX* sslCtx;
 
-        wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using system CAs");
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] WARNING: wolfSSH_TrustedSystemCAKeys makes every CA in "
+            "the OS trust store an SSH user authentication authority. Any "
+            "certificate issued by any of them whose subject matches a local "
+            "account name can log in as that account. Use this only when the "
+            "OS trust store holds solely your organization's CA.");
+    #ifdef WOLFSSH_NO_FPKI
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] WARNING: built without FPKI profile checking, so peer "
+            "certificates are not required to carry a client authentication "
+            "EKU. A TLS server, S/MIME or code signing certificate with a "
+            "matching subject is accepted for login.");
+    #endif
         sslCtx = wolfSSL_CTX_new(wolfSSLv23_server_method());
         if (sslCtx == NULL) {
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Unable to create temporary CTX");
@@ -843,7 +927,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* Load user CA certs (trust anchors used to verify client X.509 certs)
      * directly from a Windows certificate store into the cert manager. */
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
     if (ret == WS_SUCCESS && wolfSSHD_ConfigGetUserCAStore(conf)) {
         ret = LoadUserCACertsFromStore(conf, *ctx, heap);
     }
@@ -855,6 +939,19 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         ret = WS_NOT_COMPILED;
     }
     #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
+    /* State the cert-to-user binding once at startup. Which one is in force is
+     * fixed by the wolfSSL build, not by configuration, so this cannot be
+     * derived from the config file. */
+    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)
+    if (ret == WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] WARNING: client certificates are bound to an account by "
+            "subject CN only. Any CA in the trusted user CA set may assert "
+            "any CN, so keep that set narrow. Build wolfSSL with FPKI for "
+            "UPN binding and AuthorizedUPNDomains.");
+    }
+    #endif
 
     /* load in CA certs from file set */
     if (ret == WS_SUCCESS) {
@@ -3339,8 +3436,20 @@ static int StartSSHD(int argc, char** argv)
     }
 
     /* check if host key file was passed in */
-    if (hostKeyFile != NULL) {
-        wolfSSHD_ConfigSetHostKeyFile(conf, hostKeyFile);
+    if (ret == WS_SUCCESS && hostKeyFile != NULL) {
+    #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+        /* The store branch in SetupCTX() wins over the file path, so an
+         * accepted -h here would be silently discarded. */
+        if (wolfSSHD_ConfigGetHostKeyStore(conf) != NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] -h host key file conflicts with the configured "
+                "HostKeyStore. Use one or the other.");
+            ret = WS_BAD_ARGUMENT;
+        }
+    #endif
+        if (ret == WS_SUCCESS) {
+            wolfSSHD_ConfigSetHostKeyFile(conf, hostKeyFile);
+        }
     }
 
     if (ret == WS_SUCCESS) {
