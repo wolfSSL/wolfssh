@@ -5833,6 +5833,58 @@ done:
     return result;
 }
 
+#ifdef WOLFSSH_CERTS
+/* RFC 6187 chain: [name][certCount][certSz][cert]...[ocspCount] */
+static int test_ParseLeafCert_certCount(void)
+{
+    static const byte blobEmpty[] = {
+        0x00,0x00,0x00,0x0E,                    /* nameSz = 14        */
+        0x78,0x35,0x30,0x39,0x76,0x33,0x2D,     /* "x509v3-"          */
+        0x73,0x73,0x68,0x2D,0x72,0x73,0x61,     /* "ssh-rsa"          */
+        0x00,0x00,0x00,0x00,                    /* certCount = 0      */
+        0x00,0x00,0x00,0x00                     /* ocspCount = 0      */
+    };
+    static const byte blobOne[] = {
+        0x00,0x00,0x00,0x0E,                    /* nameSz = 14        */
+        0x78,0x35,0x30,0x39,0x76,0x33,0x2D,     /* "x509v3-"          */
+        0x73,0x73,0x68,0x2D,0x72,0x73,0x61,     /* "ssh-rsa"          */
+        0x00,0x00,0x00,0x01,                    /* certCount = 1      */
+        0x00,0x00,0x00,0x04,                    /* certSz = 4         */
+        0xDE,0xAD,0xBE,0xEF,                    /* leaf               */
+        0x00,0x00,0x00,0x00                     /* ocspCount = 0      */
+    };
+    byte*  leaf = NULL;
+    word32 leafSz = 0;
+    int    ret;
+
+    ret = wolfSSH_TestParseLeafCert((byte*)blobEmpty, (word32)sizeof(blobEmpty),
+            &leaf, &leafSz);
+    if (ret == WS_SUCCESS) {
+        printf("ParseLeafCert: accepted an empty certificate chain\n");
+        return -7100;
+    }
+    if (leaf != NULL || leafSz != 0) {
+        printf("ParseLeafCert: leaf set from an empty chain\n");
+        return -7101;
+    }
+
+    /* A well formed single-cert chain must still parse. */
+    ret = wolfSSH_TestParseLeafCert((byte*)blobOne, (word32)sizeof(blobOne),
+            &leaf, &leafSz);
+    if (ret != WS_SUCCESS) {
+        printf("ParseLeafCert: ret=%d on a one-cert chain\n", ret);
+        return -7102;
+    }
+    if (leaf != blobOne + 26 || leafSz != 4) {
+        printf("ParseLeafCert: wrong leaf, sz=%u\n", leafSz);
+        return -7103;
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_CERTS */
+
+
 #ifndef NO_SHA256
 /* RFC 4253 sec 7.2 key expansion, SHA-256, keySz = two digests plus a
  * remainder, so the multi-block loop runs. Guards the derived key only;
@@ -13817,6 +13869,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("PrepareUserAuthRequestPassword: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_CERTS
+    unitResult = test_ParseLeafCert_certCount();
+    printf("ParseLeafCert_certCount: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #ifndef NO_SHA256
     unitResult = test_GenerateKey_multiBlock();

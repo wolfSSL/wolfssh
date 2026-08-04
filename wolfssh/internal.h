@@ -1741,6 +1741,10 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestParseRSAPubKey(WOLFSSH* ssh, byte* pubKey,
             word32 pubKeySz);
 #endif /* !WOLFSSH_NO_RSA */
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_TestParseLeafCert(byte* in, word32 inSz,
+            byte** leafOut, word32* leafOutSz);
+#endif /* WOLFSSH_CERTS */
 #ifndef WOLFSSH_NO_ECDSA
     WOLFSSH_API int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey,
             word32 pubKeySz);
