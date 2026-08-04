@@ -5961,6 +5961,83 @@ static int test_DoChannelRequest(void)
         goto done;
     }
 
+    /* A request type must match a handled name exactly. Truncated,
+     * empty, and NUL-padded types have to be rejected. These run before
+     * the positive cases below, which set the channel session type. */
+    {
+        static const byte payShellPrefix[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x02,              /* typeSz = 2      */
+            0x73,0x68,                        /* "sh"            */
+            0x01                              /* wantReply = 1   */
+        };
+        static const byte paySubPrefix[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x03,              /* typeSz = 3      */
+            0x73,0x75,0x62,                   /* "sub"           */
+            0x01                              /* wantReply = 1   */
+        };
+        static const byte payEmptyType[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x00,              /* typeSz = 0      */
+            0x01,                             /* wantReply = 1   */
+            0x00,0x00,0x00,0x00,              /* env name = ""   */
+            0x00,0x00,0x00,0x00               /* env value = ""  */
+        };
+        static const byte payShellNul[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x0A,              /* typeSz = 10     */
+            0x73,0x68,0x65,0x6C,0x6C,         /* "shell"         */
+            0x00,0x41,0x41,0x41,0x41,         /* "\0AAAA"        */
+            0x01                              /* wantReply = 1   */
+        };
+        struct { const char* label; const byte* buf; word32 sz; } badCases[] = {
+            { "sh",         payShellPrefix, (word32)sizeof(payShellPrefix) },
+            { "sub",        paySubPrefix,   (word32)sizeof(paySubPrefix)   },
+            { "empty",      payEmptyType,   (word32)sizeof(payEmptyType)   },
+            { "shell-nul",  payShellNul,    (word32)sizeof(payShellNul)    },
+        };
+        int b;
+
+        for (b = 0; b < (int)(sizeof(badCases)/sizeof(badCases[0])); b++) {
+            word32 idxBad = 0;
+            int    retBad, capMsgId;
+
+            s_chanReqCaptureSz = 0;
+            WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+            retBad = wolfSSH_TestDoChannelRequest(ssh, (byte*)badCases[b].buf,
+                    badCases[b].sz, &idxBad);
+            if (retBad != WS_SUCCESS) {
+                printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
+                        badCases[b].label, retBad, WS_SUCCESS);
+                result = -460 - b;
+                goto done;
+            }
+
+            capMsgId = CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz);
+            if (capMsgId != (int)MSGID_CHANNEL_FAILURE) {
+                printf("DoChannelRequest[%s]: msg_id=0x%02x, expected=0x%02x\n",
+                        badCases[b].label, capMsgId, MSGID_CHANNEL_FAILURE);
+                result = -470 - b;
+                goto done;
+            }
+
+            if (ch->sessionType == WOLFSSH_SESSION_SHELL) {
+                printf("DoChannelRequest[%s]: session type changed\n",
+                        badCases[b].label);
+                result = -480 - b;
+                goto done;
+            }
+            if (ssh->clientState == CLIENT_DONE) {
+                printf("DoChannelRequest[%s]: client state changed\n",
+                        badCases[b].label);
+                result = -490 - b;
+                goto done;
+            }
+        }
+    }
+
     for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
         word32 idx = 0;
         int    ret;

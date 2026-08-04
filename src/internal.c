@@ -10969,6 +10969,15 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 #endif /* !NO_TERMIOS && WOLFSSH_TERM */
 
 
+/* Exact match on a channel request type, as NameToIdType() does for names. */
+static int ChannelRequestIs(const char* type, word32 typeSz, const char* name)
+{
+    word32 nameSz = (word32)WSTRLEN(name);
+
+    return (typeSz == nameSz) && (WSTRNCMP(type, name, nameSz) == 0);
+}
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -11007,7 +11016,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
-        if (WSTRNCMP(type, "env", typeSz) == 0) {
+        if (ChannelRequestIs(type, typeSz, "env")) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
             char value[32];
@@ -11023,14 +11032,14 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
             WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
-        else if (WSTRNCMP(type, "shell", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "shell")) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
             if (ssh->ctx->channelReqShellCb) {
                 rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
         }
-        else if (WSTRNCMP(type, "exec", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exec")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
@@ -11041,7 +11050,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
             WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
         }
-        else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "subsystem")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
@@ -11053,7 +11062,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
         }
         #ifdef WOLFSSH_TERM
-        else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "pty-req")) {
             char term[32];
             word32 termSz;
 
@@ -11091,7 +11100,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_TERM */
         #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
-        else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "window-change")) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
             wantReply = 0; /* RFC 4254 sec 6.7: no reply for window-change */
@@ -11123,12 +11132,12 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
         #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
-        else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exit-status")) {
             wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-status */
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
         }
-        else if (WSTRNCMP(type, "exit-signal", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exit-signal")) {
             char sig[WOLFSSH_MAX_NAMESZ];
             word32 sigSz;
             byte coreDumped;
@@ -11159,7 +11168,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_TERM or WOLFSSH_SHELL */
         #ifdef WOLFSSH_AGENT
-        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "auth-agent-req@openssh.com")) {
             WLOG(WS_LOG_AGENT, "  ssh-agent");
             if (ssh->ctx->agentCb != NULL)
                 ssh->useAgent = 1;
