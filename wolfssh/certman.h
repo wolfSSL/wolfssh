@@ -30,9 +30,12 @@
 
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
+#include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
 #ifdef WOLFSSH_CERTS
     #include <wolfssh/ssh.h> /* included for WOLFSSH_CTX */
-    #include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
+#endif
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wchar.h>
 #endif
 
 #ifdef __cplusplus
@@ -50,7 +53,9 @@ typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
  * note the policy is applied to the shared object: in an HAVE_OCSP build
  * this enables WOLFSSL_OCSP_CHECKALL on cm, so a caller that keeps using
  * the same manager for TLS will find every chain requiring an OCSP
- * response. */
+ * response. Returns WS_NOT_COMPILED for any arguments when built against
+ * wolfSSL older than 4.6.0 (wolfSSL_CertManager_up_ref() is unavailable
+ * there). */
 WOLFSSH_API
 int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm);
 #endif /* WOLFSSH_CERTS */
@@ -75,11 +80,20 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
  * LOCAL_MACHINE, USERS, or a decimal or 0x hex CERT_SYSTEM_STORE_* location,
  * and defaults to CURRENT_USER. The spec is split at the first two ':', so
  * neither the store name nor the subject may contain one and a third ':' is
- * rejected. */
+ * rejected. Returns WS_SUCCESS and gives the caller ownership of the two
+ * allocated wide strings, which must be released with
+ * wolfSSH_FreeCertStoreSpec() using the same heap. On failure both
+ * out-pointers are set to NULL and dwFlags is untouched. */
 WOLFSSH_API
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
         word32* dwFlags, void* heap);
+
+/* Frees the strings returned by wolfSSH_ParseCertStoreSpec(). Either
+ * pointer may be NULL. */
+WOLFSSH_API
+void wolfSSH_FreeCertStoreSpec(wchar_t* wStoreName, wchar_t* wSubjectName,
+        void* heap);
 #endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
 
 

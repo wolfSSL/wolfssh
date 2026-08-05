@@ -47,10 +47,11 @@
 #include <wolfssh/test.h>
 #include "unit.h"
 
-/* Regression coverage for non-CA intermediate promotion.
- * Needs WOLFSSH_TEST_INTERNAL (the test bodies are in that section), the cert
- * manager, runtime cert generation to forge the attack cert, ECDSA (the test
- * certs are ECC), and a filesystem to load the test certs. */
+/* Regression coverage for non-CA intermediate promotion. The test bodies use
+ * only public API, but keep WOLFSSH_TEST_INTERNAL: it limits them to the
+ * autotools test builds, which run with the ./keys certs the tests hard-load.
+ * Also needs the cert manager, runtime cert generation to forge the attack
+ * cert, ECDSA (the test certs are ECC), and a filesystem for the certs. */
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS) && \
     defined(WOLFSSL_CERT_GEN) && !defined(WOLFSSH_NO_ECDSA) && \
     !defined(NO_FILESYSTEM)
@@ -69,6 +70,13 @@
      * certman.h itself comes from the WOLFSSH_CERTS block below. */
     #include <limits.h>
     #include <stdlib.h>
+#endif
+
+/* wolfSSH_SetCertManager() is an unconditional WS_NOT_COMPILED stub before
+ * wolfSSL 4.6.0, which is where wolfSSL_CertManager_up_ref() landed. Skip the
+ * test there rather than failing on behaviour that is by design. */
+#if defined(WOLFSSH_CERTS) && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V4_6_0)
+    #define WOLFSSH_TEST_SET_CERTMAN
 #endif
 
 #ifdef WOLFSSH_CERTS
@@ -12336,7 +12344,11 @@ done:
  * WOLFSSH_TEST_INTERNAL section. Each carries its own feature guard;
  * WOLFSSH_TEST_CERTMAN_PROMOTE still implies WOLFSSH_TEST_INTERNAL. */
 
-#ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
+/* Guard by the actual users -- the promote tests and the root-CA half of
+ * test_SetCertManager() -- to avoid -Wunused-function. */
+#if defined(WOLFSSH_TEST_CERTMAN_PROMOTE) || \
+    (defined(WOLFSSH_TEST_SET_CERTMAN) && \
+     defined(WOLFSSH_TEST_CERTMAN_ROOTCA))
 
 /* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
 static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
@@ -12385,7 +12397,8 @@ static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
     return 0;
 }
 
-#endif /* WOLFSSH_TEST_CERTMAN_ROOTCA */
+#endif /* WOLFSSH_TEST_CERTMAN_PROMOTE ||
+        * (WOLFSSH_TEST_SET_CERTMAN && WOLFSSH_TEST_CERTMAN_ROOTCA) */
 
 #ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
 
@@ -12802,13 +12815,6 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
 
-/* wolfSSH_SetCertManager() is an unconditional WS_NOT_COMPILED stub before
- * wolfSSL 4.6.0, which is where wolfSSL_CertManager_up_ref() landed. Skip the
- * test there rather than failing on behaviour that is by design. */
-#if defined(WOLFSSH_CERTS) && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V4_6_0)
-    #define WOLFSSH_TEST_SET_CERTMAN
-#endif
-
 #ifdef WOLFSSH_TEST_SET_CERTMAN
 /* wolfSSH_SetCertManager imports a WOLFSSL_CERT_MANAGER by reference into
  * the wolfSSH context. Test argument checking, importing the same manager
@@ -12827,15 +12833,15 @@ static int test_SetCertManager(void)
 #ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
     byte* root = NULL;
     word32 rootSz = 0;
-    /* ./keys only resolves when run from the source root, and
-     * keys/ca-cert-ecc.der is not linked into an out-of-tree build tree. The
-     * argument and reference-count checks below need no file, so treat a
-     * missing cert as a skip of the root-CA half rather than a failure. */
+    /* Autotools builds link keys/ca-cert-ecc.der into the build tree, but
+     * other runners (e.g. the VS unit-test.exe) may not run from a tree with
+     * ./keys. The argument and reference-count checks below need no file, so
+     * treat a missing cert as a SKIP of the root-CA half, not a failure. */
     int haveRoot = (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz)
             == 0);
 
     if (!haveRoot) {
-        printf("SetCertManager: skipping root cert checks, "
+        printf("SetCertManager: SKIP root cert checks, "
                 "./keys/ca-cert-ecc.der not readable\n");
     }
 #endif
@@ -12949,10 +12955,7 @@ static int certStoreSpecCheck(const char* spec, int expRet,
         result = -5;
     }
 
-    if (wStoreName != NULL)
-        WFREE(wStoreName, NULL, DYNTYPE_TEMP);
-    if (wSubjectName != NULL)
-        WFREE(wSubjectName, NULL, DYNTYPE_TEMP);
+    wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, NULL);
 
     return result;
 }
@@ -13000,6 +13003,10 @@ static int test_ParseCertStoreSpec(void)
     /* location plus a control flag (CERT_STORE_DELETE_FLAG) is rejected */
     if (result == 0)
         result = certStoreSpecCheck("My:server:65552", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    /* an unassigned location id (0x00030000) is rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:0x00030000", WS_BAD_ARGUMENT,
                 NULL, NULL, 0);
 
     /* missing or empty fields are rejected */

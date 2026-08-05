@@ -120,17 +120,6 @@
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
 #endif
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
-    #include <windows.h>
-    #include <wincrypt.h>
-    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-    #endif
-#endif
-
 /* Shared by echoserver_test() and the -W pre-scan in wolfSSH_Echoserver(). */
 #define ES_OPTLIST "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
@@ -3280,9 +3269,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     myoptind = 0;      /* reset for test cases */
 
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* -W takes priority over the environment. */
+        /* -W takes priority over the environment; empty means unset. */
         if (certStoreSpec == NULL) {
             certStoreSpec = getenv("WOLFSSH_CERT_STORE");
+            if (certStoreSpec != NULL && certStoreSpec[0] == '\0') {
+                certStoreSpec = NULL;
+            }
             if (certStoreSpec != NULL) {
                 printf("Taking the host key from the WOLFSSH_CERT_STORE "
                        "environment variable\n");
@@ -3505,8 +3497,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
                     dwFlags, wSubjectName);
-            WFREE(wStoreName, heap, DYNTYPE_TEMP);
-            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
+            wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
             if (ret != WS_SUCCESS) {
                 #ifdef WOLFSSH_SMALL_STACK
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
@@ -3946,10 +3937,14 @@ int wolfSSH_Echoserver(int argc, char** argv)
     {
         int useStore = 0;
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        const char* envStore;
+
         /* When using the Windows certificate store for host keys, the
          * echoserver does not need file-based keys, so skip the root
-         * directory search that looks for ./keys/server-key-rsa.pem. */
-        if (getenv("WOLFSSH_CERT_STORE") != NULL) {
+         * directory search that looks for ./keys/server-key-rsa.pem.
+         * An empty WOLFSSH_CERT_STORE means unset. */
+        envStore = getenv("WOLFSSH_CERT_STORE");
+        if (envStore != NULL && envStore[0] != '\0') {
             useStore = 1;
         }
         else {
