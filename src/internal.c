@@ -852,8 +852,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
     }
 
     /* Is client userauth complete? */
-    if (ssh->connectState >= CONNECT_KEYED
-            && ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
+    if (ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
         /* The endpoints should not allow message IDs greater than or
          * equal to msgid 80 before user authentication is complete.
          * Per RFC 4252 section 6. */

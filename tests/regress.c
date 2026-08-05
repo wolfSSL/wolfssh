@@ -1685,6 +1685,38 @@ static void TestChannelBlockedBeforeAuth(WOLFSSH* ssh)
 }
 
 
+/* Reject connection-protocol messages in every state before user
+ * authentication completes, keying or not. */
+static void TestChannelBlockedEveryPreAuthState(WOLFSSH* ssh)
+{
+    static const byte connMsgs[] = {
+        MSGID_GLOBAL_REQUEST, MSGID_CHANNEL_OPEN, MSGID_CHANNEL_DATA,
+        MSGID_CHANNEL_REQUEST, MSGIDLIMIT_CONN_MAX
+    };
+    int state;
+    word32 i;
+    byte keying;
+
+    for (keying = 0; keying <= 1; keying++) {
+        for (state = CONNECT_BEGIN;
+                state < CONNECT_SERVER_USERAUTH_ACCEPT_DONE; state++) {
+            for (i = 0; i < sizeof(connMsgs)/sizeof(*connMsgs); i++) {
+                int allowed;
+
+                ResetSession(ssh);
+                ssh->isKeying = keying ? WOLFSSH_PEER_IS_KEYING : 0;
+                ssh->connectState = (byte)state;
+
+                allowed = wolfSSH_TestIsMessageAllowed(ssh, connMsgs[i],
+                        WS_MSG_RECV);
+                AssertFalse(allowed);
+                AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+            }
+        }
+    }
+}
+
+
 /* Allow channel messages after user authentication completes. */
 static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
 {
@@ -1696,6 +1728,47 @@ static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
     allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_CHANNEL_OPEN,
             WS_MSG_RECV);
     AssertTrue(allowed);
+}
+
+
+/* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
+ * connectState: no channel created, no reply emitted. The connectState
+ * gate does the rejecting; isKeying below is scene-setting only. */
+static void TestChannelOpenRejectedBeforeKex(byte connectState)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte pkt[256];
+    byte out[256];
+    word32 pktSz;
+
+    pktSz = BuildChannelOpenPacket("session", 0, 131072, 16384, NULL, 0,
+            pkt, sizeof(pkt));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    MemIoInit(&io, pkt, pktSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ssh->connectState = connectState;
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+
+    AssertIntEQ(wolfSSH_TestDoReceive(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertNull(ssh->channelList);
+    AssertIntEQ(ssh->channelListSz, 0);
+    AssertIntEQ(io.outSz, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 
@@ -5765,7 +5838,10 @@ int main(int argc, char** argv)
     TestPublicKeyFailureBeforeRequest(ssh);
     TestPublicKeyFailureAborts(ssh);
     TestChannelBlockedBeforeAuth(ssh);
+    TestChannelBlockedEveryPreAuthState(ssh);
     TestChannelAllowedAfterAuth(ssh);
+    TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
+    TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
 #ifndef NO_WOLFSSH_SERVER
     TestServerChannelBlockedBeforeAuth(serverSsh);
     TestServerChannelAllowedAfterAuth(serverSsh);
