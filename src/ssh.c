@@ -2892,21 +2892,19 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
  * that a lookup for "server1" does not select "server1.example" or
  * "myserver1". The compare is case insensitive, matching both the
  * pre-filter and X.500 name semantics. Candidates are ranked by how
- * usable they are: time-valid with a usable key, then any candidate with
- * a usable key, then time-valid without one, then the rest. A key that
- * can sign outranks time validity, because a certificate with no usable
- * key can never produce a signature, so neither a renewal's leftover
- * certificate nor a public-only duplicate ends the search. The selected
- * certificate is stored in out, and is NULL when no match exists. The
- * caller frees it with CertFreeCertificateContext.
+ * usable they are: time-valid with a usable key first, then any candidate
+ * with a usable key. A candidate with no usable key is never selected --
+ * the caller repeats the same key acquisition and would only fail with a
+ * misleading error -- so a public-only duplicate neither ends the search
+ * nor is returned. The selected certificate is stored in out, and is NULL
+ * when no usable match exists. The caller frees it with
+ * CertFreeCertificateContext.
  * Returns WS_SUCCESS on success. */
 static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         const wchar_t* subjectName, PCCERT_CONTEXT* out)
 {
     PCCERT_CONTEXT pCertContext;
     PCCERT_CONTEXT keyedMatch;
-    PCCERT_CONTEXT validMatch;
-    PCCERT_CONTEXT expiredMatch;
     const wchar_t* cn;
     wchar_t* certCn;
     DWORD certCnSz;
@@ -2914,13 +2912,13 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     int hasKey;
     int timeValidity;
     int keyedEarly;
-    int expiredEarly;
+    int keylessSeen;
     int ret;
 
     *out = NULL;
     ret = WS_SUCCESS;
     keyedEarly = 0;
-    expiredEarly = 0;
+    keylessSeen = 0;
 
     /* Strip an optional "CN=" prefix from the requested name. */
     cn = subjectName;
@@ -2934,8 +2932,6 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
 
     pCertContext = NULL;
     keyedMatch = NULL;
-    validMatch = NULL;
-    expiredMatch = NULL;
     for (;;) {
         /* Passing the previous context frees it and continues the search. */
         pCertContext = CertFindCertificateInStore(hStore,
@@ -2983,20 +2979,8 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
                 }
             }
         }
-        else if (timeValidity == 0) {
-            if (validMatch == NULL) {
-                validMatch = CertDuplicateCertificateContext(pCertContext);
-                if (validMatch == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-            }
-        }
-        else if (expiredMatch == NULL) {
-            expiredMatch = CertDuplicateCertificateContext(pCertContext);
-            expiredEarly = (timeValidity < 0);
-            if (expiredMatch == NULL) {
-                ret = WS_MEMORY_E;
-            }
+        else {
+            keylessSeen = 1;
         }
 
         if (ret != WS_SUCCESS) {
@@ -3016,32 +3000,20 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
             pCertContext = keyedMatch;
             keyedMatch = NULL;
         }
-        else if (validMatch != NULL) {
-            WLOG(WS_LOG_WARN, "FindCertByExactCN: No match with a usable "
-                    "private key, using '%ls' anyway", subjectName);
-            pCertContext = validMatch;
-            validMatch = NULL;
-        }
-        else if (expiredMatch != NULL) {
-            WLOG(WS_LOG_WARN, "FindCertByExactCN: No time-valid match and "
-                    "none with a usable private key, using a %s '%ls'",
-                    expiredEarly ? "not yet valid" : "expired", subjectName);
-            pCertContext = expiredMatch;
-            expiredMatch = NULL;
+        else if (keylessSeen) {
+            WLOG(WS_LOG_ERROR, "FindCertByExactCN: '%ls' matched only "
+                    "certificates with no usable private key", subjectName);
         }
     }
     if (keyedMatch != NULL) {
         CertFreeCertificateContext(keyedMatch);
     }
-    if (validMatch != NULL) {
-        CertFreeCertificateContext(validMatch);
-    }
-    if (expiredMatch != NULL) {
-        CertFreeCertificateContext(expiredMatch);
-    }
 
-    if (ret == WS_MEMORY_E) {
-        WLOG(WS_LOG_ERROR, "FindCertByExactCN: Memory allocation failed");
+    if (ret != WS_SUCCESS) {
+        if (pCertContext != NULL) {
+            CertFreeCertificateContext(pCertContext);
+        }
+        WLOG(WS_LOG_ERROR, "FindCertByExactCN: Failed, ret = %d", ret);
     }
     else {
         *out = pCertContext;
@@ -3150,6 +3122,10 @@ static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
                 (PCCERT_CONTEXT)pvtKey->certStoreContext);
     }
     if (pvtKey->key != NULL) {
+        /* The mirror-image order (a file key loaded after a store key) is
+         * reported the same way from SetHostPrivateKey(). */
+        WLOG(WS_LOG_ERROR, "CommitCertStoreSlot: Replacing the file-based "
+             "host key for this algorithm with the certificate store key");
         WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
         WFREE(pvtKey->key, heap, DYNTYPE_PRIVKEY);
         pvtKey->key = NULL;
@@ -3243,11 +3219,10 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    /* Only accept system-store location bits. Anything else is either not
-     * a location or a control flag (e.g. CERT_STORE_DELETE_FLAG) that
-     * would make CertOpenStore destructive. */
-    if ((dwFlags & (word32)CERT_SYSTEM_STORE_LOCATION_MASK) == 0 ||
-            (dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+    /* Only accept an assigned system-store location. Anything else is
+     * either not a location or a control flag (e.g. CERT_STORE_DELETE_FLAG)
+     * that would make CertOpenStore destructive. */
+    if (!wolfSSH_CertStoreLocationValid(dwFlags)) {
         WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Store "
              "flags are not a system store location");
         return WS_BAD_ARGUMENT;
@@ -3262,7 +3237,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     if (hStore == NULL) {
         WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Failed to "
              "open store, error: %lu", (unsigned long)GetLastError());
-        return WS_FATAL_ERROR;
+        return WS_BAD_FILE_E;
     }
 
     /* Find the certificate by full Common Name match. */
@@ -3431,8 +3406,9 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     }
 
     if (newCount > WOLFSSH_MAX_PVT_KEYS) {
-        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: No "
-             "available key slot");
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Not enough "
+             "free key slots; a store key needs one for the plain type and "
+             "one for the x509v3 type");
         ret = WS_CTX_KEY_COUNT_E;
     }
     if (ret == WS_SUCCESS) {
@@ -3471,7 +3447,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         RefreshPublicKeyAlgo(ctx);
     }
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UsePrivateKey_fromStore(), ret = %d", ret);
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UsePrivateKey_fromStore(), "
+         "ret = %d", ret);
     return ret;
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */

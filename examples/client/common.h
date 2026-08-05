@@ -45,8 +45,8 @@ int ClientSetTpm(WOLFSSH* ssh);
 int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName);
 /* Supersedes ClientUseCert()/ClientUsePubKey()/ClientSetPrivateKey(), any key
- * they loaded is released. Call ClientFreeBuffers() before wolfSSH_CTX_free(),
- * the auth globals alias memory owned by ctx. */
+ * they loaded is released. Copies the certificate out of ctx; call
+ * ClientFreeBuffers() to release the copy. */
 int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap);
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 

@@ -59,8 +59,10 @@ jobs:
         # Enable SSHD, SFTP, and X509 support (including WOLFSSH_NO_FPKI)
         sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
         # Enable the Windows cert store API (not in the repo user_settings.h).
-        # Appended to wolfssh/ide/winvs/user_settings.h, which the VS projects
-        # put on the include path before wolfssl/IDE/WIN.
+        # Inserted into wolfssh/ide/winvs/user_settings.h, which the VS
+        # projects put on the include path before wolfssl/IDE/WIN. The insert
+        # lands before the closing include-guard #endif so the defines stay
+        # inside the guard.
         # RFC 6187 names only one RSA X.509 algorithm, x509v3-ssh-rsa, and it
         # signs with SHA-1, so both SHA-1 gates have to come down for any RSA
         # certificate to negotiate:
@@ -75,7 +77,12 @@ jobs:
         #                               WS_MATCH_KEY_ALGO_E.
         # Both lists put their SHA-1 entries last, so the ECDSA entries in the
         # matrix still negotiate the same SHA-2 algorithms as before.
-        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WOLFSSH_NO_SHA1_SOFT_DISABLE\n#define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        sed -i '/#endif \/\* _WIN_USER_SETTINGS_H_ \*\//i\
+        /* Inserted by windows-cert-store-test CI */\
+        #define WOLFSSH_WINDOWS_CERT_STORE\
+        #define WOLFSSH_NO_SHA1_SOFT_DISABLE\
+        #define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA' ${{env.USER_SETTINGS_H_NEW}}
+        grep -q '^#define WOLFSSH_WINDOWS_CERT_STORE' ${{env.USER_SETTINGS_H_NEW}}
         cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     - name: Build wolfssl library
@@ -98,9 +105,36 @@ jobs:
       working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
       run: nuget restore ${{env.SOLUTION_FILE_PATH}}
 
+    # Fails the build if the defines never reach wolfsshd.c (same guard as the
+    # build-sys-ca-certs job).
+    - name: Guard that the defines reach wolfsshd.c
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: bash
+      run: |
+        printf '\n#if !defined(WOLFSSH_WINDOWS_CERT_STORE) || !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE) || !defined(WOLFSSH_SSHD)\n#error "CI: expected defines did not reach wolfsshd.c"\n#endif\n' >> apps/wolfsshd/wolfsshd.c
+
     - name: Build wolfssh
       working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
       run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+    # Run the unit and API tests here, where WOLFSSH_WINDOWS_CERT_STORE is
+    # defined; no other workflow defines it, so test_ParseCertStoreSpec and
+    # test_SetCertManager only ever execute in this job. Run from the wolfssh
+    # checkout root so ./keys/ paths resolve (as in windows-check.yml). The
+    # solution build writes to $(SolutionDir)$(Configuration)\$(Platform).
+    - name: Run api-test and unit-test
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $dir = "ide\winvs\${{env.WOLFSSH_BUILD_CONFIGURATION}}\${{env.BUILD_PLATFORM}}"
+        $dll = Get-ChildItem -Path "${{ github.workspace }}\wolfssl" -Recurse -Filter "wolfssl.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dll) { Copy-Item $dll.FullName $dir -Force }
+        foreach ($t in @("api-test", "unit-test")) {
+          $exe = Join-Path $dir "$t.exe"
+          if (-not (Test-Path $exe)) { throw "$exe not found" }
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "$t failed (exit $LASTEXITCODE)" }
+        }
 
     - name: Upload wolfSSH build artifacts
       uses: actions/upload-artifact@v4
@@ -138,7 +172,12 @@ jobs:
       shell: bash
       run: |
         sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
-        printf '\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WOLFSSL_SYS_CA_CERTS\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        # Insert before the closing include-guard #endif, not after it.
+        sed -i '/#endif \/\* _WIN_USER_SETTINGS_H_ \*\//i\
+        /* Inserted by windows-cert-store-test CI */\
+        #define WOLFSSH_WINDOWS_CERT_STORE\
+        #define WOLFSSL_SYS_CA_CERTS' ${{env.USER_SETTINGS_H_NEW}}
+        grep -q '^#define WOLFSSH_WINDOWS_CERT_STORE' ${{env.USER_SETTINGS_H_NEW}}
         cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     - name: Build wolfssl library
@@ -192,15 +231,27 @@ jobs:
     - name: Rejects a non-Windows host and a missing --enable-certs
       # Each assertion exits explicitly: bash errexit exempts a command
       # inverted with '!', and the step status comes from the last command.
+      # The output grep pins each failure to the intended configure.ac error,
+      # so an unrelated earlier configure failure cannot keep the check green.
       run: |
         if ./configure --enable-certs --enable-windows-cert-store \
-            $WOLFSSL_CACHE; then
+            $WOLFSSL_CACHE > conf-host.log 2>&1; then
           echo 'ERROR: configure should have failed on a non-Windows host'
           exit 1
         fi
+        if ! grep -q 'only supported on _WIN32 Windows hosts' conf-host.log; then
+          cat conf-host.log
+          echo 'ERROR: configure failed, but not with the non-Windows host error'
+          exit 1
+        fi
         if ./configure --host=x86_64-w64-mingw32 \
-            --enable-windows-cert-store $WOLFSSL_CACHE; then
+            --enable-windows-cert-store $WOLFSSL_CACHE > conf-nocerts.log 2>&1; then
           echo 'ERROR: configure should have failed without --enable-certs'
+          exit 1
+        fi
+        if ! grep -q 'requires X.509 cert support' conf-nocerts.log; then
+          cat conf-nocerts.log
+          echo 'ERROR: configure failed, but not with the missing-certs error'
           exit 1
         fi
 
@@ -860,10 +911,24 @@ jobs:
         $echoserverPid = $env:ECHOSERVER_PID
         if (-not [string]::IsNullOrEmpty($echoserverPid)) {
             Stop-Process -Id $echoserverPid -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
         }
         # Also kill by name in case PID tracking missed it
         Get-Process -Name "echoserver" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # wolfSSH skips SO_REUSEADDR on Windows (wolfssh/test.h), so wolfsshd
+        # hard-fails if it binds before the port is released. Poll until the
+        # listener is gone rather than sleeping a fixed interval.
+        $port = ${{env.TEST_PORT}}
+        $timeout = 30
+        $elapsed = 0
+        while (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+            if ($elapsed -ge $timeout) {
+                Write-Host "ERROR: port $port still listening ${timeout}s after stopping echoserver"
+                exit 1
+            }
+            Start-Sleep -Seconds 1
+            $elapsed++
+        }
+        Write-Host "Port $port released"
         # Clear the env var so cleanup step doesn't try again
         Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_PID="
 
@@ -873,18 +938,20 @@ jobs:
       shell: pwsh
       timeout-minutes: 3
       run: |
-        # -D -t runs the config load and CTX setup in the foreground and then
-        # returns without listening. Windows main() always returns 0, so the
-        # log is what is asserted on.
+        # Start wolfsshd for real (no -t test mode) so refusal is observable
+        # as the process exiting without a listener, not just as a log line.
+        # Windows main() always returns 0, so the exit code is not asserted.
         (Get-Content sshd_config_test) -replace 'wolfSSHTestCA', 'wolfSSHEmptyCA' |
             Out-File -FilePath sshd_config_empty_ca -Encoding ASCII
         $configPathFull = (Resolve-Path "sshd_config_empty_ca").Path
+        $port = ${{env.TEST_PORT}}
 
-        Start-Process -FilePath (Resolve-Path $env:SSHD_PATH).Path `
-            -ArgumentList @("-D", "-d", "-t", "-f", $configPathFull) `
+        $proc = Start-Process -FilePath (Resolve-Path $env:SSHD_PATH).Path `
+            -ArgumentList @("-D", "-d", "-f", $configPathFull, "-p", $port) `
             -RedirectStandardOutput "sshd_empty_ca_out.txt" `
             -RedirectStandardError "sshd_empty_ca_err.txt" `
-            -Wait -NoNewWindow
+            -NoNewWindow -PassThru
+        Start-Sleep -Seconds 5
 
         $log = ""
         foreach ($f in @("sshd_empty_ca_out.txt", "sshd_empty_ca_err.txt")) {
@@ -892,15 +959,29 @@ jobs:
         }
         Write-Host "=== wolfsshd output ==="
         Write-Host $log
+
+        $failed = $false
         # Windows may prune the registry key once the last cert is removed, in
         # which case the store fails to open instead of enumerating empty.
         # Either way startup must not succeed.
         if ($log -notmatch "No usable CA certificates found in store" -and
                 $log -notmatch "Unable to open user CA cert store") {
             Write-Host "ERROR: wolfsshd did not reject the empty user CA store"
-            exit 1
+            $failed = $true
         }
-        Write-Host "wolfsshd rejected the empty user CA store"
+        if (-not $proc.HasExited) {
+            Write-Host "ERROR: wolfsshd is still running with an empty user CA store"
+            $failed = $true
+        }
+        if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+            Write-Host "ERROR: wolfsshd is listening on port $port with an empty user CA store"
+            $failed = $true
+        }
+        if (-not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($failed) { exit 1 }
+        Write-Host "wolfsshd refused to start with the empty user CA store"
 
     - name: Start wolfSSHd as Windows service
       working-directory: ${{ github.workspace }}\wolfssh
@@ -924,6 +1005,9 @@ jobs:
         # We do NOT include -E <log> here because LocalSystem only has RX on
         # the wolfssh directory and cannot create a log file. Debug output
         # from the service goes to OutputDebugString.
+        # Single-string binPath with embedded quotes: how pwsh renders it to
+        # sc.exe depends on $PSNativeCommandArgumentPassing. This works here
+        # only because CI workspace paths contain no spaces.
         $binPath = "`"$sshdPathFull`" -f `"$configPathFull`" -p ${{env.TEST_PORT}}"
         Write-Host "Creating service with binpath: $binPath"
         $createResult = sc.exe create $serviceName binPath= $binPath

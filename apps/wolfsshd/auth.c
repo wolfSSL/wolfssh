@@ -655,17 +655,31 @@ static int IsPerUserAuthKeysPattern(const char* pattern)
 {
     word32 i;
     word32 patSz;
+    word32 seg;
 
     if (pattern == NULL || *pattern == '\0') {
         /* the built-in ~/.ssh/authorized_keys default */
         return 1;
     }
 
+    /* a ".." component can escape the home directory and collapse to one
+     * shared file for every account, so it is never per-user */
+    patSz = (word32)WSTRLEN(pattern);
+    seg = 0;
+    for (i = 0; i <= patSz; i++) {
+        if (i == patSz || pattern[i] == '/' || pattern[i] == '\\') {
+            if (i - seg == 2 && pattern[seg] == '.' &&
+                    pattern[seg + 1] == '.') {
+                return 0;
+            }
+            seg = i + 1;
+        }
+    }
+
     if (!IsAbsoluteAuthKeysPath(pattern)) {
         return 1;
     }
 
-    patSz = (word32)WSTRLEN(pattern);
     for (i = 0; (i + 1) < patSz; i++) {
         if (pattern[i] != '%') {
             continue;
@@ -682,6 +696,21 @@ static int IsPerUserAuthKeysPattern(const char* pattern)
     return 0;
 }
 #endif /* WOLFSSH_CERTS && (WOLFSSL_FPKI || _WIN32) */
+
+/* Exported predicate matching the runtime identity-check skip; on builds
+ * without that check it always returns 0. */
+int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern)
+{
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+    if (pattern == NULL) {
+        return 0;
+    }
+    return IsPerUserAuthKeysPattern(pattern);
+#else
+    (void)pattern;
+    return 0;
+#endif
+}
 
 /* Resolve the authorized keys file path for a user. The pattern is passed in
  * explicitly so concurrent authentications cannot race on it, and its tokens
@@ -2135,9 +2164,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
          * binding and is checked below. A shared AuthorizedKeysFile (an
          * absolute pattern with no %u or %h) resolves to one file for every
          * account and binds the certificate to nothing, so the identity check
-         * still has to run. */
+         * still has to run. Never skipped when AuthorizedUPNDomains is set, so
+         * the configured realm allowlist is always enforced. */
         if (authData->sf.publicKey.isCert &&
                 !(wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
+                  wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf) == NULL &&
                   IsPerUserAuthKeysPattern(
                       wolfSSHD_ConfigGetAuthKeysFile(usrConf)))) {
             DecodedCert* dCert;
@@ -2186,17 +2217,16 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         current = current->next;
                     }
 
-                    /* a UPN matched but no realm policy is set; warn per auth
+                    /* a UPN matched but no realm policy is set; note per auth
                      * attempt so the opt-in gap is visible, no shared state */
                     if (upnRealmUnchecked) {
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
+                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] AuthorizedUPNDomains "
                             "not set; certificate UPN domain is not checked");
                     }
                 #else
                     /* Without FPKI compare subject CN with user name. Only
                      * reachable on Windows, where account names are
-                     * case-insensitive, so match the CN the same way when the
-                     * Windows string API is available.
+                     * case-insensitive, so match the CN the same way.
                      *
                      * This is a name match only. There is no analogue of
                      * AuthorizedUPNDomains here, so any CA in the trust store
@@ -2204,18 +2234,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                      * of the issuer policy. */
                     if (dCert->subjectCN != NULL && dCert->subjectCNLen > 0 &&
                             (int)XSTRLEN(usr) == dCert->subjectCNLen &&
-                        #ifdef USE_WINDOWS_API
                             WSTRNCASECMP(usr, dCert->subjectCN,
-                                (size_t)dCert->subjectCNLen) == 0
-                        #else
-                            XSTRNCMP(usr, dCert->subjectCN,
-                                (size_t)dCert->subjectCNLen) == 0
-                        #endif
-                            ) {
+                                (size_t)dCert->subjectCNLen) == 0) {
                         usrMatch = 1;
-                        /* warn per auth attempt so the weaker binding is
+                        /* note per auth attempt so the weaker binding is
                          * visible, no shared state */
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] certificate bound to "
+                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] certificate bound to "
                             "user by subject CN only; no issuer constraint is "
                             "applied, keep the trusted user CA set narrow");
                     }

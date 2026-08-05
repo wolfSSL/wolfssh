@@ -78,6 +78,7 @@ int wolfSSHD_AuthReducePermissionsUser(WOLFSSHD_AUTH* auth, WUID_T uid,
 int wolfSSHD_AuthSetGroups(const WOLFSSHD_AUTH* auth, const char* usr,
     WGID_T gid);
 long wolfSSHD_AuthGetGraceTime(const WOLFSSHD_AUTH* auth);
+int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern);
 #ifdef WOLFSSH_OSSH_CERTS
 void wolfSSHD_AuthSetPeerIp(WOLFSSHD_AUTH* auth, const char* ip);
 const char* wolfSSHD_AuthGetForcedCmd(const WOLFSSHD_AUTH* auth);

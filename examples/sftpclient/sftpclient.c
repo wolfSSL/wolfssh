@@ -49,17 +49,6 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        #include <windows.h>
-        #include <wincrypt.h>
-        #include <ncrypt.h>
-        #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-            #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-        #endif
-        #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-            #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-        #endif
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
@@ -412,8 +401,8 @@ static void ShowUsage(void)
     printf(" -g            put local filename as remote filename\n");
     printf(" -G            get remote filename as local filename\n");
     printf(" -i <filename> filename for the user's private key\n");
-    printf(" -k <list>     set the comma separated list of public key "
-           "algos to offer\n");
+    printf(" -k <list>     set the comma separated list of server host key "
+           "algos to accept\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
@@ -1760,8 +1749,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         /* Create context first */
         ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, heap);
         if (ctx == NULL) {
-            WFREE(wStoreName, heap, DYNTYPE_TEMP);
-            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
+            wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
             err_sys("Couldn't create wolfSSH client context.");
         }
 
@@ -1770,11 +1758,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
          * nothing to clean up. */
         ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
             wSubjectName);
-        WFREE(wStoreName, heap, DYNTYPE_TEMP);
+        wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
         wStoreName = NULL;
-        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
         wSubjectName = NULL;
         if (ret != WS_SUCCESS) {
+            wolfSSH_CTX_free(ctx);
             err_sys("Error setting private key from certificate store");
         }
 
@@ -1783,6 +1771,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
          * authentication. */
         ret = ClientSetupCertStoreAuth(ctx, heap);
         if (ret != WS_SUCCESS) {
+            wolfSSH_CTX_free(ctx);
             err_sys("Error setting up cert store auth");
         }
     } else

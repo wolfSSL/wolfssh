@@ -62,6 +62,7 @@ char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf);
+WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file);
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
@@ -101,6 +102,8 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf);
 
 #ifdef WOLFSSHD_UNIT_TEST
 int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l, int lSz, int depth);
+int wolfSSHD_ConfigOptionPrefixShadow(const char** earlier,
+        const char** later);
 #endif
 
 #endif /* WOLFSSHD_H */

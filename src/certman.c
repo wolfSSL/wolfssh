@@ -53,6 +53,9 @@
     #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
         #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
     #endif
+    #ifndef CERT_SYSTEM_STORE_LOCATION_SHIFT
+        #define CERT_SYSTEM_STORE_LOCATION_SHIFT 16
+    #endif
     #ifndef CERT_SYSTEM_STORE_CURRENT_USER
         #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
     #endif
@@ -712,14 +715,30 @@ static int CheckProfile(DecodedCert* cert, int profile)
 
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Returns 1 when dwFlags is exactly one assigned CERT_SYSTEM_STORE_*
+ * location with no control flags set, 0 otherwise. Location ids 1, 2 and
+ * 4..9 are assigned in wincrypt.h; 3 and 10..255 are not, and CertOpenStore
+ * fails opaquely on them. */
+int wolfSSH_CertStoreLocationValid(word32 dwFlags)
+{
+    word32 id;
+
+    if ((dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+        return 0;
+    }
+    id = dwFlags >> CERT_SYSTEM_STORE_LOCATION_SHIFT;
+    return id == 1 || id == 2 || (id >= 4 && id <= 9);
+}
+
+
 /* Parse a cert store spec string "store:subject[:flags]" into wide-string
  * components.  The spec is split at the first ':' for the store name and at
  * the next one for the flags, so neither the store name nor the subject may
  * contain a ':'; a spec with a third ':' is rejected.  "My:CN=host:65536" is
  * therefore store "My", subject "CN=host", flags 65536, never a two-field
- * spec with a ':' in the subject.  Allocates wStoreName and wSubjectName via
- * WMALLOC; caller must WFREE them.  On success dwFlags is set to the parsed
- * flags value, on failure it is left alone.
+ * spec with a ':' in the subject.  Allocates wStoreName and wSubjectName;
+ * caller releases them with wolfSSH_FreeCertStoreSpec().  On success dwFlags
+ * is set to the parsed flags value, on failure it is left alone.
  * Returns WS_SUCCESS on success. */
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
@@ -806,10 +825,10 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                     WFREE(specCopy, heap, DYNTYPE_TEMP);
                     return WS_BAD_ARGUMENT;
                 }
-                if ((flagsVal & locationMask) == 0
-                        || (flagsVal & ~locationMask) != 0) {
+                if (!wolfSSH_CertStoreLocationValid((word32)flagsVal)) {
                     WLOG(WS_LOG_CERTMAN,
-                            "Cert store flags are not a store location");
+                            "Cert store flags are not an assigned store "
+                            "location");
                     WFREE(specCopy, heap, DYNTYPE_TEMP);
                     return WS_BAD_ARGUMENT;
                 }
@@ -852,15 +871,38 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
         return WS_MEMORY_E;
     }
 
-    MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
-            *wStoreName, wStoreNameLen);
-    MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
-            *wSubjectName, wSubjectNameLen);
+    if (MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
+                *wStoreName, wStoreNameLen) == 0 ||
+            MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
+                *wSubjectName, wSubjectNameLen) == 0) {
+        WLOG(WS_LOG_CERTMAN, "Cert store spec wide-string conversion failed");
+        WFREE(*wStoreName, heap, DYNTYPE_TEMP);
+        WFREE(*wSubjectName, heap, DYNTYPE_TEMP);
+        *wStoreName = NULL;
+        *wSubjectName = NULL;
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_FATAL_ERROR;
+    }
 
     *dwFlags = flags;
 
     WFREE(specCopy, heap, DYNTYPE_TEMP);
     return WS_SUCCESS;
+}
+
+
+/* Releases the wide strings allocated by wolfSSH_ParseCertStoreSpec().
+ * Either pointer may be NULL. The heap must match the parse call. */
+void wolfSSH_FreeCertStoreSpec(wchar_t* wStoreName, wchar_t* wSubjectName,
+        void* heap)
+{
+    if (wStoreName != NULL) {
+        WFREE(wStoreName, heap, DYNTYPE_TEMP);
+    }
+    if (wSubjectName != NULL) {
+        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
+    }
+    WOLFSSH_UNUSED(heap);
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 

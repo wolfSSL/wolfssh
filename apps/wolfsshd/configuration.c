@@ -540,6 +540,37 @@ static const CONFIG_OPTION options[] = {
 };
 #define NUM_OPTIONS ((int)(sizeof(options) / sizeof(*options)))
 
+#ifdef WOLFSSHD_UNIT_TEST
+/* Test hook for the option-table ordering invariant: the parser matches with
+ * WSTRNCMP over the table in order, so an earlier name that is a strict
+ * prefix of a later one would shadow it. Returns 1 and sets earlier/later on
+ * a violation, 0 when the table is well ordered. */
+int wolfSSHD_ConfigOptionPrefixShadow(const char** earlier, const char** later)
+{
+    int i;
+    int j;
+    int len;
+
+    for (i = 0; i < NUM_OPTIONS; i++) {
+        len = (int)WSTRLEN(options[i].name);
+        for (j = i + 1; j < NUM_OPTIONS; j++) {
+            if ((int)WSTRLEN(options[j].name) > len &&
+                    WSTRNCMP(options[i].name, options[j].name, len) == 0) {
+                if (earlier != NULL) {
+                    *earlier = options[i].name;
+                }
+                if (later != NULL) {
+                    *later = options[j].name;
+                }
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+#endif /* WOLFSSHD_UNIT_TEST */
+
 /* returns WS_SUCCESS on success */
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
 {
@@ -2027,6 +2058,19 @@ char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->authorizedUPNDomains;
+    }
+
+    return ret;
+}
+
+/* returns the next config node in the list (the global config is the head,
+ * each Match block adds a node) or NULL at the end of the list */
+WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf)
+{
+    WOLFSSHD_CONFIG* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->next;
     }
 
     return ret;

@@ -64,8 +64,6 @@
     #ifndef _WIN32
         #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows (_WIN32) target"
     #endif
-    /* the cert store fields below are wchar_t strings */
-    #include <wchar.h>
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #ifdef WOLFSSH_TPM
@@ -117,10 +115,8 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
-#ifndef WOLFSSL_V4_6_0
-    /* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
-    #define WOLFSSL_V4_6_0 0x04006000
-#endif
+/* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
+#define WOLFSSL_V4_6_0 0x04006000
 #define WOLFSSL_V5_0_0 0x05000000
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
@@ -766,6 +762,12 @@ typedef struct WOLFSSH_PVT_KEY {
          * Owned by CTX, must be freed with CertFreeCertificateContext. */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Returns 1 when the value is exactly one assigned CERT_SYSTEM_STORE_*
+ * location with no control flags set. Defined in certman.c. */
+WOLFSSH_LOCAL int wolfSSH_CertStoreLocationValid(word32 dwFlags);
+#endif
 
 
 /* our wolfSSH Context */

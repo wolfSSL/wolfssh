@@ -2588,8 +2588,27 @@ static int test_PermitRootLoginModes(void)
     return ret;
 }
 
-/* Parses an AuthorizedUPNDomains line and confirms the stored value is returned
- * by the getter, locking in the new config option's plumbing. */
+/* The config parser matches option names with WSTRNCMP over the options table
+ * in order, so no entry may be a strict prefix of a later one (e.g. "HostKey"
+ * must come after the "HostKeyStore*" names). */
+static int test_ConfigOptionPrefixOrder(void)
+{
+    int ret = WS_SUCCESS;
+    const char* earlier = NULL;
+    const char* later = NULL;
+
+    Log("    Testing scenario: option table prefix ordering.");
+    if (wolfSSHD_ConfigOptionPrefixShadow(&earlier, &later)) {
+        Log(" option '%s' shadows later option '%s'.", earlier, later);
+        ret = WS_FATAL_ERROR;
+    }
+    Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+
+    return ret;
+}
+
+/* Parses an AuthorizedUPNDomains line and confirms the stored value is
+ * returned by the getter, locking in the new config option's plumbing. */
 static int test_ConfigParseAuthorizedUPNDomains(void)
 {
     int ret = WS_SUCCESS;
@@ -4007,6 +4026,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigDefaults),
     TEST_DECL(test_PermitRootProhibitPassword),
     TEST_DECL(test_ParseConfigLine),
+    TEST_DECL(test_ConfigOptionPrefixOrder),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
     TEST_DECL(test_MatchUnsupportedSelector),

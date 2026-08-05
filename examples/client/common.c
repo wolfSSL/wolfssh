@@ -48,16 +48,11 @@
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* windows.h pulls in wincrypt.h; no NCrypt API is called from here. */
-        #include <windows.h>
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif
 
 static byte userPublicKeyBuf[512];
 static byte* userPublicKey = userPublicKeyBuf;
 static byte userPublicKeyAlloc = 0;
-static int userPublicKeyCtxOwned = 0; /* userPublicKey aliases CTX memory */
 static const byte* userPublicKeyType = NULL;
 static byte userPassword[256];
 static const byte* userPrivateKeyType = NULL;
@@ -764,8 +759,6 @@ int ClientUseCert(const char* certName, void* heap)
             userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
             pubKeyLoaded = 1;
             userPublicKeyAlloc = 1;
-            /* this buffer is ours now, not the CTX's */
-            userPublicKeyCtxOwned = 0;
         }
         else {
             /* Defensive: load_der_file() clears its output pointer on the
@@ -968,8 +961,6 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         if (rc == 0) {
             userPublicKey = p;
             userPublicKeyAlloc = 1;
-            /* this buffer is ours now, not the CTX's */
-            userPublicKeyCtxOwned = 0;
         } else {
             WLOG(WS_LOG_DEBUG, "Reading public key failed, rc: %d", rc);
         }
@@ -1113,8 +1104,6 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
         if (ret == 0) {
             pubKeyLoaded = 1;
             userPublicKeyAlloc = 1;
-            /* this buffer is ours now, not the CTX's */
-            userPublicKeyCtxOwned = 0;
         }
         else {
             userPublicKey = userPublicKeyBuf;
@@ -1169,14 +1158,7 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
      * name being given. */
     (void)pubKeyName;
 
-    if (userPublicKeyCtxOwned) {
-        /* Aliases CTX-owned memory; the CTX frees it, not us. */
-        userPublicKey = userPublicKeyBuf;
-        userPublicKeySz = 0;
-        userPublicKeyCtxOwned = 0;
-        userPublicKeyAlloc = 0;
-    }
-    else if (userPublicKeyAlloc && userPublicKey != NULL) {
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
         WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
         userPublicKey = userPublicKeyBuf;
         userPublicKeySz = 0;
@@ -1230,9 +1212,11 @@ int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags, subjectName);
+    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags,
+            subjectName);
     if (ret != WS_SUCCESS) {
-        fprintf(stderr, "Error loading private key from certificate store: %d\n", ret);
+        fprintf(stderr,
+                "Error loading private key from certificate store: %d\n", ret);
     }
 
     return ret;
@@ -1248,6 +1232,7 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
 {
     const byte* keyType = NULL;
     WOLFSSH_PVT_KEY* pvtKey = NULL;
+    byte* certCopy = NULL;
     word32 i;
 
     if (ctx == NULL)
@@ -1294,6 +1279,14 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
         return WS_BAD_ARGUMENT;
     }
 
+    /* Copy the DER certificate before touching the globals so a failure
+     * leaves them alone. ClientFreeBuffers() frees the copy. */
+    certCopy = (byte*)WMALLOC(pvtKey->certSz, heap, DYNTYPE_PRIVKEY);
+    if (certCopy == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(certCopy, pvtKey->cert, pvtKey->certSz);
+
     /* Drop anything an earlier file based load left behind, the cert
      * store key replaces it. Freed with the same heap the loaders in this
      * file allocate with. */
@@ -1308,14 +1301,9 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
         userPrivateKeyAlloc = 0;
     }
 
-    /* Point userPublicKey at the DER certificate stored in the CTX. The
-     * ctx-owned flag stops ClientFreeBuffers from freeing CTX memory.
-     * The alias is only valid while the slot keeps its certificate:
-     * re-loading a host key onto this slot frees it, so do not mix this
-     * with the file-key loaders on the same CTX. */
-    userPublicKey = pvtKey->cert;
+    userPublicKey = certCopy;
     userPublicKeySz = pvtKey->certSz;
-    userPublicKeyCtxOwned = 1;
+    userPublicKeyAlloc = 1;
     userPublicKeyType = keyType;
     userPublicKeyTypeSz = (word32)WSTRLEN((const char*)keyType);
 

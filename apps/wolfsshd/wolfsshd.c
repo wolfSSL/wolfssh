@@ -415,6 +415,26 @@ static int ParseCertStoreLocation(const char* in, word32* out)
             WSTRCMP(in, "CERT_SYSTEM_STORE_USERS") == 0) {
         *out = (word32)CERT_SYSTEM_STORE_USERS;
     }
+    else if (WSTRCMP(in, "CURRENT_SERVICE") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_CURRENT_SERVICE") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_CURRENT_SERVICE;
+    }
+    else if (WSTRCMP(in, "SERVICES") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_SERVICES") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_SERVICES;
+    }
+    else if (WSTRCMP(in, "CURRENT_USER_GROUP_POLICY") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY;
+    }
+    else if (WSTRCMP(in, "LOCAL_MACHINE_GROUP_POLICY") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY;
+    }
+    else if (WSTRCMP(in, "LOCAL_MACHINE_ENTERPRISE") == 0 ||
+            WSTRCMP(in, "CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE") == 0) {
+        *out = (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE;
+    }
     else {
         end = NULL;
         errno = 0;
@@ -444,31 +464,65 @@ enum {
 /* Returns CERT_CA_YES when der holds an X.509 certificate with
  * basicConstraints CA:TRUE, CERT_CA_NO when it parses but is not a CA, and
  * CERT_CA_UNKNOWN when it could not be examined. */
-static int CertIsCA(const byte* der, word32 derSz)
+static int CertIsCA(const byte* der, word32 derSz, void* heap)
 {
     DecodedCert* dCert;
     int isCA = CERT_CA_UNKNOWN;
+#ifndef WOLFSSH_SMALL_STACK
+    DecodedCert sdCert;
+#endif
+
 #ifdef WOLFSSH_SMALL_STACK
-    dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL, DYNTYPE_CERT);
+    dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), heap, DYNTYPE_CERT);
     if (dCert == NULL) {
         return CERT_CA_UNKNOWN;
     }
 #else
-    DecodedCert sdCert;
-
     dCert = &sdCert;
 #endif
 
-    wc_InitDecodedCert(dCert, der, derSz, NULL);
+    wc_InitDecodedCert(dCert, der, derSz, heap);
     if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) == 0) {
         isCA = (dCert->isCA != 0) ? CERT_CA_YES : CERT_CA_NO;
     }
     wc_FreeDecodedCert(dCert);
 #ifdef WOLFSSH_SMALL_STACK
-    WFREE(dCert, NULL, DYNTYPE_CERT);
+    WFREE(dCert, heap, DYNTYPE_CERT);
 #endif
 
     return isCA;
+}
+
+/* Returns 1 when name refers to a Windows store populated by the OS or the
+ * Microsoft Trusted Root Program rather than the administrator. Store names
+ * resolve to registry keys, which are case-insensitive, and may carry a
+ * '<SID>\' or '<Service>\' prefix, so only the final path component is
+ * compared, case-insensitively. */
+static int IsWinPublicTrustStoreName(const char* name)
+{
+    static const char* const deny[] = {
+        "Root", "AuthRoot", "CA", "Disallowed", "TrustedPublisher", "trust"
+    };
+    const char* base;
+    const char* sep;
+    word32 len;
+    word32 i;
+
+    base = name;
+    sep = WSTRCHR(base, '\\');
+    while (sep != NULL) {
+        base = sep + 1;
+        sep = WSTRCHR(base, '\\');
+    }
+    len = (word32)WSTRLEN(base);
+    for (i = 0; i < (word32)(sizeof(deny) / sizeof(*deny)); i++) {
+        if (len == (word32)WSTRLEN(deny[i]) &&
+                WSTRNCASECMP(base, deny[i], len) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 /* Add every CA certificate in the configured Windows store (winUserPvPara
@@ -489,6 +543,7 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     word32 loaded = 0;
     word32 skipped = 0;
     word32 rejected = 0;
+    word32 notX509 = 0;
     int    isCA;
 
     storeNameStr = wolfSSHD_ConfigGetWinUserPvPara(conf);
@@ -512,11 +567,9 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
         return WS_BAD_ARGUMENT;
     }
 
-    if (WSTRCMP(storeNameStr, "Root") == 0 ||
-            WSTRCMP(storeNameStr, "AuthRoot") == 0 ||
-            WSTRCMP(storeNameStr, "CA") == 0) {
+    if (IsWinPublicTrustStoreName(storeNameStr)) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] wolfSSH_WinUserPvPara='%s' names a Windows public trust "
+            "[SSHD] wolfSSH_WinUserPvPara='%s' names a Windows system trust "
             "store. Every CA it holds would become an SSH login authority. "
             "Use a store created for this purpose instead.", storeNameStr);
         return WS_BAD_ARGUMENT;
@@ -549,12 +602,25 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
             "[SSHD] Unrecognized user CA store flags '%s'", dwFlagsStr);
         return WS_BAD_ARGUMENT;
     }
-    if (dwFlags == (word32)CERT_SYSTEM_STORE_CURRENT_USER) {
+    /* Every location other than the LOCAL_MACHINE hives (per-user, per-service
+     * and HKEY_USERS stores) can be written without elevation by the account
+     * it belongs to. */
+    if (dwFlags != (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE &&
+            dwFlags != (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY &&
+            dwFlags != (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE) {
         wolfSSH_Log(WS_LOG_WARN,
-            "[SSHD] wolfSSH_WinUserDwFlags selects the per-user store hive, "
-            "which the daemon's own account can write to without elevation. "
+            "[SSHD] wolfSSH_WinUserDwFlags selects a store hive that its own "
+            "account can write to without elevation. "
             "LOCAL_MACHINE is the safer location for trust anchors.");
     }
+
+#ifdef WOLFSSH_NO_FPKI
+    wolfSSH_Log(WS_LOG_WARN,
+        "[SSHD] WARNING: built without FPKI profile checking, so peer "
+        "certificates are not required to carry a client authentication "
+        "EKU. A TLS server, S/MIME or code signing certificate with a "
+        "matching subject is accepted for login.");
+#endif
 
     wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, NULL, 0);
     if (wStoreNameLen == 0) {
@@ -567,8 +633,13 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     if (wStoreName == NULL) {
         return WS_MEMORY_E;
     }
-    MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, wStoreName,
-            wStoreNameLen);
+    if (MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, wStoreName,
+            wStoreNameLen) == 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Failed to convert user CA store name to wide characters");
+        WFREE(wStoreName, heap, DYNTYPE_SSHD);
+        return WS_BAD_ARGUMENT;
+    }
 
     hStore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, (HCRYPTPROV_LEGACY)0,
             dwFlags | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
@@ -589,13 +660,24 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
         }
         if (pCertContext->pbCertEncoded == NULL ||
                 pCertContext->cbCertEncoded == 0) {
+            notX509++;
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Skipping an entry in store '%s' with no encoded "
+                "certificate", storeNameStr);
+            continue;
+        }
+        if ((pCertContext->dwCertEncodingType & X509_ASN_ENCODING) == 0) {
+            notX509++;
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Skipping an entry in store '%s' that is not X.509 "
+                "DER encoded", storeNameStr);
             continue;
         }
         /* wolfSSL does not enforce basicConstraints CA:TRUE for user-loaded
          * trust anchors, so an end-entity certificate sitting in the store
          * would become a login authority. Filter it out here. */
         isCA = CertIsCA(pCertContext->pbCertEncoded,
-                (word32)pCertContext->cbCertEncoded);
+                (word32)pCertContext->cbCertEncoded, heap);
         if (isCA != CERT_CA_YES) {
             skipped++;
             wolfSSH_Log(WS_LOG_WARN,
@@ -624,15 +706,16 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     if (loaded == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] No usable CA certificates found in store '%s' (%u not a "
-            "CA, %u rejected as a root CA)", storeNameStr, skipped, rejected);
+            "CA, %u rejected as a root CA, %u not X.509)", storeNameStr,
+            skipped, rejected, notX509);
         ret = WS_FATAL_ERROR;
     }
     else {
         wolfSSH_Log(WS_LOG_INFO,
             "[SSHD] Trusting %u CA certificate(s) from store '%s' "
             "(location 0x%08lx) for client authentication (%u not a CA, %u "
-            "rejected as a root CA)", loaded, storeNameStr,
-            (unsigned long)dwFlags, skipped, rejected);
+            "rejected as a root CA, %u not X.509)", loaded, storeNameStr,
+            (unsigned long)dwFlags, skipped, rejected, notX509);
         if (rejected > 0) {
             wolfSSH_Log(WS_LOG_WARN,
                 "[SSHD] %u CA certificate(s) in store '%s' could not be "
@@ -731,7 +814,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             wchar_t* wStoreName = NULL;
             wchar_t* wSubjectName = NULL;
             word32 dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
-            int storeNameLen, subjectNameLen;
+            int storeNameLen = 0;
+            int subjectNameLen = 0;
 
             /* An unset location keeps the CURRENT_USER default set above. */
             if (hostKeyStoreFlags != NULL &&
@@ -741,6 +825,14 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     "[SSHD] Unrecognized host key store flags '%s'",
                     hostKeyStoreFlags);
                 ret = WS_BAD_ARGUMENT;
+            }
+            if (ret == WS_SUCCESS &&
+                    dwFlags == (word32)CERT_SYSTEM_STORE_CURRENT_USER) {
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] HostKeyStoreFlags selects the per-user store "
+                    "hive, which the daemon's own account can write to "
+                    "without elevation. LOCAL_MACHINE is the safer location "
+                    "for the host key.");
             }
 
             /* Convert to wide strings */
@@ -768,12 +860,15 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                       "[SSHD] Memory allocation failed for cert store strings");
                     ret = WS_MEMORY_E;
                 }
+                else if (MultiByteToWideChar(CP_UTF8, 0, hostKeyStore, -1,
+                            wStoreName, storeNameLen) == 0 ||
+                         MultiByteToWideChar(CP_UTF8, 0, hostKeyStoreSubject,
+                            -1, wSubjectName, subjectNameLen) == 0) {
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Failed to convert cert store strings to wchar");
+                    ret = WS_BAD_ARGUMENT;
+                }
                 else {
-                    MultiByteToWideChar(CP_UTF8, 0, hostKeyStore, -1,
-                        wStoreName, storeNameLen);
-                    MultiByteToWideChar(CP_UTF8, 0, hostKeyStoreSubject, -1,
-                        wSubjectName, subjectNameLen);
-
                     ret = wolfSSH_CTX_UsePrivateKey_fromStore(*ctx, wStoreName,
                         dwFlags, wSubjectName);
                     if (ret != WS_SUCCESS) {
@@ -1050,18 +1145,53 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     }
     #endif
 
-    /* A per-user AuthorizedKeysFile is its own user-to-certificate binding, so
-     * the certificate identity check, and with it the UPN realm allowlist, is
-     * not run for those accounts. Say so rather than leaving the directive
-     * looking enforced. */
-    if (ret == WS_SUCCESS &&
-            wolfSSHD_ConfigGetAuthorizedUPNDomains(conf) != NULL &&
-            wolfSSHD_ConfigGetAuthKeysFileSet(conf)) {
-        wolfSSH_Log(WS_LOG_WARN,
-            "[SSHD] AuthorizedUPNDomains is not enforced for accounts with a "
-            "per-user AuthorizedKeysFile; those certificates are bound by "
-            "their authorized_keys entry instead.");
+    /* AuthorizedUPNDomains is only enforced by the FPKI UPN check. Fail
+     * startup rather than silently ignore a configured realm policy. Check
+     * every config node since the directive may sit in a Match block. */
+    #ifndef WOLFSSL_FPKI
+    if (ret == WS_SUCCESS) {
+        const WOLFSSHD_CONFIG* cur;
+
+        cur = conf;
+        while (cur != NULL) {
+            if (wolfSSHD_ConfigGetAuthorizedUPNDomains(cur) != NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] AuthorizedUPNDomains is set but wolfSSL was "
+                    "built without WOLFSSL_FPKI, so the UPN realm allowlist "
+                    "cannot be enforced.");
+                ret = WS_BAD_ARGUMENT;
+                break;
+            }
+            cur = wolfSSHD_ConfigGetNext(cur);
+        }
     }
+    #endif /* !WOLFSSL_FPKI */
+
+    /* A per-user AuthorizedKeysFile is its own user-to-certificate binding,
+     * so the certificate identity check is skipped for those accounts unless
+     * AuthorizedUPNDomains is set. Warn once at startup, checking every
+     * config node since AuthorizedKeysFile may be set in a Match block. */
+    #if defined(WOLFSSL_FPKI) || defined(_WIN32)
+    if (ret == WS_SUCCESS) {
+        const WOLFSSHD_CONFIG* cur;
+
+        cur = conf;
+        while (cur != NULL) {
+            if (wolfSSHD_ConfigGetAuthKeysFileSet(cur) &&
+                    wolfSSHD_AuthKeysPatternIsPerUser(
+                        wolfSSHD_ConfigGetAuthKeysFile(cur)) &&
+                    wolfSSHD_ConfigGetAuthorizedUPNDomains(cur) == NULL) {
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] The certificate identity check is skipped for "
+                    "accounts with a per-user AuthorizedKeysFile; those "
+                    "certificates are bound by their authorized_keys entry "
+                    "instead.");
+                break;
+            }
+            cur = wolfSSHD_ConfigGetNext(cur);
+        }
+    }
+    #endif /* WOLFSSL_FPKI || _WIN32 */
 
     /* load in CA certs from file set */
     if (ret == WS_SUCCESS) {
