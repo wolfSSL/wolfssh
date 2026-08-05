@@ -5,7 +5,10 @@
 # "other.example", while the client certificate carries the UPN realm
 # "example". The wolfSSHd UPN domain check must therefore reject the cert.
 
-PWD=`pwd`
+# Not named PWD: the shell rewrites that variable on every cd, so a saved copy
+# would not survive the cd to the repository root below -- and the log counted
+# after the client run lives here, not there.
+TESTDIR=`pwd`
 . ./wolfssh_options.sh
 
 # The UPN domain check is compiled only when wolfSSL is built with FPKI.
@@ -37,7 +40,7 @@ echo "$TEST_CLIENT -X -c 'pwd' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT 
 $TEST_CLIENT -X -c 'pwd' -u "$3" -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2"
 RESULT=$?
 
-cd "$PWD"
+cd "$TESTDIR"
 
 # Give the daemon child a moment to flush its rejection to the log.
 sleep 1

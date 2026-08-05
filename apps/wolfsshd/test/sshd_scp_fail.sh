@@ -2,7 +2,9 @@
 
 # sshd local test
 
-PWD=`pwd`
+# Not named PWD: the shell rewrites that variable on every cd, so a saved
+# copy would not survive the cd to the repository root below.
+TESTDIR=`pwd`
 . ./wolfssh_options.sh
 cd ../../..
 
@@ -48,6 +50,6 @@ fi
 rm -rf test-$$
 rm testout.dat
 
-cd $PWD
+cd "$TESTDIR"
 exit 0
 
