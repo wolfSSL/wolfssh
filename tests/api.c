@@ -2697,6 +2697,71 @@ static void sftp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
 }
 
 
+/* Upper bound on retry iterations for the SFTP helpers below. */
+#define SFTP_MAX_RETRY_TRIES 1000
+
+/* Which errors are safe to retry depends on the callee: re-calling one that
+ * has already torn down its state reissues a request that may be partly on
+ * the wire, which is the desync these loops exist to avoid.
+ *
+ * wolfSSH_SFTP_Open() and wolfSSH_SFTP_SendWritePacket() keep their state
+ * only for these two (src/wolfsftp.c STATE_OPEN_SEND, STATE_OPEN_GETHANDLE,
+ * STATE_SEND_WRITE_READ_STATUS).  wolfSSH_SFTP_LS() also keeps it on
+ * WS_REKEYING. */
+static int sftp_error_keeps_state(int err)
+{
+    return err == WS_WANT_READ || err == WS_WANT_WRITE;
+}
+
+
+/* wolfSSH_SFTP_Remove() and wolfSSH_SFTP_Close() gate on NoticeError() in
+ * src/wolfsftp.c instead, which is broader.  Mirror it exactly; the two must
+ * not drift apart. */
+static int sftp_error_is_notice(int err)
+{
+    return sftp_error_keeps_state(err) || err == WS_CHAN_RXD ||
+           err == WS_WINDOW_FULL || err == WS_REKEYING;
+}
+
+
+/* Drive an SFTP operation to completion.  Abandoning one part way leaves its
+ * response pending on the stream, which the next operation then reads as its
+ * own header.  Both helpers stop on a terminal error so a real failure is
+ * still reported to the caller. */
+static int sftp_retry_remove(WOLFSSH* ssh, char* name)
+{
+    int ret = WS_FATAL_ERROR;
+    int tries;
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES; tries++) {
+        ret = wolfSSH_SFTP_Remove(ssh, name);
+        if (ret == WS_SUCCESS ||
+                !sftp_error_is_notice(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+
+    return ret;
+}
+
+
+static int sftp_retry_close(WOLFSSH* ssh, byte* handle, word32 handleSz)
+{
+    int ret = WS_FATAL_ERROR;
+    int tries;
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES; tries++) {
+        ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
+        if (ret == WS_SUCCESS ||
+                !sftp_error_is_notice(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+
+    return ret;
+}
+
+
 /* The staged read target is filled with 'a'; every read starts at offset 0,
  * so all returned bytes must be 'a'.  A macro so a failure reports the
  * calling read's line. */
@@ -2758,7 +2823,8 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
         word32 rdOfst[2] = {0, 0};
         word32 rdSz = 0;
         word32 rdChunk;
-        byte rdData[4096];
+        /* staging chunk, kept small for constrained targets */
+        byte rdData[512];
         int rdTries;
         int rdWrote;
         int rdErr;
@@ -2778,11 +2844,13 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
          * with tests/testsuite.test, which creates and removes files in the
          * same directory under "make -j check".  The staging is asserted
          * rather than skipped on failure; skipping would drop the read
-         * coverage below without failing the test. */
+         * coverage below without failing the test.  Note this makes a
+         * writable server working directory a prerequisite of the test. */
         WMEMSET(rdData, 'a', sizeof(rdData));
-        wolfSSH_SFTP_Remove(ssh, rdName); /* clear any stale file */
+        /* best effort, the file is normally absent */
+        (void)sftp_retry_remove(ssh, rdName);
         rdRet = WS_FATAL_ERROR;
-        for (rdTries = 0; rdTries < 1000; rdTries++) {
+        for (rdTries = 0; rdTries < SFTP_MAX_RETRY_TRIES; rdTries++) {
             rdHandleSz = WOLFSSH_MAX_HANDLE;
             rdRet = wolfSSH_SFTP_Open(ssh, rdName,
                     WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
@@ -2791,15 +2859,15 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
                 break;
             }
             rdErr = wolfSSH_get_error(ssh);
-            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
-                    rdErr != WS_REKEYING) {
+            if (!sftp_error_keeps_state(rdErr)) {
                 break; /* create failed */
             }
         }
         AssertIntEQ(rdRet, WS_SUCCESS);
 
         /* one try per full chunk plus slack for transient errors */
-        rdTries = (int)(WOLFSSH_MAX_SFTP_RW / sizeof(rdData)) + 1000;
+        rdTries = (int)(WOLFSSH_MAX_SFTP_RW / sizeof(rdData)) +
+                SFTP_MAX_RETRY_TRIES;
         for (; rdTries > 0 && rdSz < WOLFSSH_MAX_SFTP_RW; rdTries--) {
             rdChunk = (word32)sizeof(rdData);
             if (rdChunk > WOLFSSH_MAX_SFTP_RW - rdSz) {
@@ -2813,23 +2881,22 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
                 continue;
             }
             rdErr = wolfSSH_get_error(ssh);
-            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
-                    rdErr != WS_REKEYING) {
+            if (!sftp_error_keeps_state(rdErr)) {
                 break; /* unexpected error */
             }
         }
-        wolfSSH_SFTP_Close(ssh, rdHandle, rdHandleSz);
+        rdRet = sftp_retry_close(ssh, rdHandle, rdHandleSz);
         AssertIntEQ(rdSz, WOLFSSH_MAX_SFTP_RW);
+        AssertIntEQ(rdRet, WS_SUCCESS);
 
         current = NULL;
-        for (rdTries = 0; rdTries < 1000; rdTries++) {
+        for (rdTries = 0; rdTries < SFTP_MAX_RETRY_TRIES; rdTries++) {
             current = wolfSSH_SFTP_LS(ssh, (char*)currentDir);
             if (current != NULL) {
                 break;
             }
             rdErr = wolfSSH_get_error(ssh);
-            if (rdErr != WS_WANT_READ && rdErr != WS_WANT_WRITE &&
-                    rdErr != WS_REKEYING) {
+            if (!sftp_error_keeps_state(rdErr) && rdErr != WS_REKEYING) {
                 break;
             }
         }
@@ -2926,10 +2993,13 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
 #endif /* WOLFSSH_TEST_INTERNAL */
 
             free(out);
-            wolfSSH_SFTP_Close(ssh, handle, handleSz);
+            /* Results ignored: the reads above are skipped rather than driven
+             * to completion on WS_REKEYING, so the stream state here is not
+             * known to be clean and a failure would not mean a real fault. */
+            (void)sftp_retry_close(ssh, handle, handleSz);
         }
         wolfSSH_SFTPNAME_list_free(current);
-        wolfSSH_SFTP_Remove(ssh, rdName);
+        (void)sftp_retry_remove(ssh, rdName);
 
 #ifdef WOLFSSH_TEST_INTERNAL
         /* Issue 5574: exercise the partial-send resume path for
@@ -2970,8 +3040,10 @@ static void test_wolfSSH_SFTP_SendReadPacket(void)
             AssertIntLT(tries, 1000);
             AssertIntEQ(wrRet, (int)sizeof(wrData));
 
-            wolfSSH_SFTP_Close(ssh, whandle, whandleSz);
-            wolfSSH_SFTP_Remove(ssh, wrName);
+            /* last SFTP calls before the rekey drain and shutdown assert, so
+             * do not leave a response pending here */
+            (void)sftp_retry_close(ssh, whandle, whandleSz);
+            (void)sftp_retry_remove(ssh, wrName);
         }
 #endif /* WOLFSSH_TEST_INTERNAL */
     }
