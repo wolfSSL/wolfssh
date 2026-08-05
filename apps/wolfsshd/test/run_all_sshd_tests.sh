@@ -63,6 +63,12 @@ done
 
 TOTAL=0
 SKIPPED=0
+# Set as the last statement of each branch that runs tests, and checked before
+# the summary. A shell expansion error (a bad arithmetic expansion, say) unwinds
+# bash out of the whole enclosing compound command, skipping every remaining
+# test but still running the trailing summary -- which then reports a pass. This
+# flag makes that abort exit non-zero instead of going green.
+RUN_COMPLETE=0
 
 # validate the requested test before any setup so a bad name does not leave
 # a wolfSSHd running
@@ -195,8 +201,12 @@ run_strictmodes_authkeys_negative_test() {
     # AND make the daemon log the StrictModes rejection, so the failure is for
     # the right reason and not an unrelated client error. Count existing
     # rejection lines first so a re-run is not confused by stale matches.
+    # Do not add "|| echo 0" here: grep -c prints 0 AND exits 1 when there is no
+    # match, so the fallback appends a second 0 and every later use of the count
+    # is a syntax error. Default the empty (missing/unreadable log) case instead.
     local before
-    before=$(grep -c "failed StrictModes check" log.txt 2>/dev/null || echo 0)
+    before=$(grep -c "failed StrictModes check" log.txt 2>/dev/null)
+    before=${before:-0}
     chmod 0666 authorized_keys_test
     ( cd ../../.. && $tmo ./examples/client/client -c 'exit' -u "$USER" \
         -i ./keys/hansel-key-ecc.der -j ./keys/hansel-key-ecc.pub \
@@ -204,7 +214,8 @@ run_strictmodes_authkeys_negative_test() {
     local result=$?
     chmod 0644 authorized_keys_test
     local after
-    after=$(grep -c "failed StrictModes check" log.txt 2>/dev/null || echo 0)
+    after=$(grep -c "failed StrictModes check" log.txt 2>/dev/null)
+    after=${after:-0}
     if [ "$result" != 0 ] && [ "$after" -gt "$before" ]; then
         printf "PASSED\n"
     else
@@ -357,6 +368,7 @@ if [[ -n "$MATCH" ]]; then
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
     fi
+    RUN_COMPLETE=1
 else
     echo "Running all tests..."
     for test in "${test_cases[@]}"; do
@@ -453,6 +465,7 @@ else
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         run_test "sshd_ossh_cert_test.sh"
     fi
+    RUN_COMPLETE=1
 fi
 
 # Teardown safety net: the start/stop pairs above stop each daemon they start,
@@ -460,8 +473,16 @@ fi
 # and a later step (the valgrind "memory after close down" check) binds the same
 # port 22222. Make sure no test daemon lingers when this script exits so that
 # step does not fail with "tcp bind failed". Harmless when nothing is running.
+# Match the process name, not the whole command line: "-f wolfsshd" also matches
+# this script when it is invoked by a path holding "wolfsshd", killing the run
+# before the check below and losing the summary.
 if [ "$USING_LOCAL_HOST" == 1 ]; then
-    sudo pkill -f "wolfsshd" 2>/dev/null || true
+    sudo pkill -x wolfsshd 2>/dev/null || true
+fi
+
+if [ "$RUN_COMPLETE" != 1 ]; then
+    printf "ERROR: test run aborted before all tests ran\n"
+    exit 1
 fi
 
 printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
