@@ -453,8 +453,11 @@ EOF
         # When launched via sudo, $HK_PID is the sudo pid, not the daemon, and
         # sudo does not reliably forward the signal, so match the daemon by port.
         # This guarantees a regression cannot leave a root daemon bound to it.
+        # The command line has to be matched here (the shared daemon shares the
+        # process name), so anchor on "/wolfsshd " plus this test's own port and
+        # nothing else can be caught by it.
         if [ -n "$HK_PRE" ]; then
-            $HK_PRE pkill -f "$HK_SSHD.*$HK_PORT" 2>/dev/null
+            $HK_PRE pkill -f "/wolfsshd .*-p $HK_PORT" 2>/dev/null
         else
             kill $HK_PID 2>/dev/null
         fi
