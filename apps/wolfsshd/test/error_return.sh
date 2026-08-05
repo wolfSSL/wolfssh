@@ -2,7 +2,9 @@
 
 # sshd local test
 
-PWD=`pwd`
+# Not named PWD: the shell rewrites that variable on every cd, so a saved
+# copy would not survive the cd to the repository root below.
+TESTDIR=`pwd`
 cd ../../..
 
 TEST_CLIENT="./examples/client/client"
@@ -21,11 +23,11 @@ $TEST_CLIENT -c 'bash -c "(exit 2)"' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h 
 RESULT=$?
 if [ "$RESULT" != 2 ]; then
     echo "Expecting error return value of 2 for failed ls command, found $RESULT"
-    cd $PWD
+    cd "$TESTDIR"
     exit 1
 fi
 
-cd $PWD
+cd "$TESTDIR"
 exit 0
 
 

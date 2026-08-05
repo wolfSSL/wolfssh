@@ -2,7 +2,9 @@
 
 # sshd local test
 
-PWD=`pwd`
+# Not named PWD: the shell rewrites that variable on every cd, so a saved
+# copy would not survive the cd to the repository root below.
+TESTDIR=`pwd`
 cd ../../..
 
 if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
@@ -28,11 +30,11 @@ $TEST_CLIENT -X -c 'ls error' -u $3 -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_C
 # check stderr output was caught
 if [ ! -s error.txt ]; then
     echo "No stderr data was found when expected!!"
-    cd $PWD
+    cd "$TESTDIR"
     exit 1
 fi
 rm -f error.txt
 
-cd $PWD
+cd "$TESTDIR"
 exit 0
 

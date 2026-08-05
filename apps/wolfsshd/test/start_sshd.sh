@@ -6,7 +6,13 @@ SSHD_KEYDIR=""
 
 # starts up a sshd session, takes in the sshd_config file as an argument
 start_wolfsshd() {
-    CURRENT_PIDS=`ps -e | grep wolfsshd | grep -oE "[0-9]+"`
+    # Snapshot the PIDs of any daemon already running so the new one can be
+    # picked out below. PIDs only: "ps -e" also prints TIME, and scraping
+    # every digit run off that line mixes clock digits in with the PID.
+    # Sorted so both snapshots order the same way. No daemon running is the
+    # normal case and pgrep exits 1 on no match, which would end a caller
+    # running under "set -e".
+    CURRENT_PIDS=`pgrep -x wolfsshd | sort -n` || true
 
     ORIGCFG="$1"
     CONFIG="$ORIGCFG"
@@ -86,9 +92,11 @@ EOF
     SSHD_BIN="${SSHD_BIN:-../wolfsshd}"
     sudo env $SSHD_ENV "$SSHD_BIN" -d -E ./log.txt -f "$CONFIG"
 
-    # set the PID of started sshd
-    NEW_PID=`ps -e | grep wolfsshd | grep -oE "[0-9]+"`
-    PID=`diff <(echo "$CURRENT_PIDS") <(echo "$NEW_PID") | grep '>' | grep -oE "[0-9]+" | head -n1`
+    # The PID of the started sshd is the one present now that was not there
+    # before. The daemon can still die after sudo returns, so guard the same
+    # way and let the caller's empty-PID check report it.
+    NEW_PIDS=`pgrep -x wolfsshd | sort -n` || true
+    PID=`diff <(echo "$CURRENT_PIDS") <(echo "$NEW_PIDS") | sed -n 's/^> *//p' | head -n1`
     printf "SSHD running on PID $PID\n"
 }
 

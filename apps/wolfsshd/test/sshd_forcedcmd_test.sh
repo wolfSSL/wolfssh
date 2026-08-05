@@ -8,11 +8,26 @@ if [ -z "$1" ] || [ -z "$2" ]; then
     exit 1
 fi
 
-PWD=`pwd`
+# Not named PWD: the shell rewrites that variable on every cd, so a saved copy
+# would not survive the cd to the repository root below.
+TESTDIR=`pwd`
 USER=`whoami`
 TEST_PORT="$2"
 TEST_HOST="$1"
 source ./start_sshd.sh
+
+# Stop the daemon on every exit path. From the "set -e" below onward an aborted
+# client run would otherwise leave a root daemon holding the shared test port,
+# and every later test in the suite would talk to this config.
+cleanup() {
+    if [ -n "$PID" ]; then
+        stop_wolfsshd
+        PID=""
+    fi
+    return 0
+}
+trap cleanup EXIT
+
 cat <<EOF > sshd_config_test_forcedcmd
 Port $TEST_PORT
 Protocol 2
@@ -22,8 +37,8 @@ PasswordAuthentication yes
 PermitEmptyPasswords no
 UsePrivilegeSeparation no
 UseDNS no
-HostKey $PWD/../../../keys/server-key.pem
-AuthorizedKeysFile $PWD/authorized_keys_test
+HostKey $TESTDIR/../../../keys/server-key.pem
+AuthorizedKeysFile $TESTDIR/authorized_keys_test
 
 Match User $USER
 	ForceCommand internal-sftp
@@ -49,8 +64,9 @@ fi
 set -e
 echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT
 
-cd $PWD
+cd "$TESTDIR"
 stop_wolfsshd
+PID=""
 
 # A configured ForceCommand that is not "internal-sftp" must still permit the
 # SFTP subsystem. Only a certificate force-command denies file transfer, so a
@@ -64,8 +80,8 @@ PasswordAuthentication yes
 PermitEmptyPasswords no
 UsePrivilegeSeparation no
 UseDNS no
-HostKey $PWD/../../../keys/server-key.pem
-AuthorizedKeysFile $PWD/authorized_keys_test
+HostKey $TESTDIR/../../../keys/server-key.pem
+AuthorizedKeysFile $TESTDIR/authorized_keys_test
 
 Match User $USER
 	ForceCommand /bin/echo
@@ -76,8 +92,9 @@ cd ../../..
 
 echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT
 
-cd $PWD
+cd "$TESTDIR"
 stop_wolfsshd
+PID=""
 exit 0
 
 
