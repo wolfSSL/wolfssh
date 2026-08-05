@@ -80,3 +80,20 @@ after the test files have been setup:
  52 set +e
 ```
 
+The name also has to be listed in one of the two arrays at the top of
+run_all_sshd_tests.sh, or the run aborts with an error naming it. Use
+`test_cases` if the test runs against the shared daemon, in which case the loop
+over that array calls it and nothing else is needed. Use `extra_test_cases` if
+the test needs setup of its own -- a different daemon config, its own daemon, or
+the shared daemon stopped first -- and keep the `run_test` call where that setup
+happens. Both arrays drive `--match` and `--exclude`, so a test that is missing
+from them cannot be selected or skipped from the command line.
+
+## Selecting Tests
+
+`--match <name>` runs a single test and `--exclude <name>` drops one from a full
+run. Both take any name from the list the runner prints when it is given a name or an
+option it does not recognize, and an unrecognized name is an error rather than a
+silent no-op. `--match` runs the test where it sits in the suite, with the
+daemon it needs set up around it.
+
