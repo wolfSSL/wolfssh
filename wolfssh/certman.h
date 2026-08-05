@@ -46,7 +46,11 @@ typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
 
 #ifdef WOLFSSH_CERTS
 /* Replaces the CTX's cert manager with cm, taking a reference on it and
- * applying wolfSSH's revocation policy. */
+ * applying wolfSSH's revocation policy. The caller retains ownership, but
+ * note the policy is applied to the shared object: in an HAVE_OCSP build
+ * this enables WOLFSSL_OCSP_CHECKALL on cm, so a caller that keeps using
+ * the same manager for TLS will find every chain requiring an OCSP
+ * response. */
 WOLFSSH_API
 int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm);
 #endif /* WOLFSSH_CERTS */
@@ -68,8 +72,10 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
 #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
 /* Splits "store:subject[:flags]", where flags is CURRENT_USER,
- * LOCAL_MACHINE, or a decimal or 0x hex CERT_SYSTEM_STORE_* location, and
- * defaults to CURRENT_USER. The subject may not contain a ':'. */
+ * LOCAL_MACHINE, USERS, or a decimal or 0x hex CERT_SYSTEM_STORE_* location,
+ * and defaults to CURRENT_USER. The spec is split at the first two ':', so
+ * neither the store name nor the subject may contain one and a third ':' is
+ * rejected. */
 WOLFSSH_API
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,

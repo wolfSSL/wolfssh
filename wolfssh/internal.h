@@ -120,6 +120,10 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
+#ifndef WOLFSSL_V4_6_0
+    /* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
+    #define WOLFSSL_V4_6_0 0x04006000
+#endif
 #define WOLFSSL_V5_0_0 0x05000000
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
@@ -781,19 +785,11 @@ typedef struct WOLFSSH_PVT_KEY {
          * unused; signing and the public K_S come from ctx->tpmKey. */
 #endif
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    byte useCertStore:1;
+    byte useCertStore;
         /* Flag indicating if this key is from MS Certificate Store. */
     void* certStoreContext;
         /* Windows certificate context (PCCERT_CONTEXT) for MS Certificate Store.
          * Owned by CTX, must be freed with CertFreeCertificateContext. */
-    wchar_t* storeName;
-        /* Certificate store name (e.g., "My", "Root"). Owned by CTX. */
-    wchar_t* subjectName;
-        /* Certificate subject name for lookup. Owned by CTX. */
-    word32 dwFlags;
-        /* Certificate store flags (e.g., CERT_SYSTEM_STORE_CURRENT_USER).
-         * Kept as word32 so this header does not depend on Windows
-         * typedefs; converted to DWORD at the CertOpenStore call. */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
 

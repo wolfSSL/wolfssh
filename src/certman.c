@@ -103,10 +103,6 @@ struct WOLFSSH_CERTMAN {
 };
 
 
-/* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
-#define WOLFSSL_V4_6_0 0x04006000
-
-
 /* used to import an external cert manager, frees and replaces existing manager
  * returns WS_SUCCESS on success
  */
@@ -717,9 +713,13 @@ static int CheckProfile(DecodedCert* cert, int profile)
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Parse a cert store spec string "store:subject[:flags]" into wide-string
- * components.  The subject may not contain ':'.  Allocates wStoreName and
- * wSubjectName via WMALLOC; caller must WFREE them.  On success dwFlags is
- * set to the parsed flags value, on failure it is left alone.
+ * components.  The spec is split at the first ':' for the store name and at
+ * the next one for the flags, so neither the store name nor the subject may
+ * contain a ':'; a spec with a third ':' is rejected.  "My:CN=host:65536" is
+ * therefore store "My", subject "CN=host", flags 65536, never a two-field
+ * spec with a ':' in the subject.  Allocates wStoreName and wSubjectName via
+ * WMALLOC; caller must WFREE them.  On success dwFlags is set to the parsed
+ * flags value, on failure it is left alone.
  * Returns WS_SUCCESS on success. */
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,
@@ -761,12 +761,16 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
         if (flagsStr != NULL) {
             *flagsStr++ = '\0';
             if (*flagsStr == '\0') {
+                WLOG(WS_LOG_CERTMAN,
+                        "Cert store spec has an empty flags field; expected "
+                        "store:subject[:flags]");
                 WFREE(specCopy, heap, DYNTYPE_TEMP);
                 return WS_BAD_ARGUMENT;
             }
             if (WSTRCHR(flagsStr, ':') != NULL) {
                 WLOG(WS_LOG_CERTMAN,
-                        "Cert store subject may not contain a ':'");
+                        "Cert store spec has too many ':'-separated fields; "
+                        "expected store:subject[:flags]");
                 WFREE(specCopy, heap, DYNTYPE_TEMP);
                 return WS_BAD_ARGUMENT;
             }
@@ -796,7 +800,9 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                 flagsVal = strtoul(flagsStr, &flagsEnd, 0);
                 if (flagsEnd == flagsStr || *flagsEnd != '\0'
                         || errno == ERANGE) {
-                    WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value");
+                    WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value "
+                            "'%s'; expected store:subject[:flags] with a "
+                            "CERT_SYSTEM_STORE_* name or number", flagsStr);
                     WFREE(specCopy, heap, DYNTYPE_TEMP);
                     return WS_BAD_ARGUMENT;
                 }
@@ -812,7 +818,7 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
         }
     }
 
-    if (storeName == NULL || subjectName == NULL || *storeName == '\0' ||
+    if (subjectName == NULL || *storeName == '\0' ||
             *subjectName == '\0') {
         WFREE(specCopy, heap, DYNTYPE_TEMP);
         return WS_BAD_ARGUMENT;

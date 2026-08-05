@@ -132,7 +132,7 @@
 #endif
 
 /* Shared by echoserver_test() and the -W pre-scan in wolfSSH_Echoserver(). */
-#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
 #ifndef NO_WOLFSSH_SERVER
 

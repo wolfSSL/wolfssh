@@ -61,11 +61,21 @@ jobs:
         # Enable the Windows cert store API (not in the repo user_settings.h).
         # Appended to wolfssh/ide/winvs/user_settings.h, which the VS projects
         # put on the include path before wolfssl/IDE/WIN.
-        # WC_SIG_MIN_HASH_TYPE: x509v3-ssh-rsa signs H with SHA-1 (RFC 6187
-        # names no other RSA form), which wc_SignatureVerify rejects at its
-        # default SHA-256 floor. Needed for the RSA x509v3 host key step; see
-        # the same define in tpm-ssh.yml.
-        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA\n' >> ${{env.USER_SETTINGS_H_NEW}}
+        # RFC 6187 names only one RSA X.509 algorithm, x509v3-ssh-rsa, and it
+        # signs with SHA-1, so both SHA-1 gates have to come down for any RSA
+        # certificate to negotiate:
+        #   WC_SIG_MIN_HASH_TYPE      - wc_SignatureVerify otherwise rejects
+        #                               SHA-1 at its SHA-256 floor (see the
+        #                               same define in tpm-ssh.yml).
+        #   WOLFSSH_NO_SHA1_SOFT_DISABLE - x509v3-ssh-rsa is otherwise absent
+        #                               from cannedKeyAlgoNames, so the server
+        #                               never lists it in server-sig-algs and
+        #                               the client's RSA certificate fails
+        #                               PrepareUserAuthRequestPublicKey() with
+        #                               WS_MATCH_KEY_ALGO_E.
+        # Both lists put their SHA-1 entries last, so the ECDSA entries in the
+        # matrix still negotiate the same SHA-2 algorithms as before.
+        printf '\n/* Appended by windows-cert-store-test CI */\n#define WOLFSSH_WINDOWS_CERT_STORE\n#define WOLFSSH_NO_SHA1_SOFT_DISABLE\n#define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA\n' >> ${{env.USER_SETTINGS_H_NEW}}
         cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
 
     - name: Build wolfssl library
@@ -180,10 +190,19 @@ jobs:
         grep -q -- '-lncrypt' Makefile
 
     - name: Rejects a non-Windows host and a missing --enable-certs
+      # Each assertion exits explicitly: bash errexit exempts a command
+      # inverted with '!', and the step status comes from the last command.
       run: |
-        ! ./configure --enable-certs --enable-windows-cert-store $WOLFSSL_CACHE
-        ! ./configure --host=x86_64-w64-mingw32 --enable-windows-cert-store \
-            $WOLFSSL_CACHE
+        if ./configure --enable-certs --enable-windows-cert-store \
+            $WOLFSSL_CACHE; then
+          echo 'ERROR: configure should have failed on a non-Windows host'
+          exit 1
+        fi
+        if ./configure --host=x86_64-w64-mingw32 \
+            --enable-windows-cert-store $WOLFSSL_CACHE; then
+          echo 'ERROR: configure should have failed without --enable-certs'
+          exit 1
+        fi
 
   test:
     needs: build
@@ -205,23 +224,32 @@ jobs:
             client_key_source: x509
             key_algorithm: rsa
             test_name: "Server-Store-Client-X509"
+          # key_algorithm is the server host key; client_key_algorithm is the
+          # testuser client certificate key. Both are stated explicitly on the
+          # store-client entries so neither depends on which key renewcerts.sh
+          # happens to copy.
           - server_key_source: file
             client_key_source: store
             key_algorithm: rsa
+            client_key_algorithm: ecdsa
             test_name: "Server-File-Client-Store"
           - server_key_source: store
             client_key_source: store
             key_algorithm: rsa
+            client_key_algorithm: ecdsa
             test_name: "Server-Store-Client-Store"
           - server_key_source: store
             client_key_source: x509
             key_algorithm: ecdsa
             test_name: "Server-Store-Client-X509-ECDSA"
+          # RSA client certificate, covering the x509v3-ssh-rsa user-auth and
+          # client-side RSA cert store signing paths that the ECDSA entries
+          # above cannot reach.
           - server_key_source: file
             client_key_source: store
             key_algorithm: rsa
-            client_key_algorithm: ecdsa
-            test_name: "Server-File-Client-Store-ECDSA"
+            client_key_algorithm: rsa
+            test_name: "Server-File-Client-Store-RSA"
 
     steps:
     - uses: actions/checkout@v4
@@ -254,12 +282,20 @@ jobs:
         cd keys
         bash renewcerts.sh testuser
 
-        # renewcerts.sh always gives testuser fred's RSA key. Re-issue it with
-        # an EC key when the client store entry is meant to be ECDSA.
-        if [ "${{ matrix.client_key_algorithm }}" = "ecdsa" ]; then
+        # renewcerts.sh copies fred's key, which is EC prime256v1, so testuser
+        # comes out ECDSA. Re-issue it explicitly for whichever algorithm the
+        # matrix entry asks for, rather than inheriting whatever fred's key
+        # happens to be.
+        ALG="${{ matrix.client_key_algorithm }}"
+        if [ -n "$ALG" ]; then
           touch index.txt
           sed 's/fred/testuser/g' renewcerts.cnf > renewcerts-testuser.cnf
-          openssl ecparam -name prime256v1 -genkey -noout -out testuser-key.pem
+          if [ "$ALG" = "rsa" ]; then
+            openssl genrsa -out testuser-key.pem 2048
+          else
+            openssl ecparam -name prime256v1 -genkey -noout \
+                -out testuser-key.pem
+          fi
           openssl req -subj "/C=US/ST=WA/L=Seattle/O=wolfSSL Inc/OU=Development/CN=testuser/emailAddress=testuser@example.com" \
               -key testuser-key.pem -out testuser-cert.csr \
               -config renewcerts-testuser.cnf -new -nodes
@@ -268,7 +304,11 @@ jobs:
               -CA ca-cert-ecc.pem -CAkey ca-key-ecc.pem -out testuser-cert.pem \
               -set_serial 7
           openssl x509 -in testuser-cert.pem -outform DER -out testuser-cert.der
-          openssl ec -in testuser-key.pem -outform DER -out testuser-key.der
+          if [ "$ALG" = "rsa" ]; then
+            openssl rsa -in testuser-key.pem -outform DER -out testuser-key.der
+          else
+            openssl ec -in testuser-key.pem -outform DER -out testuser-key.der
+          fi
           rm -f renewcerts-testuser.cnf testuser-cert.csr index.*
         fi
         cd ..
@@ -278,6 +318,29 @@ jobs:
           ls -la keys/
           exit 1
         fi
+
+        # Assert the key really is the algorithm this entry asked for, so a
+        # change to renewcerts.sh cannot silently turn an entry into a
+        # duplicate of another one. Unset means whatever renewcerts.sh gives,
+        # which is fred's EC key.
+        EXPECT="${{ matrix.client_key_algorithm }}"
+        [ -n "$EXPECT" ] || EXPECT=ecdsa
+        if openssl rsa -inform DER -in keys/testuser-key.der -noout 2>/dev/null
+        then
+          ACTUAL=rsa
+        elif openssl ec -inform DER -in keys/testuser-key.der -noout 2>/dev/null
+        then
+          ACTUAL=ecdsa
+        else
+          echo "ERROR: testuser-key.der is neither RSA nor EC"
+          exit 1
+        fi
+        if [ "$ACTUAL" != "$EXPECT" ]; then
+          echo "ERROR: testuser client key is $ACTUAL, expected $EXPECT"
+          exit 1
+        fi
+        echo "testuser client key algorithm: $ACTUAL"
+
         echo "CLIENT_CERT_FILE=keys/testuser-cert.der" >> $GITHUB_ENV
         echo "CLIENT_KEY_FILE=keys/testuser-key.der" >> $GITHUB_ENV
 
@@ -493,8 +556,8 @@ jobs:
         }
 
         if ("${{ matrix.server_key_source }}" -eq "store") {
-            # The certificate is part of the store entry; do NOT specify
-            # HostCertificate separately.
+            # The certificate is part of the store entry. HostKey and
+            # HostCertificate alongside HostKeyStore are rejected at startup.
             $configContent += @"
 
         HostKeyStore My
