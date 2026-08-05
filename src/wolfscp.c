@@ -2266,7 +2266,7 @@ static int SetTimestampInfo(WFILE* fp, const char* fileName,
 #ifdef USE_WINDOWS_API
     struct _utimbuf tmp;
     int fd;
-#else
+#elif !defined(WOLFSSH_NO_UTIMES)
     struct timeval tmp[2];
 #endif
 
@@ -2287,6 +2287,11 @@ static int SetTimestampInfo(WFILE* fp, const char* fileName,
             if (WFFLUSH(fp) != 0 || _commit(fd) != 0 || _futime(fd, &tmp) != 0)
                 ret = WS_FATAL_ERROR;
         }
+#elif defined(WOLFSSH_NO_UTIMES)
+        /* No utimes() on this port; the file keeps its creation timestamps. */
+        (void)fp;
+        (void)mTime;
+        (void)aTime;
 #else
         tmp[0].tv_sec = (time_t)aTime;
         tmp[0].tv_usec = 0;

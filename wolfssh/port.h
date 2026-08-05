@@ -368,10 +368,10 @@ extern "C" {
 
     #include <zephyr/fs/fs.h>
     #include <zephyr/version.h>
-    #if ZEPHYR_VERSION_CODE >= ZEPHYR_VERSION(4, 1, 0)
-        /* struct timeval: pre-4.1 it arrived via the socket headers when
-         * NET_SOCKETS_POSIX_NAMES was set; 4.1+ needs the POSIX header
-         * (CONFIG_POSIX_API). */
+    /* struct timeval. Include it directly rather than relying on it arriving
+     * transitively through wolfSSL's Zephyr POSIX includes. */
+    #if defined(CONFIG_POSIX_API) || \
+        ZEPHYR_VERSION_CODE >= ZEPHYR_VERSION(4, 1, 0)
         #include <zephyr/posix/sys/time.h>
     #endif
     #include <stdlib.h>
@@ -400,7 +400,8 @@ extern "C" {
     #define WFGETS(b,s,f)       NULL /* Not ported yet */
     #undef  WFPUTS
     #define WFPUTS(b,s)         EOF /* Not ported yet */
-    #define WUTIMES(a,b)        ((void)(a),(void)(b),0) /* Not ported yet */
+    #define WOLFSSH_NO_UTIMES
+    #define WUTIMES(a,b)        (0) /* Not ported yet */
     #define WCHDIR(fs,b)        z_fs_chdir((b))
 
 #elif defined(MICROCHIP_MPLAB_HARMONY)
@@ -434,6 +435,7 @@ extern "C" {
     #define WFGETS(b,s,f)       SYS_FS_FileStringGet((f), (b), (s))
     #undef  WFPUTS
     #define WFPUTS(b,f)         SYS_FS_FileStringPut((f), (b))
+    #define WOLFSSH_NO_UTIMES
     #define WUTIMES(a,b)        (0) /* Not ported yet */
     #define WSETTIME(fs,f,a,m) (0)
     #define WFSETTIME(fs,fd,a,m) (0)
@@ -463,6 +465,7 @@ extern "C" {
     #define WSETTIME(fs,f,a,m) (0)
     #define WFSETTIME(fs,fd,a,m) (0)
     #ifdef WOLFSSL_VXWORKS
+        #define WOLFSSH_NO_UTIMES
         #define WUTIMES(f,t)      (WS_SUCCESS)
     #elif defined(USE_WINDOWS_API)
         #include <sys/utime.h>
