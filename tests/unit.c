@@ -913,13 +913,10 @@ static int test_MlDsaKeyGen(void)
             printf("MlDsaKeyGen: MakeMlDsaKey level %s failed (%d)\n",
                    params[i].name, sz);
             WFREE(der, NULL, DYNTYPE_BUFFER);
-            result = -106;
+            result = -107;
             break;
         }
-        /* Confirm the DER size constant is exact, not merely an upper
-         * bound. This is what makes the derSz - 1 undersized-buffer test
-         * below a meaningful tight boundary check rather than one that
-         * could incidentally pass against a generous constant. */
+        /* Confirm exact DER size for boundary check. */
         if ((word32)sz != params[i].derSz) {
             printf("MlDsaKeyGen: level %s DER size %d != constant %u\n",
                    params[i].name, sz, params[i].derSz);
@@ -933,7 +930,7 @@ static int test_MlDsaKeyGen(void)
             printf("MlDsaKeyGen: undersized buffer wrong result %d, level %s\n",
                    sz, params[i].name);
             WFREE(der, NULL, DYNTYPE_BUFFER);
-            result = -107;
+            result = -109;
             break;
         }
 
@@ -944,27 +941,46 @@ static int test_MlDsaKeyGen(void)
         int sz = wolfSSH_MakeMlDsaKey(NULL, 0, 9999);
         if (sz != WS_BAD_ARGUMENT) {
             printf("MlDsaKeyGen: invalid level wrong result %d\n", sz);
-            result = -108;
+            result = -110;
         }
     }
 
     return result;
 }
 
-/* Generates a composite key with wolfSSH_MakeMlDsaCompositeKey() for every
- * compiled-in ML-DSA level/traditional-algo combo, then round-trips it
- * through the public wolfSSH_CTX_UsePrivateKey_buffer() OpenSSH-format
- * parser to confirm the two agree on the on-disk envelope layout. */
+/* Round-trip test for ML-DSA composite keys. */
 static int test_MlDsaCompositeKeyGen(void)
 {
+    /* NULL-terminated so the table is never empty if ECDSA and
+     * Ed25519/Ed448 are all disabled while ML-DSA is enabled */
     static const struct {
         word32 level;
         word32 tradType;
         const char* name;
     } params[] = {
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
         { WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ED25519, "44+Ed25519" },
     #endif
+    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+        { WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ECDSA, "44+ES256" },
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+            !defined(NO_SHA512)
+        { WOLFSSH_MLDSAKEY_65, WOLFSSH_COMPOSITE_TRAD_ED25519, "65+Ed25519" },
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA65) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+        { WOLFSSH_MLDSAKEY_65, WOLFSSH_COMPOSITE_TRAD_ECDSA, "65+ES256" },
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+        { WOLFSSH_MLDSAKEY_87, WOLFSSH_COMPOSITE_TRAD_ED448, "87+Ed448" },
+    #endif
+    #if !defined(WOLFSSH_NO_MLDSA87) && \
+            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+        { WOLFSSH_MLDSAKEY_87, WOLFSSH_COMPOSITE_TRAD_ECDSA, "87+ES384" },
+    #endif
+        { 0, 0, NULL }
     };
     const word32 bufSz = 8192;
     word32 i;
@@ -973,7 +989,8 @@ static int test_MlDsaCompositeKeyGen(void)
     word32 firstSz = 0;
     int result = 0;
 
-    for (i = 0; i < (word32)(sizeof(params) / sizeof(params[0])); i++) {
+    for (i = 0; i < (word32)(sizeof(params) / sizeof(params[0])) &&
+            params[i].name != NULL; i++) {
         WOLFSSH_CTX* ctx;
         byte* buf;
         int sz;
@@ -982,7 +999,7 @@ static int test_MlDsaCompositeKeyGen(void)
         if (buf == NULL) {
             printf("MlDsaCompositeKeyGen: alloc failed for %s\n",
                    params[i].name);
-            result = -109;
+            result = -120;
             break;
         }
 
@@ -992,7 +1009,7 @@ static int test_MlDsaCompositeKeyGen(void)
             printf("MlDsaCompositeKeyGen: MakeMlDsaCompositeKey %s "
                    "failed (%d)\n", params[i].name, sz);
             WFREE(buf, NULL, DYNTYPE_BUFFER);
-            result = -109;
+            result = -121;
             break;
         }
 
@@ -1007,7 +1024,7 @@ static int test_MlDsaCompositeKeyGen(void)
             printf("MlDsaCompositeKeyGen: CTX_new failed for %s\n",
                    params[i].name);
             WFREE(buf, NULL, DYNTYPE_BUFFER);
-            result = -110;
+            result = -122;
             break;
         }
 
@@ -1015,7 +1032,7 @@ static int test_MlDsaCompositeKeyGen(void)
                 WOLFSSH_FORMAT_OPENSSH) != WS_SUCCESS) {
             printf("MlDsaCompositeKeyGen: round-trip parse failed for %s\n",
                    params[i].name);
-            result = -111;
+            result = -123;
         }
 
         wolfSSH_CTX_free(ctx);
@@ -1025,22 +1042,26 @@ static int test_MlDsaCompositeKeyGen(void)
         }
     }
 
-    if (result == 0) {
+    if (result == 0 && firstSz > 0) {
+        /* out == NULL is a size query for a valid (level, tradType): it
+         * should return the required buffer size, not an error. */
         int sz = wolfSSH_MakeMlDsaCompositeKey(NULL, 0, firstLevel,
                 firstTradType);
-        if (sz != WS_BAD_ARGUMENT) {
-            printf("MlDsaCompositeKeyGen: NULL out wrong result %d\n", sz);
-            result = -112;
+        if (sz <= 0 || (word32)sz != firstSz) {
+            printf("MlDsaCompositeKeyGen: NULL out size query wrong "
+                   "result %d (expected %u)\n", sz, firstSz);
+            result = -124;
         }
     }
 
     if (result == 0) {
         byte dummy[1];
-        int sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy), 9999, 9999);
+        int sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy), 9999,
+                9999);
         if (sz != WS_BAD_ARGUMENT) {
             printf("MlDsaCompositeKeyGen: invalid level/tradType wrong "
                    "result %d\n", sz);
-            result = -113;
+            result = -125;
         }
     }
 
@@ -1051,20 +1072,18 @@ static int test_MlDsaCompositeKeyGen(void)
         if (sz != WS_BAD_ARGUMENT) {
             printf("MlDsaCompositeKeyGen: mismatched level/tradType wrong "
                    "result %d\n", sz);
-            result = -115;
+            result = -127;
         }
     }
 
-    /* firstLevel/firstTradType/firstSz are only populated when params[] has
-     * at least one entry for this build's enabled algorithms; skip the
-     * undersized-buffer check (which relies on a valid firstSz) otherwise. */
-    if (result == 0 && (sizeof(params) / sizeof(params[0])) > 0) {
+    /* Skip undersize check if no algorithms enabled. */
+    if (result == 0 && firstSz > 0) {
         byte* buf = (byte*)WMALLOC(firstSz, NULL, DYNTYPE_BUFFER);
 
         if (buf == NULL) {
             printf("MlDsaCompositeKeyGen: alloc failed for undersized "
                    "buffer test\n");
-            result = -114;
+            result = -126;
         }
         else {
             int sz = wolfSSH_MakeMlDsaCompositeKey(buf, firstSz - 1,
@@ -1072,7 +1091,7 @@ static int test_MlDsaCompositeKeyGen(void)
             if (sz != WS_BUFFER_E) {
                 printf("MlDsaCompositeKeyGen: undersized buffer wrong "
                        "result %d\n", sz);
-                result = -115;
+                result = -128;
             }
             WFREE(buf, NULL, DYNTYPE_BUFFER);
         }
@@ -1080,9 +1099,110 @@ static int test_MlDsaCompositeKeyGen(void)
 
     return result;
 }
-#endif
 
-#endif
+#endif /* WOLFSSH_NO_MLDSA */
+
+#endif /* WOLFSSH_KEYGEN */
+
+/* Exercises the malformed-input error paths of the WOLFSSH_FORMAT_OPENSSH
+ * PEM stripping added to wolfSSH_ProcessBuffer() (via the public
+ * wolfSSH_CTX_UsePrivateKey_buffer() entry point): a header that doesn't
+ * match "-----BEGIN OPENSSH PRIVATE KEY-----", a missing footer, and a
+ * corrupt/non-Base64 body. Each should fail with WS_BAD_FILE_E rather than
+ * crash or leak. */
+static int test_OpenSshPemNegative(void)
+{
+    static const char badHeader[] =
+        "-----BEGIN OPENSSH PUBLIC KEY-----\n"
+        "AAAA\n"
+        "-----END OPENSSH PRIVATE KEY-----\n";
+    static const char noFooter[] =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n";
+    static const char badBase64[] =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "not valid base64 !!!\n"
+        "-----END OPENSSH PRIVATE KEY-----\n";
+    static const struct {
+        const char* pem;
+        word32 pemSz;
+        const char* name;
+    } cases[] = {
+        { badHeader, (word32)sizeof(badHeader) - 1, "bad header" },
+        { noFooter, (word32)sizeof(noFooter) - 1, "missing footer" },
+        { badBase64, (word32)sizeof(badBase64) - 1, "bad base64" },
+    };
+    word32 i;
+    int result = 0;
+
+    for (i = 0; i < (word32)(sizeof(cases) / sizeof(cases[0])); i++) {
+        WOLFSSH_CTX* ctx;
+        int ret;
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL) {
+            printf("OpenSshPemNegative: CTX_new failed for %s\n",
+                   cases[i].name);
+            result = -116;
+            break;
+        }
+
+        ret = wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                (const byte*)cases[i].pem, cases[i].pemSz,
+                WOLFSSH_FORMAT_OPENSSH);
+        if (ret != WS_BAD_FILE_E) {
+            printf("OpenSshPemNegative: %s wrong result %d\n",
+                   cases[i].name, ret);
+            result = -117;
+        }
+
+        wolfSSH_CTX_free(ctx);
+        if (result != 0) {
+            break;
+        }
+    }
+
+    return result;
+}
+
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+/* A well-formed OpenSSH-format key that isn't a composite type must be
+ * rejected, not stored as an envelope no non-composite parser can walk. */
+static int test_OpenSshFormatNonCompositeRejected(void)
+{
+    static const char ecdsaOpenSsh[] =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAaAAAABNlY2RzYS\n"
+        "1zaGEyLW5pc3RwMjU2AAAACG5pc3RwMjU2AAAAQQTAqdBgCp8bYSq2kQQ48/Ud8Iy6Mjnb\n"
+        "/fpB3LfSE/1kx9VaaE4FL3i9Gg2vDV0eLGM3PWksFNPhULxtcYJyjaBjAAAAqJAeleSQHp\n"
+        "XkAAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBMCp0GAKnxthKraR\n"
+        "BDjz9R3wjLoyOdv9+kHct9IT/WTH1VpoTgUveL0aDa8NXR4sYzc9aSwU0+FQvG1xgnKNoG\n"
+        "MAAAAgPrOgktioNqad/wHNC/rt/zVrpNqDnOwg9tNDFMOTwo8AAAANYm9iQGxvY2FsaG9z\n"
+        "dAECAw==\n"
+        "-----END OPENSSH PRIVATE KEY-----\n";
+    WOLFSSH_CTX* ctx;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) {
+        printf("OpenSshFormatNonCompositeRejected: CTX_new failed\n");
+        return -118;
+    }
+
+    ret = wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+            (const byte*)ecdsaOpenSsh, (word32)sizeof(ecdsaOpenSsh) - 1,
+            WOLFSSH_FORMAT_OPENSSH);
+    if (ret != WS_UNIMPLEMENTED_E) {
+        printf("OpenSshFormatNonCompositeRejected: wrong result %d\n", ret);
+        result = -119;
+    }
+
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && \
@@ -8894,6 +9014,11 @@ static int test_DoUserAuthRequestMlDsa(void)
     return 0;
 }
 
+/* tamperSig: 0 = no tampering, 1 = flip a byte in the trad-algorithm
+ * signature component, 2 = flip a byte in the ML-DSA signature component,
+ * 3 = claim a composite signature length shorter than the ML-DSA half
+ * alone, 4 = claim a composite signature length far longer than what was
+ * produced. All tamper modes must be rejected by verification. */
 static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
         byte keyId, int tamperSig)
 {
@@ -8967,16 +9092,20 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     ret = WS_GetCompositeParams(keyId, &params);
     if (ret != WS_SUCCESS) { result = -703; goto done; }
 
-    if (wc_MlDsaKey_Init(&signingKey, NULL, INVALID_DEVID) != 0) { result = -704; goto done; }
+    if (wc_MlDsaKey_Init(&signingKey, NULL,
+        INVALID_DEVID) != 0) { result = -704; goto done; }
     signingKeyInit = 1;
-    if (wc_MlDsaKey_SetParams(&signingKey, params.mldsaLevel) != 0) { result = -705; goto done; }
-    if (wc_MlDsaKey_MakeKey(&signingKey, &rng) != 0) { result = -706; goto done; }
+    if (wc_MlDsaKey_SetParams(&signingKey,
+        params.mldsaLevel) != 0) { result = -705; goto done; }
+    if (wc_MlDsaKey_MakeKey(&signingKey,
+        &rng) != 0) { result = -706; goto done; }
 
     if (params.tradType == TRAD_TYPE_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
         if (wc_ed25519_init(&ed25519Key) != 0) { result = -707; goto done; }
         ed25519Init = 1;
-        if (wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &ed25519Key) != 0) { result = -708; goto done; }
+        if (wc_ed25519_make_key(&rng, ED25519_KEY_SIZE,
+            &ed25519Key) != 0) { result = -708; goto done; }
 #else
         result = -709; goto done;
 #endif
@@ -8985,17 +9114,18 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
 #ifdef HAVE_ED448
         if (wc_ed448_init(&ed448Key) != 0) { result = -710; goto done; }
         ed448Init = 1;
-        if (wc_ed448_make_key(&rng, 57, &ed448Key) != 0) { result = -711; goto done; }
+        if (wc_ed448_make_key(&rng, 57,
+            &ed448Key) != 0) { result = -711; goto done; }
 #else
         result = -712; goto done;
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ECC) {
 #ifndef WOLFSSH_NO_ECDSA
-        int keysz = (int)params.tradPrivSz;
         if (wc_ecc_init(&eccKey) != 0) { result = -713; goto done; }
         eccInit = 1;
-        if (wc_ecc_make_key(&rng, keysz, &eccKey) != 0) { result = -714; goto done; }
+        if (wc_ecc_make_key_ex(&rng, (int)params.tradPrivSz, &eccKey,
+            params.eccCurveId) != 0) { result = -714; goto done; }
 #else
         result = -715; goto done;
 #endif
@@ -9005,7 +9135,8 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     if (pubRaw == NULL) { result = -716; goto done; }
     {
         word32 sz = params.mldsaPubSz;
-        if (wc_MlDsaKey_ExportPubRaw(&signingKey, pubRaw, &sz) != 0 || sz != params.mldsaPubSz) { result = -717; goto done; }
+        if (wc_MlDsaKey_ExportPubRaw(&signingKey, pubRaw,
+            &sz) != 0 || sz != params.mldsaPubSz) { result = -717; goto done; }
     }
 
     tradPub = (byte*)WMALLOC(params.tradPubSz, NULL, 0);
@@ -9013,34 +9144,42 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     if (params.tradType == TRAD_TYPE_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
         word32 sz = params.tradPubSz;
-        if (wc_ed25519_export_public(&ed25519Key, tradPub, &sz) != 0 || sz != params.tradPubSz) { result = -719; goto done; }
+        if (wc_ed25519_export_public(&ed25519Key, tradPub,
+            &sz) != 0 || sz != params.tradPubSz) { result = -719; goto done; }
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ED448) {
 #ifdef HAVE_ED448
         word32 sz = params.tradPubSz;
-        if (wc_ed448_export_public(&ed448Key, tradPub, &sz) != 0 || sz != params.tradPubSz) { result = -720; goto done; }
+        if (wc_ed448_export_public(&ed448Key, tradPub,
+            &sz) != 0 || sz != params.tradPubSz) { result = -720; goto done; }
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ECC) {
 #ifndef WOLFSSH_NO_ECDSA
         word32 sz = params.tradPubSz;
-        if (wc_ecc_export_x963(&eccKey, tradPub, &sz) != 0 || sz != params.tradPubSz) { result = -721; goto done; }
+        if (wc_ecc_export_x963(&eccKey, tradPub,
+            &sz) != 0 || sz != params.tradPubSz) { result = -721; goto done; }
 #endif
     }
 
-    pubKeyBlobSz = UINT32_SZ * 2 + keyTypeNameSz + params.mldsaPubSz + params.tradPubSz;
+    pubKeyBlobSz = UINT32_SZ * 2 + keyTypeNameSz + params.mldsaPubSz +
+            params.tradPubSz;
     pubKeyBlob = (byte*)WMALLOC(pubKeyBlobSz, NULL, 0);
     if (pubKeyBlob == NULL) { result = -722; goto done; }
 
     off = 0;
     MlDsaTest_PutLen(pubKeyBlob + off, keyTypeNameSz); off += UINT32_SZ;
     WMEMCPY(pubKeyBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
-    MlDsaTest_PutLen(pubKeyBlob + off, params.mldsaPubSz + params.tradPubSz); off += UINT32_SZ;
-    WMEMCPY(pubKeyBlob + off, pubRaw, params.mldsaPubSz); off += params.mldsaPubSz;
-    WMEMCPY(pubKeyBlob + off, tradPub, params.tradPubSz); off += params.tradPubSz;
+    MlDsaTest_PutLen(pubKeyBlob + off,
+        params.mldsaPubSz + params.tradPubSz); off += UINT32_SZ;
+    WMEMCPY(pubKeyBlob + off, pubRaw,
+        params.mldsaPubSz); off += params.mldsaPubSz;
+    WMEMCPY(pubKeyBlob + off, tradPub,
+        params.tradPubSz); off += params.tradPubSz;
 
-    dataToSignSz = UINT32_SZ * 5 + usernameSz + serviceNameSz + authNameSz + 1 + keyTypeNameSz + pubKeyBlobSz;
+    dataToSignSz = UINT32_SZ * 5 + usernameSz + serviceNameSz +
+            authNameSz + 1 + keyTypeNameSz + pubKeyBlobSz;
     dataToSign = (byte*)WMALLOC(dataToSignSz, NULL, 0);
     if (dataToSign == NULL) { result = -723; goto done; }
 
@@ -9063,7 +9202,8 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
 
     off = 0;
     MlDsaTest_PutLen(checkData + off, ssh->sessionIdSz); off += UINT32_SZ;
-    WMEMCPY(checkData + off, ssh->sessionId, ssh->sessionIdSz); off += ssh->sessionIdSz;
+    WMEMCPY(checkData + off, ssh->sessionId,
+        ssh->sessionIdSz); off += ssh->sessionIdSz;
     checkData[off++] = MSGID_USERAUTH_REQUEST;
     WMEMCPY(checkData + off, dataToSign, dataToSignSz);
 
@@ -9074,33 +9214,40 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     if (mldsaSig == NULL || tradSig == NULL) { result = -725; goto done; }
 
     hash = (byte*)WMALLOC(params.tradHashSz, NULL, 0);
-    m_prime_len = COMPOSITE_DOMAIN_PREFIX_SZ + params.labelSz + 1 + params.tradHashSz;
+    m_prime_len = COMPOSITE_DOMAIN_PREFIX_SZ + params.labelSz + 1 +
+            params.tradHashSz;
     m_prime = (byte*)WMALLOC(m_prime_len, NULL, 0);
 
     if (hash == NULL || m_prime == NULL) { result = -726; goto done; }
 
-    ret = WS_Hash_Helper(params.tradHashId, checkData, checkDataSz, hash, params.tradHashSz);
+    ret = WS_Hash_Helper(params.tradHashId, checkData, checkDataSz, hash,
+        params.tradHashSz);
     if (ret != 0) { result = -727; goto done; }
 
     WMEMCPY(m_prime, COMPOSITE_DOMAIN_PREFIX, COMPOSITE_DOMAIN_PREFIX_SZ);
     WMEMCPY(m_prime + COMPOSITE_DOMAIN_PREFIX_SZ, params.label, params.labelSz);
     m_prime[COMPOSITE_DOMAIN_PREFIX_SZ + params.labelSz] = 0;
-    WMEMCPY(m_prime + COMPOSITE_DOMAIN_PREFIX_SZ + params.labelSz + 1, hash, params.tradHashSz);
+    WMEMCPY(m_prime + COMPOSITE_DOMAIN_PREFIX_SZ + params.labelSz + 1, hash,
+        params.tradHashSz);
 
-    if (wc_MlDsaKey_SignCtx(&signingKey, (const byte*)params.label, params.labelSz, mldsaSig, &mldsaSigSz, m_prime, m_prime_len, &rng) != 0) {
+    if (wc_MlDsaKey_SignCtx(&signingKey, (const byte*)params.label,
+        params.labelSz, mldsaSig, &mldsaSigSz, m_prime, m_prime_len,
+        &rng) != 0) {
         result = -728; goto done;
     }
 
     if (params.tradType == TRAD_TYPE_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
         tradSigSz = ED25519_SIG_SIZE;
-        if (wc_ed25519_sign_msg(m_prime, m_prime_len, tradSig, &tradSigSz, &ed25519Key) != 0) { result = -729; goto done; }
+        if (wc_ed25519_sign_msg(m_prime, m_prime_len, tradSig, &tradSigSz,
+            &ed25519Key) != 0) { result = -729; goto done; }
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ED448) {
 #ifdef HAVE_ED448
         tradSigSz = 114;
-        if (wc_ed448_sign_msg(m_prime, m_prime_len, tradSig, &tradSigSz, &ed448Key, NULL, 0) != 0) { result = -730; goto done; }
+        if (wc_ed448_sign_msg(m_prime, m_prime_len, tradSig, &tradSigSz,
+            &ed448Key, NULL, 0) != 0) { result = -730; goto done; }
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ECC) {
@@ -9113,37 +9260,81 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
         byte rBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
         byte sBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
 
-        ret = WS_Hash_Helper(params.tradHashId, m_prime, m_prime_len, digest, params.tradHashSz);
+        ret = WS_Hash_Helper(params.tradHashId, m_prime, m_prime_len, digest,
+            params.tradHashSz);
         if (ret != 0) { result = -737; goto done; }
 
-        if (wc_ecc_sign_hash(digest, params.tradHashSz, asnSig, &asnSigSz, &rng, &eccKey) != 0) { result = -731; goto done; }
+        if (wc_ecc_sign_hash(digest, params.tradHashSz, asnSig, &asnSigSz,
+            &rng, &eccKey) != 0) { result = -731; goto done; }
 
-        if (wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf, &sSz) != 0) { result = -734; goto done; }
-        off = 0;
-        MlDsaTest_PutLen(tradSig + off, rSz); off += UINT32_SZ;
-        WMEMCPY(tradSig + off, rBuf, rSz); off += rSz;
-        MlDsaTest_PutLen(tradSig + off, sSz); off += UINT32_SZ;
-        WMEMCPY(tradSig + off, sBuf, sSz); off += sSz;
-        tradSigSz = off;
+        if (wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf,
+            &sSz) != 0) { result = -734; goto done; }
+        {
+            /* mpint pad, mirroring CompositeEccSign()'s wire format. */
+            byte rPad = (rBuf[0] & 0x80) ? 1 : 0;
+            byte sPad = (sBuf[0] & 0x80) ? 1 : 0;
+
+            off = 0;
+            MlDsaTest_PutLen(tradSig + off, rSz + rPad); off += UINT32_SZ;
+            if (rPad)
+                tradSig[off++] = 0;
+            WMEMCPY(tradSig + off, rBuf, rSz); off += rSz;
+            MlDsaTest_PutLen(tradSig + off, sSz + sPad); off += UINT32_SZ;
+            if (sPad)
+                tradSig[off++] = 0;
+            WMEMCPY(tradSig + off, sBuf, sSz); off += sSz;
+            tradSigSz = off;
+        }
 #endif
     }
 
-    sigBlobSz = UINT32_SZ * 2 + keyTypeNameSz + mldsaSigSz + tradSigSz;
+    /* extra padding so tamperSig==4's oversized claimed length reads
+     * initialized (zeroed) memory instead of running off the allocation */
+    sigBlobSz = UINT32_SZ * 2 + keyTypeNameSz + mldsaSigSz + tradSigSz + 64;
     sigBlob = (byte*)WMALLOC(sigBlobSz, NULL, 0);
     if (sigBlob == NULL) { result = -735; goto done; }
+    WMEMSET(sigBlob, 0, sigBlobSz);
 
     off = 0;
     MlDsaTest_PutLen(sigBlob + off, keyTypeNameSz); off += UINT32_SZ;
     WMEMCPY(sigBlob + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
-    MlDsaTest_PutLen(sigBlob + off, mldsaSigSz + tradSigSz); off += UINT32_SZ;
-    WMEMCPY(sigBlob + off, mldsaSig, mldsaSigSz); off += mldsaSigSz;
-    WMEMCPY(sigBlob + off, tradSig, tradSigSz); off += tradSigSz;
+    {
+        word32 sigLenOff = off;
+        MlDsaTest_PutLen(sigBlob + off, mldsaSigSz + tradSigSz);
+        off += UINT32_SZ;
+        WMEMCPY(sigBlob + off, mldsaSig, mldsaSigSz); off += mldsaSigSz;
+        WMEMCPY(sigBlob + off, tradSig, tradSigSz); off += tradSigSz;
 
-    if (tamperSig) {
+        if (tamperSig == 3) {
+            /* Claim a composite signature shorter than the ML-DSA half
+             * alone; must be rejected by VerifyMlDsaComposite()'s
+             * "sigSz < params.mldsaSigSz" underflow guard. */
+            MlDsaTest_PutLen(sigBlob + sigLenOff, mldsaSigSz - 1);
+        }
+        else if (tamperSig == 4) {
+            /* Claim a composite signature far longer than what was
+             * actually produced; must be rejected by
+             * VerifyMlDsaComposite()'s trad-region bound checks rather
+             * than reading past the real signature data. */
+            MlDsaTest_PutLen(sigBlob + sigLenOff,
+                    mldsaSigSz + tradSigSz + 32);
+        }
+    }
+
+    if (tamperSig == 1) {
         /* Flip a byte in the trad-algorithm component of the signature
-         * (last byte of the blob) and confirm verification rejects it
-         * rather than accepting a corrupted composite signature. */
-        sigBlob[sigBlobSz - 1] ^= 0xFF;
+         * (last byte of the real content, before the padding added for
+         * tamperSig==4) and confirm verification rejects it rather than
+         * accepting a corrupted composite signature. */
+        sigBlob[off - 1] ^= 0xFF;
+    }
+    else if (tamperSig == 2) {
+        /* Flip the first byte of the ML-DSA component of the signature
+         * and confirm verification rejects it too; a bug that verifies
+         * only the trad half (or mis-slices the combined signature)
+         * would let this slip through. */
+        word32 mldsaOff = UINT32_SZ * 2 + keyTypeNameSz;
+        sigBlob[mldsaOff] ^= 0xFF;
     }
 
     WMEMSET(&authData, 0, sizeof(authData));
@@ -9160,9 +9351,14 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     authData.sf.publicKey.publicKey       = pubKeyBlob;
     authData.sf.publicKey.publicKeySz     = pubKeyBlobSz;
     authData.sf.publicKey.signature       = sigBlob;
+    /* sigBlobSz (not off) so tamperSig==4's inflated claimed length still
+     * passes DoUserAuthRequestMlDsaComposite's GetSize() bound check
+     * against the remaining buffer and reaches VerifyMlDsaComposite's own
+     * trad-region bound checks instead of being rejected earlier. */
     authData.sf.publicKey.signatureSz     = sigBlobSz;
 
-    ret = wolfSSH_TestDoUserAuthRequestMlDsaComposite(ssh, &authData, keyId, pubKeyBlobSz);
+    ret = wolfSSH_TestDoUserAuthRequestMlDsaComposite(ssh, &authData, keyId,
+        pubKeyBlobSz);
     if (tamperSig) {
         if (ret == WS_SUCCESS) {
             printf("DoUserAuthRequestMlDsaComposite (%s) tampered sig "
@@ -9171,7 +9367,8 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
         }
     }
     else if (ret != WS_SUCCESS) {
-        printf("DoUserAuthRequestMlDsaComposite (%s) failed: ret=%d\n", keyTypeName, ret);
+        printf("DoUserAuthRequestMlDsaComposite (%s) failed: ret=%d\n",
+            keyTypeName, ret);
         result = -736;
     }
 
@@ -9202,14 +9399,7 @@ done:
     return result;
 }
 
-/* Exercises SignHMlDsaComposite(), the KEX host-key signing path used by
- * SendKexDhReply(). Confirms: (1) signing succeeds and produces exactly
- * mldsaSigSz + tradSigSz bytes when the caller's buffer is exactly that
- * size (matching production usage via KEX_SIG_SIZE), and (2) a buffer
- * that is one byte too small -- including the historical 64-byte trad
- * headroom that overflowed for ECC/Ed448 composites before the fix in
- * WS_GetCompositeParams()/SignHMlDsaComposite() -- is safely rejected with
- * WS_BAD_ARGUMENT rather than overflowing. */
+/* Exercise SignHMlDsaComposite() buffer limits. */
 static int test_SignHMlDsaComposite_Params(const char* label, byte keyId)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -9231,13 +9421,7 @@ static int test_SignHMlDsaComposite_Params(const char* label, byte keyId)
         result = -902; goto done;
     }
 
-    /* Buffer sized to the worst case: must succeed. ED25519/ED448 trad
-     * signatures are fixed-length, so sigSz must match exactly for those.
-     * ECC r/s encoding is variable length (a leading-zero pad byte may or
-     * may not be needed per coordinate), so allow up to 2 bytes of slack
-     * per coordinate (4 bytes total) for ECC composites only -- anything
-     * looser than that would fail to catch a severely truncated or
-     * dropped trad signature. */
+    /* Verify worst-case buffer sizing succeeds. */
     {
         word32 minSigSz = params.mldsaSigSz + params.tradSigSz;
         if (params.tradType == TRAD_TYPE_ECC) {
@@ -9254,11 +9438,7 @@ static int test_SignHMlDsaComposite_Params(const char* label, byte keyId)
         }
     }
 
-    /* No room at all for the trad component: must be rejected, not
-     * overflow the caller's buffer. (Not testing "one byte short of the
-     * worst case" here -- ECC r/s encoding is variable length, so a
-     * real signature can legitimately land a byte or two under the
-     * worst-case reserved size, which would make that boundary flaky.) */
+    /* Reject undersized buffer. */
     sigSz = params.mldsaSigSz + 1;
     ret = wolfSSH_TestSignHMlDsaComposite(ssh, sig, &sigSz, keyId);
     if (ret != WS_BAD_ARGUMENT) {
@@ -9267,9 +9447,9 @@ static int test_SignHMlDsaComposite_Params(const char* label, byte keyId)
         result = -904; goto done;
     }
 
-    /* Regression check for the specific historical bug: the old
-     * KEX_SIG_SIZE only reserved 64 bytes of trad headroom, which is
-     * insufficient for ECC P-384 (106 bytes) and Ed448 (114 bytes). */
+    /* Historical KEX_SIG_SIZE reserved only 64 bytes of trad headroom,
+     * too small for P-384/Ed448. Exercises the same generic tradSigSz
+     * check as above, not the KEX_SIG_SIZE constant itself. */
     if (params.tradSigSz > 64) {
         sigSz = params.mldsaSigSz + 64;
         ret = wolfSSH_TestSignHMlDsaComposite(ssh, sig, &sigSz, keyId);
@@ -9289,21 +9469,60 @@ done:
 static int test_SignHMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
-    ret = test_SignHMlDsaComposite_Params("ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519);
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+            ID_MLDSA44_ES256);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+            ID_MLDSA65_ES256);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+            ID_MLDSA87_ES384);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa44-ed25519@openssh.com",
+        ID_MLDSA44_ED25519);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    ret = test_SignHMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+            ID_MLDSA87_ED448);
     if (ret != 0) return ret;
 #endif
     return 0;
 }
 
-/* Builds a minimal OpenSSH-key-v1 envelope and drives it through the real
- * envelope parser (GetOpenSshKey() -> GetOpenSshKeyMlDsaComposite()), rather
- * than calling GetOpenSshKeyMlDsaComposite() directly on synthetic keys --
- * that gap is what let "wrong parser used on the raw envelope" bugs ship
- * undetected in earlier revisions. */
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+/* Reset a WS_KeySignature to a clean slate before (re)using it as an
+ * ID_MLDSA44_ED25519 decode target. */
+static void MlDsaTest_ResetKeySig(WS_KeySignature* keySig)
+{
+    WMEMSET(keySig, 0, sizeof(*keySig));
+    keySig->keyId = ID_MLDSA44_ED25519;
+    keySig->heap = NULL;
+}
+#endif
+
+/* E2E parser test with minimal OpenSSH-key-v1 envelope. */
 static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
 {
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
     static const char keyTypeName[] = "ssh-mldsa44-ed25519@openssh.com";
     static const char magic[] = "openssh-key-v1";
     static const char none[] = "none";
@@ -9339,6 +9558,7 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
     word32 fileSz;
     word32 off;
     word32 pubBlobSz, compositePubSz, compositePrivSz, privKeysStrSz, padSz, i;
+    word32 compPubOff2 = 0, compPrivOff = 0;
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL) return -950;
@@ -9356,10 +9576,13 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
     if (wc_RNG_GenerateBlock(&rng, mldsaSeed, sizeof(mldsaSeed)) != 0) {
         result = -954; goto done;
     }
-    if (wc_MlDsaKey_Init(&signingKey, NULL, INVALID_DEVID) != 0) { result = -955; goto done; }
+    if (wc_MlDsaKey_Init(&signingKey, NULL,
+        INVALID_DEVID) != 0) { result = -955; goto done; }
     signingKeyInit = 1;
-    if (wc_MlDsaKey_SetParams(&signingKey, params.mldsaLevel) != 0) { result = -956; goto done; }
-    if (wc_MlDsaKey_MakeKeyFromSeed(&signingKey, mldsaSeed) != 0) { result = -957; goto done; }
+    if (wc_MlDsaKey_SetParams(&signingKey,
+        params.mldsaLevel) != 0) { result = -956; goto done; }
+    if (wc_MlDsaKey_MakeKeyFromSeed(&signingKey,
+        mldsaSeed) != 0) { result = -957; goto done; }
 
     mldsaPub = (byte*)WMALLOC(params.mldsaPubSz, NULL, 0);
     if (mldsaPub == NULL) { result = -958; goto done; }
@@ -9423,7 +9646,8 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
     if (file == NULL) { result = -967; goto done; }
 
     off = 0;
-    WMEMCPY(file + off, magic, WSTRLEN(magic) + 1); off += (word32)WSTRLEN(magic) + 1;
+    WMEMCPY(file + off, magic, WSTRLEN(magic) + 1); off += (word32)WSTRLEN(
+        magic) + 1;
     MlDsaTest_PutLen(file + off, noneSz); off += UINT32_SZ;
     WMEMCPY(file + off, none, noneSz); off += noneSz;
     MlDsaTest_PutLen(file + off, noneSz); off += UINT32_SZ;
@@ -9443,9 +9667,11 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
     MlDsaTest_PutLen(file + off, 0xC0FFEEEE); off += UINT32_SZ; /* checkint2 */
     MlDsaTest_PutLen(file + off, keyTypeNameSz); off += UINT32_SZ;
     WMEMCPY(file + off, keyTypeName, keyTypeNameSz); off += keyTypeNameSz;
+    compPubOff2 = off;
     MlDsaTest_PutLen(file + off, compositePubSz); off += UINT32_SZ;
     WMEMCPY(file + off, mldsaPub, mldsaPubSz); off += mldsaPubSz;
     WMEMCPY(file + off, ed25519Pub, ed25519PubSz); off += ed25519PubSz;
+    compPrivOff = off;
     MlDsaTest_PutLen(file + off, compositePrivSz); off += UINT32_SZ;
     WMEMCPY(file + off, mldsaSeed, MLDSA_SEED_SZ); off += MLDSA_SEED_SZ;
     WMEMCPY(file + off, ed25519Seed, ED25519_KEY_SIZE); off += ED25519_KEY_SIZE;
@@ -9456,9 +9682,7 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
 
     if (off != fileSz) { result = -968; goto done; }
 
-    WMEMSET(&keySig, 0, sizeof(keySig));
-    keySig.keyId = ID_MLDSA44_ED25519;
-    keySig.heap = NULL;
+    MlDsaTest_ResetKeySig(&keySig);
 
     WMEMSET(&authData, 0, sizeof(authData));
     authData.sf.publicKey.privateKey   = file;
@@ -9489,6 +9713,39 @@ static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
     }
     wolfSSH_KEY_clean(&keySig);
 
+    /* Negative test: shrinking compositePubSz by 1 in the private section's copy */
+    MlDsaTest_PutLen(file + compPubOff2, compositePubSz - 1);
+    {
+        word32 payloadSz = 0;
+        MlDsaTest_ResetKeySig(&keySig);
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsaComposite(ssh, &payloadSz,
+                &authData, &keySig);
+        if (ret >= 0) {
+            printf("PrepareUserAuthRequestMlDsaComposite: expected failure for shrunken pub blob, got %d\n", ret);
+            result = -971;
+        }
+        /* A parse failure can still leave a partially-initialized sub-key;
+         * clean unconditionally so it can't leak into the next call. */
+        wolfSSH_KEY_clean(&keySig);
+    }
+    MlDsaTest_PutLen(file + compPubOff2, compositePubSz); /* restore */
+
+    /* Negative test: extending compositePrivSz by 1 in the private section */
+    MlDsaTest_PutLen(file + compPrivOff, compositePrivSz + 1);
+    {
+        word32 payloadSz = 0;
+        MlDsaTest_ResetKeySig(&keySig);
+        ret = wolfSSH_TestPrepareUserAuthRequestMlDsaComposite(ssh, &payloadSz,
+                &authData, &keySig);
+        if (ret >= 0) {
+            printf("PrepareUserAuthRequestMlDsaComposite: expected failure for enlarged priv blob, got %d\n", ret);
+            result = -972;
+        }
+        wolfSSH_KEY_clean(&keySig);
+    }
+    MlDsaTest_PutLen(file + compPrivOff, compositePrivSz); /* restore */
+
+
 done:
     if (signingKeyInit) wc_MlDsaKey_Free(&signingKey);
     if (ed25519Init) wc_ed25519_free(&ed25519Key);
@@ -9504,11 +9761,7 @@ done:
 #endif
 }
 
-/* Drives BuildUserAuthRequestMlDsaComposite() -- the client-side composite
- * signer, otherwise untested -- and feeds its output straight into
- * DoUserAuthRequestMlDsaComposite() (exercised above) to confirm the two
- * agree on the wire format; this is the path a real hybrid client uses
- * to authenticate. */
+/* Test client signer against server parser. */
 #ifdef WOLFSSH_KEYGEN
 static int test_BuildUserAuthRequestMlDsaComposite_Params(
         const char* keyTypeName, word32 level, word32 tradType, byte keyId)
@@ -9540,6 +9793,7 @@ static int test_BuildUserAuthRequestMlDsaComposite_Params(
     word32 packetSz;
     word32 packetBufSz;
     word32 off;
+    word32 pubBlobTagOff;
     word32 payloadSz = 0;
     word32 idx;
     int result = 0;
@@ -9572,8 +9826,8 @@ static int test_BuildUserAuthRequestMlDsaComposite_Params(
         ret = wolfSSH_ReadKey_buffer(privKey, privKeySz, WOLFSSH_FORMAT_OPENSSH,
                 &decodedPrivKey, &decodedPrivKeySz, &outType, &outTypeSz, NULL);
         if (ret != WS_SUCCESS) {
-            printf("BuildUserAuthRequestMlDsaComposite (%s): ReadKey_buffer failed "
-                   "ret=%d\n", keyTypeName, ret);
+            printf("BuildUserAuthRequestMlDsaComposite (%s): "
+                   "ReadKey_buffer failed ret=%d\n", keyTypeName, ret);
             result = -984; goto done;
         }
         WMEMCPY(privKey, decodedPrivKey, decodedPrivKeySz);
@@ -9631,6 +9885,7 @@ static int test_BuildUserAuthRequestMlDsaComposite_Params(
     MlDsaTest_PutLen(pubKeyBlob + off, keyTypeNameSz); off += UINT32_SZ;
     WMEMCPY(pubKeyBlob + off, keyTypeName, keyTypeNameSz);
     off += keyTypeNameSz;
+    pubBlobTagOff = off;
     MlDsaTest_PutLen(pubKeyBlob + off, params.mldsaPubSz + params.tradPubSz);
     off += UINT32_SZ;
     WMEMCPY(pubKeyBlob + off, mldsaPub, params.mldsaPubSz);
@@ -9694,6 +9949,17 @@ static int test_BuildUserAuthRequestMlDsaComposite_Params(
         result = -994;
     }
 
+    /* Negative test: shrink composite pub key length tag */
+    MlDsaTest_PutLen(pubKeyBlob + pubBlobTagOff, params.mldsaPubSz + params.tradPubSz - 1);
+    ret = wolfSSH_TestDoUserAuthRequestMlDsaComposite(ssh, &authData, keyId,
+            pubKeyBlobSz);
+    if (ret >= 0) {
+        printf("BuildUserAuthRequestMlDsaComposite (%s): verify of shrunken "
+               "blob succeeded\n", keyTypeName);
+        result = -995;
+    }
+    MlDsaTest_PutLen(pubKeyBlob + pubBlobTagOff, params.mldsaPubSz + params.tradPubSz);
+
 done:
     if (prepared) {
         wolfSSH_KEY_clean(&keySig);
@@ -9711,10 +9977,44 @@ done:
 static int test_BuildUserAuthRequestMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    ret = test_BuildUserAuthRequestMlDsaComposite_Params(
+            "ssh-mldsa44-es256@wolfssl.com", WOLFSSH_MLDSAKEY_44,
+            WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA44_ES256);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    ret = test_BuildUserAuthRequestMlDsaComposite_Params(
+            "ssh-mldsa65-es256@wolfssl.com", WOLFSSH_MLDSAKEY_65,
+            WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA65_ES256);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    ret = test_BuildUserAuthRequestMlDsaComposite_Params(
+            "ssh-mldsa87-es384@wolfssl.com", WOLFSSH_MLDSAKEY_87,
+            WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA87_ES384);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa44-ed25519@openssh.com", WOLFSSH_MLDSAKEY_44,
             WOLFSSH_COMPOSITE_TRAD_ED25519, ID_MLDSA44_ED25519);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    ret = test_BuildUserAuthRequestMlDsaComposite_Params(
+            "ssh-mldsa65-ed25519@wolfssl.com", WOLFSSH_MLDSAKEY_65,
+            WOLFSSH_COMPOSITE_TRAD_ED25519, ID_MLDSA65_ED25519);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    ret = test_BuildUserAuthRequestMlDsaComposite_Params(
+            "ssh-mldsa87-ed448@wolfssl.com", WOLFSSH_MLDSAKEY_87,
+            WOLFSSH_COMPOSITE_TRAD_ED448, ID_MLDSA87_ED448);
     if (ret != 0) return ret;
 #endif
     return 0;
@@ -9724,10 +10024,110 @@ static int test_BuildUserAuthRequestMlDsaComposite(void)
 static int test_DoUserAuthRequestMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
-    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 0);
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+        ID_MLDSA44_ES256, 0);
     if (ret != 0) return ret;
-    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 1);
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+        ID_MLDSA44_ES256, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+        ID_MLDSA44_ES256, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+        ID_MLDSA44_ES256, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
+        ID_MLDSA44_ES256, 4);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+        ID_MLDSA65_ES256, 0);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+        ID_MLDSA65_ES256, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+        ID_MLDSA65_ES256, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+        ID_MLDSA65_ES256, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
+        ID_MLDSA65_ES256, 4);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+        ID_MLDSA87_ES384, 0);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+        ID_MLDSA87_ES384, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+        ID_MLDSA87_ES384, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+        ID_MLDSA87_ES384, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
+        ID_MLDSA87_ES384, 4);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params(
+        "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 0);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params(
+        "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params(
+        "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params(
+        "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params(
+        "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 4);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519, 0);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
+        ID_MLDSA65_ED25519, 4);
+    if (ret != 0) return ret;
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+        ID_MLDSA87_ED448, 0);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+        ID_MLDSA87_ED448, 1);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+        ID_MLDSA87_ED448, 2);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+        ID_MLDSA87_ED448, 3);
+    if (ret != 0) return ret;
+    ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
+        ID_MLDSA87_ED448, 4);
     if (ret != 0) return ret;
 #endif
     return 0;
@@ -14881,7 +15281,8 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
     unitResult = test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope();
-    printf("PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope: %s (result=%d)\n",
+    printf("PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope: "
+            "%s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
 #ifdef WOLFSSH_KEYGEN
@@ -15128,6 +15529,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
+#endif /* WOLFSSH_KEYGEN */
+    unitResult = test_OpenSshPemNegative();
+    printf("OpenSshPemNegative: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    unitResult = test_OpenSshFormatNonCompositeRejected();
+    printf("OpenSshFormatNonCompositeRejected: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
     wolfSSH_Cleanup();

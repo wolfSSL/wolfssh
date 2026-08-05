@@ -16,6 +16,20 @@ AuthorizedKeysFile $PWD/authorized_keys_test
 
 EOF
 
+cat <<EOF > sshd_config_test_mldsa
+Port 22222
+Protocol 2
+LoginGraceTime 600
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+UsePrivilegeSeparation no
+UseDNS no
+HostKey $PWD/../../../keys/server-key-mldsa87es384
+AuthorizedKeysFile $PWD/authorized_keys_test
+
+EOF
+
 cat <<EOF > sshd_config_test_x509
 Port 22222
 Protocol 2

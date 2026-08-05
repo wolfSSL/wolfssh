@@ -59,8 +59,8 @@ printf "\n"
 # host key algorithms sent.
 find_substring_of_algos() {
     # Extract the substring between start and end lines
-    SUBSTRING=$(printf "$OUTPUT" | grep -A20 "Server Host Key Algorithms")
-    SUBSTRING=$(printf "$SUBSTRING" | grep -v -A15 "DKI: Enc Algorithms")
+    SUBSTRING=$(printf "$OUTPUT" | grep -A100 "Server Host Key Algorithms")
+    SUBSTRING=$(printf "$SUBSTRING" | grep -v -A95 "DKI: Enc Algorithms")
 }
 
 # take input argument $1 and checks if it is in the SUBSTRING

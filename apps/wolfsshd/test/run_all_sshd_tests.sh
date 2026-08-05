@@ -426,6 +426,27 @@ else
         stop_wolfsshd
     fi
 
+    # ML-DSA composite host key test. Runs when we control the local daemon.
+    # The client side uses an ECC key since we only test the host key here.
+    # sshd_config_test_mldsa has no other host key, so a build without ML-DSA
+    # cannot start the daemon at all; check for support out here rather than
+    # letting the test script skip, which would come too late. ML-DSA comes from
+    # wolfSSL (HAVE_DILITHIUM) and has no wolfSSH configure option, so probe the
+    # client's algorithm list. The closed port keeps the probe from connecting.
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        if ../../../examples/client/client -E -u "$USER" -h 127.0.0.1 -p 1 \
+                2>/dev/null | grep -q "ssh-mldsa87-es384@wolfssl.com"; then
+            start_wolfsshd "sshd_config_test_mldsa"
+            run_test "sshd_mldsa_composite_test.sh"
+            printf "Shutting down test wolfSSHd\n"
+            stop_wolfsshd
+        else
+            printf "sshd_mldsa_composite_test.sh ... SKIPPED\n"
+            TOTAL=$((TOTAL+1))
+            SKIPPED=$((SKIPPED+1))
+        fi
+    fi
+
     # OpenSSH certificate user-auth test (self-contained: starts its own
     # wolfSSHd; skips when not built with --enable-ossh-certs). Runs the suite
     # against the wolfSSH example client and, for interop, the system OpenSSH
