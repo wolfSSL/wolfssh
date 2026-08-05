@@ -12,7 +12,9 @@ if [ -z "$1" ] || [ -z "$2" ]; then
     exit 1
 fi
 
-PWD=`pwd`
+# Not PWD: that is bash's own variable and the shell rewrites it on every cd,
+# so a saved copy is gone by the time it is read.
+TESTDIR=`pwd`
 USER=`whoami`
 TEST_HOST="$1"
 
@@ -46,15 +48,24 @@ if [ -f ./log.txt ]; then
 fi
 touch log.txt
 
-TEST_CLIENT="../../../examples/client/client"
-SFTP_CLIENT="../../../examples/sftpclient/wolfsftp"
-SCP_CLIENT="../../../examples/scpclient/wolfscp"
-PRIVATE_KEY="../../../keys/hansel-key-ecc.der"
-PUBLIC_KEY="../../../keys/hansel-key-ecc.pub"
+ROOT="$TESTDIR/../../.."
+TEST_CLIENT="$ROOT/examples/client/client"
+SFTP_CLIENT="$ROOT/examples/sftpclient/wolfsftp"
+SCP_CLIENT="$ROOT/examples/scpclient/wolfscp"
+
+# Absolute, and that matters. Unlike the other sshd tests this one runs from
+# its own directory rather than the repository root, and the example clients
+# call ChangeToWolfSshRoot() before parsing anything, so every path they are
+# handed is resolved from the repository root instead of here. Relative paths
+# were read as <root>/../../../keys/... and the clients died at "Error setting
+# private key" without ever opening a socket.
+PRIVATE_KEY="$ROOT/keys/hansel-key-ecc.der"
+PUBLIC_KEY="$ROOT/keys/hansel-key-ecc.pub"
 
 # Small payload for the sftp/scp transfers. The connection dies at the failed
-# drop long before any data moves, so the contents do not matter.
-PAYLOAD="privdrop_payload.txt"
+# drop long before any data moves, so the contents do not matter. Absolute for
+# the same reason: the sftp client reads it after the chdir above.
+PAYLOAD="$TESTDIR/privdrop_payload.txt"
 echo "privdrop" > "$PAYLOAD"
 
 source ./start_sshd.sh
@@ -68,8 +79,8 @@ PasswordAuthentication yes
 PermitEmptyPasswords no
 UsePrivilegeSeparation no
 UseDNS no
-HostKey $PWD/../../../keys/server-key.pem
-AuthorizedKeysFile $PWD/authorized_keys_test
+HostKey $ROOT/keys/server-key.pem
+AuthorizedKeysFile $TESTDIR/authorized_keys_test
 EOF
 
 # Preload and arm the interposer via SSHD_ENV (start_sshd.sh passes it through
@@ -77,7 +88,8 @@ EOF
 SSHD_ENV="LD_PRELOAD=$PRELOAD_LIB WOLFSSHD_FAULT_PRIVDROP=1"
 export SSHD_BIN SSHD_ENV
 
-# Teardown on every exit path; log.txt is kept for debugging like the other tests.
+# Teardown on every exit path; log.txt and the client logs are kept for
+# debugging like the other tests, and removed on the success path below.
 cleanup() {
     stop_wolfsshd
     rm -f sshd_config_test_privdrop "$PAYLOAD" "$PRELOAD_LIB"
@@ -94,6 +106,12 @@ fi
 
 DEADLINE=30
 
+# Every failure below is ambiguous without the client's own output.
+client_said() {
+    echo "  client said: `tail -n 3 "$CLIENT_LOG" | tr '\n' '|'`"
+    echo "  full client output in $CLIENT_LOG"
+}
+
 # Drives one client; the connection dies, so its exit status is not checked.
 # Counts are per-call deltas since all three subsystems share the one log.
 check_subsystem() {
@@ -104,7 +122,11 @@ check_subsystem() {
     BEFORE_CLOSE=`grep -c "Attempting to close down connection" log.txt`
     BEFORE_SPAWN=`grep -c "Spawned new process" log.txt`
 
-    "$@" > /dev/null 2>&1 &
+    # Keep the client's output. Its exit status is meaningless here (the
+    # connection is killed under it), but if it dies before opening a socket
+    # the daemon-side counters below stay flat and look like a daemon fault.
+    CLIENT_LOG="$TESTDIR/privdrop_client_$LABEL.log"
+    "$@" > "$CLIENT_LOG" 2>&1 &
     CLIENT_PID=$!
 
     # Wait for the connection child to fork and hit the failed drop, then take
@@ -128,7 +150,12 @@ check_subsystem() {
     wait $CLIENT_PID > /dev/null 2>&1
 
     if [ -z "$CHILD" ]; then
-        echo "FAIL: $LABEL never reached the privilege drop"
+        if [ "$AFTER_SPAWN" -eq "$BEFORE_SPAWN" ]; then
+            echo "FAIL: $LABEL daemon never forked a connection process"
+        else
+            echo "FAIL: $LABEL never reached the privilege drop"
+        fi
+        client_said
         exit 1
     fi
 
@@ -141,6 +168,7 @@ check_subsystem() {
     done
     if ps -p "$CHILD" > /dev/null 2>&1; then
         echo "FAIL: $LABEL connection process still running after ${DEADLINE}s"
+        client_said
         exit 1
     fi
 
@@ -149,6 +177,7 @@ check_subsystem() {
     AFTER_CLOSE=`grep -c "Attempting to close down connection" log.txt`
     if [ "$AFTER_CLOSE" -gt "$BEFORE_CLOSE" ]; then
         echo "FAIL: $LABEL handler continued after a failed privilege drop"
+        client_said
         exit 1
     fi
 
@@ -170,7 +199,9 @@ check_subsystem "sftp" \
 # SCP_Subsystem.
 check_subsystem "scp" \
     "$SCP_CLIENT" -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
-    -S"$PWD/$PAYLOAD:." -H "$TEST_HOST" -p "$TEST_PORT"
+    -S"$PAYLOAD:." -H "$TEST_HOST" -p "$TEST_PORT"
+
+rm -f "$TESTDIR"/privdrop_client_*.log
 
 echo "PASS: all subsystems terminate on privilege-drop failure"
 exit 0
