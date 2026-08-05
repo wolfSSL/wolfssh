@@ -559,6 +559,14 @@ else
     # private daemon, so it does not depend on the shared local sshd.
     run_hostkey_perm_check
 
+    # a valid keypair whose public key is absent from authorized_keys must be
+    # rejected. Reads the local ./log.txt, so only when we own the daemon.
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        run_test "sshd_pubkey_reject_test.sh"
+    else
+        SKIPPED=$((SKIPPED+1))
+    fi
+
     # exercise the authorized_keys StrictModes path against the running sshd
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         run_strictmodes_authkeys_negative_test
