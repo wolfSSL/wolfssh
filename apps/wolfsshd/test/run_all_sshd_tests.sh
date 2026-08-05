@@ -76,6 +76,7 @@ done
 #   +0  shared wolfSSHd (TEST_PORT)    +3  host key ownership/symlink gate
 #   +1  StrictModes negative test      +4  OpenSSH certificate test
 #   +2  AuthorizedUPNDomains negative  +5  privilege-drop test
+#   +6  chroot skip-after-failure test
 #
 # The range deliberately starts above everything else in the repo that binds
 # a port: CI steps bind 22222, 22225 and 22226, and scripts/fwd-bulk.test
@@ -112,6 +113,7 @@ HOSTKEY_PERM_PORT=$((PORT_BASE + 3))
 # probed block even when --port moves the shared daemon off it.
 export WOLFSSHD_TEST_PORT=$((PORT_BASE + 4))
 export WOLFSSHD_PRIVDROP_PORT=$((PORT_BASE + 5))
+export WOLFSSHD_CHROOT_PORT=$((PORT_BASE + 6))
 
 # Registry of the daemons started during this run, appended to by
 # start_wolfsshd in every test script that sources start_sshd.sh. The exit
@@ -651,6 +653,7 @@ else
         run_upn_unenforceable_negative_test
         run_test "sshd_login_grace_test.sh"
         run_test "sshd_privdrop_fail_test.sh"
+        run_test "sshd_chroot_fail_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
         SKIPPED=$((SKIPPED+12))
