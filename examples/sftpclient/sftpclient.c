@@ -1765,27 +1765,26 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             err_sys("Couldn't create wolfSSH client context.");
         }
 
-        /* Set private key from cert store */
+        /* Set private key from cert store. The names are only needed for
+         * this call, so release them here and leave the error paths with
+         * nothing to clean up. */
         ret = ClientSetPrivateKeyFromStore(ctx, wStoreName, dwFlags,
             wSubjectName);
+        WFREE(wStoreName, heap, DYNTYPE_TEMP);
+        wStoreName = NULL;
+        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
+        wSubjectName = NULL;
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, heap, DYNTYPE_TEMP);
-            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             err_sys("Error setting private key from certificate store");
         }
 
         /* Set up auth callback globals (public key type, cert DER) so
          * that ClientUserAuth presents the certificate for public key
          * authentication. */
-        ret = ClientSetupCertStoreAuth(ctx);
+        ret = ClientSetupCertStoreAuth(ctx, heap);
         if (ret != WS_SUCCESS) {
-            WFREE(wStoreName, heap, DYNTYPE_TEMP);
-            WFREE(wSubjectName, heap, DYNTYPE_TEMP);
             err_sys("Error setting up cert store auth");
         }
-
-        WFREE(wStoreName, heap, DYNTYPE_TEMP);
-        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
     } else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
     {
@@ -1876,8 +1875,11 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = wolfSSH_SFTP_connect(ssh);
     else
         ret = NonBlockSSH_connect();
-    if (ret != WS_SUCCESS)
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "wolfSSH_SFTP_connect failed: %d, %s\n", ret,
+                wolfSSH_ErrorToName(ret));
         err_sys("Couldn't connect SFTP");
+    }
 
     {
         /* get current working directory */

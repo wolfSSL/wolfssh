@@ -1862,8 +1862,10 @@ int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value)
             conf->useSystemCA = 0;
         }
         else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs unexpected flag");
-            ret = WS_FATAL_ERROR;
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] wolfSSH_TrustedSystemCAKeys: expected 'yes' or 'no', "
+                "got '%s'", value);
+            ret = WS_BAD_ARGUMENT;
         }
     }
 
@@ -1903,8 +1905,10 @@ int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
             conf->useUserCAStore = 0;
         }
         else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store unexpected flag");
-            ret = WS_FATAL_ERROR;
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] wolfSSH_TrustedUserCAStore: expected 'yes' or 'no', "
+                "got '%s'", value);
+            ret = WS_BAD_ARGUMENT;
         }
     }
 

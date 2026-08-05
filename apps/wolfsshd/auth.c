@@ -643,6 +643,46 @@ static int IsAbsoluteAuthKeysPath(const char* path)
     return ret;
 }
 
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+/* True when the AuthorizedKeysFile pattern is guaranteed to resolve to a
+ * different file for every account, which is what makes an entry in it an
+ * implicit user-to-credential binding. A relative pattern resolves under the
+ * account's home directory, and an absolute one qualifies only when it carries
+ * a %u or %h token. An absolute pattern with neither (e.g.
+ * "/etc/ssh/authorized_keys_all") is one shared file for every account and
+ * binds a credential to nothing. */
+static int IsPerUserAuthKeysPattern(const char* pattern)
+{
+    word32 i;
+    word32 patSz;
+
+    if (pattern == NULL || *pattern == '\0') {
+        /* the built-in ~/.ssh/authorized_keys default */
+        return 1;
+    }
+
+    if (!IsAbsoluteAuthKeysPath(pattern)) {
+        return 1;
+    }
+
+    patSz = (word32)WSTRLEN(pattern);
+    for (i = 0; (i + 1) < patSz; i++) {
+        if (pattern[i] != '%') {
+            continue;
+        }
+        if (pattern[i + 1] == 'u' || pattern[i + 1] == 'h') {
+            return 1;
+        }
+        /* "%%" is a literal percent, step over both characters */
+        if (pattern[i + 1] == '%') {
+            i++;
+        }
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_CERTS && (WOLFSSL_FPKI || _WIN32) */
+
 /* Resolve the authorized keys file path for a user. The pattern is passed in
  * explicitly so concurrent authentications cannot race on it, and its tokens
  * are expanded so each user resolves to a distinct path. */
@@ -2090,11 +2130,16 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
         /* Bind the certificate to the requested user name via UPN with FPKI or
-         * CN without FPKI. Only done when relying on the CA; an
-         * AuthorizedKeysFile entry is itself an explicit user to cert binding
-         * and is checked below. */
+         * CN without FPKI. Skipped only when a per-user AuthorizedKeysFile is
+         * configured, because such an entry is itself an explicit user to cert
+         * binding and is checked below. A shared AuthorizedKeysFile (an
+         * absolute pattern with no %u or %h) resolves to one file for every
+         * account and binds the certificate to nothing, so the identity check
+         * still has to run. */
         if (authData->sf.publicKey.isCert &&
-                !wolfSSHD_ConfigGetAuthKeysFileSet(usrConf)) {
+                !(wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
+                  IsPerUserAuthKeysPattern(
+                      wolfSSHD_ConfigGetAuthKeysFile(usrConf)))) {
             DecodedCert* dCert;
         #ifdef WOLFSSH_SMALL_STACK
             dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL,
