@@ -138,8 +138,9 @@ enum WS_ErrorCodes {
     WS_KDF_E                = -1097, /* KDF error*/
     WS_DISCONNECT           = -1098, /* peer sent disconnect */
     WS_MLDSA_E              = -1099, /* MLDSA failure */
+    WS_ED448_E              = -1100, /* Ed448 failure */
 
-    WS_LAST_E               = WS_MLDSA_E  /* Last error indicator */
+    WS_LAST_E               = WS_ED448_E  /* Update to indicate last error */
 };
 
 

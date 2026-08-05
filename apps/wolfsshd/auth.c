@@ -161,13 +161,11 @@ struct WOLFSSHD_AUTH {
 #endif
 
 #ifndef MAX_LINE_SZ
-    /* sized for the largest authorized_keys entry, composite pubkeys
-     * included */
+    /* Max authorized_keys entry size. */
     #ifndef WOLFSSH_NO_MLDSA
         #ifndef WOLFSSH_NO_MLDSA87
             #if defined(WOLFSSH_CERTS)
-                /* x509v3-ssh-mldsa-87: ML-DSA-87 pubkey + CA sig + DER
-                 * overhead, base64-encoded */
+                /* Max size for ML-DSA-87 certs plus headroom. */
                 #define MAX_LINE_SZ \
                     ((WC_MLDSA_87_PUB_KEY_SIZE + WC_MLDSA_87_SIG_SIZE + \
                       COMPOSITE_MAX_TRAD_PUB_SZ + 1024 + 2) / 3 * 4 + 640)
@@ -200,6 +198,14 @@ struct WOLFSSHD_AUTH {
     #else
         #define MAX_LINE_SZ 900
     #endif
+#endif
+
+#ifdef WOLFSSHD_UNIT_TEST
+/* Expose MAX_LINE_SZ for tests. */
+word32 wolfsshd_test_MaxLineSz(void)
+{
+    return (word32)MAX_LINE_SZ;
+}
 #endif
 
 #if 0
@@ -264,46 +270,13 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     word32 keyCandSz = 0;
     char* last = NULL;
 
-    static const char* allowedTypes[] = {
-        "ssh-rsa",
-        "ssh-ed25519",
-        "ecdsa-sha2-nistp256",
-        "ecdsa-sha2-nistp384",
-        "ecdsa-sha2-nistp521",
-    #ifdef WOLFSSH_CERTS
-        "x509v3-ssh-rsa",
-        "x509v3-ecdsa-sha2-nistp256",
-        "x509v3-ecdsa-sha2-nistp384",
-        "x509v3-ecdsa-sha2-nistp521",
-    #endif
-    #ifndef WOLFSSH_NO_MLDSA
-        #ifndef WOLFSSH_NO_MLDSA44
-        "ssh-mldsa-44",
-        #endif
-        #ifndef WOLFSSH_NO_MLDSA65
-        "ssh-mldsa-65",
-        #endif
-        #ifndef WOLFSSH_NO_MLDSA87
-        "ssh-mldsa-87",
-        #endif
-        #ifdef WOLFSSH_CERTS
-        #ifndef WOLFSSH_NO_MLDSA44
-        "x509v3-ssh-mldsa-44",
-        #endif
-        #ifndef WOLFSSH_NO_MLDSA65
-        "x509v3-ssh-mldsa-65",
-        #endif
-        #ifndef WOLFSSH_NO_MLDSA87
-        "x509v3-ssh-mldsa-87",
-        #endif
-        #endif
-    #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
-        "ssh-mldsa44-ed25519@openssh.com",
-    #endif
-    };
+    /* Valid key types come from the same TYPE_KEY name registry
+     * (NameIdMap) that KEX negotiation uses, via wolfSSH_QueryKey(),
+     * instead of a separately hand-maintained list that could drift
+     * out of sync with it. */
     int typeOk = 0;
-    int i;
+    word32 queryIdx = 0;
+    const char* algoName;
 
     if (line == NULL || lineSz == 0 || key == NULL || keySz == 0) {
         ret = WS_BAD_ARGUMENT;
@@ -318,9 +291,8 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        for (i = 0; i < (int)(sizeof(allowedTypes) / sizeof(allowedTypes[0]));
-                ++i) {
-            if (allowedTypes[i] != NULL && WSTRCMP(type, allowedTypes[i]) == 0) {
+        while ((algoName = wolfSSH_QueryKey(&queryIdx)) != NULL) {
+            if (WSTRCMP(type, algoName) == 0) {
                 typeOk = 1;
                 break;
             }
@@ -1372,17 +1344,7 @@ static int SearchKeysFile(const char* keysFilePath, const byte* key,
     return ret;
 }
 
-/* Detects OpenSSH vs ASN1/DER format of a raw host private key buffer.
- *
- * Uses wc_KeyPemToDer(), not wc_PemToDer(..., PRIVATEKEY_TYPE, ...): the
- * latter also unwraps PKCS#8 via ToTraditional(), which mangles key types
- * with no traditional DER form (e.g. ML-DSA).
- *
- * On a PEM buffer, *keyDer is a WMALLOC'd (heap, DYNTYPE_SSHD) buffer the
- * caller must WS_FORCEZERO + WFREE; NULL if data was passed through as-is
- * (raw DER or OpenSSH). privBuf/privBufSz are set to the buffer to actually
- * load. Returns WOLFSSH_FORMAT_ASN1/WOLFSSH_FORMAT_OPENSSH, or negative on
- * error. */
+/* Detects host private key format. */
 int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, void* heap,
         byte** keyDer, byte** privBuf, word32* privBufSz)
 {
@@ -1412,15 +1374,15 @@ int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, void* heap,
 
     derSz = wc_KeyPemToDer(data, (int)dataSz, der, (int)dataSz, NULL);
     if (derSz <= 0) {
+        WS_FORCEZERO(der, dataSz);
         WFREE(der, heap, DYNTYPE_SSHD);
 
         *privBuf = data;
         *privBufSz = dataSz;
 
-        /* wstrnstr() stops at the first NUL, so binary buffers fall
-         * through to the WMEMCMP magic check below. */
-        if (WSTRNSTR((const char*)*privBuf,
-                "-----BEGIN OPENSSH PRIVATE KEY-----", *privBufSz) != NULL) {
+        /* Strict prefix match for OpenSSH magic (35 bytes) */
+        if (*privBufSz >= 35 &&
+                WMEMCMP(*privBuf, "-----BEGIN OPENSSH PRIVATE KEY-----", 35) == 0) {
             keyFormat = WOLFSSH_FORMAT_OPENSSH;
         }
         else if (*privBufSz >= sizeof("openssh-key-v1") &&
@@ -1429,17 +1391,34 @@ int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, void* heap,
             /* sizeof() includes the magic's trailing NUL */
             keyFormat = WOLFSSH_FORMAT_OPENSSH;
         }
+        else if (data[0] != 0x30) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to convert host private key from PEM.");
+            *privBuf = NULL;
+            *privBufSz = 0;
+            return WS_BAD_FILE_E;
+        }
     }
     else {
-        *keyDer = der;
-        *privBuf = der;
-        *privBufSz = (word32)derSz;
-        /* PEM-decoded result may still be an OpenSSH binary blob */
-        if (*privBufSz >= sizeof("openssh-key-v1") &&
-                WMEMCMP(*privBuf, "openssh-key-v1",
+        /* PEM-decoded result may still be an OpenSSH binary blob, or
+         * (on a malformed/truncated PEM input) non-DER garbage; check
+         * for both before accepting it as ASN.1, same as the derSz<=0
+         * branch above does. */
+        if ((word32)derSz >= sizeof("openssh-key-v1") &&
+                WMEMCMP(der, "openssh-key-v1",
                         sizeof("openssh-key-v1")) == 0) {
             keyFormat = WOLFSSH_FORMAT_OPENSSH;
         }
+        else if (der[0] != 0x30) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Decoded host private key is "
+                "not valid ASN.1 or OpenSSH format.");
+            WS_FORCEZERO(der, dataSz);
+            WFREE(der, heap, DYNTYPE_SSHD);
+            return WS_BAD_FILE_E;
+        }
+
+        *keyDer = der;
+        *privBuf = der;
+        *privBufSz = (word32)derSz;
     }
 
     return keyFormat;
@@ -2209,9 +2188,7 @@ static int CheckPublicKeyWIN(const char* usr,
 }
 #endif /* _WIN32*/
 
-/* Returns 1 if 'usr' is root-equivalent for PermitRootLogin (any uid 0
- * account, or the literal name "root"; name-only on Windows). Shared by
- * DoCheckUser and RequestAuthentication so all enforcement points agree. */
+/* Check if user is root-equivalent. */
 static int IsRootUser(const char* usr)
 {
     int isRoot = 0;
@@ -2230,17 +2207,14 @@ static int IsRootUser(const char* usr)
     return isRoot;
 }
 
-/* Returns 1 if root login is denied outright, i.e. PermitRootLogin no.
- * Used by DoCheckUser. */
+/* Check if root login denied. */
 WOLFSSHD_STATIC int IsRootLoginDenied(int isRoot, WOLFSSHD_CONFIG* usrConf)
 {
     return (isRoot == 1 &&
             wolfSSHD_ConfigGetPermitRoot(usrConf) == WOLFSSHD_PERMIT_ROOT_NO);
 }
 
-/* Returns 1 if root password authentication is blocked, i.e.
- * PermitRootLogin prohibit-password or forced-commands-only. Used by
- * RequestAuthentication for WOLFSSH_USERAUTH_PASSWORD. */
+/* Check if root password auth blocked. */
 WOLFSSHD_STATIC int IsRootPasswordAuthBlocked(int isRoot,
         WOLFSSHD_CONFIG* usrConf)
 {
@@ -2251,9 +2225,7 @@ WOLFSSHD_STATIC int IsRootPasswordAuthBlocked(int isRoot,
                  WOLFSSHD_PERMIT_ROOT_FORCED_CMD));
 }
 
-/* Returns 1 if root public key login is missing the ForceCommand required by
- * PermitRootLogin forced-commands-only. Used by RequestAuthentication for
- * WOLFSSH_USERAUTH_PUBLICKEY. */
+/* Check if ForceCommand missing for root. */
 WOLFSSHD_STATIC int IsRootPubKeyForcedCmdMissing(int isRoot,
         WOLFSSHD_CONFIG* usrConf)
 {
@@ -2547,7 +2519,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
         else if (IsRootPasswordAuthBlocked(isRoot, usrConf)) {
-            /* prohibit-password and forced-commands-only both block this. */
+            /* Blocked by config. */
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication for "
                         "root not allowed by configuration!");
             ret = WOLFSSH_USERAUTH_REJECTED;
@@ -2612,7 +2584,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY &&
         IsRootPubKeyForcedCmdMissing(isRoot, usrConf)) {
-        /* forced-commands-only requires a forced command for root pubkey. */
+        /* Forced command required. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key login for root requires "
                     "a forced command by configuration!");
         ret = WOLFSSH_USERAUTH_REJECTED;
@@ -2942,11 +2914,7 @@ static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
 
     pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
 #ifdef WOLFSSHD_UNIT_TEST
-    /* Unit tests run wolfSSHD_AuthCreateUser() outside of a real daemon
-     * install, where the dedicated "sshd" system account may not exist.
-     * Fall back to the invoking user so auth-flow tests can exercise
-     * wolfSSHD_AuthCreateUser() without requiring that account. Never
-     * enabled in a production build. */
+    /* Fallback for unit tests. */
     if (pwInfo == NULL) {
         pwInfo = getpwuid(getuid());
     }

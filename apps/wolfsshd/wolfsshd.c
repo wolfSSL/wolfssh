@@ -412,13 +412,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
 
             if (ret == WS_SUCCESS) {
-                /* Host keys may be OpenSSH, PEM, or DER.
-                 * wolfSSHD_DetectPrivKeyFormat() uses wc_KeyPemToDer() (not
-                 * wc_PemToDer(..., PRIVATEKEY_TYPE, ...), which unwraps
-                 * PKCS#8 via ToTraditional() and mangles key types with no
-                 * traditional DER form, e.g. ML-DSA) and also detects the
-                 * OpenSSH private-key format, used by composite ML-DSA host
-                 * keys generated in that format. */
+                /* Host keys may be OpenSSH, PEM, or DER; detect the format
+                 * and decode PEM/DER via wc_KeyPemToDer(), which handles
+                 * PKCS#8 keys with no traditional DER form (e.g. ML-DSA). */
                 if (dataSz == 0) {
                     /* An empty (0-byte) file passes the NULL check above but
                      * carries no key material. Handle it explicitly as a file
@@ -432,7 +428,12 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     int keyFormat = wolfSSHD_DetectPrivKeyFormat(data, dataSz,
                             heap, &keyDer, &privBuf, &privBufSz);
 
-                    if (keyFormat < 0) {
+                    if (keyFormat == WS_MEMORY_E) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Out of memory reading host private key.");
+                        ret = WS_MEMORY_E;
+                    }
+                    else if (keyFormat < 0) {
                         wolfSSH_Log(WS_LOG_ERROR,
                             "[SSHD] Host private key file is invalid.");
                         ret = WS_BAD_FILE_E;
@@ -459,9 +460,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     WS_FORCEZERO(keyDer, dataSz);
                     WFREE(keyDer, heap, DYNTYPE_SSHD);
                 }
-                /* data held the raw private key — the DER bytes, or the PEM
-                 * text decoded into keyDer above. Zeroize before freeing so key
-                 * material does not linger in the heap after use. */
+                /* data is the key material itself for raw DER/OpenSSH
+                 * input (privBuf aliases it directly, no copy). */
                 WS_FORCEZERO(data, dataSz);
                 freeBufferFromFile(data, heap);
             }
