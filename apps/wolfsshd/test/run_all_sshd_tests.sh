@@ -184,6 +184,43 @@ if [[ -n "$MATCH" ]]; then
     fi
 fi
 
+# Collect the directories above $1 that wolfSSHd's StrictModes check will
+# reject: a group or world writable directory anywhere above authorized_keys
+# makes the daemon refuse to read it, unless the directory is sticky. This
+# mirrors the parent walk in wolfSSHD_OpenSecureFile() (apps/wolfsshd/auth.c).
+# A tree unpacked or cloned under a non-022 umask -- 002 is the default where
+# each user has their own group -- has 0775 directories, which fails the whole
+# suite from the first test with nothing but "Couldn't connect SSH stream." on
+# the client side. Only the daemon log names the cause, so report it here.
+STRICTMODES_BAD_DIRS=()
+find_writable_path_dirs() {
+    local dir mode
+
+    STRICTMODES_BAD_DIRS=()
+    # canonical path, the same form realpath() hands the daemon's walk
+    dir=$(cd "$1" 2>/dev/null && pwd -P)
+    if [ -z "$dir" ]; then
+        return
+    fi
+    while : ; do
+        # "ls -ld" mode string: 0 type, 1-3 owner, 4-6 group, 7-9 other, so
+        # group write is index 5 and other write index 8. A sticky directory
+        # shows 't' or 'T' at index 9 and is allowed, as it is in the daemon.
+        mode=$(ls -ld "$dir" 2>/dev/null | awk '{print $1}')
+        if [ -n "$mode" ] && \
+                { [ "${mode:5:1}" == "w" ] || [ "${mode:8:1}" == "w" ]; }; then
+            case "${mode:9:1}" in
+                t|T) ;;
+                *) STRICTMODES_BAD_DIRS+=("$dir") ;;
+            esac
+        fi
+        if [ "$dir" == "/" ]; then
+            break
+        fi
+        dir=$(dirname "$dir")
+    done
+}
+
 # setup
 set -e
 ./create_authorized_test_file.sh
@@ -195,6 +232,24 @@ if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
     echo "Connecting to external host $TEST_HOST:$TEST_PORT"
 else
     USING_LOCAL_HOST=1
+    # Only meaningful for a local daemon; with an external host the
+    # authorized_keys file it reads is not this tree.
+    find_writable_path_dirs .
+    if [ "${#STRICTMODES_BAD_DIRS[@]}" -ne 0 ]; then
+        echo "Error: these directories above $PWD are group or world writable:"
+        for dir in "${STRICTMODES_BAD_DIRS[@]}"; do
+            echo "    $dir"
+        done
+        echo "wolfSSHd's StrictModes check refuses to read authorized_keys"
+        echo "through a writable directory, so the tests could not authenticate."
+        echo "Fix with 'chmod g-w,o-w <directory>' on each, or re-create the"
+        echo "tree under umask 022."
+        # start_sshd.sh has not been sourced yet, so the EXIT trap must not
+        # take its local-host branch and call teardown functions that do not
+        # exist. Same reason the earlier exits leave USING_LOCAL_HOST unset.
+        USING_LOCAL_HOST=
+        exit 1
+    fi
     source ./start_sshd.sh
     TEST_HOST="127.0.0.1"
     TEST_PORT="$LOCAL_PORT"
