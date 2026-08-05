@@ -518,12 +518,36 @@ int wolfSSH_KexTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_MLDSA87
     AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa-87"), EXIT_SUCCESS);
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519)
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
     /* Uses the "@openssh.com" wire name that OpenSSH negotiates for this
      * algorithm, matching what wolfSSH now emits (see NameIdMap). */
     AssertIntEQ(
         wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa44-ed25519@openssh.com"),
         EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa44-es256@wolfssl.com"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa65-es256@wolfssl.com"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
+        !defined(NO_SHA512)
+    AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa65-ed25519@wolfssl.com"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa87-es384@wolfssl.com"),
+            EXIT_SUCCESS);
+#endif
+#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    AssertIntEQ(wolfSSH_KexTest_MlDsaHostKey("ssh-mldsa87-ed448@wolfssl.com"),
+            EXIT_SUCCESS);
 #endif
 
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
