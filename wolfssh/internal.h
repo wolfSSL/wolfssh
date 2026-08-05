@@ -57,6 +57,15 @@
     #include <wolfssh/certman.h>
 #endif /* WOLFSSH_CERTS */
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #ifndef WOLFSSH_CERTS
+        #error "WOLFSSH_WINDOWS_CERT_STORE requires WOLFSSH_CERTS"
+    #endif
+    #ifndef _WIN32
+        #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows (_WIN32) target"
+    #endif
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 #ifdef WOLFSSH_TPM
     #include <wolftpm/tpm2_wrap.h>
 #endif /* WOLFSSH_TPM */
@@ -106,6 +115,8 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
+/* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
+#define WOLFSSL_V4_6_0 0x04006000
 #define WOLFSSL_V5_0_0 0x05000000
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
@@ -750,7 +761,20 @@ typedef struct WOLFSSH_PVT_KEY {
         /* When set, the host key material lives in the TPM and key/keySz are
          * unused; signing and the public K_S come from ctx->tpmKey. */
 #endif
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    byte useCertStore;
+        /* Flag indicating if this key is from MS Certificate Store. */
+    void* certStoreContext;
+        /* Windows certificate context (PCCERT_CONTEXT) for MS Certificate Store.
+         * Owned by CTX, must be freed with CertFreeCertificateContext. */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Returns 1 when the value is exactly one assigned CERT_SYSTEM_STORE_*
+ * location with no control flags set. Defined in certman.c. */
+WOLFSSH_LOCAL int wolfSSH_CertStoreLocationValid(word32 dwFlags);
+#endif
 
 
 /* our wolfSSH Context */
@@ -1276,6 +1300,7 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz);
 WOLFSSH_LOCAL int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         word32 amount);
+WOLFSSH_LOCAL void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                                         const byte* in, word32 inSz,
                                         int format, int type);
@@ -1447,6 +1472,9 @@ WOLFSSH_LOCAL int GenerateKey(byte hashId, byte keyId, byte* key,
 WOLFSSH_LOCAL int wcPrimeForId(byte id);
 #endif
 WOLFSSH_LOCAL enum wc_HashType HashForId(byte id);
+#ifdef WOLFSSH_CERTS
+WOLFSSH_LOCAL byte CertTypeForId(byte id);
+#endif
 
 
 enum AcceptStates {

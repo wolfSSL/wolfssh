@@ -54,7 +54,9 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
 
-#ifdef WOLFSSL_FPKI
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+/* Used to bind a client certificate to the requested user name: by UPN
+ * with FPKI, by subject CN on Windows builds without FPKI. */
 #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
@@ -639,6 +641,75 @@ static int IsAbsoluteAuthKeysPath(const char* path)
     }
 
     return ret;
+}
+
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+/* True when the AuthorizedKeysFile pattern is guaranteed to resolve to a
+ * different file for every account, which is what makes an entry in it an
+ * implicit user-to-credential binding. A relative pattern resolves under the
+ * account's home directory, and an absolute one qualifies only when it carries
+ * a %u or %h token. An absolute pattern with neither (e.g.
+ * "/etc/ssh/authorized_keys_all") is one shared file for every account and
+ * binds a credential to nothing. */
+static int IsPerUserAuthKeysPattern(const char* pattern)
+{
+    word32 i;
+    word32 patSz;
+    word32 seg;
+
+    if (pattern == NULL || *pattern == '\0') {
+        /* the built-in ~/.ssh/authorized_keys default */
+        return 1;
+    }
+
+    /* a ".." component can escape the home directory and collapse to one
+     * shared file for every account, so it is never per-user */
+    patSz = (word32)WSTRLEN(pattern);
+    seg = 0;
+    for (i = 0; i <= patSz; i++) {
+        if (i == patSz || pattern[i] == '/' || pattern[i] == '\\') {
+            if (i - seg == 2 && pattern[seg] == '.' &&
+                    pattern[seg + 1] == '.') {
+                return 0;
+            }
+            seg = i + 1;
+        }
+    }
+
+    if (!IsAbsoluteAuthKeysPath(pattern)) {
+        return 1;
+    }
+
+    for (i = 0; (i + 1) < patSz; i++) {
+        if (pattern[i] != '%') {
+            continue;
+        }
+        if (pattern[i + 1] == 'u' || pattern[i + 1] == 'h') {
+            return 1;
+        }
+        /* "%%" is a literal percent, step over both characters */
+        if (pattern[i + 1] == '%') {
+            i++;
+        }
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_CERTS && (WOLFSSL_FPKI || _WIN32) */
+
+/* Exported predicate matching the runtime identity-check skip; on builds
+ * without that check it always returns 0. */
+int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern)
+{
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+    if (pattern == NULL) {
+        return 0;
+    }
+    return IsPerUserAuthKeysPattern(pattern);
+#else
+    (void)pattern;
+    return 0;
+#endif
 }
 
 /* Resolve the authorized keys file path for a user. The pattern is passed in
@@ -1881,7 +1952,8 @@ static int CAKeysFileDiffers(const char* a, const char* b)
 /* Returns 1 when the certificate UPN <user>@<domain> in name[0..nameSz)
  * authorizes login as 'usr'. allowList is a whitespace/comma list of permitted
  * realms; NULL/empty matches the local part only, else domain must be listed. */
-#if defined(WOLFSSL_FPKI) || defined(WOLFSSHD_UNIT_TEST)
+#if (defined(WOLFSSL_FPKI) && defined(WOLFSSH_CERTS)) || \
+    defined(WOLFSSHD_UNIT_TEST)
 WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
                                    int nameSz, const char* allowList)
 {
@@ -1939,7 +2011,7 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
 
     return ret;
 }
-#endif /* WOLFSSL_FPKI || WOLFSSHD_UNIT_TEST */
+#endif /* (WOLFSSL_FPKI && WOLFSSH_CERTS) || WOLFSSHD_UNIT_TEST */
 
 
 /*
@@ -2083,11 +2155,22 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         ret = WOLFSSH_USERAUTH_REJECTED;
     }
 
-    #ifdef WOLFSSL_FPKI
+    #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        /* compare user name to UPN in certificate */
-        if (authData->sf.publicKey.isCert) {
+        /* Bind the certificate to the requested user name via UPN with FPKI or
+         * CN without FPKI. Skipped only when a per-user AuthorizedKeysFile is
+         * configured, because such an entry is itself an explicit user to cert
+         * binding and is checked below. A shared AuthorizedKeysFile (an
+         * absolute pattern with no %u or %h) resolves to one file for every
+         * account and binds the certificate to nothing, so the identity check
+         * still has to run. Never skipped when AuthorizedUPNDomains is set, so
+         * the configured realm allowlist is always enforced. */
+        if (authData->sf.publicKey.isCert &&
+                !(wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
+                  wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf) == NULL &&
+                  IsPerUserAuthKeysPattern(
+                      wolfSSHD_ConfigGetAuthKeysFile(usrConf)))) {
             DecodedCert* dCert;
         #ifdef WOLFSSH_SMALL_STACK
             dCert = (DecodedCert*)WMALLOC(sizeof(DecodedCert), NULL,
@@ -2111,6 +2194,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 }
                 else {
                     int usrMatch = 0;
+                #ifdef WOLFSSL_FPKI
                     int upnRealmUnchecked = 0;
                     DNS_entry* current = dCert->altNames;
                     const char* upnDomains =
@@ -2133,16 +2217,38 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         current = current->next;
                     }
 
-                    /* a UPN matched but no realm policy is set; warn per auth
+                    /* a UPN matched but no realm policy is set; note per auth
                      * attempt so the opt-in gap is visible, no shared state */
                     if (upnRealmUnchecked) {
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
+                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] AuthorizedUPNDomains "
                             "not set; certificate UPN domain is not checked");
                     }
+                #else
+                    /* Without FPKI compare subject CN with user name. Only
+                     * reachable on Windows, where account names are
+                     * case-insensitive, so match the CN the same way.
+                     *
+                     * This is a name match only. There is no analogue of
+                     * AuthorizedUPNDomains here, so any CA in the trust store
+                     * may assert any CN; the trusted user CA set is the whole
+                     * of the issuer policy. */
+                    if (dCert->subjectCN != NULL && dCert->subjectCNLen > 0 &&
+                            (int)XSTRLEN(usr) == dCert->subjectCNLen &&
+                            WSTRNCASECMP(usr, dCert->subjectCN,
+                                (size_t)dCert->subjectCNLen) == 0) {
+                        usrMatch = 1;
+                        /* note per auth attempt so the weaker binding is
+                         * visible, no shared state */
+                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] certificate bound to "
+                            "user by subject CN only; no issuer constraint is "
+                            "applied, keep the trusted user CA set narrow");
+                    }
+                #endif
 
                     if (usrMatch == 0) {
                         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
-                            "sent");
+                            "sent; certificate identity does not match the "
+                            "requested user (user=%s)", usr);
                         ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                     }
                 }
@@ -2175,8 +2281,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
-            #ifdef _WIN32
-                /* Still need to get users token on Windows */
+            #if defined(WOLFSSH_CERTS) && defined(_WIN32)
+                /* Bound to the requested user above by certificate UPN with
+                 * FPKI, or by subject CN otherwise; which of the two is in
+                 * force is fixed by the wolfSSL build, not by configuration.
+                 * Still need to get the users token on Windows. */
                 wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] Relying on CA for public key check");
                 rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
@@ -2190,7 +2299,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         "[SSHD] Error getting users token.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
-            #elif defined(WOLFSSL_FPKI)
+            #elif defined(WOLFSSH_CERTS) && defined(WOLFSSL_FPKI)
                 /* The UPN-vs-username check above already bound the certificate
                  * to the requested user, so the CA-verified chain is
                  * sufficient. */
@@ -2198,10 +2307,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Relying on CA for public key check");
                 ret = WOLFSSH_USERAUTH_SUCCESS;
             #else
-                /* Without FPKI the certificate UPN/principal cannot be read, so
-                 * the requested user cannot be bound to the certificate. Fail
-                 * closed: require AuthorizedKeysFile (per-user key/cert mapping)
-                 * or a wolfSSL build with FPKI. */
+                /* No binding ran above: either the certificate UPN/principal
+                 * cannot be read without FPKI, or this build has no
+                 * certificate support at all. Fail closed: require
+                 * AuthorizedKeysFile (per-user key/cert mapping) or a wolfSSL
+                 * build with FPKI. */
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Certificate authentication cannot bind the requested "
                     "user without FPKI or AuthorizedKeysFile; rejecting "

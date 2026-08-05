@@ -41,6 +41,9 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
 #include <wolfssh/agent.h>
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <wolfssh/certman.h>
+#endif
 #include <wolfssh/port.h>
 #include <wolfssh/test.h>
 #include <wolfssl/wolfcrypt/ecc.h>
@@ -117,6 +120,8 @@
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
 #endif
 
+/* Shared by echoserver_test() and the -W pre-scan in wolfSSH_Echoserver(). */
+#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -2878,6 +2883,14 @@ static void ShowUsage(void)
     printf(" -x <list>     set the comma separated list of key exchange algos "
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    printf(" -W <spec>     Windows cert store: \"store:subject:flags\" "
+           "(e.g. My:CN=Server:CURRENT_USER)\n");
+    printf("               also read from the WOLFSSH_CERT_STORE environment "
+           "variable\n");
+    printf("               with either set, file names are relative to the "
+           "current directory\n");
+#endif
     printf(" -b <num>      test user auth would block\n");
     printf(" -H            set test highwater callback\n");
 }
@@ -2992,6 +3005,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifdef WOLFSSH_CERTS
         char* caCert = NULL;
     #endif
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        const char* certStoreSpec = NULL;
+    #endif
 
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
@@ -3001,7 +3017,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:H";
+        const char* optlist = ES_OPTLIST;
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -3126,6 +3142,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     useCustomHighWaterCb = 1;
                     break;
 
+                case 'W':
+                    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                        certStoreSpec = myoptarg;
+                    #else
+                        ES_ERROR("-W requires wolfSSH built with "
+                                 "WOLFSSH_WINDOWS_CERT_STORE\n");
+                    #endif
+                    break;
+
                 default:
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
@@ -3134,6 +3159,20 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
     }
     myoptind = 0;      /* reset for test cases */
+
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        /* -W takes priority over the environment; empty means unset. */
+        if (certStoreSpec == NULL) {
+            certStoreSpec = getenv("WOLFSSH_CERT_STORE");
+            if (certStoreSpec != NULL && certStoreSpec[0] == '\0') {
+                certStoreSpec = NULL;
+            }
+            if (certStoreSpec != NULL) {
+                printf("Taking the host key from the WOLFSSH_CERT_STORE "
+                       "environment variable\n");
+            }
+        }
+    #endif
     wc_InitMutex(&doneLock);
 
 #ifdef WOLFSSH_TEST_BLOCK
@@ -3325,6 +3364,38 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 #endif
                 ES_ERROR("Couldn't load TPM host key from %s.\n",
                          tpmHostKeyPath);
+            }
+            loadDefaultHostKeys = 0;
+        }
+    #endif
+
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        if (certStoreSpec != NULL) {
+            /* Load host key from Windows certificate store */
+            wchar_t* wStoreName = NULL;
+            wchar_t* wSubjectName = NULL;
+            word32 dwFlags = 0;
+            int ret;
+
+            ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
+                    &wSubjectName, &dwFlags, heap);
+            if (ret != WS_SUCCESS) {
+                #ifdef WOLFSSH_SMALL_STACK
+                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
+            }
+
+            ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
+                    dwFlags, wSubjectName);
+            wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
+            if (ret != WS_SUCCESS) {
+                #ifdef WOLFSSH_SMALL_STACK
+                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+                WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                ES_ERROR("Couldn't load host key from certificate store.\n");
             }
             loadDefaultHostKeys = 0;
         }
@@ -3734,7 +3805,38 @@ int wolfSSH_Echoserver(int argc, char** argv)
     #endif
 
 #if !defined(WOLFSSL_NUCLEUS) && !defined(INTEGRITY) && !defined(__INTEGRITY)
-    ChangeToWolfSshRoot();
+    {
+        int useStore = 0;
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+        const char* envStore;
+
+        /* When using the Windows certificate store for host keys, the
+         * echoserver does not need file-based keys, so skip the root
+         * directory search that looks for ./keys/server-key-rsa.pem.
+         * An empty WOLFSSH_CERT_STORE means unset. */
+        envStore = getenv("WOLFSSH_CERT_STORE");
+        if (envStore != NULL && envStore[0] != '\0') {
+            useStore = 1;
+        }
+        else {
+            int ch;
+
+            /* Parse rather than match on argv, an option value could
+             * start with "-W" too. */
+            myoptind = 0;
+            while ((ch = mygetopt(argc, argv, ES_OPTLIST)) != -1) {
+                if (ch == 'W') {
+                    useStore = 1;
+                    break;
+                }
+            }
+            myoptind = 0;
+        }
+    #endif
+        if (!useStore) {
+            ChangeToWolfSshRoot();
+        }
+    }
 #endif
 #ifndef NO_WOLFSSH_SERVER
     echoserver_test(&args);

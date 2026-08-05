@@ -1201,3 +1201,117 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
     wc_ForceZero(userPassword, sizeof(userPassword));
     pubKeyLoaded = 0;
 }
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
+        const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName)
+{
+    int ret;
+
+    if (ctx == NULL || storeName == NULL || subjectName == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, storeName, dwFlags,
+            subjectName);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr,
+                "Error loading private key from certificate store: %d\n", ret);
+    }
+
+    return ret;
+}
+
+
+/* After loading a cert store key, populate the global auth callback variables
+ * (userPublicKeyType, userPublicKey, etc.) so that ClientUserAuth can present
+ * the certificate for public key authentication.
+ * For x509 cert auth the "public key" is the DER certificate, and the type
+ * is the x509v3 name that matches the key algorithm. */
+int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
+{
+    const byte* keyType = NULL;
+    WOLFSSH_PVT_KEY* pvtKey = NULL;
+    byte* certCopy = NULL;
+    word32 i;
+
+    if (ctx == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* wolfSSH_CTX_UsePrivateKey_fromStore() registers a store key under its
+     * plain key type and, when the build has one, under the matching x509v3
+     * type. Only the x509v3 slot can be offered for certificate user auth,
+     * and it only exists when that algorithm is compiled in, so select on it
+     * rather than trusting slot ordering. */
+    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
+        WOLFSSH_PVT_KEY* cur = &ctx->privateKey[i];
+
+        if (!cur->useCertStore || cur->cert == NULL || cur->certSz == 0)
+            continue;
+
+        /* Map the internal key format to the x509v3 SSH type name. Resolve
+         * it before touching the globals so a failure leaves them alone. */
+        switch (cur->publicKeyFmt) {
+            case ID_X509V3_SSH_RSA:
+                keyType = (const byte*)"x509v3-ssh-rsa";
+                break;
+            case ID_X509V3_ECDSA_SHA2_NISTP256:
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
+                break;
+            case ID_X509V3_ECDSA_SHA2_NISTP384:
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
+                break;
+            case ID_X509V3_ECDSA_SHA2_NISTP521:
+                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
+                break;
+            default:
+                /* the plain twin of the same store key, keep looking */
+                continue;
+        }
+        pvtKey = cur;
+        break;
+    }
+
+    if (pvtKey == NULL) {
+        fprintf(stderr, "No cert store key with an x509v3 algorithm found in "
+                "CTX. RSA cert store keys need SHA-1 enabled "
+                "(WOLFSSH_NO_SHA1_SOFT_DISABLE) on both ends.\n");
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Copy the DER certificate before touching the globals so a failure
+     * leaves them alone. ClientFreeBuffers() frees the copy. */
+    certCopy = (byte*)WMALLOC(pvtKey->certSz, heap, DYNTYPE_PRIVKEY);
+    if (certCopy == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(certCopy, pvtKey->cert, pvtKey->certSz);
+
+    /* Drop anything an earlier file based load left behind, the cert
+     * store key replaces it. Freed with the same heap the loaders in this
+     * file allocate with. */
+    if (userPublicKeyAlloc && userPublicKey != NULL) {
+        WFREE(userPublicKey, heap, DYNTYPE_PRIVKEY);
+        userPublicKey = userPublicKeyBuf;
+        userPublicKeyAlloc = 0;
+    }
+    if (userPrivateKeyAlloc && userPrivateKey != NULL) {
+        wc_ForceZero(userPrivateKey, userPrivateKeySz);
+        WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
+        userPrivateKeyAlloc = 0;
+    }
+
+    userPublicKey = certCopy;
+    userPublicKeySz = pvtKey->certSz;
+    userPublicKeyAlloc = 1;
+    userPublicKeyType = keyType;
+    userPublicKeyTypeSz = (word32)WSTRLEN((const char*)keyType);
+
+    /* No in-memory private key, signing goes through the cert store. */
+    userPrivateKey = userPrivateKeyBuf;
+    userPrivateKeySz = 0;
+
+    pubKeyLoaded = 1;
+    return WS_SUCCESS;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */

@@ -43,6 +43,11 @@
 #include <wolftpm/tpm2_wrap.h>
 #endif
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* The Windows certificate store API below uses wchar_t strings. */
+#include <wchar.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -494,6 +499,27 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Use the certificate with Common Name subjectName, and its private
+     * key, from the storeName system certificate store as the host key.
+     * subjectName may carry a "CN=" prefix and matches in full, case
+     * insensitively. dwFlags selects the store location and must hold
+     * only CERT_SYSTEM_STORE_* location bits, e.g.
+     * CERT_SYSTEM_STORE_CURRENT_USER; control flags such as
+     * CERT_STORE_DELETE_FLAG are rejected with WS_BAD_ARGUMENT. The store
+     * is opened read-only. When no time-valid certificate with a usable
+     * private key matches, an expired or not-yet-valid one with a usable
+     * key is still selected with only a logged warning, so a renewal whose
+     * key is not yet readable can fall back to the previous certificate.
+     * Returns WS_SUCCESS on success, WS_BAD_FILE_E when the store cannot
+     * be opened, WS_CRYPTO_FAILED when the private key is inaccessible,
+     * WS_CTX_KEY_COUNT_E when two key slots are not free, and
+     * WS_FATAL_ERROR when no certificate matches; on any failure the
+     * context is left unchanged. */
+    WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
+            const wchar_t* storeName, word32 dwFlags,
+            const wchar_t* subjectName);
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
         word32 windowSz, word32 maxPacketSz);
