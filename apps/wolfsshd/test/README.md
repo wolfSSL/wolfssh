@@ -3,6 +3,16 @@
 These are separate from the tests in scripts directory because of the need for
 'sudo' when starting up an SSHd server to test against.
 
+## Directory Permissions
+
+wolfSSHd's StrictModes check refuses to read an authorized_keys file if any
+directory above it is group or world writable. A tree unpacked or cloned under
+a umask of 002, the default where each user has their own group, has mode 0775
+directories, so no test can authenticate and the suite fails from the first
+test. `run_all_sshd_tests.sh` checks for this before it starts a daemon and
+names the offending directories; clear the bits with `chmod g-w,o-w` on each,
+or create the tree under `umask 022`.
+
 ## Running Tests
 
 To run all tests do:
