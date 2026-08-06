@@ -850,7 +850,10 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
         rc = BUFFER_E; goto exit;
     }
     if (fp != WBADFILE) {
-        WFSEEK(NULL, fp, 0, WSEEK_END);
+        if (!WFSEEK_SUCCESS(WFSEEK(NULL, fp, 0, WSEEK_END))) {
+            printf("File seek failed\n");
+            rc = BUFFER_E; goto exit;
+        }
         fileSz = WFTELL(NULL, fp);
         WREWIND(NULL, fp);
 

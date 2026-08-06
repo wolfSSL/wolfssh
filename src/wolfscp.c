@@ -2691,11 +2691,13 @@ static int _GetFileSize(void* fs, WFILE* fp, word32* fileSz)
         return WS_BAD_ARGUMENT;
 
     /* get file size */
-    WFSEEK(fs, fp, 0, WSEEK_END);
-    *fileSz = (word32)WFTELL(fs, fp);
-    WREWIND(fs, fp);
+    if (WFSEEK_SUCCESS(WFSEEK(fs, fp, 0, WSEEK_END))) {
+        *fileSz = (word32)WFTELL(fs, fp);
+        WREWIND(fs, fp);
 
-    return WS_SUCCESS;
+        return WS_SUCCESS;
+    }
+    return WS_BAD_FILE_E;
 }
 
 static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
