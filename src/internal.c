@@ -4896,6 +4896,14 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
                     ssh->error = WS_WANT_WRITE;
                     return WS_WANT_WRITE;
 
+                case WS_CBIO_ERR_ISR:
+                    /* A signal interrupted the send. Nothing went out and the
+                     * session is unharmed, so retry, as ReceiveData() does for
+                     * the same condition. Reporting it instead loses framed
+                     * output the peer never refused, since callers discard
+                     * their packet on an error. */
+                    continue;
+
                 case WS_CBIO_ERR_CONN_RST:       /* connection reset */
                     ssh->connReset = 1;
                     break;
@@ -4905,6 +4913,11 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
                     break;
 
                 case WS_CBIO_ERR_GENERAL:
+                    /* plainSz counts plaintext the caller was told was
+                     * accepted, so it goes with the packet being discarded.
+                     * Left standing, it has SendChannelData() flush an empty
+                     * buffer and call that a success. */
+                    ssh->outputBuffer.plainSz = 0;
                     ShrinkBuffer(&ssh->outputBuffer, 1);
             }
             return WS_SOCKET_ERROR_E;
@@ -17603,12 +17616,12 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
  * Comparing the flush count across the send tells those apart.
  *
  * Short of a flush, WS_WANT_WRITE is the one outcome that keeps the packet
- * framed for the next one, and reading the buffer instead would call a packet
- * delivered that a later purge or a discarding error path throws away.
- * Anything else counts as not sent, which at worst leaves the peer holding a
- * request this side did not register; guessing the other way would desync the
- * reply queue for the life of the session. Call before anything else runs,
- * since a later send flushes this packet and would read as this one's. */
+ * framed for the next one; an interrupted send is retried inside
+ * wolfSSH_SendPacket() rather than reported. Anything else counts as not sent,
+ * which at worst leaves the peer holding a request this side did not register;
+ * guessing the other way would desync the reply queue for the life of the
+ * session. Call before anything else runs, since a later send flushes this
+ * packet and would read as this one's. */
 static INLINE int SendPacketDelivered(WOLFSSH* ssh, word32 flushes, int ret)
 {
     return ssh->txFlushCount != flushes || ret == WS_WANT_WRITE;

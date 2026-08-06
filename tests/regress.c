@@ -331,6 +331,7 @@ typedef struct {
     word32 outSz;
     word32 outCap;
     byte blockNext; /* make the next send report a would-block */
+    byte isrNext;   /* make the next send report an interrupted call */
 } MemIo;
 
 static int MemRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
@@ -355,6 +356,10 @@ static int MemSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
         io->blockNext = 0;
         return WS_CBIO_ERR_WANT_WRITE;
     }
+    if (io->isrNext) {
+        io->isrNext = 0;
+        return WS_CBIO_ERR_ISR;
+    }
     if (io->outSz + sz > io->outCap) {
         return WS_CBIO_ERR_GENERAL;
     }
@@ -372,6 +377,7 @@ static void MemIoInit(MemIo* io, byte* in, word32 inSz, byte* out, word32 outCap
     io->outSz = 0;
     io->outCap = outCap;
     io->blockNext = 0;
+    io->isrNext = 0;
 }
 
 /* The in-memory session harness. The struct and its teardown are shared; the
@@ -2499,6 +2505,45 @@ static void TestServerServiceRequestRejectedDuringKeying(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
+/* A send the transport refuses discards the packet it had framed, and plainSz
+ * counted that packet's plaintext. Left standing over an emptied buffer, it
+ * has the next SendChannelData() flush nothing and call that a success. */
+static void TestFailedSendClearsPendingPlaintext(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte payload[16];
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    WMEMSET(payload, 'a', sizeof(payload));
+
+    channel = ChannelNew(harness.ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    AssertNotNull(channel);
+    AssertIntEQ(ChannelUpdatePeer(channel, 0, 1024, 1024), WS_SUCCESS);
+    AssertIntEQ(ChannelAppend(harness.ssh, channel), WS_SUCCESS);
+
+    /* The transport blocks, so the packet stays framed and the caller is told
+     * its data was taken. */
+    harness.io.blockNext = 1;
+    AssertIntEQ(wolfSSH_stream_send(harness.ssh, payload, sizeof(payload)),
+            (int)sizeof(payload));
+    AssertIntEQ(harness.ssh->outputBuffer.plainSz, (int)sizeof(payload));
+    AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 1);
+
+    /* The next call flushes that packet first, and this send fails outright,
+     * so what it was flushing is thrown away. */
+    harness.io.outSz = harness.io.outCap;
+    AssertIntEQ(wolfSSH_stream_send(harness.ssh, payload, sizeof(payload)),
+            WS_SOCKET_ERROR_E);
+
+    /* Nothing is framed any more, so nothing may still be counted as
+     * pending. */
+    AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 0);
+    AssertIntEQ(harness.ssh->outputBuffer.plainSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
 
 static void TestChannelOpenCallbackRejectSendsOpenFail(void)
 {
@@ -4672,6 +4717,50 @@ static void TestForwardedTcpipWantWriteStillRegisters(void)
      * never ran: a bind nobody asked for is still refused. */
     AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
     AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A signal interrupts the send, which retries rather than reporting it, so the
+ * request goes out and the forward registers like any other. */
+static void TestForwardedTcpipInterruptedSendStillRegisters(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    harness.io.isrNext = 1;
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+
+    /* Retried and out, with nothing left framed and the session unharmed. */
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 0);
+    AssertIntEQ(harness.ssh->connReset, 0);
+    AssertIntEQ(harness.ssh->isClosed, 0);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The same retry on a sender unrelated to forwarding: it is in
+ * wolfSSH_SendPacket(), so it governs every send in the library. */
+static void TestInterruptedSendRetriesForAnySender(void)
+{
+    ChannelOpenHarness harness;
+    const byte req[] = "keepalive@openssh.com";
+
+    InitFwdRemoteHarness(&harness);
+
+    harness.io.isrNext = 1;
+    AssertIntEQ(wolfSSH_global_request(harness.ssh, req,
+                (word32)sizeof(req) - 1, 0), WS_SUCCESS);
+
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 0);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -10158,6 +10247,7 @@ int main(int argc, char** argv)
     TestServerOnlyUserauthMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
     TestServerServiceRequestRejectedDuringKeying();
+    TestFailedSendClearsPendingPlaintext();
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
@@ -10232,6 +10322,8 @@ int main(int argc, char** argv)
     TestForwardedTcpipReentrantCancelDuringSend();
     TestForwardedTcpipAppRequestKeepsItsOwnReply();
     TestForwardedTcpipWantWriteStillRegisters();
+    TestForwardedTcpipInterruptedSendStillRegisters();
+    TestInterruptedSendRetriesForAnySender();
     TestGlobalRequestNoReplyQueuesNothing();
     TestForwardedTcpipRepliesPairInSendOrder();
     TestForwardedTcpipUnusablePortReplySendsOpenFail();
