@@ -1168,6 +1168,85 @@ static void test_wolfSSH_CTX_SetWindowPacketSize(void)
 }
 
 
+#if defined(WOLFSSH_CERTS) && !defined(NO_WOLFSSH_SERVER) && \
+    !defined(WOLFSSH_NO_ECDSA)
+
+/* Joins two buffers so a multi-block PEM can be built in memory. Returns 0 on
+ * success. */
+static int catBuffers(const byte* a, word32 aSz, const byte* b, word32 bSz,
+        byte** out, word32* outSz)
+{
+    byte* buf;
+    int ret = -1;
+
+    *out = NULL;
+    *outSz = 0;
+
+    buf = (byte*)malloc(aSz + bSz);
+    if (buf != NULL) {
+        memcpy(buf, a, aSz);
+        memcpy(buf + aSz, b, bSz);
+        *out = buf;
+        *outSz = aSz + bSz;
+        ret = 0;
+    }
+
+    return ret;
+}
+
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+
+/* Rewrites a certificate PEM into the trusted-certificate form wolfSSL also
+ * accepts for a CA. Returns 0 on success. */
+static int makeTrustedPem(const byte* pem, word32 pemSz, byte** out,
+        word32* outSz)
+{
+    static const char begin[] = "-----BEGIN CERTIFICATE-----";
+    static const char end[] = "-----END CERTIFICATE-----";
+    static const char tBegin[] = "-----BEGIN TRUSTED CERTIFICATE-----";
+    static const char tEnd[] = "-----END TRUSTED CERTIFICATE-----\n";
+    const char* b;
+    const char* e;
+    byte* buf;
+    word32 bodySz;
+    word32 sz;
+
+    *out = NULL;
+    *outSz = 0;
+
+    b = WSTRNSTR((const char*)pem, begin, pemSz);
+    e = WSTRNSTR((const char*)pem, end, pemSz);
+    if (b == NULL || e == NULL) {
+        return -1;
+    }
+
+    b += sizeof(begin) - 1;
+    if (e <= b) {
+        return -1;
+    }
+    bodySz = (word32)(e - b);
+    sz = (word32)(sizeof(tBegin) - 1) + bodySz + (word32)(sizeof(tEnd) - 1);
+
+    buf = (byte*)malloc(sz);
+    if (buf == NULL) {
+        return -1;
+    }
+
+    memcpy(buf, tBegin, sizeof(tBegin) - 1);
+    memcpy(buf + sizeof(tBegin) - 1, b, bodySz);
+    memcpy(buf + sizeof(tBegin) - 1 + bodySz, tEnd, sizeof(tEnd) - 1);
+
+    *out = buf;
+    *outSz = sz;
+
+    return 0;
+}
+
+#endif /* WOLFSSH_HAVE_TRUSTED_CERT_PEM */
+
+#endif /* WOLFSSH_CERTS && !NO_WOLFSSH_SERVER && !WOLFSSH_NO_ECDSA */
+
+
 #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA)
 /* Build the length-prefixed single-cert chain buffer that
  * wolfSSH_CERTMAN_VerifyCerts_buffer expects. Caller frees *chain. */
@@ -1308,6 +1387,232 @@ static void test_wolfSSH_CertMan(void)
 #endif /* WOLFSSH_NO_FPKI */
 #endif /* WOLFSSH_NO_ECDSA */
 #endif /* WOLFSSH_CERTS */
+}
+
+
+/* A CA buffer may hold a bundle, so every PEM block in it is loaded. */
+static void test_wolfSSH_CTX_AddRootCert_bundle(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(NO_WOLFSSH_SERVER) && \
+    !defined(WOLFSSH_NO_ECDSA)
+    static const char junk[] = "Bag Attributes: not a certificate\n";
+    static const char badPem[] =
+        "-----BEGIN CERTIFICATE-----\n"
+        "$$$$ not base64 $$$$\n"
+        "-----END CERTIFICATE-----\n";
+    /* Valid base64, but no certificate, so the manager is what refuses it. */
+    static const char notACertPem[] =
+        "-----BEGIN CERTIFICATE-----\n"
+        "bm90IGEgY2VydGlmaWNhdGUgYXQgYWxsLCBqdXN0IHRleHQ=\n"
+        "-----END CERTIFICATE-----\n";
+    /* Same block behind text holding a NUL. */
+    static const char nulBadPem[] =
+        "Bag Attributes\0more text\n"
+        "-----BEGIN CERTIFICATE-----\n"
+        "$$$$ not base64 $$$$\n"
+        "-----END CERTIFICATE-----\n";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH_CTX* ctxFirst = NULL;
+    byte* ca = NULL;
+    byte* leaf = NULL;
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    byte* trusted = NULL;
+    byte* trustedBad = NULL;
+    byte* triple = NULL;
+    word32 trustedSz = 0;
+    word32 trustedBadSz = 0;
+    word32 tripleSz = 0;
+#endif
+    byte* bundle = NULL;
+    byte* leafDer = NULL;
+    byte* chain = NULL;
+    word32 caSz = 0;
+    word32 leafSz = 0;
+    word32 bundleSz = 0;
+    word32 leafDerSz = 0;
+    word32 chainSz = 0;
+
+    AssertIntEQ(0, load_file("./keys/ca-cert-ecc.pem", &ca, &caSz));
+    AssertIntEQ(0, load_file("./keys/server-cert.pem", &leaf, &leafSz));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* The CA is the second block, so anything it signs verifies only if the
+     * walk got past the first. */
+    AssertIntEQ(0, catBuffers(leaf, leafSz, ca, caSz, &bundle, &bundleSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    AssertIntEQ(0, load_file("./keys/fred-cert.der", &leafDer, &leafDerSz));
+    AssertIntEQ(0, certman_make_chain(leafDer, leafDerSz, &chain, &chainSz));
+#ifdef WOLFSSH_NO_FPKI
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CERTMAN_VerifyCerts_buffer(ctx->certMan, chain, chainSz, 1));
+#else
+    /* An FPKI build rejects this leaf's profile, but only after finding its
+     * signer, so the code still tells the CA apart from a missing one. */
+    AssertIntEQ(WS_CERT_PROFILE_E,
+            wolfSSH_CERTMAN_VerifyCerts_buffer(ctx->certMan, chain, chainSz, 1));
+#endif
+    free(chain);
+    free(leafDer);
+
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    /* A trusted-certificate block names a CA too, alone and beside a plain
+     * one. */
+    AssertIntEQ(0, makeTrustedPem(ca, caSz, &trusted, &trustedSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, trusted, trustedSz,
+                WOLFSSH_FORMAT_PEM));
+
+    AssertIntEQ(0, catBuffers(trusted, trustedSz, ca, caSz, &bundle,
+                &bundleSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+
+    /* A second trusted block behind a plain one. The walk has to find it
+     * after consuming the first, and refusing it is what shows it did. */
+    AssertIntEQ(0, makeTrustedPem((const byte*)badPem,
+                (word32)(sizeof(badPem) - 1), &trustedBad, &trustedBadSz));
+    AssertIntEQ(0, catBuffers(bundle, bundleSz, trustedBad, trustedBadSz,
+                &triple, &tripleSz));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, triple, tripleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(triple);
+    free(trustedBad);
+
+    free(bundle);
+    bundle = NULL;
+#endif /* WOLFSSH_HAVE_TRUSTED_CERT_PEM */
+
+    /* The CA leads this bundle rather than closing it, so a walk that kept
+     * only the last block would leave the leaf without a signer. */
+    ctxFirst = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctxFirst);
+    AssertIntEQ(0, catBuffers(ca, caSz, leaf, leafSz, &bundle, &bundleSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctxFirst, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    AssertIntEQ(0, load_file("./keys/fred-cert.der", &leafDer, &leafDerSz));
+    AssertIntEQ(0, certman_make_chain(leafDer, leafDerSz, &chain, &chainSz));
+#ifdef WOLFSSH_NO_FPKI
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CERTMAN_VerifyCerts_buffer(ctxFirst->certMan, chain,
+                chainSz, 1));
+#else
+    AssertIntEQ(WS_CERT_PROFILE_E,
+            wolfSSH_CERTMAN_VerifyCerts_buffer(ctxFirst->certMan, chain,
+                chainSz, 1));
+#endif
+    free(chain);
+    free(leafDer);
+    wolfSSH_CTX_free(ctxFirst);
+
+    /* A block the manager turns down is a different failure from one that
+     * will not decode. */
+    AssertIntEQ(0, catBuffers(ca, caSz, (const byte*)notACertPem,
+                (word32)(sizeof(notACertPem) - 1), &bundle, &bundleSz));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    /* A block that will not decode fails the load wherever it sits. A
+     * trailing one used to go unread and the load answered WS_SUCCESS. */
+    AssertIntEQ(0, catBuffers(ca, caSz, (const byte*)badPem,
+                (word32)(sizeof(badPem) - 1), &bundle, &bundleSz));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    /* A NUL is not the end of the buffer, so the bad block behind it is
+     * still read. */
+    AssertIntEQ(0, catBuffers(ca, caSz, (const byte*)nulBadPem,
+                (word32)(sizeof(nulBadPem) - 1), &bundle, &bundleSz));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    AssertIntEQ(0, catBuffers((const byte*)badPem, (word32)(sizeof(badPem) - 1),
+                ca, caSz, &bundle, &bundleSz));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    /* Text around the blocks is not a certificate, so it is stepped over. */
+    AssertIntEQ(0, catBuffers((const byte*)junk, (word32)(sizeof(junk) - 1),
+                ca, caSz, &bundle, &bundleSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+    bundle = NULL;
+
+    AssertIntEQ(0, catBuffers(ca, caSz, (const byte*)junk,
+                (word32)(sizeof(junk) - 1), &bundle, &bundleSz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, bundle, bundleSz,
+                WOLFSSH_FORMAT_PEM));
+    free(bundle);
+
+    /* A buffer with no certificate in it is still a bad file. */
+    AssertIntEQ(WS_BAD_FILE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, (const byte*)junk,
+                (word32)(sizeof(junk) - 1), WOLFSSH_FORMAT_PEM));
+
+    wolfSSH_CTX_free(ctx);
+    free(ca);
+    free(leaf);
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    free(trusted);
+#endif
+#endif /* WOLFSSH_CERTS && !NO_WOLFSSH_SERVER && !WOLFSSH_NO_ECDSA */
+}
+
+
+/* OpenSSL writes the trusted form as the certificate followed by its trust
+ * settings, which nothing here strips, so the readers decline it. */
+static void test_wolfSSH_ReadCert_buffer_trusted(void)
+{
+#if defined(WOLFSSH_CERTS) && !defined(NO_WOLFSSH_SERVER) && \
+    !defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_HAVE_TRUSTED_CERT_PEM)
+    byte* cert = NULL;
+    byte* trusted = NULL;
+    byte* out = NULL;
+    const byte* outType = NULL;
+    word32 certSz = 0;
+    word32 trustedSz = 0;
+    word32 outSz = 0;
+    word32 outTypeSz = 0;
+    byte flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+
+    AssertIntEQ(0, load_file("./keys/server-cert.pem", &cert, &certSz));
+    AssertIntEQ(0, makeTrustedPem(cert, certSz, &trusted, &trustedSz));
+
+    AssertIntEQ(WS_BAD_FILETYPE_E, wolfSSH_ReadCert_buffer(trusted, trustedSz,
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+
+    free(trusted);
+    free(cert);
+#endif
 }
 
 
@@ -6261,6 +6566,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CTX_UseCert_file();
     test_wolfSSH_CTX_AddRootCert_file();
+    test_wolfSSH_CTX_AddRootCert_bundle();
+    test_wolfSSH_ReadCert_buffer_trusted();
     test_wolfSSH_ReadCert_buffer();
     test_wolfSSH_ReadCert_file();
     test_wolfSSH_CTX_UsePrivateKey_buffer_pem();

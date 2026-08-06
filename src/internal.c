@@ -2533,6 +2533,141 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
 #endif /* WOLFSSH_TPM */
 
 
+#ifdef WOLFSSH_CERTS
+
+/* Finds needle in the first inSz bytes of in. Unlike WSTRNSTR() an embedded
+   NUL does not end the search, the buffer being length delimited. */
+static const byte* FindInBuffer(const byte* in, word32 inSz, const char* needle)
+{
+    word32 needleSz;
+    word32 i;
+
+    needleSz = (word32)WSTRLEN(needle);
+    if (needleSz == 0 || inSz < needleSz) {
+        return NULL;
+    }
+
+    for (i = 0; i <= inSz - needleSz; i++) {
+        if (WMEMCMP(in + i, needle, needleSz) == 0) {
+            return in + i;
+        }
+    }
+
+    return NULL;
+}
+
+
+/* Loads every PEM certificate block in the buffer as a root CA. Stops at the
+   first block that will not decode or that the cert manager refuses; what the
+   blocks ahead of it left installed is unspecified. */
+static int LoadRootCaPemBuffer(WOLFSSH_CTX* ctx, const byte* in, word32 inSz)
+{
+    EncryptedInfo info;
+    DerBuffer* der = NULL;
+    const char* certHeader = NULL;
+    const byte* found;
+    word32 used = 0;
+    word32 count = 0;
+    int wcType = CA_TYPE;
+    int ret;
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    const char* trustedHeader = NULL;
+    const byte* foundTrusted;
+#endif
+
+    if (ctx->certMan == NULL) {
+        WLOG(WS_LOG_DEBUG, "Error no cert manager set");
+        return WS_MEMORY_E;
+    }
+
+    if (wc_PemGetHeaderFooter(CA_TYPE, &certHeader, NULL) != 0
+            || certHeader == NULL) {
+        return WS_BAD_FILE_E;
+    }
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    if (wc_PemGetHeaderFooter(TRUSTED_CERT_TYPE, &trustedHeader, NULL) != 0
+            || trustedHeader == NULL) {
+        return WS_BAD_FILE_E;
+    }
+#endif
+
+    ret = WS_SUCCESS;
+
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    /* The trusted form is rare, so find it once and look again only after the
+       walk has passed it, rather than rescanning the tail every block. */
+    foundTrusted = FindInBuffer(in, inSz, trustedHeader);
+#endif
+
+    while (used < inSz) {
+        /* Text may sit between blocks, so seek the next header. */
+        found = FindInBuffer(in + used, inSz - used, certHeader);
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+        if (foundTrusted != NULL && foundTrusted < in + used) {
+            foundTrusted = FindInBuffer(in + used, inSz - used, trustedHeader);
+        }
+
+        /* wc_PemToDer() takes either form, but only finds the one its type
+           names first, so whichever header leads picks the type. */
+        if (found == NULL || (foundTrusted != NULL && foundTrusted < found)) {
+            found = foundTrusted;
+            wcType = TRUSTED_CERT_TYPE;
+        }
+        else {
+            wcType = CA_TYPE;
+        }
+#endif
+
+        if (found == NULL) {
+            break;
+        }
+        used = (word32)(found - in);
+
+        WMEMSET(&info, 0, sizeof(info));
+        if (wc_PemToDer(in + used, (long)(inSz - used), wcType, &der,
+                    ctx->heap, &info, NULL) != 0) {
+            /* A body that will not decode is reported after the buffer is
+               allocated, so free it here too. */
+            wc_FreeDer(&der);
+            WLOG(WS_LOG_DEBUG, "PEM to DER of CA %u failed", count);
+            ret = WS_PARSE_E;
+            break;
+        }
+
+        ret = wolfSSH_CERTMAN_LoadRootCA_buffer(ctx->certMan,
+                der->buffer, der->length);
+        /* That call answers in wolfSSL codes apart from these two, so
+           anything else becomes one of ours. */
+        if (ret != WS_SUCCESS && ret != WS_BAD_ARGUMENT) {
+            ret = WS_PARSE_E;
+        }
+        wc_FreeDer(&der);
+
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Error %d loading in CA %u", ret, count);
+            break;
+        }
+
+        /* A block that consumes nothing would stall the walk, so stop. */
+        if (info.consumed <= 0) {
+            ret = WS_BAD_FILE_E;
+            break;
+        }
+        used += (word32)info.consumed;
+        count++;
+    }
+
+    if (ret == WS_SUCCESS && count == 0) {
+        WLOG(WS_LOG_DEBUG, "No certificate in the CA buffer");
+        ret = WS_BAD_FILE_E;
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
+
+
 int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
@@ -2585,6 +2720,13 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         derSz = inSz;
     }
     else if (format == WOLFSSH_FORMAT_PEM) {
+    #ifdef WOLFSSH_CERTS
+        if (type == BUFTYPE_CA) {
+            /* A CA buffer may hold a bundle, so every block is loaded. */
+            return LoadRootCaPemBuffer(ctx, in, inSz);
+        }
+    #endif /* WOLFSSH_CERTS */
+
         /* The der size will be smaller than the pem size. */
         der = (byte*)WMALLOC(inSz, heap, dynamicType);
         if (der == NULL)
