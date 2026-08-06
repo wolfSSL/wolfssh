@@ -27,7 +27,8 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
 
-#ifdef WOLFSSH_CERTS
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+        !defined(WOLFSSH_USER_FILESYSTEM)
 
 #include <stdio.h>
 #include <string.h>
@@ -54,7 +55,7 @@ static int TpmCcUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 
 
 /* Host key acceptance callback. wolfSSH verifies the server's X.509 certificate
- * chain against the root CA loaded with wolfSSH_CTX_AddRootCert_buffer() later,
+ * chain against the root CA loaded with wolfSSH_CTX_AddRootCert_file() later,
  * during the key exchange, when it extracts the public key from the certificate.
  * Because the client only accepts x509v3 host key algorithms, that CA
  * verification is always performed. This callback just accepts the presented
@@ -65,44 +66,6 @@ static int TpmCcHostKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     WOLFSSH_UNUSED(pubKeySz);
     WOLFSSH_UNUSED(ctx);
     return 0;
-}
-
-
-static int TpmCcLoadFile(const char* file, byte* buf, word32* bufSz)
-{
-    int ret = 0;
-    WFILE* f;
-    word32 fileSz = 0;
-    word32 readSz;
-
-    if (WFOPEN(NULL, &f, file, "rb") != 0) {
-        ret = -1;
-    }
-    else {
-        if (!WFSEEK_SUCCESS(WFSEEK(NULL, f, 0, WSEEK_END))) {
-            ret = -1;
-        }
-        else {
-            fileSz = (word32)WFTELL(NULL, f);
-            WREWIND(NULL, f);
-        }
-
-        if (ret != 0 || fileSz == 0 || fileSz > *bufSz) {
-            ret = -1;
-        }
-        else {
-            readSz = (word32)WFREAD(NULL, buf, 1, fileSz, f);
-            if (readSz != fileSz) {
-                ret = -1;
-            }
-            else {
-                *bufSz = fileSz;
-            }
-        }
-        WFCLOSE(NULL, f);
-    }
-
-    return ret;
 }
 
 
@@ -117,8 +80,6 @@ int main(int argc, char* argv[])
     WOLFSSH* ssh = NULL;
     WS_SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
     SOCKADDR_IN_T addr;
-    byte caDer[2048];
-    word32 caDerSz = (word32)sizeof(caDer);
     byte txt[] = "hello from tpmcertclient\n";
     byte rxBuf[TPMCC_BUF_SZ];
 
@@ -132,11 +93,6 @@ int main(int argc, char* argv[])
             host = argv[++i];
         else if (XSTRCMP(argv[i], "-A") == 0 && i + 1 < argc)
             caFile = argv[++i];
-    }
-
-    if (TpmCcLoadFile(caFile, caDer, &caDerSz) != 0) {
-        fprintf(stderr, "Could not read CA file %s\n", caFile);
-        return 1;
     }
 
 #ifdef DEBUG_WOLFSSH
@@ -167,9 +123,9 @@ int main(int argc, char* argv[])
     }
 
     if (ret == 0) {
-        if (wolfSSH_CTX_AddRootCert_buffer(ctx, caDer, caDerSz,
-                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
-            fprintf(stderr, "Could not load root CA certificate\n");
+        /* PEM or DER is detected from the file's content. */
+        if (wolfSSH_CTX_AddRootCert_file(ctx, caFile) != WS_SUCCESS) {
+            fprintf(stderr, "Could not load root CA certificate %s\n", caFile);
             ret = -1;
         }
     }
@@ -251,12 +207,13 @@ int main(int argc, char* argv[])
     return (ret == 0) ? 0 : 1;
 }
 
-#else /* !WOLFSSH_CERTS */
+#else /* !WOLFSSH_CERTS || no file system */
 
 int main(void)
 {
-    printf("This example requires wolfSSH built with --enable-certs.\n");
+    printf("This example requires wolfSSH built with --enable-certs and a "
+           "file system.\n");
     return 0;
 }
 
-#endif /* WOLFSSH_CERTS */
+#endif /* WOLFSSH_CERTS && !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM */

@@ -484,12 +484,18 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
 #if defined(WOLFSSH_OSSH_CERTS) || defined(WOLFSSH_CERTS)
     if (ret == WS_SUCCESS) {
-        /* TODO: Create a helper function that uses a file instead. */
         char* hostCert = wolfSSHD_ConfigGetHostCertFile(conf);
 
         if (hostCert != NULL) {
             byte*  data;
             word32 dataSz = 0;
+        #ifdef WOLFSSH_CERTS
+            byte* der = NULL;
+            word32 derSz = 0;
+            const byte* type = NULL;
+            word32 typeSz = 0;
+            byte flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+        #endif
 
             data = getBufferFromFile(hostCert, &dataSz, heap,
                 WOLFSSHD_LOAD_TRUST);
@@ -503,15 +509,31 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
             if (ret == WS_SUCCESS) {
             #ifdef WOLFSSH_CERTS
-                ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
-                    WOLFSSH_FORMAT_PEM);
-                if (ret != WS_SUCCESS) {
-                    ret = wolfSSH_CTX_UseCert_buffer(*ctx, data, dataSz,
-                        WOLFSSH_FORMAT_ASN1);
-                }
-                if (ret != WS_SUCCESS) {
+                if (dataSz == 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
-                        "[SSHD] Failed to load in host certificate.");
+                        "[SSHD] Host certificate file %s is empty.", hostCert);
+                    ret = WS_BAD_FILE_E;
+                }
+                else {
+                    /* Already read through the secure gate, so not _file. */
+                    ret = wolfSSH_ReadCert_buffer(data, dataSz, &der, &derSz,
+                        &type, &typeSz, &flavor, heap);
+                    if (ret == WS_SUCCESS
+                            && flavor != WOLFSSH_CERT_FLAVOR_X509) {
+                        /* Verifying OpenSSH host certs is unimplemented. */
+                        ret = WS_UNIMPLEMENTED_E;
+                    }
+                    if (ret == WS_SUCCESS) {
+                        ret = wolfSSH_CTX_UseCert_buffer(*ctx, der, derSz,
+                            WOLFSSH_FORMAT_ASN1);
+                    }
+                    if (ret != WS_SUCCESS) {
+                        wolfSSH_Log(WS_LOG_ERROR,
+                            "[SSHD] Failed to load in host certificate.");
+                    }
+                    if (der != NULL) {
+                        WFREE(der, heap, DYNTYPE_CERT);
+                    }
                 }
             #else
                 /* Only OpenSSH host certificates could apply here, and they are
@@ -535,7 +557,6 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             byte*  data;
             word32 dataSz = 0;
 
-
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Using CA keys file %s", caCert);
             data = getBufferFromFile(caCert, &dataSz, heap,
                 WOLFSSHD_LOAD_TRUST);
@@ -547,7 +568,15 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
             }
 
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS && dataSz == 0) {
+                /* Empty means misconfigured, not a CA in another format. */
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] CA keys file %s is empty.",
+                    caCert);
+                ret = WS_BAD_FILE_E;
+                freeBufferFromFile(data, heap);
+            }
+            else if (ret == WS_SUCCESS) {
+                /* A CA is never named on the wire, so it takes raw bytes. */
                 ret = wolfSSH_CTX_AddRootCert_buffer(*ctx, data, dataSz,
                     WOLFSSH_FORMAT_PEM);
                 if (ret != WS_SUCCESS) {

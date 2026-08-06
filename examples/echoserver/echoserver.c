@@ -2475,23 +2475,26 @@ static int LoadPubKeyList(StrList* strList, int format, PwMapList* mapList)
                     (void)typeSz;
                 }
                 else if (format == WOLFSSH_FORMAT_PEM) {
-                    out = (byte*)WMALLOC(bufSz, NULL, 0);
-                    if (out == NULL) {
-                        fprintf(stderr, "Memory error: %s\n", fileName);
+                #ifdef WOLFSSH_CERTS
+                    const byte* type = NULL;
+                    word32 typeSz = 0;
+                    byte flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+
+                    if (wolfSSH_ReadCert_buffer(buf, bufSz, &out, &outSz,
+                                &type, &typeSz, &flavor, NULL) != WS_SUCCESS) {
+                        fprintf(stderr, "Cert error: %s\n", fileName);
                         ok = 0;
                     }
-                    else {
-                        int rc = wc_CertPemToDer(buf, bufSz, out, bufSz,
-                                CERT_TYPE);
 
-                        if (rc <= 0) {
-                            fprintf(stderr, "PEM error: %s\n", fileName);
-                            ok = 0;
-                        }
-                        else {
-                            outSz = (word32)rc;
-                        }
-                    }
+                    (void)type;
+                    (void)typeSz;
+                    (void)flavor;
+                #else
+                    fprintf(stderr,
+                            "Certificate support not compiled in: %s\n",
+                            fileName);
+                    ok = 0;
+                #endif
                 }
 
                 if (ok) {
@@ -3092,7 +3095,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #ifndef NO_FILESYSTEM
         char* userPubKey = NULL;
     #endif
-    #ifdef WOLFSSH_CERTS
+    #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+            !defined(WOLFSSH_USER_FILESYSTEM)
         char* caCert = NULL;
     #endif
 
@@ -3118,7 +3122,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     break;
 
                 case 'a':
-                    #ifdef WOLFSSH_CERTS
+                    #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+                            !defined(WOLFSSH_USER_FILESYSTEM)
                         caCert = myoptarg;
                     #endif
                     break;
@@ -3585,42 +3590,17 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         #endif
 
-        #ifdef WOLFSSH_CERTS
+        #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+                !defined(WOLFSSH_USER_FILESYSTEM)
         if (caCert) {
-            byte* certBuf = NULL;
-            word32 certBufSz = 0;
-            int ret = 0;
-
-            load_file(caCert, NULL, &certBufSz);
-
-            if (certBufSz == 0) {
+            /* PEM or DER is detected from the file's content. */
+            if (wolfSSH_CTX_AddRootCert_file(ctx, caCert) != WS_SUCCESS) {
                 #ifdef WOLFSSH_SMALL_STACK
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
                 #endif
-                ES_ERROR("Couldn't find size of file %s.\n", caCert);
-            }
-
-            certBuf = (byte*)WMALLOC(certBufSz, NULL, 0);
-            if (certBuf == NULL) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
-                ES_ERROR("WMALLOC failed\n");
-            }
-            load_file(caCert, certBuf, &certBufSz);
-            ret = wolfSSH_CTX_AddRootCert_buffer(ctx, certBuf, certBufSz,
-                    WOLFSSH_FORMAT_PEM);
-            if (ret != 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
-                WFREE(certBuf, NULL, 0);
                 ES_ERROR("Couldn't add root cert\n");
             }
-            WFREE(certBuf, NULL, 0);
         }
         #endif
 
