@@ -2350,12 +2350,17 @@ int wolfSSH_ReadPublicKey_buffer(const byte* in, word32 inSz, int format,
 #ifdef WOLFSSH_CERTS
     static const char* CertBeginPrefix = "-----BEGIN CERTIFICATE-----";
 #endif
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    static const char* TrustedCertBeginPrefix =
+            "-----BEGIN TRUSTED CERTIFICATE-----";
+#endif
 
 /* Longest algorithm name is ecdsa-sha2-nistp521-cert-v01@openssh.com. */
 #define WOLFSSH_MAX_CERT_ALGO_NAME_SZ 48
 
 /* Identifies a certificate from its content, without decoding or allocating.
-   An x509v3-* line holds a wire chain, not a certificate, so it is declined. */
+   An x509v3-* line holds a wire chain, not a certificate, so it is declined.
+   The trusted form is PEM too; the decoders decide who takes it. */
 static int SniffCertForm(const byte* in, word32 inSz, byte* flavor,
         byte* certId)
 {
@@ -2375,6 +2380,12 @@ static int SniffCertForm(const byte* in, word32 inSz, byte* flavor,
         *flavor = WOLFSSH_CERT_FLAVOR_X509;
         ret = WOLFSSH_FORMAT_PEM;
     }
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    else if (WSTRNSTR((const char*)in, TrustedCertBeginPrefix, inSz) != NULL) {
+        *flavor = WOLFSSH_CERT_FLAVOR_X509;
+        ret = WOLFSSH_FORMAT_PEM;
+    }
+#endif /* WOLFSSH_HAVE_TRUSTED_CERT_PEM */
 #endif /* WOLFSSH_CERTS */
 
 #ifdef WOLFSSH_OSSH_CERTS
@@ -2420,6 +2431,14 @@ static int DoPemCert(const byte* in, word32 inSz, byte** out, word32* outSz,
     byte* der;
     word32 derSz = 0;
     int ret;
+
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    if (IsTrustedCertPem(in, inSz)) {
+        /* The trust data behind the certificate means nothing to a peer. */
+        WLOG(WS_LOG_DEBUG, "Trusted certificate form is for root CAs");
+        return WS_BAD_FILETYPE_E;
+    }
+#endif
 
     der = (byte*)WMALLOC(inSz, heap, DYNTYPE_CERT);
     if (der == NULL) {

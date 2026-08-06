@@ -2708,6 +2708,216 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
 #endif /* WOLFSSH_TPM */
 
 
+#ifdef WOLFSSH_CERTS
+
+/* Finds needle in the first inSz bytes of in. Unlike WSTRNSTR() an embedded
+   NUL does not end the search, the buffer being length delimited. */
+static const byte* FindInBuffer(const byte* in, word32 inSz, const char* needle)
+{
+    word32 needleSz;
+    word32 i;
+
+    needleSz = (word32)WSTRLEN(needle);
+    if (needleSz == 0 || inSz < needleSz) {
+        return NULL;
+    }
+
+    for (i = 0; i <= inSz - needleSz; i++) {
+        if (WMEMCMP(in + i, needle, needleSz) == 0) {
+            return in + i;
+        }
+    }
+
+    return NULL;
+}
+
+
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+/* Reports whether the buffer holds only trusted-certificate PEM. A plain
+   certificate anywhere in it wins, the way wc_PemToDer() finds one first. */
+int IsTrustedCertPem(const byte* in, word32 inSz)
+{
+    const char* certHeader = NULL;
+    const char* trustedHeader = NULL;
+
+    if (wc_PemGetHeaderFooter(CA_TYPE, &certHeader, NULL) != 0
+            || certHeader == NULL
+            || wc_PemGetHeaderFooter(TRUSTED_CERT_TYPE, &trustedHeader,
+                NULL) != 0
+            || trustedHeader == NULL) {
+        return 0;
+    }
+
+    return FindInBuffer(in, inSz, certHeader) == NULL
+        && FindInBuffer(in, inSz, trustedHeader) != NULL;
+}
+#endif /* WOLFSSH_HAVE_TRUSTED_CERT_PEM */
+
+
+/* Loads every PEM certificate block in the buffer as a root CA, skipping the
+   ones that fail, the way wolfSSL's own chain loader treats a CA file. */
+static int LoadRootCaPemBuffer(WOLFSSH_CTX* ctx, const byte* in, word32 inSz)
+{
+    DerBuffer* der = NULL;
+    const char* certHeader = NULL;
+    const char* certFooter = NULL;
+    const char* footer;
+    const byte* found;
+    const byte* foundEnd;
+    const byte* nextHeader;
+    const byte* nextCert;
+    word32 certHeaderSz;
+    word32 certFooterSz;
+    word32 headerSz;
+    word32 footerSz;
+    word32 bodyStart;
+    word32 searchSz;
+    word32 blockSz;
+    word32 used = 0;
+    word32 loaded = 0;
+    word32 failed = 0;
+    int wcType = CA_TYPE;
+    int ret;
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    const char* trustedHeader = NULL;
+    const char* trustedFooter = NULL;
+    const byte* nextTrusted;
+    word32 trustedHeaderSz;
+    word32 trustedFooterSz;
+#endif
+
+    if (ctx->certMan == NULL) {
+        WLOG(WS_LOG_DEBUG, "Error no cert manager set");
+        return WS_MEMORY_E;
+    }
+
+    if (wc_PemGetHeaderFooter(CA_TYPE, &certHeader, &certFooter) != 0
+            || certHeader == NULL || certFooter == NULL) {
+        return WS_BAD_FILE_E;
+    }
+    certHeaderSz = (word32)WSTRLEN(certHeader);
+    certFooterSz = (word32)WSTRLEN(certFooter);
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    if (wc_PemGetHeaderFooter(TRUSTED_CERT_TYPE, &trustedHeader,
+                &trustedFooter) != 0
+            || trustedHeader == NULL || trustedFooter == NULL) {
+        return WS_BAD_FILE_E;
+    }
+    trustedHeaderSz = (word32)WSTRLEN(trustedHeader);
+    trustedFooterSz = (word32)WSTRLEN(trustedFooter);
+#endif
+
+    /* Each form's header is re-sought only from behind the last one found. */
+    nextCert = FindInBuffer(in, inSz, certHeader);
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+    nextTrusted = FindInBuffer(in, inSz, trustedHeader);
+#endif
+
+    while (used < inSz) {
+        found = nextCert;
+        footer = certFooter;
+        headerSz = certHeaderSz;
+        footerSz = certFooterSz;
+        wcType = CA_TYPE;
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+        /* wc_PemToDer() takes either form, but only finds the one its type
+           names first, so whichever header leads picks the type. */
+        if (found == NULL || (nextTrusted != NULL && nextTrusted < found)) {
+            found = nextTrusted;
+            footer = trustedFooter;
+            headerSz = trustedHeaderSz;
+            footerSz = trustedFooterSz;
+            wcType = TRUSTED_CERT_TYPE;
+        }
+#endif
+
+        if (found == NULL) {
+            break;
+        }
+        used = (word32)(found - in);
+        bodyStart = used + headerSz;
+
+        /* Step this form's cursor past the header being read. */
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+        if (wcType == TRUSTED_CERT_TYPE) {
+            nextTrusted = FindInBuffer(in + bodyStart, inSz - bodyStart,
+                    trustedHeader);
+        }
+        else {
+            nextCert = FindInBuffer(in + bodyStart, inSz - bodyStart,
+                    certHeader);
+        }
+#else
+        nextCert = FindInBuffer(in + bodyStart, inSz - bodyStart, certHeader);
+#endif
+
+        nextHeader = (nextCert != NULL && nextCert >= in + bodyStart) ?
+            nextCert : NULL;
+#ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+        if (nextTrusted != NULL && nextTrusted >= in + bodyStart
+                && (nextHeader == NULL || nextTrusted < nextHeader)) {
+            nextHeader = nextTrusted;
+        }
+#endif
+
+        /* A block runs to its footer, and the next header caps the search
+           for one. Bounding the search keeps the walk linear. */
+        searchSz = (nextHeader != NULL) ?
+            (word32)(nextHeader - (in + bodyStart)) : inSz - bodyStart;
+        foundEnd = FindInBuffer(in + bodyStart, searchSz, footer);
+
+        if (foundEnd == NULL) {
+            WLOG(WS_LOG_ERROR, "Skipping CA %u, nothing closes its header",
+                    loaded + failed);
+            failed++;
+            used = bodyStart;
+            continue;
+        }
+        blockSz = (word32)(foundEnd - found) + footerSz;
+
+        if (wc_PemToDer(found, (long)blockSz, wcType, &der, ctx->heap,
+                    NULL, NULL) != 0) {
+            /* A bad body is reported after the buffer is allocated. */
+            wc_FreeDer(&der);
+            WLOG(WS_LOG_ERROR, "Skipping CA %u, PEM to DER failed",
+                    loaded + failed);
+            failed++;
+        }
+        else {
+            ret = wolfSSH_CERTMAN_LoadRootCA_buffer(ctx->certMan,
+                    der->buffer, der->length);
+            wc_FreeDer(&der);
+
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_ERROR, "Skipping CA %u, error %d loading it",
+                        loaded + failed, ret);
+                failed++;
+            }
+            else {
+                loaded++;
+            }
+        }
+
+        used += blockSz;
+    }
+
+    if (loaded > 0) {
+        ret = WS_SUCCESS;
+    }
+    else if (failed > 0) {
+        ret = WS_PARSE_E;
+    }
+    else {
+        WLOG(WS_LOG_ERROR, "No certificate in the CA buffer");
+        ret = WS_BAD_FILE_E;
+    }
+
+    return ret;
+}
+
+#endif /* WOLFSSH_CERTS */
+
+
 int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                           const byte* in, word32 inSz,
                           int format, int type)
@@ -2784,6 +2994,20 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
         }
     }
     else if (format == WOLFSSH_FORMAT_PEM) {
+    #ifdef WOLFSSH_CERTS
+        if (type == BUFTYPE_CA) {
+            /* A CA buffer may hold a bundle, so every block is loaded. */
+            return LoadRootCaPemBuffer(ctx, in, inSz);
+        }
+        #ifdef WOLFSSH_HAVE_TRUSTED_CERT_PEM
+        if (type == BUFTYPE_CERT && IsTrustedCertPem(in, inSz)) {
+            /* The trust data behind the certificate means nothing to a peer. */
+            WLOG(WS_LOG_DEBUG, "Trusted certificate form is for root CAs");
+            return WS_BAD_FILETYPE_E;
+        }
+        #endif /* WOLFSSH_HAVE_TRUSTED_CERT_PEM */
+    #endif /* WOLFSSH_CERTS */
+
         /* The der size will be smaller than the pem size. */
         der = (byte*)WMALLOC(inSz, heap, dynamicType);
         if (der == NULL)
