@@ -31,7 +31,9 @@ tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
 if BUILD_KEYBOARD_INTERACTIVE
 check_PROGRAMS              += tests/auth.test
-tests_auth_test_SOURCES      = tests/auth.c tests/auth.h
+tests_auth_test_SOURCES      = tests/auth.c tests/auth.h \
+                               examples/client/common.c \
+                               examples/client/common.h
 tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_auth_test_LDADD        = src/libwolfssh.la
 tests_auth_test_DEPENDENCIES = src/libwolfssh.la

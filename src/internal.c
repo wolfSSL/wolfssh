@@ -1755,12 +1755,20 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
         if (key->keyId == ID_SSH_RSA ||
-            key->keyId == ID_X509V3_SSH_RSA) {
+            key->keyId == ID_X509V3_SSH_RSA
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+            || key->keyId == ID_OSSH_CERT_RSA
+#endif
+            ) {
 #ifndef WOLFSSH_NO_RSA
             wc_FreeRsaKey(&key->ks.rsa.key);
 #endif
         }
-        else if (key->keyId == ID_ED25519) {
+        else if (key->keyId == ID_ED25519
+#ifdef WOLFSSH_OSSH_CERTS
+                 || key->keyId == ID_OSSH_CERT_ED25519
+#endif
+                 ) {
 #ifndef WOLFSSH_NO_ED25519
             wc_ed25519_free(&key->ks.ed25519.key);
 #endif
@@ -1780,7 +1788,13 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
                  key->keyId == ID_ECDSA_SHA2_NISTP521 ||
                  key->keyId == ID_X509V3_ECDSA_SHA2_NISTP256 ||
                  key->keyId == ID_X509V3_ECDSA_SHA2_NISTP384 ||
-                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP521) {
+                 key->keyId == ID_X509V3_ECDSA_SHA2_NISTP521
+#ifdef WOLFSSH_OSSH_CERTS
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP256
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP384
+                 || key->keyId == ID_OSSH_CERT_ECDSA_SHA2_NISTP521
+#endif
+                 ) {
 #ifndef WOLFSSH_NO_ECDSA
             wc_ecc_free(&key->ks.ecc.key);
 #endif
@@ -2741,7 +2755,8 @@ int GenerateKey(byte hashId, byte keyId,
             runningKeySz = digestSz;
             ret = wc_HashFinal(&hash, enmhashId, key);
 
-            for (curBlock = 1; curBlock < blocks; curBlock++) {
+            for (curBlock = 1; ret == WS_SUCCESS && curBlock < blocks;
+                    curBlock++) {
                 ret = wc_HashInit(&hash, enmhashId);
                 if (ret != WS_SUCCESS) break;
                 ret = HashUpdate(&hash, enmhashId, kSzFlat, LENGTH_SZ);
@@ -5712,6 +5727,15 @@ static int ParseCertChain(byte* in, word32 inSz,
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "Peer sent certificate count of %d", count);
+
+        /* RFC 6187 section 2.1, the chain must carry at least the leaf */
+        if (count == 0) {
+            WLOG(WS_LOG_ERROR, "Peer sent an empty certificate chain");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         chain = in + idx;
 
         for (countIdx = count; countIdx > 0; countIdx--) {
@@ -9313,7 +9337,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ret = ParseLeafCert((byte*)pubKeyBlob, pubKeyBlobSz,
                         &cert, &certSz);
             }
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS && cert != NULL && certSz != 0) {
                 authData->sf.publicKey.publicKey = cert;
                 authData->sf.publicKey.publicKeySz = certSz;
                 authData->sf.publicKey.isCert = 1;
@@ -10968,6 +10992,15 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 #endif /* !NO_TERMIOS && WOLFSSH_TERM */
 
 
+/* Exact match on a channel request type, as NameToIdType() does for names. */
+static int ChannelRequestIs(const char* type, word32 typeSz, const char* name)
+{
+    word32 nameSz = (word32)WSTRLEN(name);
+
+    return (typeSz == nameSz) && (WSTRNCMP(type, name, nameSz) == 0);
+}
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -11006,7 +11039,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
-        if (WSTRNCMP(type, "env", typeSz) == 0) {
+        if (ChannelRequestIs(type, typeSz, "env")) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
             char value[32];
@@ -11022,14 +11055,14 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
             WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
-        else if (WSTRNCMP(type, "shell", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "shell")) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
             if (ssh->ctx->channelReqShellCb) {
                 rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
         }
-        else if (WSTRNCMP(type, "exec", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exec")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
@@ -11040,7 +11073,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
             WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
         }
-        else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "subsystem")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
@@ -11052,7 +11085,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
         }
         #ifdef WOLFSSH_TERM
-        else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "pty-req")) {
             char term[32];
             word32 termSz;
 
@@ -11090,7 +11123,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_TERM */
         #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
-        else if (WSTRNCMP(type, "window-change", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "window-change")) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
             wantReply = 0; /* RFC 4254 sec 6.7: no reply for window-change */
@@ -11122,12 +11155,12 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
         #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
-        else if (WSTRNCMP(type, "exit-status", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exit-status")) {
             wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-status */
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
         }
-        else if (WSTRNCMP(type, "exit-signal", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "exit-signal")) {
             char sig[WOLFSSH_MAX_NAMESZ];
             word32 sigSz;
             byte coreDumped;
@@ -11158,7 +11191,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_TERM or WOLFSSH_SHELL */
         #ifdef WOLFSSH_AGENT
-        else if (WSTRNCMP(type, "auth-agent-req@openssh.com", typeSz) == 0) {
+        else if (ChannelRequestIs(type, typeSz, "auth-agent-req@openssh.com")) {
             WLOG(WS_LOG_AGENT, "  ssh-agent");
             if (ssh->ctx->agentCb != NULL)
                 ssh->useAgent = 1;
@@ -18617,8 +18650,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_FORCEZERO(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
 
-    if (keySig_ptr)
+    if (keySig_ptr) {
+        WS_FORCEZERO(keySig_ptr, sizeof(WS_KeySignature));
         WFREE(keySig_ptr, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
 
     return ret;
 }
@@ -20904,6 +20939,16 @@ int wolfSSH_TestParseRSAPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
 }
 
 #endif /* !WOLFSSH_NO_RSA */
+
+#ifdef WOLFSSH_CERTS
+
+int wolfSSH_TestParseLeafCert(byte* in, word32 inSz,
+        byte** leafOut, word32* leafOutSz)
+{
+    return ParseLeafCert(in, inSz, leafOut, leafOutSz);
+}
+
+#endif /* WOLFSSH_CERTS */
 
 #ifndef WOLFSSH_NO_ECDSA
 

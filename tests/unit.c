@@ -5833,6 +5833,114 @@ done:
     return result;
 }
 
+#ifdef WOLFSSH_CERTS
+/* RFC 6187 chain: [name][certCount][certSz][cert]...[ocspCount] */
+static int test_ParseLeafCert_certCount(void)
+{
+    static const byte blobEmpty[] = {
+        0x00,0x00,0x00,0x0E,                    /* nameSz = 14        */
+        0x78,0x35,0x30,0x39,0x76,0x33,0x2D,     /* "x509v3-"          */
+        0x73,0x73,0x68,0x2D,0x72,0x73,0x61,     /* "ssh-rsa"          */
+        0x00,0x00,0x00,0x00,                    /* certCount = 0      */
+        0x00,0x00,0x00,0x00                     /* ocspCount = 0      */
+    };
+    static const byte blobOne[] = {
+        0x00,0x00,0x00,0x0E,                    /* nameSz = 14        */
+        0x78,0x35,0x30,0x39,0x76,0x33,0x2D,     /* "x509v3-"          */
+        0x73,0x73,0x68,0x2D,0x72,0x73,0x61,     /* "ssh-rsa"          */
+        0x00,0x00,0x00,0x01,                    /* certCount = 1      */
+        0x00,0x00,0x00,0x04,                    /* certSz = 4         */
+        0xDE,0xAD,0xBE,0xEF,                    /* leaf               */
+        0x00,0x00,0x00,0x00                     /* ocspCount = 0      */
+    };
+    byte*  leaf = NULL;
+    word32 leafSz = 0;
+    int    ret;
+
+    ret = wolfSSH_TestParseLeafCert((byte*)blobEmpty, (word32)sizeof(blobEmpty),
+            &leaf, &leafSz);
+    if (ret == WS_SUCCESS) {
+        printf("ParseLeafCert: accepted an empty certificate chain\n");
+        return -7100;
+    }
+    if (leaf != NULL || leafSz != 0) {
+        printf("ParseLeafCert: leaf set from an empty chain\n");
+        return -7101;
+    }
+
+    /* A well formed single-cert chain must still parse. */
+    ret = wolfSSH_TestParseLeafCert((byte*)blobOne, (word32)sizeof(blobOne),
+            &leaf, &leafSz);
+    if (ret != WS_SUCCESS) {
+        printf("ParseLeafCert: ret=%d on a one-cert chain\n", ret);
+        return -7102;
+    }
+    if (leaf != blobOne + 26 || leafSz != 4) {
+        printf("ParseLeafCert: wrong leaf, sz=%u\n", leafSz);
+        return -7103;
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_CERTS */
+
+
+#ifndef NO_SHA256
+/* RFC 4253 sec 7.2 key expansion, SHA-256, keySz = two digests plus a
+ * remainder, so the multi-block loop runs. Guards the derived key only;
+ * the loop's error propagation is not covered. */
+static int test_GenerateKey_multiBlock(void)
+{
+    static const byte kBuf[] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20
+    };
+    static const byte hBuf[] = {
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+        0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+        0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50
+    };
+    static const byte sessionId[] = {
+        0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+        0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60,
+        0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+        0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60
+    };
+    static const byte expected[] = {
+        0xE1, 0x5C, 0x71, 0xCF, 0x66, 0xC2, 0x63, 0x7C,
+        0xC7, 0xB5, 0x07, 0x41, 0x3E, 0x3A, 0x1A, 0x74,
+        0x16, 0xC6, 0xE8, 0x63, 0x0F, 0xFC, 0x4B, 0x52,
+        0xB0, 0x70, 0x6C, 0xC2, 0xE4, 0x5B, 0x1D, 0x22,
+        0x15, 0xCB, 0xFE, 0x3C, 0xB2, 0x14, 0x5A, 0xF0,
+        0x02, 0x54, 0xC1, 0x44, 0x6D, 0xCF, 0xED, 0x58,
+        0x7B, 0xE2, 0x4C, 0x6E, 0xE9, 0x14, 0x01, 0xA0,
+        0x09, 0x36, 0x16, 0xBE, 0xE8, 0xD5, 0x08, 0xBA,
+        0x9B, 0x2C, 0xD0, 0x51, 0x7B
+    };
+    byte key[sizeof(expected)];
+    int ret;
+
+    WMEMSET(key, 0, sizeof(key));
+    ret = GenerateKey(WC_HASH_TYPE_SHA256, 'A', key, (word32)sizeof(key),
+            kBuf, (word32)sizeof(kBuf), hBuf, (word32)sizeof(hBuf),
+            sessionId, (word32)sizeof(sessionId), 1);
+    if (ret != WS_SUCCESS) {
+        printf("GenerateKey_multiBlock: ret=%d\n", ret);
+        return -7000;
+    }
+    if (WMEMCMP(key, expected, sizeof(expected)) != 0) {
+        printf("GenerateKey_multiBlock: derived key mismatch\n");
+        return -7001;
+    }
+
+    return 0;
+}
+#endif /* !NO_SHA256 */
+
+
 static int test_DoChannelRequest(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -5903,6 +6011,83 @@ static int test_DoChannelRequest(void)
         ChannelDelete(ch, ssh->ctx->heap);
         result = -403;
         goto done;
+    }
+
+    /* A request type must match a handled name exactly. Truncated,
+     * empty, and NUL-padded types have to be rejected. These run before
+     * the positive cases below, which set the channel session type. */
+    {
+        static const byte payShellPrefix[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x02,              /* typeSz = 2      */
+            0x73,0x68,                        /* "sh"            */
+            0x01                              /* wantReply = 1   */
+        };
+        static const byte paySubPrefix[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x03,              /* typeSz = 3      */
+            0x73,0x75,0x62,                   /* "sub"           */
+            0x01                              /* wantReply = 1   */
+        };
+        static const byte payEmptyType[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x00,              /* typeSz = 0      */
+            0x01,                             /* wantReply = 1   */
+            0x00,0x00,0x00,0x00,              /* env name = ""   */
+            0x00,0x00,0x00,0x00               /* env value = ""  */
+        };
+        static const byte payShellNul[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x0A,              /* typeSz = 10     */
+            0x73,0x68,0x65,0x6C,0x6C,         /* "shell"         */
+            0x00,0x41,0x41,0x41,0x41,         /* "\0AAAA"        */
+            0x01                              /* wantReply = 1   */
+        };
+        struct { const char* label; const byte* buf; word32 sz; } badCases[] = {
+            { "sh",         payShellPrefix, (word32)sizeof(payShellPrefix) },
+            { "sub",        paySubPrefix,   (word32)sizeof(paySubPrefix)   },
+            { "empty",      payEmptyType,   (word32)sizeof(payEmptyType)   },
+            { "shell-nul",  payShellNul,    (word32)sizeof(payShellNul)    },
+        };
+        int b;
+
+        for (b = 0; b < (int)(sizeof(badCases)/sizeof(badCases[0])); b++) {
+            word32 idxBad = 0;
+            int    retBad, capMsgId;
+
+            s_chanReqCaptureSz = 0;
+            WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+            retBad = wolfSSH_TestDoChannelRequest(ssh, (byte*)badCases[b].buf,
+                    badCases[b].sz, &idxBad);
+            if (retBad != WS_SUCCESS) {
+                printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
+                        badCases[b].label, retBad, WS_SUCCESS);
+                result = -460 - b;
+                goto done;
+            }
+
+            capMsgId = CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz);
+            if (capMsgId != (int)MSGID_CHANNEL_FAILURE) {
+                printf("DoChannelRequest[%s]: msg_id=0x%02x, expected=0x%02x\n",
+                        badCases[b].label, capMsgId, MSGID_CHANNEL_FAILURE);
+                result = -470 - b;
+                goto done;
+            }
+
+            if (ch->sessionType == WOLFSSH_SESSION_SHELL) {
+                printf("DoChannelRequest[%s]: session type changed\n",
+                        badCases[b].label);
+                result = -480 - b;
+                goto done;
+            }
+            if (ssh->clientState == CLIENT_DONE) {
+                printf("DoChannelRequest[%s]: client state changed\n",
+                        badCases[b].label);
+                result = -490 - b;
+                goto done;
+            }
+        }
     }
 
     for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
@@ -7204,6 +7389,115 @@ static const byte unitTestEd25519PrivKey[] = {
 };
 #endif /* !WOLFSSH_NO_ED25519 */
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* Each OpenSSH-certificate key ID must free the key it was loaded into. One
+ * case per branch of wolfSSH_KEY_clean(), so a cert ID landing in the wrong
+ * branch frees the wrong union member and shows up here. */
+static int test_KEY_clean_osshCert(void)
+{
+    WS_KeySignature keySig;
+    word32 idx;
+    int    ret;
+
+    /* Every case below is optional; keep the locals used if all compile out. */
+    (void)keySig;
+    (void)idx;
+    (void)ret;
+
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_RSA;
+
+    if (wc_InitRsaKey(&keySig.ks.rsa.key, NULL) != 0)
+        return -7200;
+
+    ret = wc_RsaPrivateKeyDecode(unitTestRsaPrivKey, &idx,
+            &keySig.ks.rsa.key, (word32)sizeof(unitTestRsaPrivKey));
+    if (ret != 0) {
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        printf("KEY_clean_osshCert: RSA decode failed (%d)\n", ret);
+        return -7201;
+    }
+    if (keySig.ks.rsa.key.n.used == 0) {
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        printf("KEY_clean_osshCert: RSA key did not load\n");
+        return -7202;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.rsa.key.n.used != 0) {
+        printf("KEY_clean_osshCert: RSA key was not freed\n");
+        wc_FreeRsaKey(&keySig.ks.rsa.key);
+        return -7203;
+    }
+#endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_OSSH_CERT_RSA */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_ECDSA_SHA2_NISTP256;
+
+    if (wc_ecc_init(&keySig.ks.ecc.key) != 0)
+        return -7204;
+
+    ret = wc_EccPrivateKeyDecode(unitTestEcc256PrivKey, &idx,
+            &keySig.ks.ecc.key, (word32)sizeof(unitTestEcc256PrivKey));
+    if (ret != 0) {
+        wc_ecc_free(&keySig.ks.ecc.key);
+        printf("KEY_clean_osshCert: ECC decode failed (%d)\n", ret);
+        return -7205;
+    }
+    if (keySig.ks.ecc.key.pubkey.x->used == 0) {
+        wc_ecc_free(&keySig.ks.ecc.key);
+        printf("KEY_clean_osshCert: ECC key did not load\n");
+        return -7206;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.ecc.key.pubkey.x->used != 0) {
+        printf("KEY_clean_osshCert: ECC key was not freed\n");
+        wc_ecc_free(&keySig.ks.ecc.key);
+        return -7207;
+    }
+#endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+#ifndef WOLFSSH_NO_ED25519
+    idx = 0;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.keyId = ID_OSSH_CERT_ED25519;
+
+    if (wc_ed25519_init(&keySig.ks.ed25519.key) != 0)
+        return -7208;
+
+    ret = wc_Ed25519PrivateKeyDecode(unitTestEd25519PrivKey, &idx,
+            &keySig.ks.ed25519.key, (word32)sizeof(unitTestEd25519PrivKey));
+    if (ret != 0) {
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        printf("KEY_clean_osshCert: Ed25519 decode failed (%d)\n", ret);
+        return -7209;
+    }
+    if (keySig.ks.ed25519.key.privKeySet == 0) {
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        printf("KEY_clean_osshCert: Ed25519 key did not load\n");
+        return -7210;
+    }
+
+    wolfSSH_KEY_clean(&keySig);
+
+    if (keySig.ks.ed25519.key.privKeySet != 0) {
+        printf("KEY_clean_osshCert: Ed25519 key was not freed\n");
+        wc_ed25519_free(&keySig.ks.ed25519.key);
+        return -7211;
+    }
+#endif /* !WOLFSSH_NO_ED25519 */
+
+    return 0;
+}
+#endif /* WOLFSSH_OSSH_CERTS */
+
 #if !defined(WOLFSSH_NO_MLDSA)
 /* keys/server-key-mldsa44.der - MlDsa44 OneAsymmetricKey */
 static const byte unitTestMlDsaPrivKey[] = {
@@ -7664,6 +7958,7 @@ static const byte unitTestEd25519Pub[32] = {
     0xd3, 0x9e, 0x85, 0x87, 0xf3, 0x0e, 0x72, 0x6c,
     0x1e, 0xc0, 0x01, 0xe2, 0x81, 0x96, 0xb8, 0x49
 };
+
 
 /* Write a 32-bit big-endian length prefix at out. */
 static void Ed25519Test_PutLen(byte* out, word32 v)
@@ -13684,6 +13979,27 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("PrepareUserAuthRequestPassword: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_OSSH_CERTS
+    unitResult = test_KEY_clean_osshCert();
+    printf("KEY_clean_osshCert: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSH_CERTS
+    unitResult = test_ParseLeafCert_certCount();
+    printf("ParseLeafCert_certCount: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifndef NO_SHA256
+    unitResult = test_GenerateKey_multiBlock();
+    printf("GenerateKey_multiBlock: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_DoChannelRequest();
     printf("DoChannelRequest: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));

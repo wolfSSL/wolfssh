@@ -964,8 +964,8 @@ int DoScpRequest(WOLFSSH* ssh)
  * callbacks.
  *
  * ssh     - pointer to initialized WOLFSSH structure
- * message - error message to be sent to peer, dynamically allocated, freed
- *           internally when WOLFSSH session is freed.
+ * message - error message to be sent to peer. Copied internally, so the
+ *           caller keeps ownership. NULL returns WS_BAD_ARGUMENT.
  *
  * Returns WS_SUCCESS on success, negative upon error
  */
@@ -975,14 +975,13 @@ WOLFSSH_API int wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message)
     word32 valueSz = 0;
     int ret = WS_SUCCESS;
 
-    if (ssh == NULL)
+    if (ssh == NULL || message == NULL)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
         valueSz = (word32)WSTRLEN(message) + 1;
-        if (valueSz > 0)
-            value = (char*)WMALLOC(valueSz + SCP_MIN_CONFIRM_SZ,
-                                   ssh->ctx->heap, DYNTYPE_STRING);
+        value = (char*)WMALLOC(valueSz + SCP_MIN_CONFIRM_SZ,
+                               ssh->ctx->heap, DYNTYPE_STRING);
         if (value == NULL)
             ret = WS_MEMORY_E;
     }
