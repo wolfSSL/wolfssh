@@ -102,17 +102,6 @@ static void ClientFreeKeyboardResponses(void)
 }
 #endif
 
-#ifdef WOLFSSH_CERTS
-#if 0
-/* compiled in for using RSA certificates instead of ECC certificate */
-static const byte publicKeyType[] = "x509v3-ssh-rsa";
-static const byte privateKeyType[] = "ssh-rsa";
-#else
-static const byte publicKeyType[] = "x509v3-ecdsa-sha2-nistp256";
-#endif
-#endif
-
-
 #ifdef WOLFSSH_TPM
     WOLFTPM2_DEV tpmDev;
     WOLFTPM2_KEY tpmKey;
@@ -288,57 +277,6 @@ static const unsigned int hanselPrivateEccSz = 223;
 
 
 #if defined(WOLFSSH_CERTS)
-
-static int load_der_file(const char* filename, byte** out, word32* outSz,
-        void* heap)
-{
-    WFILE* file;
-    byte* in;
-    long inSz;
-    int ret;
-
-    if (filename == NULL || out == NULL || outSz == NULL)
-        return -1;
-
-    ret = WFOPEN(NULL, &file, filename, "rb");
-    if (ret != 0 || file == WBADFILE)
-        return -1;
-
-    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
-        WFCLOSE(NULL, file);
-        return -1;
-    }
-    inSz = WFTELL(NULL, file);
-    if (inSz <= 0) {
-        WFCLOSE(NULL, file);
-        return -1;
-    }
-    WREWIND(NULL, file);
-
-    in = (byte*)WMALLOC(inSz, heap, DYNTYPE_PRIVKEY);
-    if (in == NULL) {
-        WFCLOSE(NULL, file);
-        return -1;
-    }
-
-    ret = (int)WFREAD(NULL, in, 1, inSz, file);
-    if (ret <= 0 || ret != inSz) {
-        ret = -1;
-        WFREE(in, heap, DYNTYPE_PRIVKEY);
-        in = 0;
-        inSz = 0;
-    }
-    else
-        ret = 0;
-
-    *out = in;
-    *outSz = (word32)inSz;
-
-    WFCLOSE(NULL, file);
-
-    return ret;
-}
-
 
 #if (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
 static inline void ato32(const byte* c, word32* u32)
@@ -801,19 +739,23 @@ int ClientSetEcho(int type)
 int ClientUseCert(const char* certName, void* heap)
 {
     int ret = 0;
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+        !defined(WOLFSSH_USER_FILESYSTEM)
+    byte flavor = WOLFSSH_CERT_FLAVOR_UNKNOWN;
+#endif
 
     if (certName != NULL) {
-    #ifdef WOLFSSH_CERTS
-        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz, heap);
-        if (ret == 0) {
-            userPublicKeyType = publicKeyType;
-            userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+    #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+            !defined(WOLFSSH_USER_FILESYSTEM)
+        /* Form comes from the file, algorithm name from the certificate. */
+        ret = wolfSSH_ReadCert_file(certName, &userPublicKey, &userPublicKeySz,
+                &userPublicKeyType, &userPublicKeyTypeSz, &flavor, heap);
+        if (ret == WS_SUCCESS) {
             pubKeyLoaded = 1;
             userPublicKeyAlloc = 1;
         }
         else {
-            /* Defensive: load_der_file() clears its output pointer on the
-             * short-read failure, so put the static buffer back. */
+            /* Out params are cleared on failure; restore the static buf. */
             userPublicKey = userPublicKeyBuf;
             userPublicKeySz = 0;
             userPublicKeyType = NULL;
@@ -821,7 +763,7 @@ int ClientUseCert(const char* certName, void* heap)
         }
     #else
         (void)heap;
-        fprintf(stderr, "Certificate support not compiled in");
+        fprintf(stderr, "Certificate file support not compiled in\n");
         ret = WS_NOT_COMPILED;
     #endif
     }
@@ -1099,7 +1041,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
         WMEMSET(&tpmKey, 0, sizeof(tpmKey));
         ret = wolfSSH_TPM_InitKey(&tpmDev, privKeyName, &tpmKey, tpmKeyAuth,
                 heap);
-    #elif !defined(NO_FILESYSTEM)
+    #elif !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
         userPrivateKey = NULL; /* create new buffer based on parsed input */
         userPrivateKeyAlloc = 1;
         userPrivateKeySz = sizeof(userPrivateKeyBuf);
@@ -1145,7 +1087,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
         isPrivate = 1;
     }
     else {
-    #ifndef NO_FILESYSTEM
+    #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
         userPublicKey = NULL; /* create new buffer based on parsed input */
         ret = wolfSSH_ReadKey_file(pubKeyName,
                 &userPublicKey, &userPublicKeySz,
@@ -1154,7 +1096,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
     #else
         printf("file system not compiled in!\n");
         ret = NOT_COMPILED_IN;
-    #endif /* NO_FILESYSTEM */
+    #endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM */
         if (ret == 0) {
             pubKeyLoaded = 1;
             userPublicKeyAlloc = 1;
@@ -1176,22 +1118,15 @@ int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert)
 
     /* CA certificate to verify host cert with */
     if (caCert) {
-    #ifdef WOLFSSH_CERTS
-        byte* der = NULL;
-        word32 derSz;
-
-        ret = load_der_file(caCert, &der, &derSz, ctx->heap);
-        if (ret == 0) {
-            if (wolfSSH_CTX_AddRootCert_buffer(ctx, der, derSz,
-                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
-                fprintf(stderr, "Couldn't parse in CA certificate.");
-                ret = WS_PARSE_E;
-            }
-            WFREE(der, ctx->heap, DYNTYPE_PRIVKEY);
+    #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+            !defined(WOLFSSH_USER_FILESYSTEM)
+        ret = wolfSSH_CTX_AddRootCert_file(ctx, caCert);
+        if (ret != WS_SUCCESS) {
+            fprintf(stderr, "Couldn't parse in CA certificate.\n");
         }
     #else
         (void)ctx;
-        fprintf(stderr, "Support for certificates not compiled in.");
+        fprintf(stderr, "Support for certificate files not compiled in.\n");
         ret = WS_NOT_COMPILED;
     #endif
     }
