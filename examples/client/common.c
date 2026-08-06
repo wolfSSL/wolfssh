@@ -274,7 +274,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz,
     if (ret != 0 || file == WBADFILE)
         return -1;
 
-    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
         WFCLOSE(NULL, file);
         return -1;
     }
@@ -799,7 +799,10 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
         rc = BUFFER_E; goto exit;
     }
     if (fp != WBADFILE) {
-        WFSEEK(NULL, fp, 0, WSEEK_END);
+        if (!WFSEEK_SUCCESS(WFSEEK(NULL, fp, 0, WSEEK_END))) {
+            printf("File seek failed\n");
+            rc = BUFFER_E; goto exit;
+        }
         fileSz = WFTELL(NULL, fp);
         WREWIND(NULL, fp);
 

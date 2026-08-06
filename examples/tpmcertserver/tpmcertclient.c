@@ -72,18 +72,22 @@ static int TpmCcLoadFile(const char* file, byte* buf, word32* bufSz)
 {
     int ret = 0;
     WFILE* f;
-    word32 fileSz;
+    word32 fileSz = 0;
     word32 readSz;
 
     if (WFOPEN(NULL, &f, file, "rb") != 0) {
         ret = -1;
     }
     else {
-        WFSEEK(NULL, f, 0, WSEEK_END);
-        fileSz = (word32)WFTELL(NULL, f);
-        WREWIND(NULL, f);
+        if (!WFSEEK_SUCCESS(WFSEEK(NULL, f, 0, WSEEK_END))) {
+            ret = -1;
+        }
+        else {
+            fileSz = (word32)WFTELL(NULL, f);
+            WREWIND(NULL, f);
+        }
 
-        if (fileSz == 0 || fileSz > *bufSz) {
+        if (ret != 0 || fileSz == 0 || fileSz > *bufSz) {
             ret = -1;
         }
         else {

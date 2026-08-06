@@ -174,13 +174,22 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
     WFILE* file;
     word32 fileSz;
     word32 readSz;
+    long tmpSz;
 
     if (fileName == NULL) return 0;
 
     if (WFOPEN(NULL, &file, fileName, "rb") != 0)
         return 0;
-    WFSEEK(NULL, file, 0, WSEEK_END);
-    fileSz = (word32)WFTELL(NULL, file);
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+    tmpSz = WFTELL(NULL, file);
+    if (tmpSz < 0) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+    fileSz = (word32)tmpSz;
     WREWIND(NULL, file);
 
     if (buf == NULL || fileSz > *bufSz) {

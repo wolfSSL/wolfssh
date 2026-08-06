@@ -124,6 +124,7 @@ extern "C" {
     #define WREWIND(fs,s)       NU_Seek(*(s), 0, PSEEK_SET)
     #define WSEEK_END           PSEEK_END
     #define WBADFILE            NULL
+    #define WFSEEK_SUCCESS(r)   ((int)(r) >= 0)
 
     #define WS_DELIM '\\'
     #define WOLFSSH_O_RDWR   PO_RDWR
@@ -440,6 +441,7 @@ extern "C" {
     #define WSETTIME(fs,f,a,m) (0)
     #define WFSETTIME(fs,fd,a,m) (0)
     #define WCHDIR(fs,b)        SYS_FS_DirectryChange((b))
+    #define WFSEEK_SUCCESS(r)   ((int)(r) >= 0)
 
 #else
     #include <stdlib.h>
@@ -1622,6 +1624,15 @@ extern "C" {
  * 0 when symlinks are not a concern (no-symlink filesystems, opt-out builds). */
 #ifndef WOLFSSH_O_NOFOLLOW
     #define WOLFSSH_O_NOFOLLOW 0
+#endif
+
+/* Catch-all so callers can test a seek result unconditionally.  Ports whose
+ * seek returns the new file position rather than a 0/-1 status define their
+ * own WFSEEK_SUCCESS() in the port block above; see Nucleus and MPLAB
+ * Harmony.  Any definition must evaluate its argument exactly once, as
+ * callers pass the WFSEEK() call in directly. */
+#ifndef WFSEEK_SUCCESS
+    #define WFSEEK_SUCCESS(r)   ((r) == 0)
 #endif
 
 /* wIsSymlink lives in the always-compiled port.c, but its filesystem

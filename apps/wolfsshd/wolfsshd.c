@@ -291,7 +291,11 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
             return NULL;
         }
     }
-    WFSEEK(NULL, file, 0, WSEEK_END);
+
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
+        WFCLOSE(NULL, file);
+        return NULL;
+    }
     fileSz = WFTELL(NULL, file);
     if (fileSz < 0) {
         WFCLOSE(NULL, file);

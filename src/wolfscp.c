@@ -2686,17 +2686,25 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
 static int _GetFileSize(void* fs, WFILE* fp, word32* fileSz)
 {
+    long tmpSz;
+
     WOLFSSH_UNUSED(fs);
 
     if (fp == NULL || fileSz == NULL)
         return WS_BAD_ARGUMENT;
 
     /* get file size */
-    WFSEEK(fs, fp, 0, WSEEK_END);
-    *fileSz = (word32)WFTELL(fs, fp);
-    WREWIND(fs, fp);
+    if (WFSEEK_SUCCESS(WFSEEK(fs, fp, 0, WSEEK_END))) {
+        tmpSz = WFTELL(fs, fp);
+        if (tmpSz < 0) {
+            return WS_BAD_FILE_E;
+        }
+        *fileSz = (word32)tmpSz;
+        WREWIND(fs, fp);
 
-    return WS_SUCCESS;
+        return WS_SUCCESS;
+    }
+    return WS_BAD_FILE_E;
 }
 
 static int GetFileStats(void *fs, ScpSendCtx* ctx, const char* fileName,
@@ -3182,8 +3190,14 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
             if (ret == WS_SUCCESS) {
                 ret = _GetFileSize(ssh->fs, sendCtx->fp, totalFileSz);
 
-                if (ret == WS_SUCCESS)
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, "scp: unable to get file size, abort");
+                    wolfSSH_SetScpErrorMsg(ssh, "unable to get file size");
+                    ret = WS_SCP_ABORT;
+                }
+                else {
                     ret = (word32)WFREAD(ssh->fs, buf, 1, bufSz, sendCtx->fp);
+                }
             }
 
             /* keep fp open if no errors and transfer will continue */
@@ -3356,8 +3370,13 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             #endif
             }
 
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = _GetFileSize(ssh->fs, sendCtx->fp, totalFileSz);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, "scp: unable to get file size, abort");
+                    wolfSSH_SetScpErrorMsg(ssh, "unable to get file size");
+                }
+            }
 
             if (ret == WS_SUCCESS)
                 ret = GetFileStats(ssh->fs, sendCtx, peerRequest, mTime, aTime, fileMode);
