@@ -472,7 +472,10 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
     if (WFOPEN(NULL, &file, path, "rb") != 0 || file == WBADFILE) {
         return 0;
     }
-    WFSEEK(NULL, file, 0, WSEEK_END);
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
     fileSz = WFTELL(NULL, file);
     WREWIND(NULL, file);
 

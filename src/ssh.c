@@ -2410,7 +2410,7 @@ int wolfSSH_ReadKey_file(const char* name,
     if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
 #endif
 
-    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
         WFCLOSE(NULL, file);
         return WS_BAD_FILE_E;
     }

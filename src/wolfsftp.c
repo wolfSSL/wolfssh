@@ -10053,7 +10053,8 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 #if SIZEOF_OFF_T == 8
                     offset = (((word64)state->pOfst[1]) << 32) | offset;
                 #endif
-                    if (WFSEEK(ssh->fs, state->fl, offset, 0) != 0) {
+                    if (!WFSEEK_SUCCESS(WFSEEK(
+                                        ssh->fs, state->fl, offset, 0))) {
                         WLOG(WS_LOG_SFTP, "Unable to seek input file");
                         ssh->error = WS_BAD_FILE_E;
                         ret = WS_FATAL_ERROR;
