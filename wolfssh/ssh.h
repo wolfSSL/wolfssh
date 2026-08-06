@@ -106,8 +106,9 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
 
 #if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
 /* Decodes a PEM/DER X.509 cert or OpenSSH cert line, detected from content.
- * Caller frees out via heap; on failure every out param is cleared. A body
- * that will not decode is WS_PARSE_E; WS_BAD_FILE_E is from _file alone. */
+ * Of several PEM certs, only the first is read. Caller frees out via heap; on
+ * failure out params are cleared. An undecodable body gives WS_PARSE_E,
+ * WS_BAD_FILE_E comes from _file alone. */
 WOLFSSH_API int wolfSSH_ReadCert_buffer(const byte* in, word32 inSz,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* flavor, void* heap);
@@ -535,8 +536,12 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
                                                  const byte* in, word32 inSz,
                                                  int format);
 #ifdef WOLFSSH_CERTS
+    /* Takes the leaf; of several PEM certs, only the first is read. The
+     * trusted form is for root CAs, so it is declined here. */
     WOLFSSH_API int wolfSSH_CTX_UseCert_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
+    /* Loads every PEM cert, plain or trusted (wolfSSL 5.8.0+), so a bundle
+     * installs all its CAs. A failing block is skipped; no CA fails the call. */
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_buffer(WOLFSSH_CTX* ctx,
             const byte* cert, word32 certSz, int format);
     #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
