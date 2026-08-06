@@ -1660,6 +1660,7 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
     WFILE* file;
     word32 fileSz;
     word32 readSz;
+    long tmpSz;
 
     if (fileName == NULL) return 0;
 
@@ -1669,7 +1670,13 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
         WFCLOSE(NULL, file);
         return 0;
     }
-    fileSz = (word32)WFTELL(NULL, file);
+
+    tmpSz = WFTELL(NULL, file);
+    if (tmpSz < 0) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+    fileSz = (word32)tmpSz;
     WREWIND(NULL, file);
 
     if (buf == NULL || fileSz > *bufSz) {
@@ -2182,6 +2189,11 @@ static char* LoadTpmSshKey(const char* keyFile, const char* username)
         return NULL;
     }
     length = WFTELL(NULL, file);
+    if (length < 0) {
+        fprintf(stderr, "TPM key file tell failed\n");
+        WFCLOSE(NULL, file);
+        return NULL;
+    }
     WREWIND(NULL, file);
 
     usernameLen = WSTRLEN(username);
