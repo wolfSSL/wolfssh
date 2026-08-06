@@ -302,6 +302,19 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelReqExecCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelReq cb);
 WOLFSSH_API int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelReq cb);
+typedef int (*WS_CallbackChannelSignalReq)(WOLFSSH_CHANNEL* channel,
+        const char* signame, word32 signameSz, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqSignalCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelSignalReq cb);
+typedef int (*WS_CallbackChannelBreakReq)(WOLFSSH_CHANNEL* channel,
+        word32 duration, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqBreakCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelBreakReq cb);
+typedef int (*WS_CallbackChannelEnvReq)(WOLFSSH_CHANNEL* channel,
+        const char* key, word32 keySz, const char* value, word32 valueSz,
+        void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqEnvCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelEnvReq cb);
 WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
 

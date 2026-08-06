@@ -5833,6 +5833,50 @@ done:
     return result;
 }
 
+typedef int (*channel_request_callback)(void);
+
+typedef int (*channel_request_callback_setter)(
+        WOLFSSH_CTX* ctx, channel_request_callback callback);
+
+static int channel_request_cb(WOLFSSH_CHANNEL* ch, void* ctx)
+{
+    (void)ch;
+    *(byte*)ctx = 1;
+    return 0;
+}
+
+static int channel_request_env_cb(WOLFSSH_CHANNEL* ch, const char* key,
+        word32 keySz, const char* value, word32 valueSz, void* ctx)
+{
+    (void)ch;
+    (void)key;
+    (void)keySz;
+    (void)value;
+    (void)valueSz;
+    *(byte*)ctx = 1;
+    return 0;
+}
+
+static int channel_request_signal_cb(WOLFSSH_CHANNEL* ch,
+        const char* signame, word32 signameSz, void* ctx)
+{
+    (void)ch;
+    (void)signame;
+    (void)signameSz;
+    *(byte*)ctx = 1;
+    return 0;
+}
+
+static int channel_request_break_cb(WOLFSSH_CHANNEL* ch, word32 duration,
+        void* ctx)
+{
+    (void)ch;
+    (void)duration;
+    *(byte*)ctx = 1;
+    return 0;
+}
+
+
 static int test_DoChannelRequest(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -5845,40 +5889,93 @@ static int test_DoChannelRequest(void)
     static const byte payShell[] = {
         0x00,0x00,0x00,0x00,              /* channelId = 0   */
         0x00,0x00,0x00,0x05,              /* typeSz = 5      */
-        0x73,0x68,0x65,0x6C,0x6C,         /* "shell"         */
+        's','h','e','l','l',
         0x01                              /* wantReply = 1   */
     };
     static const byte payExec[] = {
         0x00,0x00,0x00,0x00,              /* channelId = 0   */
         0x00,0x00,0x00,0x04,              /* typeSz = 4      */
-        0x65,0x78,0x65,0x63,              /* "exec"          */
+        'e','x','e','c',
         0x01,                             /* wantReply = 1   */
         0x00,0x00,0x00,0x02,              /* cmdSz = 2       */
-        0x6C,0x73                         /* "ls"            */
+        'l','s'
+    };
+    static const byte paySubsystem[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x09,              /* typeSz = 9      */
+        's','u','b','s','y','s','t','e','m',
+        0x01,                             /* wantReply = 1   */
+        0x00,0x00,0x00,0x04,              /* nameSz = 4      */
+        's','f','t','p'
+    };
+    static const byte payEnv[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x03,              /* typeSz = 3      */
+        'e','n','v',
+        0x01,                             /* wantReply = 1   */
+        0x00,0x00,0x00,0x04,              /* nameSz = 4      */
+        'H','O','M','E',
+        0x00,0x00,0x00,0x0D,              /* valueSz = 13    */
+        '/','h','o','m','e','/','w','o','l','f','s','s','h'
+    };
+    static const byte paySignal[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x06,              /* typeSz = 6      */
+        's','i','g','n','a','l',
+        0x00,                             /* wantReply = 0   */
+        0x00,0x00,0x00,0x03,              /* signameSz = 3   */
+        'H','U','P'
+    };
+    static const byte payBreak[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x05,              /* typeSz = 6      */
+        'b','r','e','a','k',
+        0x01,                             /* wantReply = 1   */
+        0x00,0x00,0x01,0xf4,              /* duration = 500  */
     };
     static const byte payUnknown[] = {
         0x00,0x00,0x00,0x00,              /* channelId = 0   */
         0x00,0x00,0x00,0x0C,              /* typeSz = 12     */
-        0x75,0x6E,0x6B,0x6E,0x6F,0x77,
-        0x6E,0x2D,0x74,0x79,0x70,0x65,   /* "unknown-type"  */
+        'u','n','k','n','o','w','n','-','t','y','p','e',
         0x01                              /* wantReply = 1   */
     };
 
-    struct {
-        const char* label;
-        const byte* payload;
-        word32      payloadSz;
-        int         expectRet;
-        byte        expectMsgId;
+    const struct {
+        const char*                     label;
+        const byte*                     payload;
+        word32                          payloadSz;
+        void*                           callback;
+        void*                           cb_setter;
+        int                             expectRet;
+        byte                            expectMsgId;
     } cases[] = {
         { "shell",
           payShell,   (word32)sizeof(payShell),
+          channel_request_cb, wolfSSH_CTX_SetChannelReqShellCb,
           WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
         { "exec",
           payExec,    (word32)sizeof(payExec),
+          channel_request_cb, wolfSSH_CTX_SetChannelReqExecCb,
+          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        { "subsystem",
+          paySubsystem, (word32)sizeof(paySubsystem),
+          channel_request_cb, wolfSSH_CTX_SetChannelReqSubsysCb,
+          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        { "env",
+          payEnv, (word32)sizeof(payEnv),
+          channel_request_env_cb, wolfSSH_CTX_SetChannelReqEnvCb,
+          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        { "signal",
+          paySignal, (word32)sizeof(paySignal),
+          channel_request_signal_cb, wolfSSH_CTX_SetChannelReqSignalCb,
+          WS_SUCCESS, 0 },
+        { "break",
+          payBreak, (word32)sizeof(payBreak),
+          channel_request_break_cb, wolfSSH_CTX_SetChannelReqBreakCb,
           WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
         { "unknown-type",
           payUnknown, (word32)sizeof(payUnknown),
+          NULL, NULL,
           WS_SUCCESS, MSGID_CHANNEL_FAILURE },
     };
 
@@ -5908,9 +6005,28 @@ static int test_DoChannelRequest(void)
     for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
         word32 idx = 0;
         int    ret;
+        byte   called = 0;
 
         s_chanReqCaptureSz = 0;
         WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+        ret = wolfSSH_SetChannelReqCtx(ssh, &called);
+        if (ret != WS_SUCCESS) {
+            printf("SetChannelReqCtx[%s]: failed (%d)\n", cases[i].label, ret);
+            result = -410 - i;
+            goto done;
+        }
+
+        if (cases[i].cb_setter) {
+            channel_request_callback_setter setter = cases[i].cb_setter;
+            ret = setter(ssh->ctx, (channel_request_callback)cases[i].callback);
+            if (ret != WS_SUCCESS) {
+                printf("set channel request callback [%s]: failed (%d)\n",
+                        cases[i].label, ret);
+                result = -420 - i;
+                goto done;
+            }
+        }
 
         ret = wolfSSH_TestDoChannelRequest(ssh,
                 (byte*)cases[i].payload, cases[i].payloadSz, &idx);
@@ -5918,25 +6034,51 @@ static int test_DoChannelRequest(void)
         if (ret != cases[i].expectRet) {
             printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
                     cases[i].label, ret, cases[i].expectRet);
-            result = -404 - i;
+            result = -430 - i;
             goto done;
         }
 
         {
             int capMsgId = CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz);
 
-            if (capMsgId < 0) {
+            if (!cases[i].expectMsgId) {
+                if (capMsgId >= 0) {
+                    printf("DoChannelRequest[%s]: unexpected return message "
+                            "with id 0x%02x\n", cases[i].label, capMsgId);
+                    result = -440 - i;
+                    goto done;
+                }
+            }
+
+            if (cases[i].expectMsgId && capMsgId < 0) {
                 printf("DoChannelRequest[%s]: captured packet too short (%u)\n",
                         cases[i].label, s_chanReqCaptureSz);
-                result = -410 - i;
+                result = -450 - i;
                 goto done;
             }
 
-            if (capMsgId != (int)cases[i].expectMsgId) {
+            if (cases[i].expectMsgId && capMsgId != (int)cases[i].expectMsgId) {
                 printf("DoChannelRequest[%s]: msg_id=0x%02x, expected=0x%02x\n",
                         cases[i].label,
                         capMsgId, cases[i].expectMsgId);
-                result = -420 - i;
+                result = -460 - i;
+                goto done;
+            }
+        }
+
+        if (cases[i].cb_setter) {
+            if (!called) {
+                printf("channel request callback [%s]: not called\n",
+                        cases[i].label);
+                result = -470 - i;
+                goto done;
+            }
+            channel_request_callback_setter setter = cases[i].cb_setter;
+            ret = setter(ssh->ctx, NULL);
+            if (ret != WS_SUCCESS) {
+                printf("clear channel request callback [%s]: failed (%d)\n",
+                        cases[i].label, ret);
+                result = -480 - i;
                 goto done;
             }
         }
@@ -5972,8 +6114,8 @@ static int test_DoChannelRequest(void)
         };
         struct { const char* label; const byte* buf; word32 sz; int errBase; }
         noReplyCases[] = {
-            { "exit-status", payExitStatus, (word32)sizeof(payExitStatus), -430 },
-            { "exit-signal", payExitSignal, (word32)sizeof(payExitSignal), -440 },
+            { "exit-status", payExitStatus, (word32)sizeof(payExitStatus), -490 },
+            { "exit-signal", payExitSignal, (word32)sizeof(payExitSignal), -500 },
         };
         int k;
 
@@ -6030,13 +6172,13 @@ static int test_DoChannelRequest(void)
         if (ret2 != WS_SUCCESS) {
             printf("DoChannelRequest[window-change]: ret=%d, expected=%d\n",
                     ret2, WS_SUCCESS);
-            result = -450;
+            result = -510;
             goto done;
         }
         if (s_chanReqCaptureSz != 0) {
             printf("DoChannelRequest[window-change]: unexpected reply packet "
                     "(sz=%u)\n", s_chanReqCaptureSz);
-            result = -451;
+            result = -511;
             goto done;
         }
     }

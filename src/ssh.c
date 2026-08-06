@@ -4096,6 +4096,48 @@ int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 }
 
 
+int wolfSSH_CTX_SetChannelReqSignalCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelSignalReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqSignalCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqBreakCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelBreakReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqBreakCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqEnvCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelEnvReq cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqEnvCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx)
 {
     int ret = WS_SSH_NULL_E;

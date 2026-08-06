@@ -771,6 +771,9 @@ struct WOLFSSH_CTX {
     WS_CallbackChannelReq channelReqShellCb; /* Channel Request "Shell" */
     WS_CallbackChannelReq channelReqExecCb; /* Channel Request "Exec" */
     WS_CallbackChannelReq channelReqSubsysCb; /* Channel Request "Subsystem" */
+    WS_CallbackChannelSignalReq channelReqSignalCb; /* Channel Signal Request */
+    WS_CallbackChannelBreakReq channelReqBreakCb; /* Channel Break Request */
+    WS_CallbackChannelEnvReq channelReqEnvCb; /* Channel Environment Request */
     WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
     WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */
 #ifdef WOLFSSH_SCP

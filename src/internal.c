@@ -11007,20 +11007,24 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
         if (WSTRNCMP(type, "env", typeSz) == 0) {
-            char name[WOLFSSH_MAX_NAMESZ];
+            const char* name = NULL;
             word32 nameSz;
-            char value[32];
+            const char* value = NULL;
             word32 valueSz;
 
-            name[0] = 0;
-            value[0] = 0;
-            nameSz = (word32)sizeof(name);
-            valueSz = (word32)sizeof(value);
-            ret = GetString(name, &nameSz, buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                ret = GetString(value, &valueSz, buf, len, &begin);
-
-            WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
+            ret = GetStringRef(&nameSz, (const byte**)&name, buf, len, &begin);
+            if (ret == WS_SUCCESS) {
+                ret = GetStringRef(&valueSz, (const byte**)&value,
+                        buf, len, &begin);
+            }
+            if (ret == WS_SUCCESS && ssh->ctx->channelReqEnvCb) {
+                rej = ssh->ctx->channelReqEnvCb(channel, name, nameSz,
+                        value, valueSz, ssh->channelReqCtx);
+            }
+            if (ret == WS_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "  %.*s = %.*s",
+                        nameSz, name, valueSz, value);
+            }
         }
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
@@ -11033,7 +11037,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
-            if (ssh->ctx->channelReqExecCb) {
+            if (ret == WS_SUCCESS && ssh->ctx->channelReqExecCb) {
                 rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
@@ -11044,12 +11048,37 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-            if (ssh->ctx->channelReqSubsysCb) {
+            if (ret == WS_SUCCESS && ssh->ctx->channelReqSubsysCb) {
                 rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
             }
             ssh->clientState = CLIENT_DONE;
 
             WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+        }
+        else if (WSTRNCMP(type, "signal", typeSz) == 0) {
+            const char* signame = NULL;
+            word32 signameSz;
+
+            wantReply = 0; /* RFC 4254 sec 6.9: no reply for signal */
+            ret = GetStringRef(&signameSz, (const byte**)&signame,
+                        buf, len, &begin);
+            if (ret == WS_SUCCESS && ssh->ctx->channelReqSignalCb) {
+                rej = ssh->ctx->channelReqSignalCb(channel, signame, signameSz,
+                        ssh->channelReqCtx);
+            }
+
+            WLOG(WS_LOG_DEBUG, "  Client requested to send signal SIG%.*s",
+                    signameSz, signame);
+        }
+        else if (WSTRNCMP(type, "break", typeSz) == 0) {
+            word32 duration;
+            ret = GetUint32(&duration, buf, len, &begin);
+            if (ret == WS_SUCCESS && ssh->ctx->channelReqBreakCb) {
+                rej = ssh->ctx->channelReqBreakCb(channel, duration,
+                        ssh->channelReqCtx);
+            }
+
+            WLOG(WS_LOG_DEBUG, "  **BREAK** [%dms]", duration);
         }
         #ifdef WOLFSSH_TERM
         else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
