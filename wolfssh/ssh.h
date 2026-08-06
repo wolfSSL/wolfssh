@@ -452,6 +452,27 @@ typedef struct WS_UserAuthData {
     } sf;
 } WS_UserAuthData;
 
+/* User Authentication Callback
+ *
+ * A server-side callback that decides whether to authenticate a client.
+ * Return WOLFSSH_USERAUTH_SUCCESS only on a positive authentication
+ * decision. WOLFSSH_USERAUTH_PARTIAL_SUCCESS reports that one factor of
+ * a multi-method authentication passed, WOLFSSH_USERAUTH_SUCCESS_ANOTHER
+ * reports that a keyboard-interactive round passed and asks for the next
+ * round, WOLFSSH_USERAUTH_WOULD_BLOCK asks for the request to be
+ * retried, and WOLFSSH_USERAUTH_REJECTED is a hard rejection that ends
+ * the session; any other value is treated as an ordinary failure.
+ *
+ * WARNING: WOLFSSH_USERAUTH_SUCCESS has the value 0, the same as
+ * WS_SUCCESS and the C "no error" idiom. A bare "return 0;", a forwarded
+ * WS_SUCCESS from a helper, or a fall-through default of 0 silently
+ * authenticates the client. Return WOLFSSH_USERAUTH_FAILURE for any
+ * authType or code path the callback does not explicitly handle.
+ *
+ * For WOLFSSH_USERAUTH_PUBLICKEY, the callback must check the offered
+ * public key against the user's authorized keys; returning success on an
+ * unchecked key authorizes an attacker-supplied key. The library verifies
+ * the signature, not the key's authorization. */
 typedef int (*WS_CallbackUserAuth)(byte authType, WS_UserAuthData* authData,
         void* ctx);
 WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb);
@@ -469,7 +490,17 @@ WOLFSSH_API void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh,
         void* userAuthResultCtx);
 WOLFSSH_API void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh);
 
-/* Public Key Check Callback */
+/* Public Key Check Callback
+ *
+ * A client-side callback that decides whether to trust the server's host
+ * key, the client's only defense against a man-in-the-middle. Return 0 to
+ * accept the key; return non-zero to reject it and fail the key exchange.
+ *
+ * WARNING: 0 accepts, so a stub that defaults to "return 0;" accepts any
+ * server host key and defeats MITM protection. The callback must match
+ * the key against a trust store, e.g. a known-hosts list; see
+ * ClientPublicKeyCheck() in the examples. If no callback is registered,
+ * the host key is rejected (WS_PUBKEY_REJECTED_E). */
 typedef int (*WS_CallbackPublicKeyCheck)(const byte* publicKey,
         word32 publicKeySz, void* ctx);
 WOLFSSH_API void wolfSSH_CTX_SetPublicKeyCheck(WOLFSSH_CTX* ctx,

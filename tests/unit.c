@@ -3352,6 +3352,99 @@ done:
     return result;
 }
 
+/* Sibling of test_MsgHighwater for the byte-count branch of HighwaterCheck
+ * (RFC 4253 Section 9 keystream/IV bound). Covers:
+ *   - Threshold boundary: mark-1 does not fire, mark fires (>= not >)
+ *   - Callback fires exactly once per epoch (highwaterFlag gates re-firing)
+ *   - Receive side fires independently after an epoch reset
+ *   - highwaterMark == 0 disables the byte check */
+static int test_ByteHighwater(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    HwTestCtx    hc;
+    int          result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -820;
+
+    WMEMSET(&hc, 0, sizeof(hc));
+    wolfSSH_SetHighwaterCb(ctx, 1024, HwTestCb);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -821;
+        goto done;
+    }
+    wolfSSH_SetHighwaterCtx(ssh, &hc);
+    /* Disable the packet-count branch so only the byte branch is under
+     * test. */
+    wolfSSH_SetMsgHighwater(ssh, 0);
+
+    if (wolfSSH_GetHighwater(ssh) != 1024) {
+        result = -822;
+        goto done;
+    }
+
+    /* One byte under the mark on both sides: must not fire. */
+    ssh->txCount = 1023;
+    ssh->rxCount = 1023;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 0) {
+        result = -823;
+        goto done;
+    }
+
+    /* At the mark: fires, with the transmit side reported. */
+    ssh->txCount = 1024;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1
+            || hc.lastSide != WOLFSSH_HWSIDE_TRANSMIT) {
+        result = -824;
+        goto done;
+    }
+
+    /* Flag-gated: more bytes in the same epoch must not re-fire. */
+    ssh->txCount = 4096;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 1) {
+        result = -825;
+        goto done;
+    }
+
+    /* Fresh key epoch (highwaterFlag and tx/rxCount are reset by
+     * DoNewKeys/SendNewKeys): the receive side fires on its own. */
+    ssh->highwaterFlag = 0;
+    ssh->txCount = 0;
+    ssh->rxCount = 1024;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_RECEIVE) != WS_SUCCESS
+            || hc.count != 2
+            || hc.lastSide != WOLFSSH_HWSIDE_RECEIVE) {
+        result = -826;
+        goto done;
+    }
+
+    /* mark == 0 disables the byte check entirely. */
+    if (wolfSSH_SetHighwater(ssh, 0) != WS_SUCCESS) {
+        result = -827;
+        goto done;
+    }
+    ssh->highwaterFlag = 0;
+    ssh->txCount = 0xFFFFFFFFu;
+    ssh->rxCount = 0xFFFFFFFFu;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 2) {
+        result = -828;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 static int test_DoChannelSuccess(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -6969,6 +7062,273 @@ static int test_SendUserAuthFailure_emptyMethods(void)
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
+
+/* Append an SSH string (uint32 BE length followed by the bytes) at *pIdx. */
+static void AppendSshString(byte* buf, word32* pIdx,
+        const void* data, word32 dataSz)
+{
+    PutU32BE(buf + *pIdx, dataSz);
+    *pIdx += UINT32_SZ;
+    if (dataSz > 0) {
+        WMEMCPY(buf + *pIdx, data, dataSz);
+    }
+    *pIdx += dataSz;
+}
+
+/* Verify DoUserAuthRequestEcc() binds the curve name carried in the public key
+ * blob to the declared public key algorithm (RFC 5656 Section 3.1: the key blob
+ * is string "ecdsa-sha2-[identifier]" || string [identifier] || string Q, so
+ * the two identifiers must agree).
+ *
+ * Without that binding the blob's curve name is discarded and the point is
+ * imported with the curve inferred from its own size, so a request declaring
+ * ecdsa-sha2-nistp256 while carrying a P-384 curve name, a P-384 point, and a
+ * P-384 signature over the SHA-256 digest verifies and authenticates. The
+ * declared algorithm picks the hash, and signing a 32-byte digest with a P-384
+ * key is valid ECDSA, so nothing else in the path rejects it.
+ *
+ * Four cases, each on a fresh WOLFSSH:
+ *   1. Control: P-256 key, curve name "nistp256". Must authenticate - proves
+ *      the message layout and signing recipe are right, so the mismatch cases
+ *      fail for the intended reason, and that the check does not break the
+ *      happy path.
+ *   2. Mismatch: P-384 key and curve name "nistp384", algorithm still
+ *      ecdsa-sha2-nistp256. Same length as "nistp256", so this exercises the
+ *      content arm of the curve name check. Must be rejected with
+ *      USERAUTH_FAILURE.
+ *   3. Point mismatch: curve name "nistp256" agrees with the algorithm but
+ *      the point and signature are P-384. The name check passes; only the
+ *      import pinned to the declared curve (wc_ecc_import_x963_ex) rejects
+ *      it. Must be rejected with USERAUTH_FAILURE.
+ *   4. Truncated name: curve name "nistp" with a P-256 key, exercising the
+ *      length arm of the curve name check. Must be rejected with
+ *      USERAUTH_FAILURE.
+ *
+ * All cases assert ret == WS_SUCCESS (the connection stays up either way) and
+ * idx == len (the whole payload is consumed). */
+static int test_EccUserAuthCurveMismatch(void)
+{
+    static const char algoName[] = "ecdsa-sha2-nistp256";
+    static const struct {
+        const char* curveName;
+        int         keySz;
+        int         curveId;
+        int         expectAuth;
+        const char* label;
+    } cases[] = {
+        { "nistp256", 32, ECC_SECP256R1, 1, "matching curve" },
+        { "nistp384", 48, ECC_SECP384R1, 0, "curve mismatch" },
+        { "nistp256", 48, ECC_SECP384R1, 0, "matching name, wrong point" },
+        { "nistp",    32, ECC_SECP256R1, 0, "truncated curve name" },
+    };
+    int result = 0;
+    int i;
+
+    for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
+        WOLFSSH_CTX* ctx = NULL;
+        WOLFSSH*     ssh = NULL;
+        WC_RNG   rng;
+        ecc_key  key;
+        byte     buf[512];
+        byte     toSign[512];
+        byte     q[133];
+        byte     der[140];
+        byte     r[66];
+        byte     s[66];
+        byte     digest[WC_MAX_DIGEST_SIZE];
+        word32   algoSz = (word32)WSTRLEN(algoName);
+        word32   curveSz = (word32)WSTRLEN(cases[i].curveName);
+        word32   qSz = (word32)sizeof(q);
+        word32   derSz = (word32)sizeof(der);
+        word32   rSz = (word32)sizeof(r);
+        word32   sSz = (word32)sizeof(s);
+        word32   len = 0, idx = 0, blobSz, sigBlobSz, tsSz;
+        byte     rPad, sPad;
+        int      rngReady = 0, keyReady = 0;
+        int      ret;
+
+        WMEMSET(&rng, 0, sizeof(rng));
+        WMEMSET(&key, 0, sizeof(key));
+        WMEMSET(digest, 0, sizeof(digest));
+
+        if (wc_ecc_init(&key) != 0) {
+            result = -776;
+            break;
+        }
+        keyReady = 1;
+        if (wc_InitRng(&rng) != 0) {
+            result = -777;
+            goto caseDone;
+        }
+        rngReady = 1;
+        if (wc_ecc_make_key_ex(&rng, cases[i].keySz, &key,
+                    cases[i].curveId) != 0) {
+            result = -778;
+            goto caseDone;
+        }
+        if (wc_ecc_export_x963(&key, q, &qSz) != 0) {
+            result = -779;
+            goto caseDone;
+        }
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL) {
+            result = -780;
+            goto caseDone;
+        }
+        wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+        wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysSucceed);
+
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            result = -781;
+            goto caseDone;
+        }
+        /* The digest recipe below assumes an empty session id. */
+        if (ssh->sessionIdSz != 0) {
+            result = -782;
+            goto caseDone;
+        }
+
+        s_authSvcCaptureSz = 0;
+        s_authSvcSendCount = 0;
+        WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+        /* Fields 1-6, the region covered by the signature. */
+        AppendSshString(buf, &len, "user", 4);
+        AppendSshString(buf, &len, "ssh-connection", 14);
+        AppendSshString(buf, &len, "publickey", 9);
+        buf[len++] = 1;                     /* has signature */
+        AppendSshString(buf, &len, algoName, algoSz);
+
+        /* Key blob: string(algo) || string(curve name) || string(Q). */
+        blobSz = (UINT32_SZ + algoSz) + (UINT32_SZ + curveSz)
+               + (UINT32_SZ + qSz);
+        PutU32BE(buf + len, blobSz);
+        len += UINT32_SZ;
+        AppendSshString(buf, &len, algoName, algoSz);
+        AppendSshString(buf, &len, cases[i].curveName, curveSz);
+        AppendSshString(buf, &len, q, qSz);
+
+        /* Signed data: uint32(sessionIdSz) || sessionId || msg id || fields
+         * 1-6. sessionIdSz is 0, so the first two collapse to four zeros. */
+        PutU32BE(toSign, 0);
+        tsSz = UINT32_SZ;
+        toSign[tsSz++] = MSGID_USERAUTH_REQUEST;
+        WMEMCPY(toSign + tsSz, buf, len);
+        tsSz += len;
+
+        /* The declared algorithm selects SHA-256 for both cases. */
+        if (wc_Hash(WC_HASH_TYPE_SHA256, toSign, tsSz,
+                    digest, WC_SHA256_DIGEST_SIZE) != 0) {
+            result = -783;
+            goto caseDone;
+        }
+        if (wc_ecc_sign_hash(digest, WC_SHA256_DIGEST_SIZE, der, &derSz,
+                    &rng, &key) != 0) {
+            result = -784;
+            goto caseDone;
+        }
+        if (wc_ecc_sig_to_rs(der, derSz, r, &rSz, s, &sSz) != 0) {
+            result = -785;
+            goto caseDone;
+        }
+
+        /* r and s come back minimal big-endian; pad to keep the mpints
+         * positive, as SendUserAuthRequest() does. */
+        rPad = (r[0] & 0x80) ? 1 : 0;
+        sPad = (s[0] & 0x80) ? 1 : 0;
+        sigBlobSz = (UINT32_SZ * 2) + rSz + rPad + sSz + sPad;
+
+        /* Field 7: string(string(algo) || string(string(r) || string(s))). */
+        PutU32BE(buf + len, (UINT32_SZ + algoSz) + (UINT32_SZ + sigBlobSz));
+        len += UINT32_SZ;
+        AppendSshString(buf, &len, algoName, algoSz);
+        PutU32BE(buf + len, sigBlobSz);
+        len += UINT32_SZ;
+        PutU32BE(buf + len, rSz + rPad);
+        len += UINT32_SZ;
+        if (rPad)
+            buf[len++] = 0;
+        WMEMCPY(buf + len, r, rSz);
+        len += rSz;
+        PutU32BE(buf + len, sSz + sPad);
+        len += UINT32_SZ;
+        if (sPad)
+            buf[len++] = 0;
+        WMEMCPY(buf + len, s, sSz);
+        len += sSz;
+
+        ret = wolfSSH_TestDoUserAuthRequest(ssh, buf, len, &idx);
+
+        if (ret != WS_SUCCESS) {
+            printf("EccUserAuthCurveMismatch[%s]: ret=%d expected"
+                   " WS_SUCCESS\n", cases[i].label, ret);
+            result = -786;
+            goto caseDone;
+        }
+        if (idx != len) {
+            printf("EccUserAuthCurveMismatch[%s]: idx=%u expected %u\n",
+                   cases[i].label, idx, len);
+            result = -787;
+            goto caseDone;
+        }
+
+        if (cases[i].expectAuth) {
+            if (s_authSvcSendCount != 0) {
+                printf("EccUserAuthCurveMismatch[%s]: expected 0 sends,"
+                       " got %u\n", cases[i].label, s_authSvcSendCount);
+                result = -788;
+                goto caseDone;
+            }
+            if (ssh->clientState != CLIENT_USERAUTH_DONE) {
+                printf("EccUserAuthCurveMismatch[%s]: not authenticated\n",
+                       cases[i].label);
+                result = -789;
+                goto caseDone;
+            }
+        }
+        else {
+            if (s_authSvcSendCount != 1) {
+                printf("EccUserAuthCurveMismatch[%s]: expected 1 send,"
+                       " got %u\n", cases[i].label, s_authSvcSendCount);
+                result = -790;
+                goto caseDone;
+            }
+            if (CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz)
+                    != MSGID_USERAUTH_FAILURE) {
+                printf("EccUserAuthCurveMismatch[%s]: expected"
+                       " USERAUTH_FAILURE\n", cases[i].label);
+                result = -791;
+                goto caseDone;
+            }
+            if (ssh->clientState == CLIENT_USERAUTH_DONE) {
+                printf("EccUserAuthCurveMismatch[%s]: authenticated with a"
+                       " mismatched curve\n", cases[i].label);
+                result = -792;
+                goto caseDone;
+            }
+        }
+
+caseDone:
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        if (rngReady)
+            wc_FreeRng(&rng);
+        if (keyReady)
+            wc_ecc_free(&key);
+        if (result != 0)
+            break;
+    }
+
+    return result;
+}
+
+#endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 && !WOLFSSH_NO_ECDSA_SHA2_NISTP384 */
 
 
 #if !defined(WOLFSSH_NO_RSA)
@@ -13931,6 +14291,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("MsgHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_ByteHighwater();
+    printf("ByteHighwater: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_DoUserAuthRequest_serviceName();
     printf("DoUserAuthRequest_serviceName: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -13945,6 +14309,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("SendUserAuthFailure_emptyMethods: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
+    unitResult = test_EccUserAuthCurveMismatch();
+    printf("EccUserAuthCurveMismatch: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_MaxAuthAttempts();
     printf("MaxAuthAttempts: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));

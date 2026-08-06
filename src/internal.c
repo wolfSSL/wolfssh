@@ -8536,6 +8536,8 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     word32 sz, qSz, rSz, sSz;
     word32 i = 0, asnSigSz = ECDSA_ASN_SIG_SZ;
     int ret = WS_SUCCESS;
+    int primeId = ECC_CURVE_INVALID;
+    byte keyId = ID_NONE;
     ecc_key *key_ptr = NULL;
     byte* asnSig = NULL;
 #ifndef WOLFSSH_SMALL_STACK
@@ -8588,26 +8590,43 @@ static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         }
     }
 
+    /* Derive the curve from the declared algorithm, not from the blob. */
+    if (ret == WS_SUCCESS) {
+        keyId = NameToId((const char*)pk->publicKeyType, pk->publicKeyTypeSz);
+        primeId = wcPrimeForId(keyId);
+        if (primeId == ECC_CURVE_INVALID) {
+            ret = WS_INVALID_PRIME_CURVE;
+        }
+    }
+
     if (ret == WS_SUCCESS)
         ret = GetSize(&curveNameSz, pk->publicKey, pk->publicKeySz, &i);
 
+    /* The curve name (RFC 5656 section 3.1) in the blob must match the
+     * curve of the declared algorithm. */
     if (ret == WS_SUCCESS) {
+        const char* primeName = PrimeNameForId(keyId);
+
         curveName = pk->publicKey + i;
-        WOLFSSH_UNUSED(curveName);
-            /* Not used at the moment, hush the compiler. */
         i += curveNameSz;
-        ret = GetSize(&qSz, pk->publicKey, pk->publicKeySz, &i);
+        if (curveNameSz != (word32)WSTRLEN(primeName)
+                || WMEMCMP(curveName, primeName, curveNameSz) != 0) {
+            WLOG(WS_LOG_DEBUG,
+                "Public Key's curve name does not match its type");
+            ret = WS_INVALID_PRIME_CURVE;
+        }
     }
+
+    if (ret == WS_SUCCESS)
+        ret = GetSize(&qSz, pk->publicKey, pk->publicKeySz, &i);
 
     if (ret == WS_SUCCESS) {
         q = pk->publicKey + i;
         i += qSz;
-        ret = wc_ecc_import_x963(q, qSz, key_ptr);
-    }
-
-    if (ret != 0) {
-        WLOG(WS_LOG_DEBUG, "Could not decode public key");
-        ret = WS_CRYPTO_FAILED;
+        if (wc_ecc_import_x963_ex(q, qSz, key_ptr, primeId) != 0) {
+            WLOG(WS_LOG_DEBUG, "Could not decode public key");
+            ret = WS_CRYPTO_FAILED;
+        }
     }
 
     if (ret == WS_SUCCESS) {
