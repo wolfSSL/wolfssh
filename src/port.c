@@ -129,10 +129,10 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            int ret;
+            int ret = -1;
 
-            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
-            if (ret != -1) {
+            if (WFSEEK_SUCCESS(WFSEEK(
+                               NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET))) {
                 ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
             }
 
@@ -142,10 +142,10 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            int ret;
+            int ret = -1;
 
-            ret = (int)WFSEEK(NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET);
-            if (ret != -1)
+            if (WFSEEK_SUCCESS(WFSEEK(
+                               NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET)))
                 ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
 
             return ret;

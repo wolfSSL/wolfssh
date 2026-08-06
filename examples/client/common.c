@@ -304,7 +304,7 @@ static int load_der_file(const char* filename, byte** out, word32* outSz,
     if (ret != 0 || file == WBADFILE)
         return -1;
 
-    if (WFSEEK(NULL, file, 0, WSEEK_END) != 0) {
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
         WFCLOSE(NULL, file);
         return -1;
     }
