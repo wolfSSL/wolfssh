@@ -177,6 +177,7 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
     WFILE* file;
     word32 fileSz;
     word32 readSz;
+    long tmpSz;
 
     if (fileName == NULL) return 0;
 
@@ -186,7 +187,12 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
         WFCLOSE(NULL, file);
         return 0;
     }
-    fileSz = (word32)WFTELL(NULL, file);
+    tmpSz = WFTELL(NULL, file);
+    if (tmpSz < 0) {
+        WFCLOSE(NULL, file);
+        return 0;
+    }
+    fileSz = (word32)tmpSz;
     WREWIND(NULL, file);
 
     if (buf == NULL || fileSz > *bufSz) {
