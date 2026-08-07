@@ -109,7 +109,14 @@ extern "C" {
 #define WOLFSSL_V5_0_0 0x05000000
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
+#define WOLFSSL_V5_8_0 0x05008000
 #define WOLFSSL_V5_9_2 0x05009002
+
+/* wolfSSL 5.8.0 added the trusted-certificate PEM header, both the
+ * TRUSTED_CERT_TYPE enum and PemToDer()'s fallback to it. */
+#if defined(WOLFSSH_CERTS) && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_8_0)
+    #define WOLFSSH_HAVE_TRUSTED_CERT_PEM
+#endif
 
 /* wc_MlDsaKey_* / WC_MLDSA_* naming replaced the wc_Dilithium_* API in
  * wolfSSL 5.9.2. HAVE_DILITHIUM alone doesn't distinguish the two, so
