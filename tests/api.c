@@ -670,6 +670,43 @@ static int load_file(const char* filename, byte** buf, word32* bufSz)
 #endif
 
 
+#ifdef WOLFSSH_CERTS
+
+/* PEM shapes that carry a header the sniff accepts but a body no decoder
+ * will take, so the failure lands in the decoder rather than the sniff. */
+static const char badPemCert[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "!!!! this is not base64 !!!!\n"
+    "-----END CERTIFICATE-----\n";
+static const char noBodyPemCert[] = "-----BEGIN CERTIFICATE-----\n";
+/* Under one full base64 group, so the body decodes to nothing rather than
+ * failing, and wolfSSL answers 0 for it instead of a negative code. */
+static const char zeroLenPemCert[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MI\n"
+    "-----END CERTIFICATE-----\n";
+
+#endif /* WOLFSSH_CERTS */
+
+
+#ifndef WOLFSSH_NO_SERVER
+
+/* The same shapes for a private key, which decodes without certificate
+ * support and so is pinned outside WOLFSSH_CERTS. */
+static const char badPemKey[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "!!!! this is not base64 !!!!\n"
+    "-----END PRIVATE KEY-----\n";
+/* This one goes through wc_KeyPemToDer, which answers 0 rather than a
+ * negative code, so it needs its own fixture. */
+static const char zeroLenPemKey[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MI\n"
+    "-----END PRIVATE KEY-----\n";
+
+#endif /* WOLFSSH_NO_SERVER */
+
+
 static void test_wolfSSH_CTX_UseCert_buffer(void)
 {
 #ifdef WOLFSSH_CERTS
@@ -703,6 +740,18 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_RAW));
     AssertIntEQ(WS_BAD_FILETYPE_E,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, 99));
+
+    /* Content the caller declared PEM but that will not decode is malformed
+     * input, not a file that would not read. */
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, (const byte*)badPemCert,
+                (word32)WSTRLEN(badPemCert), WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, (const byte*)noBodyPemCert,
+                (word32)WSTRLEN(noBodyPemCert), WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, (const byte*)zeroLenPemCert,
+                (word32)WSTRLEN(zeroLenPemCert), WOLFSSH_FORMAT_PEM));
 
     free(cert);
     cert = NULL;
@@ -776,6 +825,7 @@ static void test_wolfSSH_ReadCert_buffer(void)
 #ifdef WOLFSSH_CERTS
     byte* cert = NULL;
     word32 certSz = 0;
+    byte stale[1];
 #ifndef WOLFSSH_NO_ED25519
     int ret;
 #endif
@@ -833,6 +883,37 @@ static void test_wolfSSH_ReadCert_buffer(void)
                 &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
     free(cert);
     cert = NULL;
+
+    /* Keeping the header sends these past the sniff and into the decoder,
+     * where a body that will not decode is a parse failure, not a file error.
+     * Sentinels go in, as the preceding rejection already cleared them all. */
+    out = stale;
+    outSz = 0xDEADBEEF;
+    outType = stale;
+    outTypeSz = 0xDEADBEEF;
+    flavor = WOLFSSH_CERT_FLAVOR_X509;
+    AssertIntEQ(WS_PARSE_E, wolfSSH_ReadCert_buffer((const byte*)badPemCert,
+                (word32)WSTRLEN(badPemCert),
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
+
+    out = stale;
+    outSz = 0xDEADBEEF;
+    outType = stale;
+    outTypeSz = 0xDEADBEEF;
+    flavor = WOLFSSH_CERT_FLAVOR_X509;
+    AssertIntEQ(WS_PARSE_E, wolfSSH_ReadCert_buffer((const byte*)noBodyPemCert,
+                (word32)WSTRLEN(noBodyPemCert),
+                &out, &outSz, &outType, &outTypeSz, &flavor, NULL));
+    AssertNull(out);
+    AssertIntEQ(outSz, 0);
+    AssertNull(outType);
+    AssertIntEQ(outTypeSz, 0);
+    AssertIntEQ(flavor, WOLFSSH_CERT_FLAVOR_UNKNOWN);
 
     AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
@@ -1058,6 +1139,15 @@ static void test_wolfSSH_CTX_AddRootCert_file(void)
     /* The cert manager rejects a non-CA in wolfSSL's codes; this path maps. */
     AssertIntEQ(WS_PARSE_E,
             wolfSSH_CTX_AddRootCert_file(ctx, "./keys/server-key-ecc.der"));
+
+    /* The buffer entry point, tested here because it shares this one's
+     * decoder: a PEM body that will not decode is a parse failure. */
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, (const byte*)badPemCert,
+                (word32)WSTRLEN(badPemCert), WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_AddRootCert_buffer(ctx, (const byte*)zeroLenPemCert,
+                (word32)WSTRLEN(zeroLenPemCert), WOLFSSH_FORMAT_PEM));
 #ifdef WOLFSSH_TEST_OSSH_CERT_FILE
     AssertIntEQ(0, writeTmpFile(osshCertPath, osshCertLine,
                 WSTRLEN(osshCertLine)));
@@ -1082,15 +1172,19 @@ static void test_wolfSSH_CTX_AddRootCert_file(void) { ; }
 
 static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 {
-#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_SERVER)
+#if !defined(WOLFSSH_NO_SERVER)
     WOLFSSH_CTX* ctx = NULL;
+#ifdef WOLFSSH_CERTS
     byte* key = NULL;
     word32 keySz = 0;
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
 
-#ifndef WOLFSSH_NO_RSA
+/* The key files come in through load_file(), which certificate support
+ * carries, so the cases reading one are gated with it. */
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_RSA)
     AssertIntEQ(0, load_file("./keys/server-key-rsa.pem", &key, &keySz));
     AssertNotNull(key);
     AssertIntNE(0, keySz);
@@ -1102,9 +1196,9 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 
     free(key);
     key = NULL;
-#endif /* WOLFSSH_NO_RSA */
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_RSA */
 
-#ifndef WOLFSSH_NO_ECDSA
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA)
     AssertIntEQ(0, load_file("./keys/server-key-ecc.pem", &key, &keySz));
     AssertNotNull(key);
     AssertIntNE(0, keySz);
@@ -1116,10 +1210,19 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 
     free(key);
     key = NULL;
-#endif /* WOLFSSH_NO_ECDSA */
+#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_ECDSA */
+
+    /* A body that will not decode and one that decodes to nothing are both
+     * parse failures, on a path that needs no certificate support. */
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, (const byte*)badPemKey,
+                (word32)WSTRLEN(badPemKey), WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, (const byte*)zeroLenPemKey,
+                (word32)WSTRLEN(zeroLenPemKey), WOLFSSH_FORMAT_PEM));
 
     wolfSSH_CTX_free(ctx);
-#endif /* WOLFSSH_CERTS && !WOLFSSH_NO_SERVER */
+#endif /* WOLFSSH_NO_SERVER */
 }
 
 

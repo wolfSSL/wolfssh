@@ -106,7 +106,8 @@ WOLFSSH_API int wolfSSH_ReadKey_file(const char* name,
 
 #if defined(WOLFSSH_CERTS) || defined(WOLFSSH_OSSH_CERTS)
 /* Decodes a PEM/DER X.509 cert or OpenSSH cert line, detected from content.
- * Caller frees out via heap; on failure every out param is cleared. */
+ * Caller frees out via heap; on failure every out param is cleared. A body
+ * that will not decode is WS_PARSE_E; WS_BAD_FILE_E is from _file alone. */
 WOLFSSH_API int wolfSSH_ReadCert_buffer(const byte* in, word32 inSz,
         byte** out, word32* outSz, const byte** outType, word32* outTypeSz,
         byte* flavor, void* heap);
