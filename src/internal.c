@@ -2801,14 +2801,14 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return WS_UNIMPLEMENTED_E;
         }
     #endif /* WOLFSSH_CERTS */
-        if (ret < 0) {
+        if (ret <= 0) {
             if (type == BUFTYPE_PRIVKEY) {
                 /* wc_KeyPemToDer may have written partial key material;
                  * zeroize before free on the private-key path. */
                 WS_FORCEZERO(der, inSz);
             }
             WFREE(der, heap, dynamicType);
-            return WS_BAD_FILE_E;
+            return WS_PARSE_E;
         }
         derSz = (word32)ret;
     }

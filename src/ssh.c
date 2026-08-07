@@ -2428,9 +2428,9 @@ static int DoPemCert(const byte* in, word32 inSz, byte** out, word32* outSz,
 
     ret = wc_CertPemToDer(in, (int)inSz, der, (int)inSz, CERT_TYPE);
     if (ret <= 0) {
-        WLOG(WS_LOG_DEBUG, "PEM to DER of certificate failed.");
+        WLOG(WS_LOG_DEBUG, "PEM certificate body would not decode.");
         WFREE(der, heap, DYNTYPE_CERT);
-        return WS_BAD_FILE_E;
+        return WS_PARSE_E;
     }
     derSz = (word32)ret;
 
