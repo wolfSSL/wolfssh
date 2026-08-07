@@ -40,6 +40,9 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
 #include <wolfssl/wolfcrypt/ed25519.h>
+#ifdef HAVE_ED448
+#include <wolfssl/wolfcrypt/ed448.h>
+#endif
 
 #ifndef WOLFSSL_WOLFSSH
     #error "wolfssh requires wolfSSL built with WOLFSSL_WOLFSSH"
@@ -468,6 +471,13 @@ enum {
     ID_MLDSA44,
     ID_MLDSA65,
     ID_MLDSA87,
+    /* always declared */
+    ID_MLDSA44_ES256,
+    ID_MLDSA65_ES256,
+    ID_MLDSA87_ES384,
+    ID_MLDSA44_ED25519,
+    ID_MLDSA65_ED25519,
+    ID_MLDSA87_ED448,
 #endif
     ID_X509V3_SSH_RSA,
     ID_X509V3_ECDSA_SHA2_NISTP256,
@@ -669,7 +679,9 @@ enum NameIdType {
     #define WOLFSSH_MAX_FILE_SIZE (1024ul * 1024ul * 4)
 #endif
 #ifndef WOLFSSH_MAX_PVT_KEYS
-    #define WOLFSSH_MAX_PVT_KEYS 8
+    /* 3 default host keys (RSA, ECDSA, Ed25519) + 3 plain ML-DSA levels +
+     * 6 ML-DSA composite combos, with headroom for future combos. */
+    #define WOLFSSH_MAX_PVT_KEYS 16
 #endif
 #ifndef WOLFSSH_MAX_PUB_KEY_ALGO
     #define WOLFSSH_MAX_PUB_KEY_ALGO (WOLFSSH_MAX_PVT_KEYS + 2)
@@ -1285,6 +1297,30 @@ WOLFSSH_LOCAL int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId);
 WOLFSSH_LOCAL int wolfSSH_FwdWorker(WOLFSSH* ssh);
 
 
+#ifndef WOLFSSH_NO_MLDSA
+/* Shared shape for a composite key's ML-DSA+traditional pair; reused
+ * in src/internal.c so the copies can't drift apart. */
+typedef struct WS_MlDsaCompositeBody {
+    MlDsaKey mldsa;
+    union {
+#ifndef WOLFSSH_NO_ECDSA
+        ecc_key ecc;
+#endif
+#ifndef WOLFSSH_NO_ED25519
+        ed25519_key ed25519;
+#endif
+#ifdef HAVE_ED448
+        ed448_key ed448;
+#endif
+#if defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_NO_ED25519) && \
+        !defined(HAVE_ED448)
+        /* keep union non-empty */
+        byte placeholder;
+#endif
+    } trad;
+} WS_MlDsaCompositeBody;
+#endif /* WOLFSSH_NO_MLDSA */
+
 typedef struct WS_KeySignature {
     byte keyId;
     byte sigId;
@@ -1314,9 +1350,87 @@ typedef struct WS_KeySignature {
         struct {
             MlDsaKey key;
         } mldsa;
+        WS_MlDsaCompositeBody mldsa_composite;
 #endif /* WOLFSSH_NO_MLDSA */
     } ks;
 } WS_KeySignature;
+
+#ifndef WOLFSSH_NO_ECDSA
+#define ECDSA_ASN_SIG_SZ               256
+#endif
+
+#ifndef WOLFSSH_NO_MLDSA
+#define TRAD_TYPE_ECC       1
+#define TRAD_TYPE_ED25519   2
+#define TRAD_TYPE_ED448     3
+#define COMPOSITE_DOMAIN_PREFIX        "CompositeAlgorithmSignatures2025"
+#define COMPOSITE_DOMAIN_PREFIX_SZ     32
+/* max label size */
+#define COMPOSITE_MAX_LABEL_SZ         33
+#define ECC_P256_COORD_SZ              32
+#define ECC_P384_COORD_SZ              48
+/* max trad pubkey size */
+#define COMPOSITE_MAX_TRAD_PUB_SZ      (1 + (2 * ECC_P384_COORD_SZ))
+/* max trad privkey size */
+#ifdef HAVE_ED448
+#define COMPOSITE_MAX_TRAD_PRIV_SZ     ED448_KEY_SIZE
+#else
+#define COMPOSITE_MAX_TRAD_PRIV_SZ     ECC_P384_COORD_SZ
+#endif
+/* max trad sig size */
+#ifdef HAVE_ED448
+#define COMPOSITE_MAX_TRAD_SIG_SZ      ED448_SIG_SIZE
+#else
+#define COMPOSITE_MAX_TRAD_SIG_SZ      (2 * (LENGTH_SZ + ECC_P384_COORD_SZ + 1))
+#endif
+/* alloc slack */
+#define COMPOSITE_SIG_ALLOC_SLACK_SZ   32
+
+typedef struct CompositeParams {
+    const char* label;
+    word32 mldsaSigSz;
+    word32 mldsaPubSz;
+    word32 tradHashSz;
+    word32 labelSz;
+    word32 tradPubSz;
+    word32 tradSigSz;
+    word32 tradPrivSz;
+    enum wc_HashType tradHashId;
+    byte keyId;
+    byte mldsaLevel;
+    byte tradType;
+    int eccCurveId;
+} CompositeParams;
+
+/* trad dispatch table */
+typedef struct CompositeTradOps {
+    int  (*init)(void* key, void* heap);
+    void (*free)(void* key);
+    int  (*importPub)(void* key, const byte* pub, word32 pubSz);
+    int  (*importPriv)(void* key, const byte* priv, word32 privSz,
+                        const byte* pub, word32 pubSz);
+    int  (*exportPrivOnly)(void* key, byte* out, word32* outSz);
+    int  (*exportPub)(void* key, byte* out, word32* outSz);
+    int  (*sign)(void* key, WC_RNG* rng, void* heap,
+                  enum wc_HashType tradHashId, word32 tradHashSz,
+                  const byte* mPrime, word32 mPrimeLen,
+                  byte* wireSig, word32* wireSigSz);
+    int  (*verify)(void* key, void* heap,
+                    enum wc_HashType tradHashId, word32 tradHashSz,
+                    const byte* wireSig, word32 wireSigSz,
+                    const byte* mPrime, word32 mPrimeLen);
+    byte tradType;
+} CompositeTradOps;
+
+WOLFSSH_LOCAL int WS_GetCompositeParams(byte keyId, CompositeParams* params);
+WOLFSSH_LOCAL const CompositeTradOps* WS_GetTradOps(byte tradType);
+/* Init composite key pair */
+WOLFSSH_LOCAL int InitCompositeKeyPair(const CompositeParams* params,
+        MlDsaKey* mldsa, void* tradKey, const CompositeTradOps* ops,
+        void* heap, int* mldsaInit, int* tradInit);
+WOLFSSH_LOCAL int WS_Hash_Helper(enum wc_HashType hashId, const byte* msg,
+        word32 msgSz, byte* hash, word32 hashSz);
+#endif
 
 WOLFSSH_LOCAL int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     WS_KeySignature **pkey);
@@ -1331,6 +1445,8 @@ WOLFSSH_LOCAL int GetOpenSshPublicKey(WS_KeySignature *key,
 #ifdef WOLFSSH_CERTS
 WOLFSSH_LOCAL int IdentifyCert(const byte* in, word32 inSz, void* heap);
 #endif
+WOLFSSH_LOCAL int WS_StripOpenSshPem(const byte* in, word32 inSz,
+        byte* out, word32* outSz);
 
 
 /* Parsing functions */
@@ -1768,6 +1884,17 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsa(WOLFSSH* ssh,
             byte* output, word32* idx, const WS_UserAuthData* authData,
             const byte* sigStart, word32 sigStartIdx, WS_KeySignature* keySig);
+    WOLFSSH_API int wolfSSH_TestDoUserAuthRequestMlDsaComposite(WOLFSSH* ssh,
+            WS_UserAuthData* authData, byte keyId, word32 pubKeyBlobSz);
+    WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsaComposite(
+            WOLFSSH* ssh, word32* payloadSz, const WS_UserAuthData* authData,
+            WS_KeySignature* keySig);
+    WOLFSSH_API int wolfSSH_TestSignHMlDsaComposite(WOLFSSH* ssh, byte* sig,
+            word32* sigSz, byte keyId);
+    WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsaComposite(
+            WOLFSSH* ssh, byte* output, word32* idx,
+            const WS_UserAuthData* authData, const byte* sigStart,
+            word32 sigStartIdx, WS_KeySignature* keySig);
 #endif /* !WOLFSSH_NO_MLDSA */
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS)
     WOLFSSH_API int wolfSSH_TestScpExtractFileName(const char* filePath,

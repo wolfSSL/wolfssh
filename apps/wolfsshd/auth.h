@@ -108,6 +108,12 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     int rejectReadable, void* heap, WFILE** out);
 
+/* classifies a loaded host private key buffer as OpenSSH or ASN1/DER.
+ * *keyDer is a WMALLOC'd (heap, DYNTYPE_SSHD) buffer to WS_FORCEZERO +
+ * WFREE on a PEM decode, else NULL. */
+int wolfSSHD_DetectPrivKeyFormat(byte* data, word32 dataSz, void* heap,
+    byte** keyDer, byte** privBuf, word32* privBufSz);
+
 #ifdef WOLFSSHD_UNIT_TEST
 #ifndef _WIN32
 extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);
@@ -128,6 +134,7 @@ int SearchForPubKey(const char* path, const char* authKeysFile,
                     const WS_UserAuthData_PublicKey* pubKeyCtx,
                     WUID_T uid, int strictModes);
 #endif
+word32 wolfsshd_test_MaxLineSz(void);
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
 int CheckPasswordHashUnix(const char* input, const char* stored);
 #endif
