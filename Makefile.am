@@ -7,6 +7,7 @@ noinst_PROGRAMS =
 nobase_include_HEADERS =
 check_PROGRAMS =
 dist_noinst_SCRIPTS =
+CLEANFILES =
 
 #includes additional rules from aminclude.am
 @INC_AMINCLUDE@
@@ -79,3 +80,21 @@ merge-clean:
 	@find ./ | $(GREP) \.OTHER | xargs rm -f
 	@find ./ | $(GREP) \.BASE | xargs rm -f
 	@find ./ | $(GREP) \~$$ | xargs rm -f
+
+# SBOM generation (CRA compliance).  The recipe is shared across the wolfSSL
+# stack's autotools products in scripts/sbom.am; wolfSSH just declares what it
+# is (a library that links wolfSSL) and includes it.  WOLFSSL_DIR must point to
+# a wolfssl source tree containing scripts/gen-sbom.
+SBOM_PKGNAME      = wolfssh
+SBOM_LICENSE_FILE = $(srcdir)/LICENSING
+SBOM_DEP_WOLFSSL  = yes
+
+# wolfSSH is GPLv3-or-later (per the per-file source headers: "either version 3
+# of the License, or (at your option) any later version") or commercial.  Its
+# LICENSING summary uses the "GPLv3" abbreviation, which gen-sbom's
+# detect_license maps to GPL-3.0-only -- contradicting the headers -- so pin the
+# header-accurate SPDX id here.  Commercial licensees can still override it
+# (e.g. LicenseRef-wolfSSL-Commercial).
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-or-later
+
+include scripts/sbom.am
