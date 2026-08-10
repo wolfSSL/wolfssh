@@ -2547,30 +2547,35 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
         }
     }
 
+    /* Replace the matching slot if the search found one, else append. */
+    destIdx = HINTISSET(certIdx) ? certIdx : ctx->privateKeyCount;
+
     if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        WFREE(der, ctx->heap, dynamicType);
         ret = WS_CTX_KEY_COUNT_E;
     }
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
-        if (pvtKey->publicKeyFmt == certId) {
-            if (pvtKey->cert != NULL) {
-                WFREE(pvtKey->cert, ctx->heap, dynamicType);
-            }
+        /* Copy the paired key into the slot before claiming it, so a
+         * failure here leaves the table unchanged. */
+        ret = UpdateHostCertificates(ctx, keyIdx, destIdx);
+        if (ret != WS_SUCCESS) {
+            WFREE(der, ctx->heap, dynamicType);
         }
         else {
-            certIdx = destIdx;
-            ctx->privateKeyCount++;
-            pvtKey->publicKeyFmt = certId;
-        }
+            if (pvtKey->publicKeyFmt == certId) {
+                if (pvtKey->cert != NULL) {
+                    WFREE(pvtKey->cert, ctx->heap, dynamicType);
+                }
+            }
+            else {
+                ctx->privateKeyCount++;
+                pvtKey->publicKeyFmt = certId;
+            }
 
-        pvtKey->cert = der;
-        pvtKey->certSz = derSz;
-
-        if (ret == WS_SUCCESS) {
-            ret = UpdateHostCertificates(ctx, keyIdx, certIdx);
-        }
-        if (ret == WS_SUCCESS) {
+            pvtKey->cert = der;
+            pvtKey->certSz = derSz;
             RefreshPublicKeyAlgo(ctx);
         }
     }
