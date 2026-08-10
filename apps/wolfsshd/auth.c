@@ -2459,13 +2459,11 @@ static void DoFakePasswordCheck(WS_UserAuthData* authData)
  * CA-only branch below fails closed when a Match block sets a CA file that
  * differs from the global one.
  *
- * Note: the comparison is against the *resolved* per-user value. Match nodes
- * are built by copying the preceding config node (see HandleMatch in
- * configuration.c), so with multiple Match blocks a user can inherit a
- * TrustedUserCAKeys set by an earlier block even though that user's own Match
- * never set it. Such a user is also rejected for certificate auth, which is
- * consistent with the fail-closed intent: the resolved CA still differs from
- * the global store the chain was verified against.
+ * Note: the comparison is against the *resolved* per-user value. A Match node
+ * snapshots the global config as it stood when the Match line was parsed, so a
+ * user whose own Match never set TrustedUserCAKeys keeps the global value and
+ * is not rejected. A Match parsed before the global directive snapshots no CA
+ * file and still fails closed.
  */
 static int RequestAuthentication(WS_UserAuthData* authData,
                                  WOLFSSHD_AUTH* authCtx)

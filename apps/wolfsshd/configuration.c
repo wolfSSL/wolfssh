@@ -95,6 +95,7 @@ struct WOLFSSHD_CONFIG {
     char* pidFile;
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
     WOLFSSHD_CONFIG* next; /* next config in list */
+    WOLFSSHD_CONFIG* head; /* global config the Match nodes branch from */
     long  loginTimer;
     word16 port;
     byte usePrivilegeSeparation:2;
@@ -107,8 +108,8 @@ struct WOLFSSHD_CONFIG {
 };
 
 /* Maximum depth of nested Include directives. Bounds the recursion
- * through wolfSSHD_ConfigLoad -> ParseConfigLine -> HandleConfigOption
- * -> HandleInclude -> wolfSSHD_ConfigLoad. */
+ * through ConfigLoad -> ParseConfigLine -> HandleConfigOption
+ * -> HandleInclude -> ConfigLoad. */
 #ifndef WOLFSSHD_MAX_INCLUDE_DEPTH
 #define WOLFSSHD_MAX_INCLUDE_DEPTH 16
 #endif
@@ -238,6 +239,8 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
         WMEMSET(ret, 0, sizeof(WOLFSSHD_CONFIG));
 
         /* default values */
+        ret->heap = heap;
+        ret->head = ret;
         ret->port = 22;
         ret->passwordAuth = 1;
         ret->pubKeyAuth = 1;
@@ -348,6 +351,7 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
             newConf->permitEmptyPasswords   = conf->permitEmptyPasswords;
             newConf->authKeysFileSet        = conf->authKeysFileSet;
             newConf->strictModes            = conf->strictModes;
+            newConf->head                   = conf->head;
         }
         else {
             wolfSSHD_ConfigFree(newConf);
@@ -729,7 +733,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
     int ret = WS_SUCCESS;
 
     /* No value, nothing to do */
-    if (!value || value[0] == '\0') {
+    if (conf == NULL || value == NULL || value[0] == '\0') {
         ret = WS_BAD_ARGUMENT;
     }
 
@@ -1142,6 +1146,7 @@ static int CheckMatchSelectors(const char* value)
 static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
 {
     WOLFSSHD_CONFIG* newConf = NULL;
+    WOLFSSHD_CONFIG* tail;
     int ret = WS_SUCCESS;
 
     if (conf == NULL || *conf == NULL || value == NULL) {
@@ -1161,9 +1166,8 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
         }
     }
 
-    /* create new configure for altered options specific to the match */
     if (ret == WS_SUCCESS) {
-        newConf = wolfSSHD_ConfigCopy(*conf);
+        newConf = wolfSSHD_ConfigCopy((*conf)->head);
         if (newConf == NULL) {
             ret = WS_MEMORY_E;
         }
@@ -1182,14 +1186,16 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
         newConf = NULL;
     }
 
-    /* update current config being processed */
+    /* Link the node at the end of the list. An included file leaves its Match
+     * nodes on the list but not on the caller's cursor, so the cursor is not
+     * always the tail. */
     if (ret == WS_SUCCESS) {
-        (*conf)->next = newConf;
-        (*conf)       = newConf;
-    }
-    else {
-        /* newConf was allocated but not linked into the list; free it */
-        wolfSSHD_ConfigFree(newConf);
+        tail = (*conf)->head;
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = newConf;
+        (*conf)    = newConf;
     }
 
     (void)valueSz;

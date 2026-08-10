@@ -1152,61 +1152,59 @@ static int test_GetUserConfMatchRepeatedKeyword(void)
     return ret;
 }
 
+/* writes 'contents' to the file 'path', creating or truncating it.
+ * Returns WS_SUCCESS on success. */
+static int WriteConfigFile(const char* path, const char* contents)
+{
+    WFILE* f = WBADFILE;
+    word32 sz, wr;
+    int ret = WS_SUCCESS;
+    int cl;
+
+    if (WFOPEN(NULL, &f, path, "w") != 0 || f == WBADFILE) {
+        Log("    Could not create %s.\n", path);
+        return WS_FATAL_ERROR;
+    }
+
+    sz = (word32)WSTRLEN(contents);
+    wr = (word32)WFWRITE(NULL, contents, sizeof(char), sz, f);
+    cl = WFCLOSE(NULL, f);
+
+    /* both can fail from one I/O error, report the write first */
+    if (sz != wr) {
+        Log("    Could not write %s.\n", path);
+        ret = WS_FATAL_ERROR;
+    }
+    else if (cl != 0) {
+        Log("    Could not close %s.\n", path);
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
  * config object must remain usable so a subsequent load of a normal
  * config on the same WOLFSSHD_CONFIG still succeeds. */
 static int test_IncludeRecursionBound(void)
 {
-    int ret = WS_SUCCESS;
+    int ret;
     WOLFSSHD_CONFIG* conf = NULL;
-    WFILE* f = WBADFILE;
     const char* loopPath = "./include_loop.conf";
     const char* normalPath = "./include_normal.conf";
     const char* loopContents = "Include ./include_loop.conf\n";
     const char* normalContents = "Port 22\n";
-    word32 sz, wr;
-    int cl;
 
-    if (WFOPEN(NULL, &f, loopPath, "w") != 0 || f == WBADFILE) {
-        Log("    Could not create %s.\n", loopPath);
-        return WS_FATAL_ERROR;
+    ret = WriteConfigFile(loopPath, loopContents);
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(normalPath, normalContents);
     }
-    sz = (word32)WSTRLEN(loopContents);
-    wr = (word32)WFWRITE(NULL, loopContents, sizeof(char), sz, f);
-    cl = WFCLOSE(NULL, f);
-    f = WBADFILE;
-    if (sz != wr) {
-        Log("    Could not write %s.\n", loopPath);
-        (void)WREMOVE(NULL, loopPath);
-        return WS_FATAL_ERROR;
-    }
-    if (cl != 0) {
-        Log("    Could not close %s.\n", loopPath);
-        (void)WREMOVE(NULL, loopPath);
-        return WS_FATAL_ERROR;
-    }
-
-    if (WFOPEN(NULL, &f, normalPath, "w") != 0 || f == WBADFILE) {
-        (void)WREMOVE(NULL, loopPath);
-        Log("    Could not create %s.\n", normalPath);
-        return WS_FATAL_ERROR;
-    }
-    sz = (word32)WSTRLEN(normalContents);
-    wr = (word32)WFWRITE(NULL, normalContents, sizeof(char), sz, f);
-    cl = WFCLOSE(NULL, f);
-    f = WBADFILE;
-    if (sz != wr) {
-        Log("    Could not write %s.\n", normalPath);
+    if (ret != WS_SUCCESS) {
         (void)WREMOVE(NULL, loopPath);
         (void)WREMOVE(NULL, normalPath);
-        return WS_FATAL_ERROR;
-    }
-    if (cl != 0) {
-        Log("    Could not close %s.\n", normalPath);
-        (void)WREMOVE(NULL, loopPath);
-        (void)WREMOVE(NULL, normalPath);
-        return WS_FATAL_ERROR;
+        return ret;
     }
 
     conf = wolfSSHD_ConfigNew(NULL);
@@ -1241,6 +1239,218 @@ static int test_IncludeRecursionBound(void)
     (void)WREMOVE(NULL, normalPath);
     return ret;
 }
+
+/* Each Match block is built from the global config, not from the Match block
+ * before it. A user selected by a later block must not pick up settings that
+ * an earlier, non-matching block changed. */
+static int test_GetUserConfMatchNoInherit(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* aliceConf = NULL;
+    WOLFSSHD_CONFIG* staffConf = NULL;
+    WOLFSSHD_CONFIG* match = NULL;
+    const char* cmd;
+    const char* grps[1];
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/global");
+    if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords yes");
+
+    /* alice's block overrides several of the global settings */
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/alice");
+    if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/alice_keys");
+    if (ret == WS_SUCCESS) ret = PCL("PermitEmptyPasswords no");
+    if (ret == WS_SUCCESS) aliceConf = conf;
+
+    /* the staff block sets one option, everything else must resolve to the
+     * global value rather than to alice's */
+    if (ret == WS_SUCCESS) ret = PCL("Match Group staff");
+    if (ret == WS_SUCCESS) ret = PCL("PubkeyAuthentication no");
+    if (ret == WS_SUCCESS) staffConf = conf;
+#undef PCL
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: staff user does not inherit alice.");
+        grps[0] = "staff";
+        match = wolfSSHD_GetUserConf(head, "bob", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != staffConf)
+            ret = WS_FATAL_ERROR;
+
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(match);
+            if (cmd == NULL || XSTRCMP(cmd, "/bin/global") != 0)
+                ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                wolfSSHD_ConfigGetAuthKeysFileSet(match) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                wolfSSHD_ConfigGetPermitEmptyPw(match) != 1) {
+            ret = WS_FATAL_ERROR;
+        }
+        /* the staff block's own override still applies */
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPubKeyAuth(match) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: alice keeps her own overrides.");
+        grps[0] = "users";
+        match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match != aliceConf)
+            ret = WS_FATAL_ERROR;
+
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(match);
+            if (cmd == NULL || XSTRCMP(cmd, "/bin/alice") != 0)
+                ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                wolfSSHD_ConfigGetAuthKeysFileSet(match) != 1) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                wolfSSHD_ConfigGetPermitEmptyPw(match) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        /* alice is not in staff, so she keeps the global pubkey setting */
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPubKeyAuth(match) != 1) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+    }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+
+/* A Match block inside an Include'd file must survive a later Match block in
+ * the including file, and the include must not export its Match scope: a
+ * directive after the Include belongs to the global config, the way OpenSSH
+ * resets Match scope at the end of an included file. */
+static int test_ConfigIncludeMatchChain(void)
+{
+    int ret;
+    WOLFSSHD_CONFIG* head = NULL;
+    WOLFSSHD_CONFIG* match;
+    const char* cmd;
+    const char* incPath = "./include_match.conf";
+    const char* topPath = "./include_match_top.conf";
+    const char* incContents =
+        "Match User alice\n"
+        "ForceCommand /bin/alice\n";
+    const char* topContents =
+        "ForceCommand /bin/global\n"
+        "Include ./include_match.conf\n"
+        "PermitEmptyPasswords yes\n"
+        "Match User bob\n"
+        "ForceCommand /bin/bob\n";
+
+    ret = WriteConfigFile(incPath, incContents);
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(topPath, topContents);
+    }
+    if (ret != WS_SUCCESS) {
+        (void)WREMOVE(NULL, incPath);
+        (void)WREMOVE(NULL, topPath);
+        return ret;
+    }
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSHD_ConfigLoad(head, topPath);
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: included Match block still applies.");
+        match = wolfSSHD_GetUserConf(head, "alice", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        cmd = wolfSSHD_ConfigGetForcedCmd(match);
+        if (match == head || cmd == NULL ||
+                XSTRCMP(cmd, "/bin/alice") != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: outer Match block still applies.");
+        match = wolfSSHD_GetUserConf(head, "bob", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        cmd = wolfSSHD_ConfigGetForcedCmd(match);
+        if (match == head || cmd == NULL || XSTRCMP(cmd, "/bin/bob") != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: unmatched user gets the global config.");
+        match = wolfSSHD_GetUserConf(head, "carol", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        cmd = wolfSSHD_ConfigGetForcedCmd(match);
+        if (match != head || cmd == NULL ||
+                XSTRCMP(cmd, "/bin/global") != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        /* the include ends inside a Match block, so this proves the directive
+         * after it was not swallowed by that block */
+        if (ret == WS_SUCCESS &&
+                wolfSSHD_ConfigGetPermitEmptyPw(match) != 1) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+        }
+    }
+
+    wolfSSHD_ConfigFree(head);
+    (void)WREMOVE(NULL, incPath);
+    (void)WREMOVE(NULL, topPath);
+    return ret;
+}
+
 
 /* The public wolfSSHD_ConfigSetAuthKeysFile setter must mark the authorized
  * keys file as explicitly configured, otherwise certificate public-key logins
@@ -5952,6 +6162,8 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
+    TEST_DECL(test_GetUserConfMatchNoInherit),
+    TEST_DECL(test_ConfigIncludeMatchChain),
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_DefaultUserAuthTypesNullArgs),
     TEST_DECL(test_ConfigSetAuthKeysFile),
