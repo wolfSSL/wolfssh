@@ -714,6 +714,12 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
     WOLFSSH_CTX* ctx = NULL;
     byte* cert = NULL;
     word32 certSz = 0;
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    byte* key = NULL;
+    word32 keySz = 0;
+    word32 count = 0;
+    byte lastFmt = ID_NONE;
+#endif
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
@@ -732,6 +738,8 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     AssertIntEQ(WS_SUCCESS,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_PEM));
+    AssertIntEQ(1, ctx->privateKeyCount);
+    AssertNotNull(ctx->privateKey[0].cert);
 #endif
 
     AssertIntEQ(WS_BAD_FILETYPE_E,
@@ -756,17 +764,63 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
     free(cert);
     cert = NULL;
 
-    AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    /* A matching private key seeds a key copy in the cert slot. */
+    AssertIntEQ(0, load_file("./keys/server-key-ecc.der", &key, &keySz));
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx, key, keySz,
+                WOLFSSH_FORMAT_ASN1));
+    count = ctx->privateKeyCount;
+    AssertIntEQ(2, count);
+#endif
+
+    /* A different certificate, so the reload shows in the stored DER. */
+    AssertIntEQ(0, load_file("./keys/fred-cert.der", &cert, &certSz));
     AssertNotNull(cert);
     AssertIntNE(0, certSz);
 
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     AssertIntEQ(WS_SUCCESS,
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+    /* Reloading replaces the slot instead of appending a duplicate. */
+    AssertIntEQ(count, ctx->privateKeyCount);
+    AssertIntEQ(certSz, ctx->privateKey[0].certSz);
+    AssertIntEQ(0, XMEMCMP(ctx->privateKey[0].cert, cert, certSz));
+    AssertIntEQ(2, ctx->publicKeyAlgoCount);
+    /* The replaced slot keeps a fresh copy of the matching key. */
+    AssertIntEQ(ctx->privateKey[1].keySz, ctx->privateKey[0].keySz);
+    AssertIntEQ(0, XMEMCMP(ctx->privateKey[0].key, ctx->privateKey[1].key,
+                ctx->privateKey[0].keySz));
+
+    /* A full table still replaces the matching slot rather than rejecting;
+     * a third certificate keeps the stored-DER checks honest. */
+    free(cert);
+    cert = NULL;
+    AssertIntEQ(0, load_file("./keys/server-cert.der", &cert, &certSz));
+    ctx->privateKeyCount = WOLFSSH_MAX_PVT_KEYS;
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+    AssertIntEQ(certSz, ctx->privateKey[0].certSz);
+    AssertIntEQ(0, XMEMCMP(ctx->privateKey[0].cert, cert, certSz));
+    /* publicKeyAlgo stays stale from the fabricated count; ctx freed below. */
+    ctx->privateKeyCount = count;
+
+    /* No matching slot and no room: rejected, and the DER is freed. */
+    lastFmt = ctx->privateKey[0].publicKeyFmt;
+    ctx->privateKey[0].publicKeyFmt = ID_NONE;
+    ctx->privateKeyCount = WOLFSSH_MAX_PVT_KEYS;
+    AssertIntEQ(WS_CTX_KEY_COUNT_E,
+            wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_ASN1));
+    AssertIntEQ(WOLFSSH_MAX_PVT_KEYS, ctx->privateKeyCount);
+    ctx->privateKeyCount = count;
+    ctx->privateKey[0].publicKeyFmt = lastFmt;
 #endif
 
     wolfSSH_CTX_free(ctx);
     free(cert);
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    free(key);
+#endif
 #endif /* WOLFSSH_CERTS */
 }
 
