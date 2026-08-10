@@ -472,6 +472,8 @@ static void AddShadowLineToFakeHashCache(char* line)
                 if (!duplicate) {
                     XSTRNCPY(cachedFakeHashes[numCachedFakeHashes], tmpl,
                         sizeof(cachedFakeHashes[0]));
+                    cachedFakeHashes[numCachedFakeHashes][
+                        sizeof(cachedFakeHashes[0]) - 1] = '\0';
                     numCachedFakeHashes++;
                 }
             }
@@ -569,6 +571,7 @@ void wolfSSHD_AuthInit(void)
             GetFakeHashFromTemplate(rootShadow->sp_pwdp, tmpl, sizeof(tmpl));
             if (tmpl[0] != '\0' && tmpl[1] != '\0' && tmpl[1] != '*') {
                 XSTRNCPY(cachedFakeHashes[0], tmpl, sizeof(cachedFakeHashes[0]));
+                cachedFakeHashes[0][sizeof(cachedFakeHashes[0]) - 1] = '\0';
                 numCachedFakeHashes = 1;
             }
         }
