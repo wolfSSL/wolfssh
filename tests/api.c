@@ -1637,6 +1637,7 @@ static const char serverKeyRsaPubPem[] =
     "BsJ9kNvjnNDEZVoDrQCsWqLN2j+JWDdTvytGeqyJQStaLuh2517jKYWjY+rmhmB8\n"
     "LQIDAQAB\n"
     "-----END PUBLIC KEY-----\n";
+#ifdef WOLFSSH_TEST_INTERNAL
 /* The same SubjectPublicKeyInfo in DER, what the PEM above decodes to. */
 static const char serverKeyRsaPubDer[] =
     "30820122300d06092a864886f70d01010105000382010f003082010a02820101"
@@ -1649,6 +1650,7 @@ static const char serverKeyRsaPubDer[] =
     "388bf854af3a4d2ff81fd78490d8930506c27d90dbe39cd0c4655a03ad00ac5a"
     "a2cdda3f89583753bf2b467aac89412b5a2ee876e75ee32985a363eae686607c"
     "2d0203010001";
+#endif /* WOLFSSH_TEST_INTERNAL */
 #endif
 
 
@@ -1705,10 +1707,12 @@ static void test_wolfSSH_ReadPublicKey_pem(void)
     AssertIntEQ(keyTypeSz, 0);
 #endif /* WOLFSSH_TPM */
 
+#ifdef WOLFSSH_TEST_INTERNAL
     /* The public PEM branch above only builds with TPM support, so pin the
-     * behavior it depends on here where every build runs it: the decoded
-     * SubjectPublicKeyInfo identifies as ssh-rsa only when isPrivate is 0.
-     * Hardcoding 1, as DoPemKey() once did, cannot identify it. */
+     * behavior it depends on directly: the decoded SubjectPublicKeyInfo
+     * identifies as ssh-rsa only when isPrivate is 0. Hardcoding 1, as
+     * DoPemKey() once did, cannot identify it. IdentifyAsn1Key is
+     * WOLFSSH_LOCAL, so this only links against the test library. */
     {
         byte* der = NULL;
         word32 derSz = 0;
@@ -1720,6 +1724,7 @@ static void test_wolfSSH_ReadPublicKey_pem(void)
         AssertIntLT(IdentifyAsn1Key(der, derSz, 1, NULL, NULL), 0);
         WFREE(der, NULL, 0);
     }
+#endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
 }
 
