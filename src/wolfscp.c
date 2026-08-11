@@ -3698,10 +3698,12 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             *aTime = sendBuffer->mTime;
             *fileMode = sendBuffer->mode;
 
-            /* copy over buffer info */
+            /* copy over buffer info, idx past fileSz wraps the unsigned
+             * math and is caught by the guard */
             ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
                 bufSz : sendBuffer->fileSz - sendBuffer->idx;
-            if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+            if (sendBuffer->idx > sendBuffer->fileSz ||
+                    sendBuffer->idx + ret > sendBuffer->bufferSz) {
                 WLOG(WS_LOG_ERROR, scpState,
                     "potential buffer overflow caught, abort");
                 ret = WS_SCP_ABORT;
@@ -3721,17 +3723,19 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             break;
 
         case WOLFSSH_SCP_CONTINUE_FILE_TRANSFER:
-            /* copy over buffer info */
-            if (sendBuffer->idx >= sendBuffer->bufferSz) {
+            /* copy over buffer info, idx past fileSz would underflow the
+             * size math */
+            if (sendBuffer->idx > sendBuffer->bufferSz ||
+                    sendBuffer->idx > sendBuffer->fileSz) {
                 WLOG(WS_LOG_ERROR, scpState,
-                    "sendbuffer idx greater than buffer size, abort");
+                    "sendbuffer idx out of range, abort");
                 ret = WS_SCP_ABORT;
                 break;
             }
             ret = (bufSz < (sendBuffer->fileSz - sendBuffer->idx))?
                 bufSz : sendBuffer->fileSz - sendBuffer->idx;
             if (ret > 0) {
-                if (sendBuffer->idx  + ret >= sendBuffer->bufferSz) {
+                if (sendBuffer->idx  + ret > sendBuffer->bufferSz) {
                     ret = WS_SCP_ABORT;
                     WLOG(WS_LOG_ERROR, scpState, "buffer size issue, abort");
                     break;
@@ -3743,7 +3747,8 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
                 ret = WS_EOF;
             }
 
-            if (sendBuffer->status(ssh, sendBuffer->name,
+            if (sendBuffer->status != NULL &&
+                    sendBuffer->status(ssh, sendBuffer->name,
                         WOLFSSH_SCP_CONTINUE_FILE_TRANSFER, sendBuffer)
                         != WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, scpState, "continue status fail, abort");
