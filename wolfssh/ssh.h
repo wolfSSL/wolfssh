@@ -279,6 +279,7 @@ DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(
  * equal the address the peer reports. Register the spelling the peer will echo
  * back, or a wildcard: a peer that canonicalises the bind, answering an open
  * for "127.0.0.1" against a registered "localhost", has those opens refused.
+ * wolfSSH_SetFwdRemoteMatch() relaxes this for peers that need it.
  *
  * One bindAddr:bindPort is one registration however often it is registered,
  * since it is one listener on the peer, so one cancel undoes it. That covers a
@@ -309,6 +310,26 @@ WOLFSSH_API int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
         word32 bindPort, int wantReply);
 WOLFSSH_API int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
         word32 bindPort, int wantReply);
+
+/* How strictly an inbound "forwarded-tcpip" open must name a registration
+ * made with wolfSSH_FwdRemoteSetup(). */
+enum WS_FwdRemoteMatch {
+    WOLFSSH_FWD_MATCH_STRICT = 0, /* bind and port, the default */
+    WOLFSSH_FWD_MATCH_PORT   = 1, /* port alone, the bind is not compared */
+    WOLFSSH_FWD_MATCH_OFF    = 2  /* accept any open, matching nothing */
+};
+
+/* Relax the check wolfSSH_FwdRemoteSetup() turns on for this session. Set it
+ * before the first setup, since opens are matched from that point.
+ *
+ * STRICT is the default and is what RFC 4254 7.2 asks for. PORT is for a peer
+ * that rewrites the bind address it echoes back but keeps the port, which
+ * STRICT refuses every open from. OFF accepts any "forwarded-tcpip" open, as
+ * wolfSSH did before this check existed, leaving the channel-open policy
+ * callback as the only thing standing between the peer and a new channel.
+ *
+ * Returns WS_BAD_ARGUMENT for a NULL session or an unknown setting. */
+WOLFSSH_API int wolfSSH_SetFwdRemoteMatch(WOLFSSH* ssh, byte match);
 
 WOLFSSH_API int wolfSSH_ChannelFree(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelGetId(WOLFSSH_CHANNEL* channel, word32* id,

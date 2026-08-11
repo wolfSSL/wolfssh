@@ -2741,8 +2741,9 @@ static void InitFwdRemoteHarness(ChannelOpenHarness* harness)
 /* Set up a client that asked for one remote forward, then hand it a
  * forwarded-tcpip open naming openAddr:openPort. The request the setup sends
  * is dropped from the output so the open's response starts at offset 0. */
-static void RunForwardedTcpipMatchTest(const char* bindAddr, word32 bindPort,
-        const char* openAddr, word32 openPort, int expectAccept)
+static void RunForwardedTcpipMatchModeTest(byte match, const char* bindAddr,
+        word32 bindPort, const char* openAddr, word32 openPort,
+        int expectAccept)
 {
     ChannelOpenHarness harness;
     byte extra[128];
@@ -2759,6 +2760,7 @@ static void RunForwardedTcpipMatchTest(const char* bindAddr, word32 bindPort,
     InitChannelOpenHarnessClient(&harness, in, inSz);
     AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
             WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetFwdRemoteMatch(harness.ssh, match), WS_SUCCESS);
 
     AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, bindAddr, bindPort, 1),
             WS_SUCCESS);
@@ -2780,6 +2782,13 @@ static void RunForwardedTcpipMatchTest(const char* bindAddr, word32 bindPort,
     }
 
     FreeChannelOpenHarness(&harness);
+}
+
+static void RunForwardedTcpipMatchTest(const char* bindAddr, word32 bindPort,
+        const char* openAddr, word32 openPort, int expectAccept)
+{
+    RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_STRICT, bindAddr,
+            bindPort, openAddr, openPort, expectAccept);
 }
 
 static void TestForwardedTcpipRegisteredIsAccepted(void)
@@ -3769,6 +3778,46 @@ static void TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward(void)
 
     harness.io.outSz = 0;
     AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A peer that canonicalises the bind it echoes back has every open refused
+ * under the default, so the port it was asked for can be made the whole
+ * test. */
+static void TestFwdRemoteMatchPortIgnoresBindAddr(void)
+{
+    RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_STRICT, "localhost", 8080,
+            "127.0.0.1", 8080, 0);
+    RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_PORT, "localhost", 8080,
+            "127.0.0.1", 8080, 1);
+
+    /* Relaxing the address does not relax the port. */
+    RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_PORT, "localhost", 8080,
+            "127.0.0.1", 9999, 0);
+}
+
+/* Off is what wolfSSH did before the check existed: the open reaches the
+ * channel-open policy callback whatever it names. */
+static void TestFwdRemoteMatchOffAcceptsUnregistered(void)
+{
+    RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_OFF, "127.0.0.1", 8080,
+            "10.0.0.1", 9999, 1);
+}
+
+static void TestFwdRemoteMatchRejectsBadSetting(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    AssertIntEQ(wolfSSH_SetFwdRemoteMatch(NULL, WOLFSSH_FWD_MATCH_OFF),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_SetFwdRemoteMatch(harness.ssh,
+                WOLFSSH_FWD_MATCH_OFF + 1), WS_BAD_ARGUMENT);
+
+    /* A refused setting leaves the default in place. */
+    AssertIntEQ(harness.ssh->fwdRemoteMatch, WOLFSSH_FWD_MATCH_STRICT);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -7958,6 +8007,9 @@ int main(int argc, char** argv)
     TestForwardedTcpipRequestAfterReplyDuringSend();
     TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward();
     TestForwardedTcpipReentrantCancelDuringSend();
+    TestFwdRemoteMatchPortIgnoresBindAddr();
+    TestFwdRemoteMatchOffAcceptsUnregistered();
+    TestFwdRemoteMatchRejectsBadSetting();
     TestFwdReplyQueueIsCapped();
     TestForwardedTcpipAppRequestKeepsItsOwnReply();
     TestForwardedTcpipWantWriteStillRegisters();

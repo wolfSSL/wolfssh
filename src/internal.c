@@ -4438,6 +4438,10 @@ static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
     if (ssh == NULL || addr == NULL)
         return 0;
 
+    /* The application took responsibility for what it accepts. */
+    if (ssh->fwdRemoteMatch == WOLFSSH_FWD_MATCH_OFF)
+        return 1;
+
     for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
         WOLFSSH_FWD_REPLY* newest;
 
@@ -4458,7 +4462,10 @@ static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
         if (!cur->confirmed && newest == NULL)
             continue;
 
-        if (FwdRemoteAddrIsWild(cur->bindAddr) ||
+        /* A peer that rewrites the bind it echoes back can still be held to
+         * the port it was asked for. */
+        if (ssh->fwdRemoteMatch == WOLFSSH_FWD_MATCH_PORT ||
+                FwdRemoteAddrIsWild(cur->bindAddr) ||
                 WSTRCMP(cur->bindAddr, addr) == 0)
             return 1;
     }
