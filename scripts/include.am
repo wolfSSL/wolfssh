@@ -11,5 +11,9 @@ if BUILD_SCP
 dist_noinst_SCRIPTS+= scripts/scp.test
 endif
 
+# Not gated on BUILD_SSHCLIENT. The script skips itself when the client
+# app wasn't built.
+dist_noinst_SCRIPTS+= scripts/sshclient.test
+
 dist_noinst_SCRIPTS+= scripts/external.test scripts/fwd.test
 EXTRA_DIST += scripts/fwd.test.expect

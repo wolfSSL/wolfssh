@@ -82,6 +82,10 @@
     #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
+#ifdef SINGLE_THREADED
+    #error "Threading needed for terminal and command sessions."
+#endif
+
 
 int myoptind = 0;
 char* myoptarg = NULL;
@@ -1050,10 +1054,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (clientConfig.hostname == NULL)
         err_sys("client requires a hostname parameter.");
 
-#ifdef SINGLE_THREADED
-    err_sys("Threading needed for terminal and command sessions\n");
-#endif
-
     if (clientConfig.keyFile) {
         ret = ClientSetPrivateKey(clientConfig.keyFile);
         if (ret == 0) {
@@ -1249,8 +1249,11 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         else {
             ret = wolfSSH_worker(ssh, NULL);
         }
-        if (ret == WS_CHANNEL_CLOSED) {
-            /* Shutting down, channel closing isn't a fail. */
+        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ
+                || ret == WS_WANT_WRITE) {
+            /* Shutting down. The channel closing isn't a fail, and neither
+             * is the peer having nothing ready on this non-blocking socket;
+             * either way there is nothing left to wait for. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
