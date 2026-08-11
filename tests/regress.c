@@ -3700,6 +3700,79 @@ static void TestForwardedTcpipReplyDuringSendTakesSlot(void)
     FreeChannelOpenHarness(&harness);
 }
 
+static int CancelAnsweredDuringSendHighwaterCb(byte side, void* ctx)
+{
+    ChannelOpenHarness* harness = (ChannelOpenHarness*)ctx;
+    byte reply[64];
+    word32 replySz;
+
+    WOLFSSH_UNUSED(side);
+
+    /* Answers the cancel queued ahead of the setup now going out. */
+    if (harness != NULL) {
+        replySz = WrapPacket(MSGID_REQUEST_SUCCESS, NULL, 0, reply,
+                sizeof(reply));
+        FeedOnePacket(harness, reply, replySz);
+    }
+
+    return WS_SUCCESS;
+}
+
+/* The peer confirming a cancel while a fresh setup for the same bind is still
+ * in its send window. That setup's slot does not name the forward until it
+ * commits, so a scan that only reads committed slots finds nothing standing
+ * for the forward and unlinks it -- leaving a request on the wire the peer
+ * will bind and no registration for its opens to match. */
+static void TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 1);
+
+    /* The registration is held until the peer answers the cancel. */
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    /* Cross the mark on the re-setup's own send. */
+    wolfSSH_SetHighwaterCb(harness.ctx, 1,
+            CancelAnsweredDuringSendHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.ssh, &harness);
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->highwaterFlag = 0;
+    harness.ssh->txCount = 1;
+    harness.io.outSz = 0;
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    /* The cancel took the listener down and the setup asked for it back, so
+     * the registration stands and waits on that answer instead of going. */
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 0);
+    AssertNotNull(harness.ssh->fwdReplyHead);
+    AssertTrue(harness.ssh->fwdReplyHead->entry == harness.ssh->fwdRemoteList);
+    AssertIntEQ(harness.ssh->fwdReplyHead->uncommitted, 0);
+    AssertTrue(harness.ssh->fwdReplyHead->next == NULL);
+
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 1);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static int CancelDuringSendHighwaterCb(byte side, void* ctx)
 {
     WOLFSSH* ssh = (WOLFSSH*)ctx;
@@ -7833,6 +7906,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipRefusalDuringSendDropsForward();
     TestForwardedTcpipPortZeroReplyDuringSendBinds();
     TestForwardedTcpipRequestAfterReplyDuringSend();
+    TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward();
     TestForwardedTcpipReentrantCancelDuringSend();
     TestForwardedTcpipAppRequestKeepsItsOwnReply();
     TestForwardedTcpipWantWriteStillRegisters();

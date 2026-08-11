@@ -3978,6 +3978,29 @@ static void FwdRemoteUnlink(WOLFSSH* ssh, void* heap,
 }
 
 
+/* Does this slot answer for that forward? A slot still in its send window
+ * doesn't name the forward yet, but the bind it will name is known, and an
+ * answer settling an earlier request turns on whether a later one is already
+ * on its way out. */
+static int FwdReplyNames(const WOLFSSH_FWD_REPLY* reply,
+        const WOLFSSH_FWD_REMOTE* entry)
+{
+    if (entry == NULL)
+        return 0;
+
+    if (reply->entry == entry)
+        return 1;
+
+    if (!reply->uncommitted || reply->bindAddr == NULL)
+        return 0;
+
+    /* A port-0 forward has no port to be named by until the peer's reply
+     * says which one it bound. */
+    return !entry->portPending && entry->bindPort == reply->bindPort &&
+            WSTRCMP(entry->bindAddr, reply->bindAddr) == 0;
+}
+
+
 /* The last queued request naming this forward, or NULL. The queue is in send
  * order, so this is what the application asked for most recently. */
 static WOLFSSH_FWD_REPLY* FwdReplyNewest(WOLFSSH* ssh,
@@ -3987,7 +4010,7 @@ static WOLFSSH_FWD_REPLY* FwdReplyNewest(WOLFSSH* ssh,
     WOLFSSH_FWD_REPLY* newest = NULL;
 
     for (cur = ssh->fwdReplyHead; cur != NULL; cur = cur->next) {
-        if (cur->entry == entry)
+        if (FwdReplyNames(cur, entry))
             newest = cur;
     }
 
@@ -4001,7 +4024,7 @@ static int FwdReplyHasSetup(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
     WOLFSSH_FWD_REPLY* cur;
 
     for (cur = ssh->fwdReplyHead; cur != NULL; cur = cur->next) {
-        if (cur->entry == entry && !cur->isCancel)
+        if (!cur->isCancel && FwdReplyNames(cur, entry))
             return 1;
     }
 
@@ -4099,9 +4122,11 @@ static void FwdRemoteSettle(WOLFSSH* ssh, WOLFSSH_FWD_REMOTE* entry,
 
 
 /* Take this request's place in the reply queue before it is sent, so a
- * callback that reenters the library mid-send cannot queue ahead of it. Which
- * forward the slot answers for is filled in on commit. */
-static WOLFSSH_FWD_REPLY* FwdReplyNew(WOLFSSH* ssh, int isCancel)
+ * callback that reenters the library mid-send cannot queue ahead of it. The
+ * forward the slot answers for is named by its bind until it commits, since
+ * the entry it resolves to can be freed and remade across the send. */
+static WOLFSSH_FWD_REPLY* FwdReplyNew(WOLFSSH* ssh, int isCancel,
+        const char* bindAddr, word32 bindPort)
 {
     WOLFSSH_FWD_REPLY* reply;
 
@@ -4110,6 +4135,8 @@ static WOLFSSH_FWD_REPLY* FwdReplyNew(WOLFSSH* ssh, int isCancel)
     if (reply != NULL) {
         WMEMSET(reply, 0, sizeof(WOLFSSH_FWD_REPLY));
         reply->isCancel = (byte)(isCancel != 0);
+        reply->bindAddr = bindAddr;
+        reply->bindPort = bindPort;
         /* The sender owns this slot until it commits; an answer arriving
          * meanwhile parks its verdict here. */
         reply->uncommitted = 1;
@@ -4234,7 +4261,7 @@ int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr, word32 bindPort,
     }
 
     if (ret == WS_SUCCESS && wantReply) {
-        pend->reply = FwdReplyNew(ssh, isCancel);
+        pend->reply = FwdReplyNew(ssh, isCancel, bindAddr, bindPort);
         if (pend->reply == NULL) {
             if (pend->entry != NULL) {
                 WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
@@ -4268,7 +4295,9 @@ int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
     if (ssh == NULL || ssh->ctx == NULL || pend == NULL)
         return WS_BAD_ARGUMENT;
 
-    pend->reply = FwdReplyNew(ssh, 0);
+    /* An application's own request names no forward, but it consumes a reply,
+     * so it holds a place in the queue. */
+    pend->reply = FwdReplyNew(ssh, 0, NULL, 0);
     ret = pend->reply == NULL ? WS_MEMORY_E : WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Leaving FwdReplyPrepare(), ret = %d", ret);
@@ -4330,8 +4359,10 @@ void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
     }
     else if (pend->reply != NULL) {
         /* The slot is queued already; naming the forward makes it the newest
-         * request outstanding on it. */
+         * request outstanding on it. The bind gave the scans something to find
+         * it by meanwhile, and is the caller's to free from here. */
         pend->reply->entry = target;
+        pend->reply->bindAddr = NULL;
         pend->reply->uncommitted = 0;
     }
     else if (target != NULL) {

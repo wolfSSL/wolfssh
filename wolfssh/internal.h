@@ -1006,6 +1006,12 @@ typedef struct WOLFSSH_FWD_REPLY {
     struct WOLFSSH_FWD_REPLY* next;
     WOLFSSH_FWD_REMOTE* entry; /* forward answered, NULL once it is gone or if
                                 * the application sent the request */
+    const char* bindAddr;      /* bind this slot will name once it commits, so
+                                * the scans can see it meanwhile. Borrowed from
+                                * the caller and dropped at commit, the same
+                                * lifetime WOLFSSH_FWD_PENDING assumes. NULL
+                                * once committed. */
+    word32 bindPort;
     word32 port;               /* port a parked answer named */
     byte isCancel;             /* answers cancel-tcpip-forward */
     byte uncommitted;          /* its request has not reached the wire, so the
