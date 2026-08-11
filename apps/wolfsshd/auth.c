@@ -253,13 +253,28 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 }
 #endif
 
+/* A line may name a signature algorithm instead of the key type it signs
+ * with; OpenSSH maps the RSA SHA-2 names onto ssh-rsa, so those lines must
+ * keep working here. Returns the key type the token denotes. */
+static const char* AuthKeysTokenKeyType(const char* type)
+{
+    if (WSTRCMP(type, "rsa-sha2-256") == 0 ||
+            WSTRCMP(type, "rsa-sha2-512") == 0) {
+        return "ssh-rsa";
+    }
+
+    return type;
+}
+
 /* TODO: Can use wolfSSH_ReadKey_buffer? */
+/* isCert: key is a raw DER certificate, not an SSH wire-format key blob.
+ * When set, the wire-format type/embedded-type cross-check is skipped. */
 #ifdef WOLFSSHD_UNIT_TEST
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
-                      word32 keySz)
+                      word32 keySz, int isCert)
 #else
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
-                             word32 keySz)
+                             word32 keySz, int isCert)
 #endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
@@ -269,14 +284,6 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     byte* keyCand = NULL;
     word32 keyCandSz = 0;
     char* last = NULL;
-
-    /* Valid key types come from the same TYPE_KEY name registry
-     * (NameIdMap) that KEX negotiation uses, via wolfSSH_QueryKey(),
-     * instead of a separately hand-maintained list that could drift
-     * out of sync with it. */
-    int typeOk = 0;
-    word32 queryIdx = 0;
-    const char* algoName;
 
     if (line == NULL || lineSz == 0 || key == NULL || keySz == 0) {
         ret = WS_BAD_ARGUMENT;
@@ -291,20 +298,9 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        while ((algoName = wolfSSH_QueryKey(&queryIdx)) != NULL) {
-            /* OpenSSH cert types are verified via the CA path, not by
-             * literal comparison here; exclude them. */
-            if (WSTRSTR(algoName, "-cert-v01@openssh.com") != NULL) {
-                continue;
-            }
-            if (WSTRCMP(type, algoName) == 0) {
-                typeOk = 1;
-                break;
-            }
-        }
-        if (!typeOk) {
-            /* Skip unsupported key types so the scan continues to later
-             * entries instead of aborting the whole file. */
+        /* Cert types are verified via the CA path, not by literal
+         * comparison here. */
+        if (WSTRSTR(type, "-cert-v01@openssh.com") != NULL) {
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -318,8 +314,34 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         else {
             if (Base64_Decode((byte*)keyCandBase64, keyCandBase64Sz, keyCand,
                               &keyCandSz) != 0) {
-                ret = WS_FATAL_ERROR;
+                /* Skip, don't abort: an option-prefixed line puts a
+                 * non-base64 token here (e.g. "no-pty ssh-rsa ..."). */
+                ret = WSSHD_AUTH_FAILURE;
             }
+        }
+    }
+    if (ret == WSSHD_AUTH_SUCCESS && !isCert) {
+        /* A certificate candidate is a raw DER blob, not an SSH wire-format
+         * [uint32 len][type] key; this cross-check does not apply to it. */
+        word32 typeStrSz;
+        const char* keyType = AuthKeysTokenKeyType(type);
+        word32 keyTypeSz = (word32)XSTRLEN(keyType);
+
+        if (keyCandSz >= 4) {
+            ato32(keyCand, &typeStrSz);
+            if (typeStrSz != keyTypeSz || typeStrSz > keyCandSz - 4 ||
+                XMEMCMP(keyType, keyCand + 4, keyTypeSz) != 0) {
+                /* Skip: type token doesn't match the offered key's
+                 * embedded type. */
+                wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Skipping key line, type %s "
+                    "does not match the offered key's embedded type", type);
+                ret = WSSHD_AUTH_FAILURE;
+            }
+        }
+        else {
+            wolfSSH_Log(WS_LOG_DEBUG,
+                "[SSHD] Skipping key line, blob too short for a type field");
+            ret = WSSHD_AUTH_FAILURE;
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
@@ -1271,9 +1293,11 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 
 /* Scan a resolved keys file (authorized_keys or TrustedUserCAKeys) for
  * (key, keySz). Fails closed with WSSHD_AUTH_FAILURE when no line matches.
- * strictModes opens through the secure gate; the file must be owned by uid. */
+ * strictModes opens through the secure gate; the file must be owned by uid.
+ * isCert: key is a raw DER certificate, not an SSH wire-format key blob. */
 static int SearchKeysFile(const char* keysFilePath, const byte* key,
-                          word32 keySz, WUID_T uid, int strictModes)
+                          word32 keySz, WUID_T uid, int strictModes,
+                          int isCert)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     WFILE *f = WBADFILE;
@@ -1326,7 +1350,7 @@ static int SearchKeysFile(const char* keysFilePath, const byte* key,
             continue; /* commented out line */
         }
 
-        rc = CheckAuthKeysLine(current, currentSz, key, keySz);
+        rc = CheckAuthKeysLine(current, currentSz, key, keySz, isCert);
         if (rc == WSSHD_AUTH_SUCCESS) {
             foundKey = 1;
             break;
@@ -1451,7 +1475,8 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
 
     if (ret == WSSHD_AUTH_SUCCESS) {
         ret = SearchKeysFile(authKeysPath, pubKeyCtx->publicKey,
-                pubKeyCtx->publicKeySz, uid, strictModes);
+                pubKeyCtx->publicKeySz, uid, strictModes,
+                pubKeyCtx->isCert);
     }
 
     return ret;
@@ -1783,7 +1808,8 @@ static int CheckPublicKeyUnix(const char* name,
          * anchor, so it is always secure-gated, regardless of StrictModes. */
         if (ret == WSSHD_AUTH_SUCCESS) {
             ret = SearchKeysFile(usrCaKeysFile, pubKeyCtx->caKey,
-                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */);
+                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */,
+                    0 /* isCert: caKey is a wire-format key, not a cert */);
         }
 
         /* Bind the certificate to the requested user via its principals. */

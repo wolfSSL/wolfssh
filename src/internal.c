@@ -64,18 +64,24 @@
 #ifndef WOLFSSH_NO_MLDSA
     #include <wolfssl/wolfcrypt/dilithium.h>
 
-    /* SendKexGetSigningKey() bitwise-copies MlDsaKey, so it must have no
-     * heap-allocated/self-referential members; guard against that here. */
-    #if defined(WOLFSSL_MLDSA_DYNAMIC_KEYS) || defined(WOLFSSL_DILITHIUM_DYNAMIC_KEYS) || \
-            (!(defined(WC_MLDSA_FIXED_ARRAY) || defined(WC_DILITHIUM_FIXED_ARRAY)) && \
-             (defined(WC_MLDSA_CACHE_MATRIX_A) || defined(WC_DILITHIUM_CACHE_MATRIX_A) || \
-              defined(WC_MLDSA_CACHE_PRIV_VECTORS) || defined(WC_DILITHIUM_CACHE_PRIV_VECTORS) || \
-              defined(WC_MLDSA_CACHE_PUB_VECTORS) || defined(WC_DILITHIUM_CACHE_PUB_VECTORS)))
-        #error "wolfSSH's ML-DSA composite key handling assumes MlDsaKey " \
-            "is flat and safe to bitwise-copy; this wolfCrypt build " \
-            "config gives it heap-allocated/pointer members, so " \
-            "SendKexGetSigningKey() must be reworked before it can be " \
-            "used with WOLFSSH_NO_MLDSA unset."
+    /* Skip the hazard check below for plain-ML-DSA-only builds. This
+     * coarse over-approximation avoids forcing WOLFSSH_NO_MLDSA_COMPOSITES. */
+    #if (!defined(WOLFSSH_NO_MLDSA44) || !defined(WOLFSSH_NO_MLDSA65) || \
+            !defined(WOLFSSH_NO_MLDSA87)) && \
+        (!defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_ECDSA) || \
+            defined(HAVE_ED448))
+        #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
+        /* SendKexGetSigningKey() bitwise-copies MlDsaKey, requiring flat keys.
+         * WOLFSSH_NO_MLDSA_COMPOSITES disables composite ops to avoid this. */
+        #if defined(WOLFSSL_MLDSA_DYNAMIC_KEYS) || defined(WOLFSSL_DILITHIUM_DYNAMIC_KEYS) || \
+                (!(defined(WC_MLDSA_FIXED_ARRAY) || defined(WC_DILITHIUM_FIXED_ARRAY)) && \
+                 (defined(WC_MLDSA_CACHE_MATRIX_A) || defined(WC_DILITHIUM_CACHE_MATRIX_A) || \
+                  defined(WC_MLDSA_CACHE_PRIV_VECTORS) || defined(WC_DILITHIUM_CACHE_PRIV_VECTORS) || \
+                  defined(WC_MLDSA_CACHE_PUB_VECTORS) || defined(WC_DILITHIUM_CACHE_PUB_VECTORS)))
+            #error "SendKexGetSigningKey() requires a flat MlDsaKey. " \
+                "Define WOLFSSH_NO_MLDSA_COMPOSITES to bypass."
+        #endif
+        #endif
     #endif
 
 #endif
@@ -1031,6 +1037,7 @@ static const char cannedKexAlgoNames[] =
 
 /* ML-DSA listed first (post-quantum priority), then ECDSA, ED25519, RSA. */
 static const char cannedKeyAlgoNames[] =
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
@@ -1053,6 +1060,7 @@ static const char cannedKeyAlgoNames[] =
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -1132,6 +1140,7 @@ static const char cannedKeyAlgoNames[] =
  * ("*-cert-v01@openssh.com") names: host-cert verification is unimplemented, so
  * a client must not advertise them as host keys. Keep plain/X.509 in sync. */
 static const char cannedKeyAlgoNamesHostKey[] =
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
@@ -1154,6 +1163,7 @@ static const char cannedKeyAlgoNamesHostKey[] =
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -5740,16 +5750,6 @@ struct wolfSSH_sigKeyBlock {
 #ifndef WOLFSSH_NO_MLDSA
         struct {
             WS_MlDsaCompositeBody base;
-            /* largest mldsaPubSz + tradPubSz across WS_GetCompositeParams()
-             * combos; keep in sync with any new combo added there */
-#ifndef WOLFSSH_NO_MLDSA87
-            byte q[WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-            byte q[WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#else
-            byte q[WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#endif
-            word32 qSz;
         } mldsa_composite;
 #endif
     } sk;
@@ -6364,12 +6364,7 @@ static int ParsePubKey(WOLFSSH *ssh,
                 pubKeySz, ssh->handshake->pubKeyId);
             break;
     #endif
-        case ID_MLDSA44_ES256:
-        case ID_MLDSA65_ES256:
-        case ID_MLDSA87_ES384:
-        case ID_MLDSA44_ED25519:
-        case ID_MLDSA65_ED25519:
-        case ID_MLDSA87_ED448:
+        WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
             sigKeyBlock_ptr->useMlDsaComposite = 1;
             sigKeyBlock_ptr->pubKeyId = ssh->handshake->pubKeyId;
             ret = ParseMlDsaCompositePubKey(ssh, sigKeyBlock_ptr, pubKey,
@@ -13301,27 +13296,15 @@ struct wolfSSH_sigKeyBlockFull {
             struct {
                 MlDsaKey key;
                 /* Size to highest enabled ML-DSA level; qSz tracks actual. */
-#ifndef WOLFSSH_NO_MLDSA87
-                byte q[WC_MLDSA_87_PUB_KEY_SIZE];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-                byte q[WC_MLDSA_65_PUB_KEY_SIZE];
-#else
-                byte q[WC_MLDSA_44_PUB_KEY_SIZE];
-#endif
+                byte q[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
                 word32 qSz;
             } mldsa;
             struct {
                 WS_MlDsaCompositeBody base;
                 byte tradInit;
                 /* largest mldsaPubSz + tradPubSz across
-                 * WS_GetCompositeParams() combos; keep in sync */
-#ifndef WOLFSSH_NO_MLDSA87
-                byte q[WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-                byte q[WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#else
-                byte q[WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#endif
+                 * WS_GetCompositeParams() combos */
+                byte q[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ + COMPOSITE_MAX_TRAD_PUB_SZ];
                 word32 qSz;
             } mldsa_composite;
 #endif
@@ -14009,12 +13992,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
         }
         #endif /* WOLFSSH_NO_MLDSA */
 #ifndef WOLFSSH_NO_MLDSA
-        case ID_MLDSA44_ES256:
-        case ID_MLDSA65_ES256:
-        case ID_MLDSA87_ES384:
-        case ID_MLDSA44_ED25519:
-        case ID_MLDSA65_ED25519:
-        case ID_MLDSA87_ED448:
+        WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
         {
             CompositeParams params;
             ret = WS_GetCompositeParams(sigKeyBlock_ptr->pubKeyId, &params);
@@ -15095,6 +15073,38 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #endif /* WOLFSSH_NO_RSA */
 
 
+#ifndef WOLFSSH_NO_ECDSA
+/* Encode ECDSA r/s mpints to [uint32 len][val] pairs, padding positive
+ * values with top bit set. Returns bytes written, or 0 when outSz can't
+ * hold both mpints. */
+static word32 EncodeEcdsaRsToMpints(byte* out, word32 outSz,
+        const byte* r, word32 rSz, byte rPad,
+        const byte* s, word32 sSz, byte sPad)
+{
+    word32 idx = 0;
+
+    if (outSz < (2 * LENGTH_SZ) + rSz + rPad + sSz + sPad) {
+        return 0;
+    }
+
+    c32toa(rSz + rPad, out + idx);
+    idx += LENGTH_SZ;
+    if (rPad)
+        out[idx++] = 0;
+    WMEMCPY(out + idx, r, rSz);
+    idx += rSz;
+
+    c32toa(sSz + sPad, out + idx);
+    idx += LENGTH_SZ;
+    if (sPad)
+        out[idx++] = 0;
+    WMEMCPY(out + idx, s, sSz);
+    idx += sSz;
+
+    return idx;
+}
+#endif /* !WOLFSSH_NO_ECDSA */
+
 static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         struct wolfSSH_sigKeyBlockFull *sigKey)
 #ifndef WOLFSSH_NO_ECDSA
@@ -15109,6 +15119,9 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     enum wc_HashType hashId;
     word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ,
            sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
+    /* wc_ecc_sign_hash() overwrites *sigSz, and the mpint form written back
+     * over sig can be longer than the ASN.1 form; keep the capacity. */
+    word32 sigCap = *sigSz;
     byte rPad, sPad;
 #ifndef WOLFSSH_SMALL_STACK
     byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
@@ -15203,22 +15216,19 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
-        int idx = 0;
+        word32 written;
+
         rPad = (r[0] & 0x80) ? 1 : 0;
         sPad = (s[0] & 0x80) ? 1 : 0;
-        *sigSz = (LENGTH_SZ * 2) + rSz + rPad + sSz + sPad;
-
-        c32toa(rSz + rPad, sig + idx);
-        idx += LENGTH_SZ;
-        if (rPad)
-            sig[idx++] = 0;
-        WMEMCPY(sig + idx, r, rSz);
-        idx += rSz;
-        c32toa(sSz + sPad, sig + idx);
-        idx += LENGTH_SZ;
-        if (sPad)
-            sig[idx++] = 0;
-        WMEMCPY(sig + idx, s, sSz);
+        written = EncodeEcdsaRsToMpints(sig, sigCap, r, rSz, rPad, s, sSz,
+                sPad);
+        if (written == 0) {
+            WLOG(WS_LOG_DEBUG, "SignHEcdsa: sig buffer too small for mpints");
+            ret = WS_BUFFER_E;
+        }
+        else {
+            *sigSz = written;
+        }
     }
 
     WS_FORCEZERO(digest, sizeof(digest));
@@ -15323,12 +15333,7 @@ static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
         case ID_X509V3_MLDSA87:
             ret = SignHMlDsa(ssh, sig, sigSz, sigKey);
             break;
-        case ID_MLDSA44_ES256:
-        case ID_MLDSA65_ES256:
-        case ID_MLDSA87_ES384:
-        case ID_MLDSA44_ED25519:
-        case ID_MLDSA65_ED25519:
-        case ID_MLDSA87_ED448:
+        WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
             ret = SignHMlDsaComposite(ssh, sig, sigSz, sigKey);
             break;
 #endif
@@ -15815,12 +15820,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             }
             break;
 
-            case ID_MLDSA44_ES256:
-            case ID_MLDSA65_ES256:
-            case ID_MLDSA87_ES384:
-            case ID_MLDSA44_ED25519:
-            case ID_MLDSA65_ED25519:
-            case ID_MLDSA87_ED448:
+            WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
             {
             /* ML-DSA pubkey then trad pubkey. */
             c32toa(sigKeyBlock_ptr->sk.mldsa_composite.qSz, output + idx);
@@ -17868,6 +17868,9 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                word32 written;
+                word32 outRemaining;
+
                 namesSz = (word32)WSTRLEN(names);
 
                 c32toa(rSz + rPad + sSz + sPad + namesSz + LENGTH_SZ * 4,
@@ -17883,23 +17886,18 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
                 c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
 
-                c32toa(rSz + rPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (rPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, r_ptr, rSz);
-                begin += rSz;
-
-                c32toa(sSz + sPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (sPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, s_ptr, sSz);
-                begin += sSz;
+                /* begin indexes into the whole output buffer. */
+                outRemaining = (ssh->outputBuffer.bufferSz > begin) ?
+                        ssh->outputBuffer.bufferSz - begin : 0;
+                written = EncodeEcdsaRsToMpints(output + begin, outRemaining,
+                        r_ptr, rSz, rPad, s_ptr, sSz, sPad);
+                if (written == 0) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: ECDSA sig doesn't fit output");
+                    ret = WS_BUFFER_E;
+                }
+                else {
+                    begin += written;
+                }
             }
         }
     }
@@ -18129,6 +18127,9 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                word32 written;
+                word32 outRemaining;
+
                 namesSz = (word32)WSTRLEN(names);
 
                 c32toa(rSz + rPad + sSz + sPad + namesSz+ LENGTH_SZ * 4,
@@ -18144,23 +18145,19 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
 
-                c32toa(rSz + rPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (rPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, r, rSz);
-                begin += rSz;
-
-                c32toa(sSz + sPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (sPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, s, sSz);
-                begin += sSz;
+                /* begin indexes into the whole output buffer. */
+                outRemaining = (ssh->outputBuffer.bufferSz > begin) ?
+                        ssh->outputBuffer.bufferSz - begin : 0;
+                written = EncodeEcdsaRsToMpints(output + begin, outRemaining,
+                        r, rSz, rPad, s, sSz, sPad);
+                if (written == 0) {
+                    WLOG(WS_LOG_DEBUG,
+                            "SUAR: ECDSA cert sig doesn't fit output");
+                    ret = WS_BUFFER_E;
+                }
+                else {
+                    begin += written;
+                }
             }
         }
     }
@@ -18730,12 +18727,7 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
             #endif
             #endif
 #ifndef WOLFSSH_NO_MLDSA
-            case ID_MLDSA44_ES256:
-            case ID_MLDSA65_ES256:
-            case ID_MLDSA87_ES384:
-            case ID_MLDSA44_ED25519:
-            case ID_MLDSA65_ED25519:
-            case ID_MLDSA87_ED448:
+            WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
                 ret = PrepareUserAuthRequestMlDsaComposite(ssh,
                         payloadSz, authData, keySig);
                 break;
@@ -18914,12 +18906,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                 #endif
                 #endif
 #ifndef WOLFSSH_NO_MLDSA
-                case ID_MLDSA44_ES256:
-                case ID_MLDSA65_ES256:
-                case ID_MLDSA87_ES384:
-                case ID_MLDSA44_ED25519:
-                case ID_MLDSA65_ED25519:
-                case ID_MLDSA87_ED448:
+                WOLFSSH_MLDSA_COMPOSITE_ID_CASES:
                     c32toa(pk->publicKeyTypeSz, output + begin);
                     begin += LENGTH_SZ;
                     WMEMCPY(output + begin,
@@ -21271,6 +21258,11 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
     XMEMSET(params, 0, sizeof(*params));
     params->keyId = keyId;
 
+#ifdef WOLFSSH_NO_MLDSA_COMPOSITES
+    /* Fail unconditionally if composites disabled. Keeps bitwise-MlDsaKey-copy
+     * hazard unreachable. */
+    return WS_NOT_COMPILED;
+#else
     switch (keyId) {
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
         case ID_MLDSA44_ES256:
@@ -21390,6 +21382,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
     }
 
     return WS_SUCCESS;
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 }
 
 int WS_Hash_Helper(enum wc_HashType hashId, const byte* msg, word32 msgSz,
@@ -21426,6 +21419,14 @@ static int CompositeEccInit(void* key, void* heap)
 static void CompositeEccFree(void* key)
 {
     wc_ecc_free((ecc_key*)key);
+}
+
+/* returns 0 on success, negative on failure (wc_ecc_make_key_ex() code) */
+static int CompositeEccMakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    return wc_ecc_make_key_ex(rng, (int)params->tradPrivSz, (ecc_key*)key,
+            params->eccCurveId);
 }
 
 /* returns 0 on success, negative on failure (wc_ecc_import_x963() code) */
@@ -21511,31 +21512,19 @@ static int CompositeEccSign(void* key, WC_RNG* rng, void* heap,
             ret = wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf, &sSz);
         }
         if (ret == 0) {
-            word32 offset = 0;
-            byte rPad = (rBuf[0] & 0x80) ? 1 : 0;
-            byte sPad = (sBuf[0] & 0x80) ? 1 : 0;
-
             /* RFC 5656 3.1.2: r/s are mpints; a positive value with its
              * top bit set needs a leading zero pad byte. */
-            if (*wireSigSz < (2U * LENGTH_SZ) + rSz + rPad + sSz + sPad) {
+            byte rPad = (rBuf[0] & 0x80) ? 1 : 0;
+            byte sPad = (sBuf[0] & 0x80) ? 1 : 0;
+            word32 written;
+
+            written = EncodeEcdsaRsToMpints(wireSig, *wireSigSz,
+                    rBuf, rSz, rPad, sBuf, sSz, sPad);
+            if (written == 0) {
                 ret = WS_BAD_ARGUMENT;
             }
             else {
-                c32toa(rSz + rPad, wireSig + offset);
-                offset += LENGTH_SZ;
-                if (rPad)
-                    wireSig[offset++] = 0;
-                WMEMCPY(wireSig + offset, rBuf, rSz);
-                offset += rSz;
-
-                c32toa(sSz + sPad, wireSig + offset);
-                offset += LENGTH_SZ;
-                if (sPad)
-                    wireSig[offset++] = 0;
-                WMEMCPY(wireSig + offset, sBuf, sSz);
-                offset += sSz;
-
-                *wireSigSz = offset;
+                *wireSigSz = written;
             }
         }
 #ifdef WOLFSSH_SMALL_STACK
@@ -21629,7 +21618,7 @@ static int CompositeEccVerify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEccOps = {
-    CompositeEccInit, CompositeEccFree,
+    CompositeEccInit, CompositeEccFree, CompositeEccMakeKey,
     CompositeEccImportPub, CompositeEccImportPriv,
     CompositeEccExportPrivOnly, CompositeEccExportPub,
     CompositeEccSign, CompositeEccVerify,
@@ -21648,6 +21637,14 @@ static int CompositeEd25519Init(void* key, void* heap)
 static void CompositeEd25519Free(void* key)
 {
     wc_ed25519_free((ed25519_key*)key);
+}
+
+/* returns 0 on success, negative wc_ed25519_make_key() code on failure */
+static int CompositeEd25519MakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    WOLFSSH_UNUSED(params);
+    return wc_ed25519_make_key(rng, ED25519_KEY_SIZE, (ed25519_key*)key);
 }
 
 /* returns 0 on success, negative wc_ed25519_import_public() code on
@@ -21733,7 +21730,7 @@ static int CompositeEd25519Verify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEd25519Ops = {
-    CompositeEd25519Init, CompositeEd25519Free,
+    CompositeEd25519Init, CompositeEd25519Free, CompositeEd25519MakeKey,
     CompositeEd25519ImportPub, CompositeEd25519ImportPriv,
     CompositeEd25519ExportPrivOnly, CompositeEd25519ExportPub,
     CompositeEd25519Sign, CompositeEd25519Verify,
@@ -21752,6 +21749,14 @@ static int CompositeEd448Init(void* key, void* heap)
 static void CompositeEd448Free(void* key)
 {
     wc_ed448_free((ed448_key*)key);
+}
+
+/* returns 0 on success, negative wc_ed448_make_key() code on failure */
+static int CompositeEd448MakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    WOLFSSH_UNUSED(params);
+    return wc_ed448_make_key(rng, ED448_KEY_SIZE, (ed448_key*)key);
 }
 
 /* returns 0 on success, negative wc_ed448_import_public() code on failure */
@@ -21834,7 +21839,7 @@ static int CompositeEd448Verify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEd448Ops = {
-    CompositeEd448Init, CompositeEd448Free,
+    CompositeEd448Init, CompositeEd448Free, CompositeEd448MakeKey,
     CompositeEd448ImportPub, CompositeEd448ImportPriv,
     CompositeEd448ExportPrivOnly, CompositeEd448ExportPub,
     CompositeEd448Sign, CompositeEd448Verify,
