@@ -16794,11 +16794,12 @@ int SendServiceAccept(WOLFSSH* ssh, byte serviceId)
 }
 
 
+#ifndef NO_WOLFSSH_SERVER
+
 #define WS_EXTINFO_EXTENSION_COUNT 1
 static const char serverSigAlgsName[] = "server-sig-algs";
 
 
-#ifndef NO_WOLFSSH_SERVER
 static int SendExtInfoServer(WOLFSSH* ssh)
 {
     byte* output;

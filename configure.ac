@@ -292,8 +292,22 @@ AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_NONE_CIPHER" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_ALLOW_NONE_CIPHER"])
+dnl The client app shows host key fingerprints and writes known_hosts
+dnl entries, both base64. wolfSSL only enables its encoder by default on
+dnl x86_64, so check for it rather than fail later on a hidden prototype.
 AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"])
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHCLIENT"
+       AC_MSG_CHECKING([for Base64_Encode_NoNl])
+       AC_LINK_IFELSE(
+         [AC_LANG_PROGRAM([[#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/coding.h>]],
+                          [[byte out[8];
+                            word32 outSz = sizeof(out);
+                            (void)Base64_Encode_NoNl((const byte*)"x", 1,
+                                    out, &outSz);]])],
+         [AC_MSG_RESULT([yes])],
+         [AC_MSG_RESULT([no])
+          AC_MSG_ERROR([the SSH client app needs base64 encoding for host key fingerprints and known_hosts entries. Rebuild wolfSSL with --enable-base64encode, or leave out --enable-sshclient.])])])
 AS_IF([test "x$ENABLED_TPM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"
        AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])

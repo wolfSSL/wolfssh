@@ -147,7 +147,8 @@ static word32 AppendUint32(byte* buf, word32 bufSz, word32 idx, word32 value)
     return idx;
 }
 
-static word32 ReadUint32(const byte* buf)
+/* Callers sit in separate conditional blocks; some builds have none. */
+static WS_MAYBE_UNUSED word32 ReadUint32(const byte* buf)
 {
     return ((word32)buf[0] << 24) | ((word32)buf[1] << 16) |
             ((word32)buf[2] << 8) | (word32)buf[3];
@@ -306,6 +307,11 @@ static void MemIoInit(MemIo* io, byte* in, word32 inSz, byte* out, word32 outCap
     io->outCap = outCap;
 }
 
+/* The harness below and everything built on it drive a server-side session.
+ * With NO_WOLFSSH_SERVER the message filter has no server branch, so every
+ * message on such a session is refused and those tests cannot run. */
+#ifndef NO_WOLFSSH_SERVER
+
 typedef struct {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
@@ -437,6 +443,8 @@ static void TestKbInfoResponseMismatchKeepsFraming(void)
 }
 
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+#endif /* NO_WOLFSSH_SERVER */
 
 /* Needs server, client, key files, and one covered host-key algorithm. */
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
@@ -1282,6 +1290,8 @@ static void TestKexDhReplyRejectsSigNameOverrun(void)
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
+#ifndef NO_WOLFSSH_SERVER
+
 static word32 ParseChannelOpenFailRecipient(const byte* pkt, word32 sz)
 {
     word32 chan;
@@ -1503,6 +1513,8 @@ static int RejectRemoteSetupFwdCb(WS_FwdCbAction action, void* ctx,
 }
 #endif
 
+
+#endif /* NO_WOLFSSH_SERVER */
 
 /* Reject auth messages while the peer is still keying and the client
  * expects the KEX reply. */
@@ -1887,7 +1899,6 @@ static void TestServerServiceRequestStateGated(WOLFSSH* ssh)
      * on reject. */
     AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
 }
-#endif /* NO_WOLFSSH_SERVER */
 
 
 static void TestChannelOpenCallbackRejectSendsOpenFail(void)
@@ -2533,6 +2544,9 @@ static void TestAgentChannelNullAgentSendsOpenFail(void)
     FreeChannelOpenHarness(&harness);
 }
 #endif
+
+
+#endif /* NO_WOLFSSH_SERVER */
 
 
 /* Reject a peer KEXINIT once keying is in progress. */
@@ -5848,7 +5862,6 @@ int main(int argc, char** argv)
     TestServerUserauthBlockedBeforeKeyed(serverSsh);
     TestServerOnlyUserauthMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
-#endif
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
@@ -5875,6 +5888,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();
 #endif
+#endif /* NO_WOLFSSH_SERVER */
     TestKexInitRejectedWhenKeying(ssh);
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
