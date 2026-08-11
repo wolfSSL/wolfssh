@@ -15,7 +15,10 @@ have support for SSH-AGENT and forwarding.
 Command Line Options
 --------------------
 
-    -E logfile    : Specify a different log file.
+    -E logfile    : Append the log to this file instead of stderr, and turn
+                    logging on. The log is empty unless the library has
+                    logging compiled in, with `--enable-debug` or
+                    `--enable-sshd`.
     -G            : Print out the configuration as used.
     -l login_name : Overrides the login name specified in the destination.
     -p port       : Overrides the destination port number.

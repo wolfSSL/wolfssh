@@ -31,6 +31,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/log.h>
 #include <wolfssh/version.h>
 #include <wolfssl/version.h>
 #include <wolfssh/test.h>
@@ -73,6 +74,10 @@
     #include <sys/select.h>
 #endif
 
+#ifndef WOLFSSH_NO_TIMESTAMP
+    #include <time.h>
+#endif
+
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
 #endif
@@ -80,6 +85,55 @@
 
 int myoptind = 0;
 char* myoptarg = NULL;
+
+/* The file named by -E, when given. Named apart from struct config's
+ * logFile, which is the path this was opened from. */
+static WFILE* logFileStream = NULL;
+
+
+/* Same names DefaultLoggingCb() logs with. That function's GetLogStr() is
+ * private to the library, so the list is repeated here. */
+static const char* ClientLogLevelStr(enum wolfSSH_LogLevel level)
+{
+    switch (level) {
+        case WS_LOG_INFO:    return "INFO";
+        case WS_LOG_WARN:    return "WARNING";
+        case WS_LOG_ERROR:   return "ERROR";
+        case WS_LOG_DEBUG:   return "DEBUG";
+        case WS_LOG_USER:    return "USER";
+        case WS_LOG_SFTP:    return "SFTP";
+        case WS_LOG_SCP:     return "SCP";
+        case WS_LOG_AGENT:   return "AGENT";
+        case WS_LOG_CERTMAN: return "CERTMAN";
+        default:             return "UNKNOWN";
+    }
+}
+
+
+/* Write the log to the file named by -E instead of stderr. The format
+ * matches DefaultLoggingCb() so the two are comparable. The callback cannot
+ * be uninstalled, so fall back to stderr when the file isn't open. */
+static void ClientLoggingCb(enum wolfSSH_LogLevel level, const char *const str)
+{
+    WFILE* out = (logFileStream != NULL) ? logFileStream : stderr;
+    char timeStr[24];
+
+    timeStr[0] = '\0';
+#ifndef WOLFSSH_NO_TIMESTAMP
+    {
+        time_t current;
+        struct tm local;
+
+        current = WTIME(NULL);
+        if (WLOCALTIME(&current, &local)) {
+            strftime(timeStr, sizeof(timeStr), "%F %T ", &local);
+        }
+    }
+#endif
+    fprintf(out, "%s[%s] %s\r\n", timeStr, ClientLogLevelStr(level), str);
+    /* flush so the log is complete when the client is interrupted */
+    fflush(out);
+}
 
 
 static void ShowUsage(char* appPath)
@@ -748,6 +802,11 @@ struct config {
 };
 
 
+/* Parsed by main() before wolfSSH_Init() so the -E log file catches the
+ * library's start up messages. */
+static struct config clientConfig;
+
+
 static int config_init_default(struct config* config)
 {
     char* env;
@@ -972,37 +1031,31 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     byte useAgent = 0;
     WS_AgentCbActionCtx agentCbCtx;
 #endif
-    struct config config;
 
     MODES_STORE();
 
     ((func_args*)args)->return_code = 0;
 
-    config_init_default(&config);
-    config_parse_command_line(&config,
-            ((func_args*)args)->argc, ((func_args*)args)->argv);
-    config_print(&config);
-
     /* Only ask for an interactive terminal session when no remote command
      * was given. Requesting both discards the command. */
-    keepOpen = (byte)(config.command == NULL);
+    keepOpen = (byte)(clientConfig.command == NULL);
 
 #ifdef WOLFSSH_AGENT
-    useAgent = (byte)config.useAgent;
+    useAgent = (byte)clientConfig.useAgent;
 #endif
 
-    if (config.user == NULL)
+    if (clientConfig.user == NULL)
         err_sys("client requires a username parameter.");
 
-    if (config.hostname == NULL)
+    if (clientConfig.hostname == NULL)
         err_sys("client requires a hostname parameter.");
 
 #ifdef SINGLE_THREADED
     err_sys("Threading needed for terminal and command sessions\n");
 #endif
 
-    if (config.keyFile) {
-        ret = ClientSetPrivateKey(config.keyFile);
+    if (clientConfig.keyFile) {
+        ret = ClientSetPrivateKey(clientConfig.keyFile);
         if (ret == 0) {
         #ifdef WOLFSSH_CERTS
             /* passed in certificate to use */
@@ -1011,8 +1064,8 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             }
             else
         #endif
-            if (config.pubKeyFile) {
-                (void)ClientUsePubKey(config.pubKeyFile);
+            if (clientConfig.pubKeyFile) {
+                (void)ClientUsePubKey(clientConfig.pubKeyFile);
             }
         }
     }
@@ -1054,13 +1107,13 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     }
 #endif
 
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)config.hostname);
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)clientConfig.hostname);
 
-    ret = wolfSSH_SetUsername(ssh, config.user);
+    ret = wolfSSH_SetUsername(ssh, clientConfig.user);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
-    build_addr(&clientAddr, config.hostname, config.port);
+    build_addr(&clientAddr, clientConfig.hostname, clientConfig.port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
 
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
@@ -1073,10 +1126,10 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
-    if (config.command != NULL) {
+    if (clientConfig.command != NULL) {
         ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
-                            (byte*)config.command,
-                            (word32)WSTRLEN((char*)config.command));
+                            (byte*)clientConfig.command,
+                            (word32)WSTRLEN((char*)clientConfig.command));
         if (ret != WS_SUCCESS)
             err_sys("Couldn't set the channel type.");
     }
@@ -1107,7 +1160,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
     /* Every session, shell or command, runs its I/O on threads. */
     {
-    #if defined(_POSIX_THREADS)
+#if defined(_POSIX_THREADS)
         thread_args arg;
         pthread_t   thread[3];
 
@@ -1120,7 +1173,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             err_sys("Couldn't initialize window semaphore.");
         }
 
-        if (config.command) {
+        if (clientConfig.command) {
             int err;
 
             /* exec command does not contain initial terminal size,
@@ -1151,7 +1204,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         wolfSSH_SEMAPHORE_Release(&windowSem);
 #endif /* WOLFSSH_TERM */
         ioErr = arg.readError;
-    #elif defined(_MSC_VER)
+#elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
 
@@ -1160,7 +1213,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         arg.readError = 0;
         wc_InitMutex(&arg.lock);
 
-        if (config.command) {
+        if (clientConfig.command) {
             int err;
 
             /* exec command does not contain initial terminal size,
@@ -1178,9 +1231,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         CloseHandle(thread[0]);
         CloseHandle(thread[1]);
         ioErr = arg.readError;
-    #else
+#else
         err_sys("No threading to use");
-    #endif
+#endif
         if (keepOpen)
             ClientSetEcho(1);
     }
@@ -1230,7 +1283,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    config_cleanup(&config);
     MODES_RESET();
 
     return 0;
@@ -1248,6 +1300,23 @@ int main(int argc, char** argv)
 
     WSTARTTCP();
 
+    config_init_default(&clientConfig);
+    config_parse_command_line(&clientConfig, argc, argv);
+    config_print(&clientConfig);
+
+    /* Install the log callback before wolfSSH_Init() so the file named by
+     * -E gets the library's start up messages too. */
+    if (clientConfig.logFile != NULL) {
+        if (WFOPEN(NULL, &logFileStream, clientConfig.logFile, "ab") != 0
+                || logFileStream == WBADFILE) {
+            err_sys("Couldn't open the log file.");
+        }
+        wolfSSH_SetLoggingCb(ClientLoggingCb);
+        /* Asking for a log file is asking for logging. A no-op when the
+         * library has none compiled in, same as wolfsshd's -d. */
+        wolfSSH_Debugging_ON();
+    }
+
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
@@ -1257,6 +1326,14 @@ int main(int argc, char** argv)
     wolfSSH_Client(&args);
 
     wolfSSH_Cleanup();
+
+    /* Close the log last, wolfSSH_Cleanup() still logs and the callback
+     * cannot be uninstalled. */
+    if (logFileStream != NULL) {
+        WFCLOSE(NULL, logFileStream);
+        logFileStream = NULL;
+    }
+    config_cleanup(&clientConfig);
 
     return args.return_code;
 }
