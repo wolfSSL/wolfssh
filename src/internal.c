@@ -4146,6 +4146,7 @@ static WOLFSSH_FWD_REPLY* FwdReplyNew(WOLFSSH* ssh, int isCancel,
         else
             ssh->fwdReplyTail->next = reply;
         ssh->fwdReplyTail = reply;
+        ssh->fwdReplyCount++;
     }
 
     return reply;
@@ -4175,6 +4176,7 @@ static void FwdReplyUnqueue(WOLFSSH* ssh, WOLFSSH_FWD_REPLY* reply)
 
     if (ssh->fwdReplyTail == reply)
         ssh->fwdReplyTail = prev;
+    ssh->fwdReplyCount--;
 
     WFREE(reply, ssh->ctx->heap, DYNTYPE_FWD);
 }
@@ -4199,6 +4201,13 @@ int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr, word32 bindPort,
 
     if (ssh == NULL || ssh->ctx == NULL || bindAddr == NULL || pend == NULL)
         return WS_BAD_ARGUMENT;
+
+    /* Refusing here keeps the request off the wire. Framing one whose slot was
+     * never queued would mispair every later reply for the session. */
+    if (wantReply && ssh->fwdReplyCount >= WOLFSSH_MAX_FWD_REPLIES) {
+        WLOG(WS_LOG_ERROR, "Too many global requests await a reply");
+        return WS_RESOURCE_E;
+    }
 
     heap = ssh->ctx->heap;
     pend->isCancel = (byte)(isCancel != 0);
@@ -4294,6 +4303,11 @@ int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 
     if (ssh == NULL || ssh->ctx == NULL || pend == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (ssh->fwdReplyCount >= WOLFSSH_MAX_FWD_REPLIES) {
+        WLOG(WS_LOG_ERROR, "Too many global requests await a reply");
+        return WS_RESOURCE_E;
+    }
 
     /* An application's own request names no forward, but it consumes a reply,
      * so it holds a place in the queue. */
@@ -4473,6 +4487,7 @@ static void FwdRemoteReply(WOLFSSH* ssh, int success, const byte* buf,
     ssh->fwdReplyHead = reply->next;
     if (ssh->fwdReplyHead == NULL)
         ssh->fwdReplyTail = NULL;
+    ssh->fwdReplyCount--;
 
     if (reply->uncommitted) {
         /* The request this answers is still being sent -- a callback the send
@@ -4519,6 +4534,7 @@ void FwdRemoteFreeList(WOLFSSH* ssh, void* heap)
     }
     ssh->fwdReplyHead = NULL;
     ssh->fwdReplyTail = NULL;
+    ssh->fwdReplyCount = 0;
 }
 #endif /* WOLFSSH_FWD */
 

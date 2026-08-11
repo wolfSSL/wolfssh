@@ -3773,6 +3773,56 @@ static void TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* Only the peer gives a reply slot back, so a peer that never answers would
+ * let the queue grow for the life of the session and lengthen every match.
+ * Refusing has to happen before the request is framed: one whose slot was
+ * never queued would mispair every later reply. */
+static void TestFwdReplyQueueIsCapped(void)
+{
+    ChannelOpenHarness harness;
+    const byte req[] = "keepalive@openssh.com";
+    word32 i;
+
+    InitFwdRemoteHarness(&harness);
+
+    for (i = 0; i < WOLFSSH_MAX_FWD_REPLIES; i++) {
+        harness.io.outSz = 0;
+        AssertIntEQ(wolfSSH_global_request(harness.ssh, req,
+                    (word32)sizeof(req) - 1, 1), WS_SUCCESS);
+    }
+    AssertIntEQ(harness.ssh->fwdReplyCount, WOLFSSH_MAX_FWD_REPLIES);
+
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_global_request(harness.ssh, req,
+                (word32)sizeof(req) - 1, 1), WS_RESOURCE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->fwdReplyCount, WOLFSSH_MAX_FWD_REPLIES);
+
+    /* Forward requests share the queue, so they share the cap, and a refused
+     * one registers nothing. */
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_RESOURCE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+
+    /* Without wantReply nothing is queued, so nothing is capped. */
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    /* An answer gives a slot back, and the next request fits in it. */
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(harness.ssh->fwdReplyCount, WOLFSSH_MAX_FWD_REPLIES - 1);
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_global_request(harness.ssh, req,
+                (word32)sizeof(req) - 1, 1), WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static int CancelDuringSendHighwaterCb(byte side, void* ctx)
 {
     WOLFSSH* ssh = (WOLFSSH*)ctx;
@@ -7908,6 +7958,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipRequestAfterReplyDuringSend();
     TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward();
     TestForwardedTcpipReentrantCancelDuringSend();
+    TestFwdReplyQueueIsCapped();
     TestForwardedTcpipAppRequestKeepsItsOwnReply();
     TestForwardedTcpipWantWriteStillRegisters();
     TestForwardedTcpipInterruptedSendStillRegisters();

@@ -983,6 +983,14 @@ struct WOLFSSH_AGENT_CTX;
 
 #ifdef WOLFSSH_FWD
 
+/* Most want-reply global requests a session may have outstanding at once. The
+ * peer gives a slot back by answering, so a peer that never does would
+ * otherwise let the queue grow for the life of the session. Set high enough
+ * that a non-blocking application pipelining setups stays well under it. */
+#ifndef WOLFSSH_MAX_FWD_REPLIES
+#define WOLFSSH_MAX_FWD_REPLIES 1024
+#endif
+
 /* A remote forward this client asked the peer to listen on with
  * wolfSSH_FwdRemoteSetup(), kept so an inbound forwarded-tcpip open can be
  * matched against it. */
@@ -1256,6 +1264,7 @@ struct WOLFSSH {
     WOLFSSH_FWD_REMOTE* fwdRemoteList; /* remote forwards this client asked for */
     WOLFSSH_FWD_REPLY* fwdReplyHead;   /* oldest want-reply request owed */
     WOLFSSH_FWD_REPLY* fwdReplyTail;
+    word32 fwdReplyCount;  /* slots queued, kept off the walk it bounds */
     byte fwdRemoteTracked; /* wolfSSH_FwdRemoteSetup() was used */
 #endif /* WOLFSSH_FWD */
 #ifdef WOLFSSH_TERM
