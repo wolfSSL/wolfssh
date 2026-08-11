@@ -407,7 +407,9 @@ static const char serverKeyEccDer[] =
     "7bb87f38c66dd5a00a06082a8648ce3d030107a144034200048113ffa42bb79c"
     "45747a834c61f33fad26cf22cda9a3bca561b47ce662d4c2f755439a31fb8011"
     "20b5124b24f578d7fd22ef4635f005586b5f63c8da1bc4f569";
+#ifndef NO_WOLFSSH_SERVER
 static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP256;
+#endif
 #elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
 static const char serverKeyEccDer[] =
     "3081a402010104303eadd2bbbf05a7be3a3f7c28151289de5bb3644d7011761d"
@@ -416,7 +418,9 @@ static const char serverKeyEccDer[] =
     "7724316d46a23105873f2986d5c712803a6f471ab86850eb063e108961349cf8"
     "b4c6a4cf5e97bd7e51e975e3e9217261506eb9cf3c493d3eb88d467b5f27ebab"
     "2161c00066febd";
+#ifndef NO_WOLFSSH_SERVER
 static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP384;
+#endif
 #elif !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
 static const char serverKeyEccDer[] =
     "3081dc0201010442004ca4d86428d9400e7b2df3912eb996c195895043af92e8"
@@ -426,7 +430,9 @@ static const char serverKeyEccDer[] =
     "d18046a9717f2c6f59519c827095b29a6313306218c235769400d0f96d000a19"
     "3ba346652beb409a9a45c597a3ed932dd5aaae96bf2f317e5a7ac7458b3c6cdb"
     "aa90c355382cdfcdca7377d92eb20a5e8c74237ca5a345b19e3f1a2290b154";
+#ifndef NO_WOLFSSH_SERVER
 static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
+#endif
 #endif
 
 #ifndef WOLFSSH_NO_RSA
@@ -474,7 +480,7 @@ static const char serverKeyRsaDer[] =
 
 static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 {
-#ifndef WOLFSSH_NO_SERVER
+#ifndef NO_WOLFSSH_SERVER
     WOLFSSH_CTX* ctx;
 #ifndef WOLFSSH_NO_ECDSA
     byte* eccKey;
@@ -609,7 +615,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 #ifndef WOLFSSH_NO_RSA
     FreeBins(rsaKey, NULL, NULL, NULL);
 #endif
-#endif /* WOLFSSH_NO_SERVER */
+#endif /* NO_WOLFSSH_SERVER */
 }
 
 
@@ -691,7 +697,7 @@ static const char zeroLenPemCert[] =
 #endif /* WOLFSSH_CERTS */
 
 
-#ifndef WOLFSSH_NO_SERVER
+#ifndef NO_WOLFSSH_SERVER
 
 /* The same shapes for a private key, which decodes without certificate
  * support and so is pinned outside WOLFSSH_CERTS. */
@@ -706,7 +712,7 @@ static const char zeroLenPemKey[] =
     "MI\n"
     "-----END PRIVATE KEY-----\n";
 
-#endif /* WOLFSSH_NO_SERVER */
+#endif /* NO_WOLFSSH_SERVER */
 
 
 static void test_wolfSSH_CTX_UseCert_buffer(void)
@@ -1122,7 +1128,7 @@ static void test_wolfSSH_ReadCert_file(void)
 static void test_wolfSSH_CTX_UseCert_file(void)
 {
 #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
-    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_NO_SERVER)
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(NO_WOLFSSH_SERVER)
     WOLFSSH_CTX* ctx = NULL;
 #ifndef WOLFSSH_NO_ED25519
     int ret;
@@ -1171,7 +1177,7 @@ static void test_wolfSSH_CTX_UseCert_file(void)
 static void test_wolfSSH_CTX_AddRootCert_file(void)
 {
 #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
-    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_NO_SERVER)
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(NO_WOLFSSH_SERVER)
     WOLFSSH_CTX* ctx = NULL;
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
@@ -1228,7 +1234,7 @@ static void test_wolfSSH_CTX_AddRootCert_file(void) { ; }
 
 static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
 {
-#if !defined(WOLFSSH_NO_SERVER)
+#if !defined(NO_WOLFSSH_SERVER)
     WOLFSSH_CTX* ctx = NULL;
 #ifdef WOLFSSH_CERTS
     byte* key = NULL;
@@ -1278,7 +1284,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
                 (word32)WSTRLEN(zeroLenPemKey), WOLFSSH_FORMAT_PEM));
 
     wolfSSH_CTX_free(ctx);
-#endif /* WOLFSSH_NO_SERVER */
+#endif /* NO_WOLFSSH_SERVER */
 }
 
 

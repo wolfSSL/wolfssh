@@ -4156,6 +4156,11 @@ done:
     return result;
 }
 
+/* The tests below drive a server-side session that sends a window adjust.
+ * With NO_WOLFSSH_SERVER the message filter has no server branch, so every
+ * message on such a session is refused and the tests cannot run. */
+#ifndef NO_WOLFSSH_SERVER
+
 /* An unknown extended data type must be ignored (consumed and discarded) per
  * RFC 4254, not rejected: the call returns WS_SUCCESS, nothing is buffered for
  * the application, and the window is left intact (replenished on receipt). */
@@ -4211,6 +4216,8 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#endif /* NO_WOLFSSH_SERVER */
 
 /* Exercises the accumulating extended-data buffer and its window
  * back-pressure: two stderr blobs that arrive before the application reads
@@ -4510,6 +4517,8 @@ static int CountIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     return (int)sz;
 }
 
+#ifndef NO_WOLFSSH_SERVER
+
 /* RFC 4253 section 7.1: no connection-layer message (such as
  * SSH_MSG_CHANNEL_WINDOW_ADJUST) may go out between KEXINIT and NEWKEYS.
  * Neither DoChannelExtendedData() discarding an unknown data type nor
@@ -4693,6 +4702,8 @@ done:
     return result;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
 /* A peer may trickle stderr in tiny packets while the app is slow to drain. The
  * data it can send before draining is bounded by the receive window, and the
  * buffer holding it must stay bounded too: an AppendBuffer() that reallocates
@@ -4790,6 +4801,8 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#ifndef NO_WOLFSSH_SERVER
 
 /* Fires once the message highwater mark is crossed and reports an error. */
 static int FailHighwater(byte side, void* ctx)
@@ -5235,6 +5248,8 @@ done:
     return result;
 }
 
+#endif /* NO_WOLFSSH_SERVER */
+
 /* ChannelCreditWindow() guards its two defensive early exits: a NULL ssh or
  * channel returns WS_BAD_ARGUMENT, and folding a credit that would push
  * pendingWindowAdjust past UINT32_MAX returns WS_OVERFLOW_E and leaves the
@@ -5385,6 +5400,8 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#ifndef NO_WOLFSSH_SERVER
 
 /* A crafted transport packet staged for the receive path, and the running
  * offset PacketIoRecv has delivered. */
@@ -5909,6 +5926,8 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#endif /* NO_WOLFSSH_SERVER */
 
 static int test_SendChannelData_eofTxd(void)
 {
@@ -15788,6 +15807,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#ifndef NO_WOLFSSH_SERVER
     unitResult = test_DoChannelExtendedData_unknown_type();
     printf("DoChannelExtendedData_unknown_type: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -15803,11 +15823,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#endif /* NO_WOLFSSH_SERVER */
+
     unitResult = test_ChannelExtDataBufferGrowth();
     printf("ChannelExtDataBufferGrowth: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#ifndef NO_WOLFSSH_SERVER
     unitResult = test_ChannelExtDataCredit();
     printf("ChannelExtDataCredit: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -15823,14 +15846,19 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#endif /* NO_WOLFSSH_SERVER */
+
     unitResult = test_ChannelSendExt();
     printf("ChannelSendExt: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#ifndef NO_WOLFSSH_SERVER
     unitResult = test_ChannelExtDataCreditWantWrite();
     printf("ChannelExtDataCreditWantWrite: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#endif /* NO_WOLFSSH_SERVER */
 
     unitResult = test_ChannelCreditWindowGuards();
     printf("ChannelCreditWindowGuards: %s\n",
@@ -15842,6 +15870,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+#ifndef NO_WOLFSSH_SERVER
     unitResult = test_StreamReadExtDataOtherChannel();
     printf("StreamReadExtDataOtherChannel: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -15876,6 +15905,8 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("ChannelReadExtClearsStaleWantWrite: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#endif /* NO_WOLFSSH_SERVER */
 
     unitResult = test_SendChannelData_eofTxd();
     printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));

@@ -279,8 +279,13 @@ static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
         wc_Sha256Free(&sha);
     }
 
-    if (ret == 0)
+    if (ret == 0) {
+#ifdef WOLFSSL_BASE64_ENCODE
         ret = Base64_Encode_NoNl(digest, sizeof(digest), (byte*)fp, &fpSz);
+#else
+        ret = WS_NOT_COMPILED;
+#endif
+    }
 
     if (ret == 0) {
         if (fpSz > 0 && fp[fpSz - 1] == '=') {
@@ -396,7 +401,11 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         pubKeyType[sz] = 0;
 
         sz = WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
+#ifdef WOLFSSL_BASE64_ENCODE
         ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
+#else
+        ret = WS_NOT_COMPILED;
+#endif
     }
 
     if (ret == 0)
