@@ -14256,6 +14256,227 @@ cleanup:
 #endif /* WOLFSSH_SCP recv callback depth guard test */
 
 
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    defined(NO_FILESYSTEM)
+
+static int scpSendTestStatus(WOLFSSH* ssh, const char* fileName,
+        enum WS_ScpFileStates state, ScpBuffer* file)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(fileName);
+    WOLFSSH_UNUSED(state);
+    WOLFSSH_UNUSED(file);
+    return WS_SUCCESS;
+}
+
+static int scpSendTestStatusFail(WOLFSSH* ssh, const char* fileName,
+        enum WS_ScpFileStates state, ScpBuffer* file)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(fileName);
+    WOLFSSH_UNUSED(state);
+    WOLFSSH_UNUSED(file);
+    return WS_FATAL_ERROR;
+}
+
+/* The default no-filesystem send callback must accept an ScpBuffer whose
+ * bufferSz exactly equals fileSz, in both single- and multi-chunk transfers,
+ * and must still refuse a fileSz larger than the buffer. */
+static int test_ScpSendCallback_ExactFitBuffer(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpBuffer    sendBuf;
+    byte         data[16];
+    byte         out[64];
+    char         fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    word64       mTime = 0;
+    word64       aTime = 0;
+    word32       totalSz = 0;
+    int          fileMode = 0;
+    int          result = 0;
+    int          ret;
+    word32       i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1500;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1501;
+    }
+
+    for (i = 0; i < (word32)sizeof(data); i++)
+        data[i] = (byte)i;
+
+    WMEMSET(&sendBuf, 0, sizeof(sendBuf));
+    WMEMCPY(sendBuf.name, "file.txt", WSTRLEN("file.txt") + 1);
+    sendBuf.nameSz   = (word32)WSTRLEN(sendBuf.name);
+    sendBuf.buffer   = data;
+    sendBuf.bufferSz = (word32)sizeof(data);
+    sendBuf.fileSz   = (word32)sizeof(data);
+    sendBuf.status   = scpSendTestStatus;
+    WMEMSET(fileName, 0, sizeof(fileName));
+
+    /* exact fit, single chunk: the whole file is returned, not aborted */
+    ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST, "file.txt",
+            fileName, (word32)sizeof(fileName), &mTime, &aTime, &fileMode, 0,
+            &totalSz, out, (word32)sizeof(out), &sendBuf);
+    if (ret != (int)sendBuf.fileSz)
+        result = -1502;
+    if (result == 0 && sendBuf.idx != sendBuf.fileSz)
+        result = -1503;
+    if (result == 0 && totalSz != sendBuf.fileSz)
+        result = -1504;
+    if (result == 0 && WMEMCMP(out, data, sizeof(data)) != 0)
+        result = -1505;
+
+    /* exact fit, multi-chunk: final chunk lands on the buffer boundary */
+    if (result == 0) {
+        sendBuf.idx = 0;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != 10)
+            result = -1506;
+    }
+    if (result == 0) {
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 10, &totalSz, out, 10, &sendBuf);
+        if (ret != 6)
+            result = -1507;
+        if (result == 0 && WMEMCMP(out, data + 10, 6) != 0)
+            result = -1508;
+    }
+    if (result == 0) {
+        /* transfer complete: a further continue reports EOF, not abort */
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 16, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_EOF)
+            result = -1509;
+    }
+
+    /* fileSz larger than the buffer is still refused before any copy */
+    if (result == 0) {
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = sendBuf.bufferSz + 1;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, (word32)sizeof(out), &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1510;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* file smaller than the buffer keeps working */
+    if (result == 0) {
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = 8;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, (word32)sizeof(out), &sendBuf);
+        if (ret != 8)
+            result = -1511;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* a NULL status callback must not crash the continue state */
+    if (result == 0) {
+        sendBuf.idx    = 0;
+        sendBuf.status = NULL;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != 10)
+            result = -1512;
+        if (result == 0) {
+            ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                    "file.txt", fileName, (word32)sizeof(fileName), &mTime,
+                    &aTime, &fileMode, 10, &totalSz, out, 10, &sendBuf);
+            if (ret != 6)
+                result = -1513;
+        }
+        sendBuf.status = scpSendTestStatus;
+    }
+
+    /* idx one past the buffer end must abort, not report EOF; idx == fileSz
+     * keeps the inner guard out of play so only the top guard can reject */
+    if (result == 0) {
+        sendBuf.idx    = sendBuf.bufferSz + 1;
+        sendBuf.fileSz = sendBuf.bufferSz + 1;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1514;
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* a chunk that would run past the buffer end mid-continue must abort */
+    if (result == 0) {
+        sendBuf.idx    = 10;
+        sendBuf.fileSz = sendBuf.bufferSz + 4;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 10, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1515;
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* idx past fileSz mid-continue must abort; idx + bufSz stays inside
+     * bufferSz here, so only the underflow guard can reject */
+    if (result == 0) {
+        sendBuf.idx    = 5;
+        sendBuf.fileSz = 4;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1516;
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* same underflow shape in the single file request state */
+    if (result == 0) {
+        sendBuf.idx    = 5;
+        sendBuf.fileSz = 4;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1517;
+        sendBuf.idx    = 0;
+        sendBuf.fileSz = sendBuf.bufferSz;
+    }
+
+    /* a failing status callback aborts the continue state even after a
+     * successful copy */
+    if (result == 0) {
+        sendBuf.idx    = 0;
+        sendBuf.status = scpSendTestStatusFail;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, 10, &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1518;
+        sendBuf.idx    = 0;
+        sendBuf.status = scpSendTestStatus;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS && NO_FILESYSTEM */
+
+
 /* ParseECCPubKey() Unit Test */
 
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
@@ -16250,6 +16471,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
     !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     unitResult = test_ScpPushDir();
     printf("ScpPushDir: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    defined(NO_FILESYSTEM)
+    unitResult = test_ScpSendCallback_ExactFitBuffer();
+    printf("ScpSendCallback_ExactFitBuffer: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

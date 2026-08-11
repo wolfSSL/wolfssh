@@ -97,3 +97,48 @@ jobs:
           path: wolfssh
           configure: ${{ matrix.config }} LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
           check: true
+
+  build_wolfssh_no_filesystem:
+    needs:
+      - build_wolfssl
+      - create_matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
+    name: Build and test wolfssh with NO_FILESYSTEM
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v5
+        with:
+          path: build-dir/
+          key: wolfssh-os-check-wolfssl-${{ matrix.wolfssl }}-ubuntu-latest
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v6
+        with:
+          path: wolfssh/
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run: |
+          ./configure --enable-scp LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DNO_FILESYSTEM"
+
+      # The examples do not build without a filesystem, so build the
+      # library and the unit test directly instead of running make all
+      - name: make unit test
+        working-directory: ./wolfssh/
+        run: make tests/unit.test
+
+      - name: run unit test
+        working-directory: ./wolfssh/
+        run: |
+          set -o pipefail
+          LD_LIBRARY_PATH=${{ github.workspace }}/build-dir/lib ./tests/unit.test | tee unit-test.log
+          grep "ScpSendCallback_ExactFitBuffer: SUCCESS" unit-test.log
