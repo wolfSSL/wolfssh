@@ -4061,6 +4061,22 @@ int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
     return ret;
 }
 
+
+int wolfSSH_SetFwdRemoteMatch(WOLFSSH* ssh, byte match)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetFwdRemoteMatch()");
+
+    if (ssh == NULL || match > WOLFSSH_FWD_MATCH_OFF)
+        ret = WS_BAD_ARGUMENT;
+    else
+        ssh->fwdRemoteMatch = match;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_SetFwdRemoteMatch(), ret = %d", ret);
+    return ret;
+}
+
 #endif /* WOLFSSH_FWD */
 
 
