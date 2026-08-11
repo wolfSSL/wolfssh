@@ -18,7 +18,6 @@ Command Line Options
     -E logfile    : Specify a different log file.
     -G            : Print out the configuration as used.
     -l login_name : Overrides the login name specified in the destination.
-    -N            : Do not execute remote command.
     -p port       : Overrides the destination port number.
     -V            : Print out the version.
 
@@ -27,6 +26,9 @@ following formats:
 
     [user@]hostname
     ssh://[user@]hostname[:port]
+
+Anything after the destination is taken as a command to run on the server. With
+no command, the client opens an interactive terminal session.
 
 The default value for _user_ is the current user's login name. The default
 value for _port_ is 22.
