@@ -99,8 +99,8 @@ static void ShowUsage(char* appPath)
 #ifdef WOLFSSH_AGENT
             "[-a] "
 #endif
-            "[-E logfile] [-G] [-l login_name] [-N] [-p port] "
-            "[-V] destination\n",
+            "[-E logfile] [-G] [-l login_name] [-p port] "
+            "[-V] destination [command]\n",
             appName);
 #ifdef WOLFSSH_AGENT
     printf("  -a  attempt to use SSH-AGENT\n");
@@ -727,6 +727,14 @@ static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
 #endif /* WOLFSSH_AGENT */
 
 
+/* Mirrors the library's channel name limit. wolfSSH_SetChannelType()
+ * discards a longer command and still returns WS_SUCCESS, which would
+ * send an exec request with no command string. */
+#ifndef WOLFSSH_MAX_CHN_NAMESZ
+    #define WOLFSSH_MAX_CHN_NAMESZ 4096
+#endif
+
+
 struct config {
     char* logFile;
     char* user;
@@ -735,7 +743,6 @@ struct config {
     char* pubKeyFile;
     char* command;
     word32 printConfig:1;
-    word32 noCommand:1;
     word32 useAgent:1;
     word16 port;
 };
@@ -798,7 +805,7 @@ static int config_parse_command_line(struct config* config,
 #ifdef WOLFSSH_AGENT
                 "a"
 #endif
-                "E:Gl:Np:V")) != -1) {
+                "E:Gl:p:V")) != -1) {
         switch (ch) {
         #ifdef WOLFSSH_AGENT
             case 'a':
@@ -824,10 +831,6 @@ static int config_parse_command_line(struct config* config,
                     fprintf(stderr, "Couldn't capture the user name.\n");
                     exit(EXIT_FAILURE);
                 }
-                break;
-
-            case 'N':
-                config->noCommand = 1;
                 break;
 
             case 'p':
@@ -877,6 +880,13 @@ static int config_parse_command_line(struct config* config,
             commandSz += WSTRLEN(argv[i]);
         }
 
+        /* commandSz counts the nul, the command itself is one shorter. */
+        if (commandSz - 1 >= WOLFSSH_MAX_CHN_NAMESZ) {
+            fprintf(stderr, "The command is too long, limit is %u.\n",
+                    (word32)(WOLFSSH_MAX_CHN_NAMESZ - 1));
+            exit(EXIT_FAILURE);
+        }
+
         command = (char*)WMALLOC(commandSz, NULL, 0);
         if (command == NULL) {
             fprintf(stderr, "Couldn't capture the command.\n");
@@ -907,7 +917,6 @@ static int config_print(struct config* config)
         printf("keyFile %s\n", config->keyFile ? config->keyFile : "none");
         printf("pubKeyFile %s\n",
                 config->pubKeyFile ? config->pubKeyFile : "none");
-        printf("noCommand %s\n", config->noCommand ? "true" : "false");
     #ifdef WOLFSSH_AGENT
         printf("useAgent %s\n", config->useAgent ? "true" : "false");
     #endif
@@ -955,7 +964,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     int ret = 0;
     int ioErr = 0;
-    byte keepOpen = 1;
+    byte keepOpen;
 #ifdef USE_WINDOWS_API
     byte rawMode = 0;
 #endif
@@ -974,6 +983,10 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             ((func_args*)args)->argc, ((func_args*)args)->argv);
     config_print(&config);
 
+    /* Only ask for an interactive terminal session when no remote command
+     * was given. Requesting both discards the command. */
+    keepOpen = (byte)(config.command == NULL);
+
 #ifdef WOLFSSH_AGENT
     useAgent = (byte)config.useAgent;
 #endif
@@ -985,8 +998,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         err_sys("client requires a hostname parameter.");
 
 #ifdef SINGLE_THREADED
-    if (keepOpen)
-        err_sys("Threading needed for terminal session\n");
+    err_sys("Threading needed for terminal and command sessions\n");
 #endif
 
     if (config.keyFile) {
@@ -1081,7 +1093,11 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
-    MODES_CLEAR();
+    /* Raw mode is for the interactive terminal. A remote command runs with
+     * no pty, so its output is LF terminated and needs OPOST left on. */
+    if (keepOpen) {
+        MODES_CLEAR();
+    }
 
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
 #if 0
@@ -1089,7 +1105,8 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         ClientSetEcho(2);
 #endif
 
-    if (config.command != NULL || keepOpen == 1) {
+    /* Every session, shell or command, runs its I/O on threads. */
+    {
     #if defined(_POSIX_THREADS)
         thread_args arg;
         pthread_t   thread[3];
