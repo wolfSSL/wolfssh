@@ -1248,12 +1248,18 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         }
         else {
             ret = wolfSSH_worker(ssh, NULL);
+            if (ret == WS_WANT_WRITE) {
+                /* The close messages are already out, whatever the drain
+                 * still wants to send is a reply to the peer. */
+                ret = WS_SUCCESS;
+            }
         }
-        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ
-                || ret == WS_WANT_WRITE) {
+        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ) {
             /* Shutting down. The channel closing isn't a fail, and neither
              * is the peer having nothing ready on this non-blocking socket;
-             * either way there is nothing left to wait for. */
+             * either way there is nothing left to wait for. A want write
+             * from wolfSSH_shutdown() is different, the close messages are
+             * still queued, so that stays a failure. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
