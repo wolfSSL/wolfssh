@@ -12,6 +12,11 @@ Phase 2 is going to bring reading the config files `/etc/ssh/ssh_config` and
 `$HOME/.ssh/config`. It will handle OpenSSH style modern keys. It will also
 have support for SSH-AGENT and forwarding.
 
+Every session, terminal or command, runs its I/O on threads, so the client
+needs a threaded wolfSSL. Configuring `--enable-sshclient` against a
+single-threaded wolfSSL is an error, and `--enable-all` leaves the client out
+rather than failing.
+
 Command Line Options
 --------------------
 

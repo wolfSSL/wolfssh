@@ -82,8 +82,10 @@
     #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
+/* Every session, terminal or command, runs its I/O on threads. configure
+ * catches this first; the check is here for the builds that don't use it. */
 #ifdef SINGLE_THREADED
-    #error "Threading needed for terminal and command sessions."
+    #error "The wolfSSH client app requires a threaded wolfSSL."
 #endif
 
 
@@ -260,7 +262,7 @@ static void modes_reset(void)
 #define MODES_RESET() do {} while(0)
 #endif /* HAVE_TERMIOS_H && WOLFSSH_TERM */
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#ifndef WOLFSSL_NUCLEUS
 
 #if defined(WOLFSSH_AGENT)
 static inline void ato32(const byte* c, word32* u32)
@@ -657,7 +659,7 @@ static THREAD_RET readPeer(void* in)
 
     return THREAD_RET_SUCCESS;
 }
-#endif /* !SINGLE_THREADED && !WOLFSSL_NUCLEUS */
+#endif /* !WOLFSSL_NUCLEUS */
 
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -1152,7 +1154,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         MODES_CLEAR();
     }
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#ifndef WOLFSSL_NUCLEUS
 #if 0
     if (keepOpen) /* set up for pseudo-terminal */
         ClientSetEcho(2);
