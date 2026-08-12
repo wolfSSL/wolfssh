@@ -1361,7 +1361,7 @@ cleanup:
     if (processCreated) {
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
-        CloseHandle(wolfSSHD_GetAuthToken(conn->auth));
+        wolfSSHD_AuthCloseToken(conn->auth);
     }
     if (cmd != NULL) {
         WFREE(cmd, NULL, DYNTYPE_SSHD);
@@ -2317,8 +2317,7 @@ static void* HandleConnection(void* arg)
         wolfSSH_SetUserAuthResultCtx(ssh, conn);
     #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
         /* Unix-only: each connection is a forked child with its own copy of the
-         * auth struct, so these per-connection cert writes never race. The
-         * Windows threaded path shares one struct and does not enforce certs. */
+         * auth struct. Windows does not enforce OpenSSH certs. */
         wolfSSHD_AuthSetPeerIp(conn->auth, conn->ip);
     #endif
 
@@ -2628,6 +2627,12 @@ static void* HandleConnection(void* arg)
         WCLOSESOCKET(conn->fd);
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
+#ifdef _WIN32
+    /* free the per-connection auth allocated in StartSSHD */
+    if (conn != NULL) {
+        wolfSSHD_AuthFreeUser(conn->auth);
+    }
+#endif
     WFREE(conn, NULL, DYNTYPE_SSHD);
 
 #ifdef _WIN32
@@ -3199,6 +3204,20 @@ static int StartSSHD(int argc, char** argv)
                     }
 #endif
                 }
+#ifdef _WIN32
+                {
+                    WOLFSSHD_AUTH* connAuth =
+                        wolfSSHD_AuthCreateUser(NULL, conf);
+                    if (connAuth == NULL) {
+                        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Failed to create "
+                            "auth struct for connection");
+                        WCLOSESOCKET(conn->fd);
+                        WFREE(conn, NULL, DYNTYPE_SSHD);
+                        continue;
+                    }
+                    conn->auth = connAuth;
+                }
+#endif
                 ret = NewConnection(conn);
             }
             else {
