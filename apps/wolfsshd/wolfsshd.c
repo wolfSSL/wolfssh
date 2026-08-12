@@ -2696,6 +2696,10 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
 
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new process %d\n", pd);
             WCLOSESOCKET(conn->fd);
+
+            /* the child process has its own copy of the connection, free the
+               parent's copy here */
+            WFREE(conn, NULL, DYNTYPE_SSHD);
         }
     }
 #else
@@ -3242,9 +3246,18 @@ static int StartSSHD(int argc, char** argv)
                 }
 #endif
                 ret = NewConnection(conn);
+                if (ret != WS_SUCCESS) {
+                    /* on failure the connection was not handed off, it is
+                       still owned here and needs cleaned up */
+                    WCLOSESOCKET(conn->fd);
+                #ifdef _WIN32
+                    wolfSSHD_AuthFreeUser(conn->auth);
+                #endif
+                    WFREE(conn, NULL, DYNTYPE_SSHD);
+                }
             }
             else {
-                XFREE(conn, NULL, DYNTYPE_SSHD);
+                WFREE(conn, NULL, DYNTYPE_SSHD);
             }
 #ifdef _WIN32
             /* check if service has been shutdown */
