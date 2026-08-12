@@ -99,6 +99,7 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* adr);
 #ifdef _WIN32
 HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
+void wolfSSHD_AuthCloseToken(WOLFSSHD_AUTH* auth);
 int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
 #endif
 

@@ -1917,6 +1917,16 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth)
     return auth->token;
 }
 
+/* Close and clear the impersonation token. Safe to call more than once. */
+void wolfSSHD_AuthCloseToken(WOLFSSHD_AUTH* auth)
+{
+    if (auth != NULL && auth->token != NULL &&
+            auth->token != INVALID_HANDLE_VALUE) {
+        CloseHandle(auth->token);
+        auth->token = NULL;
+    }
+}
+
 static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
 {
     int ret;
@@ -3011,6 +3021,9 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 {
     if (auth != NULL) {
+    #ifdef _WIN32
+        wolfSSHD_AuthCloseToken(auth);
+    #endif
     #ifdef WOLFSSH_OSSH_CERTS
         if (auth->certForcedCmd != NULL) {
             WFREE(auth->certForcedCmd, auth->heap, DYNTYPE_STRING);
