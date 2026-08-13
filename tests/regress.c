@@ -3560,7 +3560,8 @@ static void TestSftpStartPathInsideConfineRoot(void)
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
     int rid = 500;
-    char cwd[WOLFSSH_MAX_FILENAME];
+    /* short enough that any fixture suffix below still fits a full path */
+    char cwd[WOLFSSH_MAX_FILENAME - 64];
     char root[WOLFSSH_MAX_FILENAME];
     char start[WOLFSSH_MAX_FILENAME];
     char sibling[WOLFSSH_MAX_FILENAME];
@@ -3576,24 +3577,30 @@ static void TestSftpStartPathInsideConfineRoot(void)
     AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
 
     WMEMSET(cwd, 0, sizeof(cwd));
-    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
 
     /* the fixture paths below hang off the working directory; skip rather
-     * than test truncated paths if they would not fit */
-    if (WSTRLEN(cwd) + 64 >= WOLFSSH_MAX_FILENAME) {
+     * than test truncated paths if it is too deep to leave room for them */
+    if (WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1) == NULL) {
         wolfSSH_SFTP_TestRecvStateFree(ssh);
         wolfSSH_free(ssh);
         wolfSSH_CTX_free(ctx);
         return;
     }
 
-    /* unique per-process fixture names (see TestSftpForgedHandleRejected) */
-    WSNPRINTF(root, sizeof(root), "%s/wolfssh_confine_%d", cwd, (int)getpid());
-    WSNPRINTF(start, sizeof(start), "%s/start", root);
-    WSNPRINTF(sibling, sizeof(sibling), "%s/sibling", root);
-    WSNPRINTF(startFile, sizeof(startFile), "%s/start_file", start);
-    WSNPRINTF(sibFile, sizeof(sibFile), "%s/sib_file", sibling);
-    WSNPRINTF(nearMiss, sizeof(nearMiss), "%s_evil", root);
+    /* unique per-process fixture names (see TestSftpForgedHandleRejected),
+     * each spelled out from cwd so the lengths stay provably in bounds */
+    #define CONFINE_ROOT "%s/wolfssh_confine_%d"
+    WSNPRINTF(root, sizeof(root), CONFINE_ROOT, cwd, (int)getpid());
+    WSNPRINTF(start, sizeof(start), CONFINE_ROOT "/start", cwd, (int)getpid());
+    WSNPRINTF(sibling, sizeof(sibling), CONFINE_ROOT "/sibling",
+            cwd, (int)getpid());
+    WSNPRINTF(startFile, sizeof(startFile), CONFINE_ROOT "/start/start_file",
+            cwd, (int)getpid());
+    WSNPRINTF(sibFile, sizeof(sibFile), CONFINE_ROOT "/sibling/sib_file",
+            cwd, (int)getpid());
+    WSNPRINTF(nearMiss, sizeof(nearMiss), CONFINE_ROOT "_evil",
+            cwd, (int)getpid());
+    #undef CONFINE_ROOT
 
     AssertIntEQ(WMKDIR(ssh->fs, root, 0755), 0);
     AssertIntEQ(WMKDIR(ssh->fs, start, 0755), 0);
