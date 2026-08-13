@@ -115,6 +115,25 @@ jobs:
         sudo make install
         sudo ldconfig
 
+    # Builds every check_PROGRAM -- no other job compiles wolfSSH's tests
+    # with TPM support -- but runs only api.test, the one suite with TPM
+    # tests. One cell: these tests ignore the simulator and host key.
+    - name: Run API tests
+      if: matrix.keytype == 'ecc' && matrix.sim == 'ibmswtpm2' && matrix.hostkey == 'raw'
+      run: |
+        cd wolfssh
+        # A non-TPM build compiles every TPM-guarded test out, silently.
+        if ! grep -q '^AM_CPPFLAGS = .*-DWOLFSSH_TPM' Makefile; then
+            echo "Not a TPM build; the TPM-guarded tests would compile out."
+            grep '^AM_CPPFLAGS' Makefile
+            exit 1
+        fi
+        make check TESTS=tests/api.test
+
+    - name: Show API test log on failure
+      if: failure() && (matrix.keytype == 'ecc' && matrix.sim == 'ibmswtpm2' && matrix.hostkey == 'raw')
+      run: cat wolfssh/tests/api.log || true
+
     # Server host key resident in the TPM: the private key never enters RAM.
     - name: Test TPM host key (${{ matrix.keytype }})
       if: matrix.hostkey == 'raw'
@@ -222,3 +241,4 @@ jobs:
           wolfssh/tpmcert_client.txt
           wolfssh/tpmcert_server_neg.txt
           wolfssh/tpmcert_client_neg.txt
+          wolfssh/tests/api.log
