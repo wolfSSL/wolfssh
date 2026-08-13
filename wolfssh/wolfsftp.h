@@ -214,7 +214,46 @@ WOLFSSH_LOCAL WS_SFTPNAME* wolfSSH_SFTP_ReadDir(WOLFSSH* ssh, byte* handle,
         word32 handleSz);
 WOLFSSH_LOCAL int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* buf, word32 bufSz);
 
+/* An SFTP session has two independent path settings:
+ *
+ *   start path   where the session begins and what relative requests resolve
+ *                against. Grants and denies nothing.
+ *                Set with wolfSSH_SFTP_SetDefaultPath.
+ *   confinement  the root the session is jailed to. Requests resolving
+ *                outside it are rejected with WS_PERMISSIONS. No root, or a
+ *                root of "/", leaves the session unconfined.
+ *                Set with wolfSSH_SFTP_SetConfinePath.
+ *
+ * Keeping them separate lets a server start a session deep inside a jail
+ * (start /srv/data/user7, confine to /srv/data), confine without moving where
+ * the session opens, or do neither and let the OS bound access instead, as
+ * wolfsshd does by dropping to the authenticated user.
+ *
+ * For both, path is NULL-terminated, a NULL path leaves the current setting
+ * unchanged, and WS_SUCCESS is returned on success.
+ *
+ * Paths are resolved lexically, which cannot prove a link stays in-jail, so
+ * confinement rejects ALL symbolic links below the root - including ones
+ * pointing back inside it (e.g. "current -> releases/v3"). Serve trees without
+ * symlinks, or build with WOLFSSH_NO_SYMLINK_CHECK to drop the check, and the
+ * escape protection with it.
+ *
+ * The root itself is trusted and never checked, so a root reached through a
+ * symbolic link is as wide as that link's target. Give a root the server
+ * controls, with no symlink components.
+ *
+ * That link check is defense in depth, not a boundary: it is a TOCTOU check,
+ * inspecting each component before the operation later acts on the path by
+ * name. A concurrent writer inside the jail, running as the user the server
+ * does file operations as, could swap a checked component for a symlink in
+ * that window; a session cannot race itself, since wolfSSH serves one
+ * session's requests serially. The check reliably blocks static in-jail
+ * symlinks, but closing the race portably needs *at/O_NOFOLLOW primitives some
+ * supported filesystems lack. Hostile multi-tenant deployments want an
+ * OS-level jail (chroot plus dropped privileges).
+ */
 WOLFSSH_API int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path);
+WOLFSSH_API int wolfSSH_SFTP_SetConfinePath(WOLFSSH* ssh, const char* path);
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_RealPath(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz);
 WOLFSSH_API int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,

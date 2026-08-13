@@ -5184,6 +5184,7 @@ static void test_wolfSSH_SFTP_Confinement(void)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
+    args[argsCount++] = "-D"; /* confine to the working directory */
     args[argsCount++] = "-p";
     args[argsCount++] = "0";
     ser.argv = (char**)args;
@@ -5397,6 +5398,165 @@ static void test_wolfSSH_SFTP_Confinement(void)
 }
 
 
+/* A session given only a start path is NOT confined to it: the wolfsshd
+ * arrangement, where the OS bounds access instead.  The echoserver runs
+ * without -D, so out-of-tree paths must be reachable - the inverse of
+ * test_wolfSSH_SFTP_Confinement, proving GetAndCleanPath enforces the
+ * confinement root and not the start path. */
+static void test_wolfSSH_SFTP_StartPathNotConfined(void)
+{
+/* Staging the out-of-tree fixtures needs mkdtemp()/fopen(), as in
+ * test_wolfSSH_SFTP_Confinement, so this is hosted POSIX only. */
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    func_args       ser;
+    tcp_ready       ready;
+    int             argsCount;
+    WS_SOCKET_T     clientFd;
+    const char*     args[10];
+    WOLFSSH_CTX*    ctx = NULL;
+    WOLFSSH*        ssh = NULL;
+    THREAD_TYPE     serThread;
+    WS_SFTPNAME*    ls = NULL;
+    WS_SFTP_FILEATRB atr;
+    int             ret;
+    char            curDir[]  = ".";
+    char            outRoot[] = "/tmp/wolfssh_startpath_XXXXXX";
+    char            outFile[WOLFSSH_MAX_FILENAME];
+    char            outDir[WOLFSSH_MAX_FILENAME];
+    char            startCwd[WOLFSSH_MAX_FILENAME];
+    WFILE*          fp = NULL;
+
+    AssertNotNull(mkdtemp(outRoot));
+
+    /* A temp root inside the start directory (the test process's cwd) would
+     * make the paths below in-tree, proving nothing; skip instead. */
+    WMEMSET(startCwd, 0, sizeof(startCwd));
+    if (WGETCWD(NULL, startCwd, sizeof(startCwd) - 1) != NULL) {
+        size_t startLen = WSTRLEN(startCwd);
+        if (WSTRLEN(outRoot) >= startLen &&
+                WSTRNCMP(outRoot, startCwd, startLen) == 0) {
+            WRMDIR(NULL, outRoot);
+            return;
+        }
+    }
+
+    WSNPRINTF(outFile, sizeof(outFile), "%s/real_file", outRoot);
+    WSNPRINTF(outDir,  sizeof(outDir),  "%s/real_dir",  outRoot);
+    AssertIntEQ(WFOPEN(NULL, &fp, outFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(NULL, fp);
+    AssertIntEQ(WMKDIR(NULL, outDir, 0755), 0);
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p"; /* no -D, so the session is unconfined */
+    args[argsCount++] = "0";
+    ser.argv = (char**)args;
+    ser.argc = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    /* the session starts in the working directory */
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* and can still reach outside it: listing and stat both succeed */
+    ls = wolfSSH_SFTP_LS(ssh, outDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    AssertIntEQ(wolfSSH_SFTP_STAT(ssh, outFile, &atr), WS_SUCCESS);
+
+    /* Drain any pending rekey before shutdown. */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING)
+        wolfSSH_worker(ssh, NULL);
+
+    ret = AbsorbBenignReset(ssh, wolfSSH_shutdown(ssh));
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (ret == WS_REKEYING) {
+        ret = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(ret, WS_SUCCESS);
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+
+    WREMOVE(NULL, outFile);
+    WRMDIR(NULL, outDir);
+    WRMDIR(NULL, outRoot);
+#endif /* !WOLFSSH_ZEPHYR && !USE_WINDOWS_API */
+}
+
+
+/* The start path and the confinement root are stored independently: setting
+ * one must not disturb the other, and the default path does not confine. */
+static void test_wolfSSH_SFTP_SetConfinePath(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    char         longPath[WOLFSSH_MAX_FILENAME + 4];
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(NULL, "/"), WS_BAD_ARGUMENT);
+
+    /* a root that does not fit the working buffer is rejected up front and
+     * leaves the session unconfined */
+    WMEMSET(longPath, 'a', sizeof(longPath));
+    longPath[0] = '/';
+    longPath[WOLFSSH_MAX_FILENAME + 1] = '\0'; /* length == MAX_FILENAME + 1 */
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, longPath), WS_BUFFER_E);
+    AssertNull(ssh->sftpConfinePath);
+    AssertNull(ssh->sftpDefaultPath);
+
+    /* a NULL path leaves both settings alone */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, NULL), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, NULL), WS_SUCCESS);
+    AssertNull(ssh->sftpDefaultPath);
+    AssertNull(ssh->sftpConfinePath);
+
+    /* a start path on its own does not confine the session */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "/tmp/../tmp/start"),
+            WS_SUCCESS);
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/start");
+    AssertNull(ssh->sftpConfinePath);
+
+    /* a confinement root on its own does not move the start path */
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/tmp/./jail"), WS_SUCCESS);
+    AssertStrEQ(ssh->sftpConfinePath, "/tmp/jail");
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/start");
+
+    /* each is replaceable without touching the other */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "/tmp/jail/sub"), WS_SUCCESS);
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/jail/sub");
+    AssertStrEQ(ssh->sftpConfinePath, "/tmp/jail");
+
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/var/jail2"), WS_SUCCESS);
+    AssertStrEQ(ssh->sftpConfinePath, "/var/jail2");
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/jail/sub");
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* Direct unit coverage for wolfSSH_SFTP_SetDefaultPath, exercising the new
  * canonicalization and error branches that test_wolfSSH_SFTP_Confinement only
  * reaches indirectly (it always passes an already-absolute realpath):
@@ -5432,12 +5592,15 @@ static void test_wolfSSH_SFTP_SetDefaultPath(void)
     longPath[WOLFSSH_MAX_FILENAME + 1] = '\0'; /* length == MAX_FILENAME + 1 */
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, longPath), WS_BUFFER_E);
     AssertNull(ssh->sftpDefaultPath);
+    AssertNull(ssh->sftpConfinePath);
 
-    /* An absolute path is stored in lexically canonical form */
+    /* An absolute path is stored in lexically canonical form as the start
+     * path, and does not confine the session */
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, "/tmp/../tmp/sdp"),
             WS_SUCCESS);
     AssertNotNull(ssh->sftpDefaultPath);
     AssertStrEQ(ssh->sftpDefaultPath, "/tmp/sdp");
+    AssertNull(ssh->sftpConfinePath);
 
     /* A repeated call frees the previous path (no leak) and stores the new
      * one - the wolfsshd "/" then home-dir sequence */
@@ -5523,6 +5686,8 @@ static void test_wolfSSH_SFTP_PartialSend(void) { ; }
 static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SFTP_Confinement(void) { ; }
+static void test_wolfSSH_SFTP_StartPathNotConfined(void) { ; }
+static void test_wolfSSH_SFTP_SetConfinePath(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
@@ -7386,6 +7551,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_ReKey();
     test_wolfSSH_SFTP_ReKey_NonBlock();
     test_wolfSSH_SFTP_Confinement();
+    test_wolfSSH_SFTP_StartPathNotConfined();
+    test_wolfSSH_SFTP_SetConfinePath();
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
 

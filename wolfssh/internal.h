@@ -1152,7 +1152,8 @@ struct WOLFSSH {
     byte   realState;
     byte   sftpInt;
     SFTP_OFST sftpOfst[WOLFSSH_MAX_SFTPOFST];
-    char* sftpDefaultPath;
+    char* sftpDefaultPath; /* where a session starts, base for relative paths */
+    char* sftpConfinePath; /* jail root, NULL or "/" for unconfined */
 #ifndef NO_WOLFSSH_DIR
     WS_DIR_LIST* dirList;
 #endif
