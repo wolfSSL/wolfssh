@@ -30,6 +30,17 @@ client_limit=60
 ./examples/echoserver/echoserver '-?' 2>&1 | grep -q "^echoserver " \
     || { echo "echoserver doesn't run, skipping"; exit 77; }
 
+# A WOLFSSH_TEST_BLOCK build fails writes at random. The echoserver leaves a
+# failed write queued and then waits on the peer for a reply to the message
+# it never sent, so a session stalls no matter what the client does. The
+# other echoserver scripts skip this build for the same reason.
+if [ -x ./examples/client/client ] \
+    && ./examples/client/client -h 2>&1 | grep -q "WOLFSSH_TEST_BLOCK"
+then
+    echo "macro WOLFSSH_TEST_BLOCK was used, skipping"
+    exit 77
+fi
+
 do_cleanup() {
     echo "in cleanup"
 
