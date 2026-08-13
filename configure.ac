@@ -388,6 +388,15 @@ AM_CONDITIONAL([BUILD_KEYBOARD_INTERACTIVE],[test "x$ENABLED_KEYBOARD_INTERACTIV
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
+dnl A test that is configured out compiles down to "return 77", the automake
+dnl skip code, and so does the main() that forwards to it. Apple's linker folds
+dnl the two identical bodies together, then writes LC_MAIN entryoff 0, so the
+dnl binary starts executing at the Mach-O header and dies with SIGILL instead
+dnl of skipping. Turn the folding off where the linker understands the flag;
+dnl GNU ld rejects it and is unaffected.
+AX_CHECK_LINK_FLAG([-Wl,-no_deduplicate],
+                   [AM_LDFLAGS="$AM_LDFLAGS -Wl,-no_deduplicate"])
+
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
