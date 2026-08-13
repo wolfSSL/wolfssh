@@ -2339,6 +2339,32 @@ static void SFTP_HandleIdNext(WOLFSSH* ssh, word32 id[2])
 
 #endif /* !NO_WOLFSSH_SERVER */
 
+#ifdef USE_WINDOWS_API
+/* dwCreationDisposition takes one enumerated value, not a bitmask, so
+ * resolve CREAT/EXCL/TRUNC to a single disposition here. */
+static DWORD SFTP_WinCreationDisp(word32 reason)
+{
+    DWORD disp;
+
+    if (reason & WOLFSSH_FXF_CREAT) {
+        if (reason & WOLFSSH_FXF_EXCL)
+            disp = CREATE_NEW;
+        else if (reason & WOLFSSH_FXF_TRUNC)
+            disp = CREATE_ALWAYS;
+        else
+            disp = OPEN_ALWAYS;
+    }
+    else {
+        if (reason & WOLFSSH_FXF_TRUNC)
+            disp = TRUNCATE_EXISTING;
+        else
+            disp = OPEN_EXISTING;
+    }
+
+    return disp;
+}
+#endif /* USE_WINDOWS_API */
+
 /* Handles packet to open a file
  *
  * returns WS_SUCCESS on success
@@ -2662,25 +2688,14 @@ cleanup:
     }
 #endif
 
-    if (reason & WOLFSSH_FXF_READ) {
+    if (reason & WOLFSSH_FXF_READ)
         desiredAccess |= GENERIC_READ;
-        creationDisp |= OPEN_EXISTING;
-    }
-    if (reason & WOLFSSH_FXF_WRITE) {
+    if (reason & WOLFSSH_FXF_WRITE)
         desiredAccess |= GENERIC_WRITE;
-        if (reason & WOLFSSH_FXF_CREAT) {
-            if (reason & WOLFSSH_FXF_TRUNC)
-                creationDisp = CREATE_ALWAYS;
-            else
-                creationDisp = OPEN_ALWAYS;
-        }
-    #if 0
-        if (reason & WOLFSSH_FXF_EXCL)
-            creationDisp |= CREATE_NEW;
-        if (reason & WOLFSSH_FXF_APPEND)
-            desiredAccess |= FILE_APPEND_DATA;
-    #endif
-    }
+    if (reason & WOLFSSH_FXF_APPEND)
+        desiredAccess |= FILE_APPEND_DATA;
+
+    creationDisp = SFTP_WinCreationDisp(reason);
 
 #if 0
     /* if file permissions not set then use default */
@@ -6401,8 +6416,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
 #endif /* _WIN32_WCE */
 
-#if defined(WOLFSSH_TEST_INTERNAL) && !defined(USE_WINDOWS_API) && \
-    !defined(NO_FILESYSTEM)
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_FILESYSTEM)
 /* Test-only plumbing for the forged-handle regression test in tests/regress.c.
  *
  * The SFTP request handlers buffer their status/handle reply into ssh->recvState
@@ -6485,10 +6499,12 @@ int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh)
 }
 #endif /* NO_WOLFSSH_DIR */
 
+#ifndef USE_WINDOWS_API
 /* Close the underlying descriptor of the head tracked file handle out of band,
  * leaving the node in the list with a now-stale fd. The next RecvClose on that
  * handle will see its close() fail, exercising the path that must still drop
- * the handle from the tracking list. Returns WS_SUCCESS if a node was found. */
+ * the handle from the tracking list. Returns WS_SUCCESS if a node was found.
+ * Not provided for Windows, where fd is a HANDLE, not a WCLOSE-able fd. */
 int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh)
 {
     if (ssh == NULL || ssh->fileList == NULL) {
@@ -6501,7 +6517,8 @@ int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh)
 #endif
     return WS_SUCCESS;
 }
-#endif /* WOLFSSH_TEST_INTERNAL && !USE_WINDOWS_API && !NO_FILESYSTEM */
+#endif /* !USE_WINDOWS_API */
+#endif /* WOLFSSH_TEST_INTERNAL && !NO_FILESYSTEM */
 
 #endif /* !NO_WOLFSSH_SERVER */
 

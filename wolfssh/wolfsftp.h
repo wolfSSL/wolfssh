@@ -356,8 +356,7 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
             word32* handleSz);
     WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
     WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
-    #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
-            !defined(NO_FILESYSTEM)
+    #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
         WOLFSSH_API int wolfSSH_SFTP_TestRecvStateInit(WOLFSSH* ssh);
         WOLFSSH_API const byte* wolfSSH_SFTP_TestRecvReply(WOLFSSH* ssh,
                 word32* sz);
@@ -366,7 +365,9 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
         #ifndef NO_WOLFSSH_DIR
             WOLFSSH_API int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh);
         #endif
-        WOLFSSH_API int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh);
+        #ifndef USE_WINDOWS_API
+            WOLFSSH_API int wolfSSH_SFTP_TestInvalidateHeadFd(WOLFSSH* ssh);
+        #endif
     #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
         WOLFSSH_API int wolfSSH_TestNucleusMonthFromDate(word16 d);
