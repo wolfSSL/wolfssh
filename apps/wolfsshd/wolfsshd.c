@@ -2855,7 +2855,9 @@ static int StartSSHD(int argc, char** argv)
 
     if (ret == WS_SUCCESS) {
         for (i = 0; i < argc; i++) {
-            if (WSTRCMP((char*)(cmdArgs[i]), "-D") == 0) {
+            /* cmdArgs entries are wide strings (CommandLineToArgvW); compare
+             * as such instead of reinterpreting as narrow char data. */
+            if (wcscmp(cmdArgs[i], L"-D") == 0) {
                 isDaemon = 0;
             }
         }
