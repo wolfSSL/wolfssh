@@ -71,6 +71,7 @@ jobs:
         config: [
           '',
           '--enable-all',
+          '--enable-all CFLAGS=-DWOLFSSH_LOCAL_PREAD_PWRITE',
           '--enable-all --enable-ossh-certs',
           '--enable-sftp',
           '--enable-sftp --disable-sftp-zeroize',

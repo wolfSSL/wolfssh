@@ -156,11 +156,14 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            int ret;
+            word64 offset;
+            int ret = -1;
 
-            ret = (int)lseek(fd, shortOffset[0], SEEK_SET);
-            if (ret != -1)
-                ret = (int)write(fd, buf, sz);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) == 0) {
+                if (lseek(fd, (off_t)offset, SEEK_SET) != (off_t)-1)
+                    ret = (int)write(fd, buf, sz);
+            }
 
             return ret;
         }
@@ -168,11 +171,14 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            int ret;
+            word64 offset;
+            int ret = -1;
 
-            ret = (int)lseek(fd, shortOffset[0], SEEK_SET);
-            if (ret != -1)
-                ret = (int)read(fd, buf, sz);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) == 0) {
+                if (lseek(fd, (off_t)offset, SEEK_SET) != (off_t)-1)
+                    ret = (int)read(fd, buf, sz);
+            }
 
             return ret;
         }
@@ -182,24 +188,26 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            off_t offset = (off_t)shortOffset[0];
+            word64 offset;
 
-        #if SIZEOF_OFF_T == 8
-            offset = ((off_t)shortOffset[1] << 32) | offset;
-        #endif
-            return (int)pwrite(fd, buf, sz, offset);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) != 0)
+                return -1;
+
+            return (int)pwrite(fd, buf, sz, (off_t)offset);
         }
 
 
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
-            off_t offset = (off_t)shortOffset[0];
+            word64 offset;
 
-        #if SIZEOF_OFF_T == 8
-            offset = ((off_t)shortOffset[1] << 32) | offset;
-        #endif
-            return (int)pread(fd, buf, sz, offset);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) != 0)
+                return -1;
+
+            return (int)pread(fd, buf, sz, (off_t)offset);
         }
 
     #endif /* USE_WINDOWS_API USE_OSE_API */

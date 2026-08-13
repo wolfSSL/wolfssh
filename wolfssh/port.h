@@ -717,6 +717,23 @@ extern "C" {
         #endif
     #endif
 
+    /* Assemble the two words of a split file offset into one value */
+    static inline int wResolveOffset(const unsigned int* shortOffset,
+            word64 maxOffset, word64* offset)
+    {
+        word64 combined;
+
+        if (shortOffset == NULL || offset == NULL)
+            return -1;
+
+        combined = ((word64)shortOffset[1] << 32) | (word64)shortOffset[0];
+        if (combined > maxOffset)
+            return -1;
+
+        *offset = combined;
+        return 0;
+    }
+
 #if defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support, this should be at the top of the ports list
      * to override all */
@@ -1579,6 +1596,17 @@ extern "C" {
     #define WREWINDDIR(fs,d) rewinddir(*(d))
 #endif /* NO_WOLFSSH_DIR */
 #endif
+
+/* Largest file offset the seek call of the port can take. A port seeking with
+ * a type narrower than off_t defines its own value ahead of this default. */
+#ifndef WOLFSSH_MAX_FILE_OFFSET
+    #if SIZEOF_OFF_T == 8
+        #define WOLFSSH_MAX_FILE_OFFSET W64LIT(0x7FFFFFFFFFFFFFFF)
+    #else
+        #define WOLFSSH_MAX_FILE_OFFSET W64LIT(0x7FFFFFFF)
+    #endif
+#endif
+
 #endif /* WOLFSSH_SFTP or WOLFSSH_SCP */
 
 /* SFTP path confinement must reject symbolic links because wolfSSH_RealPath
