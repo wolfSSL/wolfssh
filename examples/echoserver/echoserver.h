@@ -25,6 +25,9 @@
 
 THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args);
 int wolfSSH_Echoserver(int argc, char** argv);
+#ifdef WOLFSSH_TPM
+char* LoadTpmSshKey(const char* keyFile, const char* username);
+#endif
 
 
 #endif /* _WOLFSSH_EXAMPLES_ECHOSERVER_H_ */
