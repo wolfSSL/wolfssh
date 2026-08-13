@@ -291,6 +291,53 @@ typedef struct thread_args {
 #endif
 
 
+/* Sleep long enough for the socket to drain, the socket is non-blocking and
+ * a busy retry loop would only starve the peer. */
+static void PauseForSocket(void)
+{
+#ifdef USE_WINDOWS_API
+    Sleep(1);
+#else
+    usleep(1000);
+#endif
+}
+
+
+/* A packet the socket wasn't ready for stays queued in the session, and the
+ * send that queued it still reports the data as taken. The peer can't answer
+ * a message it never received, so push the queue out here rather than go
+ * back to waiting on the peer. The lock is NULL when no other thread is
+ * using the session. */
+static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
+{
+    int ret;
+
+    do {
+        PauseForSocket();
+
+        if (lock != NULL) {
+            wc_LockMutex(lock);
+        }
+        ret = wolfSSH_worker(ssh, NULL);
+        if (ret == WS_FATAL_ERROR) {
+            /* the session holds the detail behind a fatal error */
+            ret = wolfSSH_get_error(ssh);
+        }
+        if (lock != NULL) {
+            wc_UnLockMutex(lock);
+        }
+    } while (ret == WS_WANT_WRITE);
+
+    /* The queue is out. Whatever the worker made of the peer's end of the
+     * conversation is for the reader to sort out. */
+    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
 #ifdef WOLFSSH_TERM
 static int sendCurrentWindowSize(thread_args* args)
 {
@@ -321,6 +368,10 @@ static int sendCurrentWindowSize(thread_args* args)
 #endif
     ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, xpix, ypix);
     wc_UnLockMutex(&args->lock);
+
+    if (ret == WS_WANT_WRITE) {
+        ret = FlushQueuedSend(args->ssh, &args->lock);
+    }
 
     return ret;
 }
@@ -452,6 +503,7 @@ static THREAD_RET readInput(void* in)
     thread_args* args = (thread_args*)in;
     int ret = 0;
     int err = 0;
+    int queued = 0;
     word32 sz = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
@@ -478,18 +530,21 @@ static THREAD_RET readInput(void* in)
             ret = wolfSSH_stream_send(args->ssh, buf, sz);
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
+            /* A send the socket wasn't ready for still counts the data as
+             * taken, it is left queued in the session instead. */
+            queued = (wolfSSH_get_error(args->ssh) == WS_WANT_WRITE);
             wc_UnLockMutex(&args->lock);
             if (err == WS_REKEYING) {
                 /* give readPeer() the lock to finish the rekey, then
                  * send this buffer again */
-            #ifdef USE_WINDOWS_API
-                Sleep(1);
-            #else
-                usleep(1000);
-            #endif
+                PauseForSocket();
             }
         } while (err == WS_REKEYING);
         if (ret <= 0) {
+            fprintf(stderr, "Couldn't send data\n");
+            break;
+        }
+        if (queued && FlushQueuedSend(args->ssh, &args->lock) != WS_SUCCESS) {
             fprintf(stderr, "Couldn't send data\n");
             break;
         }
@@ -515,6 +570,7 @@ static THREAD_RET readPeer(void* in)
 #endif
     fd_set readSet;
     fd_set errSet;
+    struct timeval timeout;
 
 #ifdef USE_WINDOWS_API
     if (args->rawMode == 0) {
@@ -552,7 +608,16 @@ static THREAD_RET readPeer(void* in)
         FD_SET(fd, &readSet);
         FD_SET(fd, &errSet);
 
-        bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        bytes = select(fd + 1, &readSet, NULL, &errSet, &timeout);
+        if (bytes == 0) {
+            /* Nothing new on the socket, but a flush in the send thread may
+             * have already taken the peer's reply off it, so run the read
+             * path anyway. It only costs an empty read. */
+            bytes = 1;
+            FD_SET(fd, &readSet);
+        }
         wc_LockMutex(&args->lock);
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
             /* there is something to read off the wire */
@@ -1242,26 +1307,42 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #endif
 
     ret = wolfSSH_shutdown(ssh);
+    /* WS_FATAL_ERROR only says to go look, the session has the detail. The
+     * drain inside the shutdown reports a want read that way. */
+    if (ret == WS_FATAL_ERROR) {
+        ret = wolfSSH_get_error(ssh);
+    }
+
     /* do not continue on with shutdown process if peer already disconnected */
     if (ret != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
+#ifndef WOLFSSL_NUCLEUS
+        if (ret == WS_WANT_WRITE) {
+            /* The close messages are queued and the threads are done, no
+             * one else is going to send them. */
+            ret = FlushQueuedSend(ssh, NULL);
         }
-        else {
+#endif
+
+        if (ret == WS_SUCCESS) {
             ret = wolfSSH_worker(ssh, NULL);
+            if (ret == WS_FATAL_ERROR) {
+                ret = wolfSSH_get_error(ssh);
+            }
             if (ret == WS_WANT_WRITE) {
                 /* The close messages are already out, whatever the drain
                  * still wants to send is a reply to the peer. */
                 ret = WS_SUCCESS;
             }
         }
+        else if (ret != WS_CHANNEL_CLOSED && ret != WS_WANT_READ) {
+            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
+        }
+
         if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ) {
             /* Shutting down. The channel closing isn't a fail, and neither
              * is the peer having nothing ready on this non-blocking socket;
-             * either way there is nothing left to wait for. A want write
-             * from wolfSSH_shutdown() is different, the close messages are
-             * still queued, so that stays a failure. */
+             * either way there is nothing left to wait for. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
