@@ -53,12 +53,7 @@
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
     #include <wolfssh/ossh.h>
-    #ifdef WOLFSSL_BASE64_ENCODE
-        /* Declared rather than including coding.h, whose Base16_Decode
-         * collides with the one wolfssh/test.h defines. */
-        WOLFSSL_API int Base64_Encode_NoNl(const byte* in, word32 inLen,
-                byte* out, word32* outLen);
-    #endif
+    #include <wolfssl/wolfcrypt/coding.h>
 #endif
 
 #if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)

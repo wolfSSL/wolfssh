@@ -1158,6 +1158,13 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
 
 #ifdef WOLFSSH_TEST_HEX2BIN
 
+/* Declares Base16_Decode when wolfSSL has it, and settles WOLFSSL_BASE16
+ * for the guard below. Only --enable-base16 and the options that imply it
+ * (openssh, sm2, all) build it, so the local copy is still needed. */
+#include <wolfssl/wolfcrypt/coding.h>
+
+#ifndef WOLFSSL_BASE16
+
 #define BAD 0xFF
 
 static const byte hexDecode[] =
@@ -1229,6 +1236,8 @@ static int Base16_Decode(const byte* in, word32 inLen,
     *outLen = outIdx;
     return 0;
 }
+
+#endif /* !WOLFSSL_BASE16 */
 
 
 static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
