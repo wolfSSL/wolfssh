@@ -2900,6 +2900,7 @@ static void TestSftpForgedHandleRejected(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
 
     /* ---- positive control: legitimately open a file over SFTP ----
      * RecvOpen assigns the first handle the per-session id {0,0}. */
@@ -3085,6 +3086,7 @@ static void TestSftpHandleNamespaceIsolation(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
 
     /* open a directory -> first id from the shared counter */
     idx = 0;
@@ -3236,6 +3238,7 @@ static void TestSftpHandleLimit(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
 
     /* open the cap's worth of handles against one file; all must succeed */
     for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
@@ -3369,6 +3372,7 @@ static void TestSftpDirHandleLimit(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
 
     /* open the cap's worth of handles on "."; all must succeed */
     for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
@@ -3462,6 +3466,7 @@ static void TestSftpCloseFailureRemovesHandle(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
 
     idx = 0;
     SftpPutU32((word32)WSTRLEN(path), pkt + idx); idx += UINT32_SZ;
@@ -3496,6 +3501,134 @@ static void TestSftpCloseFailureRemovesHandle(void)
     AssertTrue(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx) != WS_SUCCESS);
 
     (void)WREMOVE(ssh->fs, path);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* Sends an FXP_STAT for path and returns the handler's return code. */
+static int SftpStatPath(WOLFSSH* ssh, int reqId, const char* path)
+{
+    byte   pkt[WOLFSSH_MAX_FILENAME + UINT32_SZ];
+    word32 idx = 0;
+    word32 sz  = (word32)WSTRLEN(path);
+
+    SftpPutU32(sz, pkt); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, sz); idx += sz;
+
+    return wolfSSH_SFTP_RecvSTAT(ssh, reqId, pkt, idx);
+}
+
+/* An accepted STAT answers with FXP_ATTRS carrying the same request id. */
+static void AssertSftpAttrsReply(WOLFSSH* ssh, int reqId)
+{
+    const byte* reply;
+    word32 replySz;
+
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= WOLFSSH_SFTP_HEADER + UINT32_SZ);
+    AssertIntEQ(reply[LENGTH_SZ], WOLFSSH_FTP_ATTRS);
+    AssertIntEQ((int)SftpGetU32(reply + LENGTH_SZ + MSG_ID_SZ), reqId);
+}
+
+/* The start path and the confinement root are separate settings: a relative
+ * request resolves against the start path, while the jail boundary is the
+ * confinement root.  Start the session in a subdirectory of the root and
+ * confirm requests are judged against the root - a sibling of the start
+ * directory is reachable, anything above the root is not.  The tests that pass
+ * the same directory to both setters cannot tell the two apart, so they would
+ * still pass if confinement went back to following the start path. */
+static void TestSftpStartPathInsideConfineRoot(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 500;
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char root[WOLFSSH_MAX_FILENAME];
+    char start[WOLFSSH_MAX_FILENAME];
+    char sibling[WOLFSSH_MAX_FILENAME];
+    char startFile[WOLFSSH_MAX_FILENAME];
+    char sibFile[WOLFSSH_MAX_FILENAME];
+    char nearMiss[WOLFSSH_MAX_FILENAME];
+    WFILE* fp = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+
+    /* the fixture paths below hang off the working directory; skip rather
+     * than test truncated paths if they would not fit */
+    if (WSTRLEN(cwd) + 64 >= WOLFSSH_MAX_FILENAME) {
+        wolfSSH_SFTP_TestRecvStateFree(ssh);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        return;
+    }
+
+    /* unique per-process fixture names (see TestSftpForgedHandleRejected) */
+    WSNPRINTF(root, sizeof(root), "%s/wolfssh_confine_%d", cwd, (int)getpid());
+    WSNPRINTF(start, sizeof(start), "%s/start", root);
+    WSNPRINTF(sibling, sizeof(sibling), "%s/sibling", root);
+    WSNPRINTF(startFile, sizeof(startFile), "%s/start_file", start);
+    WSNPRINTF(sibFile, sizeof(sibFile), "%s/sib_file", sibling);
+    WSNPRINTF(nearMiss, sizeof(nearMiss), "%s_evil", root);
+
+    AssertIntEQ(WMKDIR(ssh->fs, root, 0755), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, start, 0755), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, sibling, 0755), 0);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, startFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(ssh->fs, fp);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, sibFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(ssh->fs, fp);
+
+    /* start deeper than the jail: the session opens in start, the boundary
+     * stays at root */
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, start), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, root), WS_SUCCESS);
+
+    /* a relative request resolves against the start path: start_file exists
+     * only there, not at the root */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "start_file"), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+
+    /* a sibling of the start directory is inside the root, so it is reachable
+     * both by absolute path and by climbing out of the start directory */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, sibFile), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "../sibling/sib_file"), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+
+    /* the root itself is in bounds, reached relatively or absolutely */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, ".."), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+    AssertIntEQ(SftpStatPath(ssh, ++rid, root), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+
+    /* above the root is out of bounds, however it is spelled */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "../.."), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_PERMISSION);
+    AssertIntEQ(SftpStatPath(ssh, ++rid, cwd), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_PERMISSION);
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "/"), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_PERMISSION);
+
+    /* a sibling of the root sharing its string prefix is not under it */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, nearMiss), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_PERMISSION);
+
+    (void)WREMOVE(ssh->fs, startFile);
+    (void)WREMOVE(ssh->fs, sibFile);
+    (void)WRMDIR(ssh->fs, start);
+    (void)WRMDIR(ssh->fs, sibling);
+    (void)WRMDIR(ssh->fs, root);
     wolfSSH_SFTP_TestRecvStateFree(ssh);
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -5960,6 +6093,8 @@ int main(int argc, char** argv)
     #endif
     /* a failed close still drops the handle from the tracking list */
     TestSftpCloseFailureRemovesHandle();
+    /* confinement follows the confine root, not the start path */
+    TestSftpStartPathInsideConfineRoot();
     #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
     TestNucleusMonthConversion();

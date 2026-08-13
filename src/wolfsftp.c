@@ -1488,7 +1488,8 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
     r[rSz] = '\0';
     WLOG(WS_LOG_SFTP, "Real Path Request = %s", r);
 
-    /* If the default path isn't set, try to get it. */
+    /* If the start path isn't set, try to get it. Only the start path - a
+     * first REALPATH must not confine a session the server left unconfined. */
     if (ssh->sftpDefaultPath == NULL) {
         char wd[WOLFSSH_MAX_FILENAME];
 
@@ -1516,7 +1517,7 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         }
     }
 
-    /* If the default path still isn't set, send error to peer. */
+    /* If the start path still isn't set, send error to peer. */
     if (ssh->sftpDefaultPath == NULL) {
         WLOG(WS_LOG_SFTP, "Unable to get current working directory");
         if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
@@ -1938,18 +1939,22 @@ int wolfSSH_SFTP_CreateStatus(WOLFSSH* ssh, word32 status, word32 reqId,
  * the source path value, copy the path from the data stream into a local
  * array and use that as the source.
  *
- * @param defaultPath pointer to the defaultPath
- * @param data        input data stream at the location of the path name
- * @param sz          size of the path name in bytes
- * @param s           destination buffer for the Real Path
- * @param sSz         size of s in bytes
- * @return            0 for success or negative error code
+ * A relative request resolves against the session's start path; the result
+ * must stay inside the confinement root, when one is set (see wolfsftp.h).
+ *
+ * @param ssh  session supplying the start path and the confinement root
+ * @param data input data stream at the location of the path name
+ * @param sz   size of the path name in bytes
+ * @param s    destination buffer for the Real Path
+ * @param sSz  size of s in bytes
+ * @return     0 for success or negative error code
  */
-static int GetAndCleanPath(const char* defaultPath,
+static int GetAndCleanPath(WOLFSSH* ssh,
         const byte* data, word32 sz, char* s, word32 sSz)
 {
     int    ret;
-    word32 dpLen = 0;
+    word32 cpLen = 0;
+    const char* confinePath = ssh->sftpConfinePath;
     char   r[WOLFSSH_MAX_FILENAME];
 
     if (sz >= sizeof r)
@@ -1957,33 +1962,32 @@ static int GetAndCleanPath(const char* defaultPath,
     WMEMCPY(r, data, sz);
     r[sz] = '\0';
 
-    ret = wolfSSH_RealPath(defaultPath, r, s, sSz);
-    if (ret == WS_SUCCESS && defaultPath != NULL) {
-        /* defaultPath is stored in canonical form by
-         * wolfSSH_SFTP_SetDefaultPath, so a direct prefix compare against the
-         * canonical resolved request path enforces confinement. */
-        dpLen = (word32)WSTRLEN(defaultPath);
+    ret = wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sSz);
+    if (ret == WS_SUCCESS && confinePath != NULL) {
+        /* both sides are canonical - the root by SetConfinePath, the request
+         * by the RealPath call above - so a prefix compare confines it */
+        cpLen = (word32)WSTRLEN(confinePath);
         /* strip trailing separator(s), but keep a lone "/" as-is */
-        while (dpLen > 1 && WOLFSSH_SFTP_IS_DELIM(defaultPath[dpLen - 1])) {
-            dpLen--;
+        while (cpLen > 1 && WOLFSSH_SFTP_IS_DELIM(confinePath[cpLen - 1])) {
+            cpLen--;
         }
-        if (dpLen > 1) {
-            /* resolved path must equal the default path or be within its
-             * subtree. On Windows the filesystem is case-insensitive and the
-             * default path is canonicalized to GetCurrentDirectoryA()'s case,
-             * so compare case-insensitively there to avoid rejecting valid
-             * in-jail requests that differ only in case. */
+        if (cpLen > 1) {
+            /* the resolved path must be the root itself or sit under it.
+             * Windows paths are case-insensitive and the root keeps
+             * GetCurrentDirectoryA()'s case, so compare without case there
+             * rather than reject in-jail requests over case alone. */
 #ifdef USE_WINDOWS_API
-            if (WSTRNCASECMP(s, defaultPath, dpLen) != 0 ||
+            if (WSTRNCASECMP(s, confinePath, cpLen) != 0 ||
 #else
-            if (WSTRNCMP(s, defaultPath, dpLen) != 0 ||
+            if (WSTRNCMP(s, confinePath, cpLen) != 0 ||
 #endif
-                    (s[dpLen] != '\0' && !WOLFSSH_SFTP_IS_DELIM(s[dpLen]))) {
+                    (s[cpLen] != '\0' && !WOLFSSH_SFTP_IS_DELIM(s[cpLen]))) {
                 ret = WS_PERMISSIONS;
             }
         }
         else {
-            /* default path is "/" - only absolute paths are accepted */
+            /* root is "/", the whole filesystem: unconfined, but still only
+             * absolute paths are accepted */
             if (s[0] == '\0' || !WOLFSSH_SFTP_IS_DELIM(s[0])) {
                 ret = WS_PERMISSIONS;
             }
@@ -1991,27 +1995,24 @@ static int GetAndCleanPath(const char* defaultPath,
     }
 
 #ifdef WOLFSSH_HAVE_SYMLINK
-    if (ret == WS_SUCCESS && defaultPath != NULL && dpLen > 1) {
-        /* Defense in depth: the prefix check above only proves the normalized
-         * path string stays under the jail.  Because wolfSSH_RealPath does not
-         * resolve symlinks, an in-jail symlink pointing outside the jail would
-         * pass that check and then be followed by the file operation, escaping
-         * confinement.  Walk every path component below the jail root and
-         * reject if any existing component is a link (in-jail links are
-         * rejected too, which is the conservative, safe choice).  A
-         * not-yet-created leaf is left to the operation so creates still
-         * work. */
+    if (ret == WS_SUCCESS && confinePath != NULL && cpLen > 1) {
+        /* Defense in depth: the prefix check only proves the path string
+         * stays under the jail, and wolfSSH_RealPath does not resolve
+         * symlinks, so an in-jail link pointing out would pass it and then be
+         * followed.  Reject any existing component below the root that is a
+         * link, in-jail targets included; a not-yet-created leaf is left to
+         * the operation so creates still work. */
         word32 i;
         word32 sLen = (word32)WSTRLEN(s);
         char   saved;
 
-        for (i = dpLen; i <= sLen && ret == WS_SUCCESS; i++) {
+        for (i = cpLen; i <= sLen && ret == WS_SUCCESS; i++) {
             /* act only at a component boundary (a separator) or the leaf */
             if (i != sLen && !WOLFSSH_SFTP_IS_DELIM(s[i])) {
                 continue;
             }
             /* the jail root itself is trusted; only inspect inside the jail */
-            if (i <= dpLen) {
+            if (i <= cpLen) {
                 continue;
             }
             saved = s[i];
@@ -2085,8 +2086,7 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-            str, strSz, dir, sizeof(dir));
+    ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
 
     if (ret == 0) {
     #ifndef USE_WINDOWS_API
@@ -2153,8 +2153,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-            str, strSz, dir, sizeof(dir));
+    ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
     if (ret != WS_SUCCESS && ret != WS_PERMISSIONS) {
         return ret;
     }
@@ -2381,8 +2380,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         goto cleanup;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-                str, strSz, dir, sizeof(dir));
+    ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
     if (ret == WS_PERMISSIONS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
         rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId, per);
@@ -2612,8 +2610,7 @@ cleanup:
         goto cleanup;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-                str, strSz, dir, sizeof(dir));
+    ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
     if (ret == WS_PERMISSIONS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
         rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId, per);
@@ -2833,8 +2830,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-                str, strSz, dir, sizeof(dir));
+    ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
     if (ret == WS_PERMISSIONS) {
         rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId, per);
         return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
@@ -2961,11 +2957,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    /* Resolve and confine the peer supplied path to sftpDefaultPath, the same
-     * way the POSIX branch does, so an absolute or UNC path cannot escape the
-     * configured root. When no default path is set this only normalizes the
-     * path, preserving the "/" drive listing special case below. */
-    ret = GetAndCleanPath(ssh->sftpDefaultPath, data + idx, sz,
+    /* Resolve and confine the peer supplied path the same way the POSIX branch
+     * does, so an absolute or UNC path cannot escape the configured root. When
+     * the session is unconfined this only normalizes the path, preserving the
+     * "/" drive listing special case below. */
+    ret = GetAndCleanPath(ssh, data + idx, sz,
             clean, sizeof(clean));
     if (ret == WS_PERMISSIONS) {
         rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId, per);
@@ -4854,7 +4850,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath, str, strSz,
+    ret = GetAndCleanPath(ssh, str, strSz,
             name, sizeof(name));
 
     if (ret == WS_SUCCESS) {
@@ -4935,7 +4931,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ret = WS_BUFFER_E;
     }
     if (ret == WS_SUCCESS) {
-        ret = GetAndCleanPath(ssh->sftpDefaultPath, str, strSz,
+        ret = GetAndCleanPath(ssh, str, strSz,
                 old, sizeof(old));
     }
     if (ret == WS_SUCCESS) {
@@ -4945,7 +4941,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
     }
     if (ret == WS_SUCCESS) {
-        ret = GetAndCleanPath(ssh->sftpDefaultPath, str, strSz,
+        ret = GetAndCleanPath(ssh, str, strSz,
                 name, sizeof(name));
     }
 
@@ -5894,7 +5890,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     /* try to get file attributes and send back to client */
-    ret = GetAndCleanPath(ssh->sftpDefaultPath, str, sz, name, sizeof(name));
+    ret = GetAndCleanPath(ssh, str, sz, name, sizeof(name));
     if (ret < 0) {
         if (ret == WS_PERMISSIONS) {
             statusType = WOLFSSH_FTP_PERMISSION;
@@ -5985,8 +5981,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath,
-                str, strSz, name, sizeof(name));
+    ret = GetAndCleanPath(ssh, str, strSz, name, sizeof(name));
     if (ret < 0) {
         if (ret == WS_PERMISSIONS) {
             statusType = WOLFSSH_FTP_PERMISSION;
@@ -6200,7 +6195,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return WS_BUFFER_E;
     }
 
-    ret = GetAndCleanPath(ssh->sftpDefaultPath, str, strSz, name, sizeof(name));
+    ret = GetAndCleanPath(ssh, str, strSz, name, sizeof(name));
     if (ret != WS_SUCCESS) {
         if (ret == WS_PERMISSIONS) {
             type = WOLFSSH_FTP_PERMISSION;
@@ -8985,120 +8980,143 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
 }
 
 
-/* Sets the default path that SFTP will start a user in.
- *
- * Setting a default path other than "/" also confines the session to that
- * subtree: requests resolving outside it are rejected with WS_PERMISSIONS
- * (see GetAndCleanPath).  Because paths are resolved lexically and the result
- * cannot prove a link stays in-jail, confinement deliberately rejects ALL
- * symbolic links encountered below the default path - including links whose
- * target is itself inside the jail (e.g. "current -> releases/v3").  Deploy
- * served trees without symlinks, or build with WOLFSSH_NO_SYMLINK_CHECK to
- * disable the link check (which also removes the symlink-escape protection).
- *
- * Note this link check is best-effort, not a hard security boundary: it is a
- * time-of-check/time-of-use (TOCTOU) check.  GetAndCleanPath inspects each
- * path component, then the operation acts on the same path by name in a later,
- * separate call.  An attacker able to write inside the jail concurrently and
- * as the same user the server runs file operations as could swap a validated
- * component for a symlink in that window and escape.  wolfSSH services a single
- * SFTP session's requests serially, so a session cannot race its own
- * check-then-use; this requires a separate concurrent writer.  For hostile
- * multi-tenant deployments, confine the session with an OS-level mechanism
- * (e.g. chroot and dropped privileges) and treat this check as defense in
- * depth: it reliably blocks static (non-racing) in-jail symlinks but cannot
- * close the concurrent-swap race portably (the *at/O_NOFOLLOW primitives the
- * full fix needs do not exist across all supported filesystems).
- *
- * path  NULL-terminated string specifying the default/base path
- *       the SFTP session should start in. If path is NULL, the
- *       existing default path (if any) is left unchanged.
+/* Canonicalize path into out, which must be at least WOLFSSH_MAX_FILENAME
+ * bytes.  Both paths are stored canonical so the confinement check stays a
+ * plain prefix compare.  A relative path is resolved against the working
+ * directory; canonicalizing e.g. "." lexically would collapse it to "/" and
+ * leave confinement effectively disabled.
  *
  * returns WS_SUCCESS on success
  */
-int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
+static int CanonicalizePath(WOLFSSH* ssh, const char* path,
+        char* out, word32 outSz)
 {
     int    ret = WS_SUCCESS;
-    word32 canonSz;
-    const char* canon = NULL;
-    char*  newPath = NULL;
     char   in[WOLFSSH_MAX_FILENAME];
     char   cwd[WOLFSSH_MAX_FILENAME];
-    char   real[WOLFSSH_MAX_FILENAME];
 #ifdef USE_WINDOWS_API
     DWORD  cwdLen;
 #endif
 
-    if (ssh == NULL)
-        return WS_BAD_ARGUMENT;
+    /* only the WGETCWD ports that take a filesystem handle use ssh */
+    WOLFSSH_UNUSED(ssh);
 
-    if (path != NULL) {
-        /* Store the default path in canonical form so the SFTP confinement
-         * check (GetAndCleanPath) can compare it directly against canonicalized
-         * request paths without re-canonicalizing per request.  A relative path
-         * is resolved against the current working directory; a purely lexical
-         * canonicalization of e.g. "." would collapse to "/" and leave
-         * confinement effectively disabled. */
-        if (WSTRLEN(path) >= sizeof(in)) {
-            return WS_BUFFER_E;
-        }
-        WSTRNCPY(in, path, sizeof(in));
-        in[sizeof(in) - 1] = '\0';
+    if (WSTRLEN(path) >= sizeof(in)) {
+        return WS_BUFFER_E;
+    }
+    WSTRNCPY(in, path, sizeof(in));
+    in[sizeof(in) - 1] = '\0';
 
-        if (!WOLFSSH_SFTP_IS_DELIM(in[0]) &&
-                !WOLFSSH_SFTP_IS_WINPATH((word32)WSTRLEN(in), in)) {
-            /* relative: resolve against the canonicalized working directory */
+    if (!WOLFSSH_SFTP_IS_DELIM(in[0]) &&
+            !WOLFSSH_SFTP_IS_WINPATH((word32)WSTRLEN(in), in)) {
+        /* relative: resolve against the canonicalized working directory */
 #ifdef WOLFSSH_ZEPHYR
-            WSTRNCPY(cwd, CONFIG_WOLFSSH_SFTP_DEFAULT_DIR, sizeof cwd);
+        WSTRNCPY(cwd, CONFIG_WOLFSSH_SFTP_DEFAULT_DIR, sizeof cwd);
 #elif !defined(USE_WINDOWS_API)
-            if (WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1) == NULL) {
-                ret = WS_INVALID_PATH_E;
-            }
+        if (WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1) == NULL) {
+            ret = WS_INVALID_PATH_E;
+        }
 #else
-            /* GetCurrentDirectoryA returns the number of chars written on
-             * success, or the required size (including the NUL) when the
-             * buffer is too small; treat zero or an over-long result as a
-             * failure so a truncated cwd is never canonicalized. */
-            cwdLen = GetCurrentDirectoryA(sizeof(cwd) - 1, cwd);
-            if (cwdLen == 0 || cwdLen >= (DWORD)(sizeof(cwd) - 1)) {
-                ret = WS_INVALID_PATH_E;
-            }
+        /* GetCurrentDirectoryA returns the chars written, or the size
+         * needed (with the NUL) when the buffer is too small; treat zero or
+         * an over-long result as failure so a truncated cwd is never used */
+        cwdLen = GetCurrentDirectoryA(sizeof(cwd) - 1, cwd);
+        if (cwdLen == 0 || cwdLen >= (DWORD)(sizeof(cwd) - 1)) {
+            ret = WS_INVALID_PATH_E;
+        }
 #endif
-            if (ret == WS_SUCCESS) {
-                cwd[sizeof(cwd) - 1] = '\0';
-                ret = wolfSSH_RealPath(NULL, cwd, real, sizeof(real));
-            }
-            if (ret == WS_SUCCESS) {
-                ret = wolfSSH_RealPath(real, in, cwd, sizeof(cwd));
-                canon = cwd;
-            }
-        }
-        else {
-            ret = wolfSSH_RealPath(NULL, in, real, sizeof(real));
-            canon = real;
-        }
-
         if (ret == WS_SUCCESS) {
-            /* Allocate and populate the replacement first, then swap it in,
-             * freeing the previous path only on success.  A failed allocation
-             * must leave the existing confinement base path intact rather than
-             * clear it (repeated calls, e.g. wolfsshd setting "/" then the
-             * user's home dir, also do not leak). */
-            canonSz = (word32)WSTRLEN(canon) + 1;
-            newPath = (char*)WMALLOC(canonSz, ssh->ctx->heap, DYNTYPE_STRING);
-            if (newPath == NULL) {
-                ssh->error = WS_MEMORY_E;
-                ret = WS_FATAL_ERROR;
+            cwd[sizeof(cwd) - 1] = '\0';
+            ret = wolfSSH_RealPath(NULL, cwd, out, outSz);
+        }
+        if (ret == WS_SUCCESS) {
+            /* move the canonical cwd out of out, so out can take the
+             * relative path resolved against it */
+            if (WSTRLEN(out) >= sizeof(cwd)) {
+                ret = WS_BUFFER_E;
             }
             else {
-                WSTRNCPY(newPath, canon, canonSz);
-                if (ssh->sftpDefaultPath != NULL) {
-                    WFREE(ssh->sftpDefaultPath, ssh->ctx->heap, DYNTYPE_STRING);
-                }
-                ssh->sftpDefaultPath = newPath;
+                WSTRNCPY(cwd, out, sizeof(cwd));
+                ret = wolfSSH_RealPath(cwd, in, out, outSz);
             }
         }
     }
+    else {
+        ret = wolfSSH_RealPath(NULL, in, out, outSz);
+    }
+
+    return ret;
+}
+
+
+/* Replaces the path at *dst with a copy of canon.
+ *
+ * Builds the replacement before swapping it in and freeing the old one, so a
+ * failed allocation leaves the existing path intact rather than clearing it.
+ * Repeated calls, e.g. wolfsshd setting "/" then the user's home dir, do not
+ * leak.
+ *
+ * returns WS_SUCCESS on success
+ */
+static int StorePath(WOLFSSH* ssh, char** dst, const char* canon)
+{
+    word32 canonSz;
+    char*  newPath;
+
+    canonSz = (word32)WSTRLEN(canon) + 1;
+    newPath = (char*)WMALLOC(canonSz, ssh->ctx->heap, DYNTYPE_STRING);
+    if (newPath == NULL) {
+        ssh->error = WS_MEMORY_E;
+        return WS_FATAL_ERROR;
+    }
+    WSTRNCPY(newPath, canon, canonSz);
+    if (*dst != NULL) {
+        WFREE(*dst, ssh->ctx->heap, DYNTYPE_STRING);
+    }
+    *dst = newPath;
+
+    return WS_SUCCESS;
+}
+
+
+/* Confines an SFTP session to a subtree, leaving the start path alone.
+ * See wolfssh/wolfsftp.h for the contract. */
+int wolfSSH_SFTP_SetConfinePath(WOLFSSH* ssh, const char* path)
+{
+    int  ret;
+    char canon[WOLFSSH_MAX_FILENAME];
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+    if (path == NULL)
+        return WS_SUCCESS;
+
+    ret = CanonicalizePath(ssh, path, canon, sizeof(canon));
+    if (ret == WS_SUCCESS) {
+        ret = StorePath(ssh, &ssh->sftpConfinePath, canon);
+    }
+
+    return ret;
+}
+
+
+/* Sets the directory an SFTP session starts in. Confinement is separate; see
+ * wolfssh/wolfsftp.h for the contract. */
+int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path)
+{
+    int  ret;
+    char canon[WOLFSSH_MAX_FILENAME];
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+    if (path == NULL)
+        return WS_SUCCESS;
+
+    ret = CanonicalizePath(ssh, path, canon, sizeof(canon));
+    if (ret == WS_SUCCESS) {
+        ret = StorePath(ssh, &ssh->sftpDefaultPath, canon);
+    }
+
     return ret;
 }
 

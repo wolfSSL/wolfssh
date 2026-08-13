@@ -1791,6 +1791,10 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         WFREE(ssh->sftpDefaultPath, heap, DYNTYPE_STRING);
         ssh->sftpDefaultPath = NULL;
     }
+    if (ssh->sftpConfinePath) {
+        WFREE(ssh->sftpConfinePath, heap, DYNTYPE_STRING);
+        ssh->sftpConfinePath = NULL;
+    }
 #endif
 #ifdef WOLFSSH_TERM
     if (ssh->modes) {

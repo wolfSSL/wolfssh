@@ -2893,9 +2893,12 @@ static int wsUserAuth(byte authType,
  *
  * @param ssh             WOLFSSH object to update
  * @param defaultSftpPath command line provided default SFTP path
+ * @param confine         when set, also confine the session to that path,
+ *                        rather than only starting it there
  * @return                0 for success or error code
  */
-static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
+static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath,
+        int confine)
 {
     char path[WOLFSSH_MAX_FILENAME];
     char realPath[WOLFSSH_MAX_FILENAME];
@@ -2936,6 +2939,12 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath)
         ret = wolfSSH_SFTP_SetDefaultPath(ssh, realPath);
     }
 
+    /* the echoserver does not drop privileges, so -D is the only thing that
+     * bounds a session */
+    if (ret == WS_SUCCESS && confine) {
+        ret = wolfSSH_SFTP_SetConfinePath(ssh, realPath);
+    }
+
     return ret;
 }
 #endif
@@ -2956,6 +2965,8 @@ static void ShowUsage(void)
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
+    printf(" -D            confine SFTP connections to the home directory,"
+           " rather than only starting them there\n");
 #endif
     printf(" -j <file>     load in a SSH public key to accept from peer\n"
            "               (user assumed in comment)\n");
@@ -3091,6 +3102,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     word16 port = wolfSshPort;
     char* readyFile = NULL;
     const char* defaultSftpPath = NULL;
+    int   confineSftpPath = 0;
     char  nonBlock  = 0;
     #ifndef NO_FILESYSTEM
         char* userPubKey = NULL;
@@ -3108,7 +3120,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:efEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:H";
+        const char* optlist = "?1a:d:DefEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:H";
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, optlist)) != -1) {
             switch (ch) {
@@ -3169,6 +3181,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'd':
                     defaultSftpPath = myoptarg;
+                    break;
+
+                case 'D':
+                    confineSftpPath = 1;
                     break;
 
 #ifndef NO_FILESYSTEM
@@ -3739,7 +3755,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
 
     #ifdef WOLFSSH_SFTP
-        if (SetDefaultSftpPath(ssh, defaultSftpPath) != 0) {
+        if (SetDefaultSftpPath(ssh, defaultSftpPath, confineSftpPath) != 0) {
             ES_ERROR("Couldn't store default sftp path.\n");
         }
     #endif
@@ -3838,6 +3854,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     (void)defaultSftpPath;
+    (void)confineSftpPath;
     WOLFSSL_RETURN_FROM_THREAD(0);
 }
 
