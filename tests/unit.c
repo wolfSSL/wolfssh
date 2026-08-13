@@ -79,6 +79,21 @@
 #include <unistd.h>
 #endif
 
+/* Needs a server build that does file transfers and an off_t wide enough for
+ * a 4 GiB offset. A narrower one takes a reject path no 64-bit build hits. */
+#if !defined(NO_FILESYSTEM) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(FREESCALE_MQX) && !defined(MICROCHIP_MPLAB_HARMONY) && \
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_FATFS) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER) && defined(SIZEOF_OFF_T) && SIZEOF_OFF_T == 8
+#include <stdlib.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#define WOLFSSH_TEST_PREAD_PWRITE
+#endif
+
 /* SendChannelTerminalRequest() reads the terminal settings of stdin, so the
  * no-tty case needs POSIX file descriptors to point stdin at /dev/null. */
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_TERM) && \
@@ -15617,6 +15632,92 @@ static int test_SftpGetHandle_sizeBound(void)
 }
 #endif /* WOLFSSH_SFTP && WOLFSSH_TEST_INTERNAL */
 
+
+#ifdef WOLFSSH_TEST_PREAD_PWRITE
+/* The offset arrives as two 32-bit words, low first, so 4 GiB and up lives
+ * only in the high word. WOLFSSH_LOCAL_PREAD_PWRITE covers the lseek port. */
+static int test_PreadPwriteHighOffset(void)
+{
+    static const char nameTemplate[] = "/wolfssh_pofstXXXXXX";
+    const char* tmpDir;
+    char tmpFile[256];
+    unsigned char buf[8];
+    unsigned int shortOffset[2];
+    struct stat st;
+    int result = 0;
+    int skipped = 0;
+    int fd;
+    int ret;
+
+    shortOffset[0] = 0;
+    shortOffset[1] = 1; /* offset of exactly 4 GiB */
+
+    /* Honor TMPDIR for the scratch file, falling back to /tmp. This test can
+     * leave a 4 GiB sparse file behind. */
+    tmpDir = getenv("TMPDIR");
+    if (tmpDir == NULL || tmpDir[0] == '\0') {
+        tmpDir = "/tmp";
+    }
+    /* WSNPRINTF truncates instead of failing, so bound the directory first */
+    if (WSTRLEN(tmpDir) + sizeof(nameTemplate) > sizeof(tmpFile)) {
+        tmpDir = "/tmp";
+    }
+    WSNPRINTF(tmpFile, sizeof(tmpFile), "%s%s", tmpDir, nameTemplate);
+
+    fd = mkstemp(tmpFile);
+    if (fd == -1)
+        return -935;
+
+    if (write(fd, "0123456789ABCDEF", 16) != 16)
+        result = -936;
+
+    /* A port that drops the high word rereads the file start, not EOF. */
+    if (result == 0) {
+        WMEMSET(buf, 0, sizeof(buf));
+        ret = wPread(fd, buf, (unsigned int)sizeof(buf), shortOffset);
+        if (ret != 0)
+            result = -937;
+    }
+
+    /* Extending past 4 GiB needs holes left unallocated, so probe with a
+     * 1 MiB one. A probe that cannot write at all is a broken environment. */
+    if (result == 0) {
+        if (lseek(fd, (off_t)1 << 20, SEEK_SET) == (off_t)-1
+                || write(fd, "Z", 1) != 1 || fstat(fd, &st) != 0)
+            result = -941;
+        else if ((off_t)st.st_blocks * 512 > (off_t)1 << 19)
+            skipped = 1;
+    }
+
+    /* Only a size cap may skip this. The high word guard returns -1 without
+     * touching errno, so a rejected valid offset lands on the failure. */
+    if (result == 0 && !skipped) {
+        errno = 0;
+        ret = wPwrite(fd, (unsigned char*)"Z", 1, shortOffset);
+        if (ret < 0 && (errno == EFBIG || errno == ENOSPC))
+            skipped = 1;
+        else if (ret != 1)
+            result = -938;
+    }
+
+    if (result == 0 && !skipped) {
+        if (fstat(fd, &st) != 0)
+            result = -939;
+        else if (st.st_size != (((off_t)1 << 32) + 1))
+            result = -940;
+    }
+
+    close(fd);
+    (void)remove(tmpFile);
+
+    if (skipped)
+        printf("(large file write unsupported, read half only) ");
+
+    return result;
+}
+#endif /* WOLFSSH_TEST_PREAD_PWRITE */
+
+
 int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
@@ -16253,6 +16354,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("OpenSshPemNegative: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_PREAD_PWRITE
+    unitResult = test_PreadPwriteHighOffset();
+    printf("PreadPwriteHighOffset: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     unitResult = test_OpenSshFormatNonCompositeRejected();
     printf("OpenSshFormatNonCompositeRejected: %s\n",
