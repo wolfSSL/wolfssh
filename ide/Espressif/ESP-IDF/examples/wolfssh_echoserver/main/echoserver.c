@@ -2197,7 +2197,7 @@ static char* LoadTpmSshKey(const char* keyFile, const char* username)
     WREWIND(NULL, file);
 
     usernameLen = WSTRLEN(username);
-    buffer = (char*)WMALLOC(length + usernameLen + 2, NULL, DYNTYPE_BUFFER);
+    buffer = (char*)WMALLOC(length + usernameLen + 3, NULL, DYNTYPE_BUFFER);
     if (buffer) {
         if (WFREAD(NULL, buffer, 1, length, file) == (size_t)length) {
             while (length > 0 && (buffer[length-1] == '\n' ||

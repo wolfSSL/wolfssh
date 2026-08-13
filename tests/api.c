@@ -74,7 +74,9 @@
 #endif
 #include <wolfssh/test.h>
 #include "tests/api.h"
-#ifdef WOLFSSH_TEST_ECHOSERVER
+#if defined(WOLFSSH_TEST_ECHOSERVER) || defined(WOLFSSH_TPM)
+    /* TPM builds need the echoserver's key loader even without SCP or SFTP,
+     * which are what otherwise set WOLFSSH_TEST_ECHOSERVER. */
     #include "examples/echoserver/echoserver.h"
 #endif
 
@@ -1781,6 +1783,76 @@ static void test_wolfSSH_ReadPublicKey_pem(void)
 #endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
 }
+
+
+#if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
+
+static const char tpmKeyLine[] =
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDf5tsL7sT2wGvXbT2mNBOgnkO";
+
+/* Stages sz bytes of buf at name. Returns 0 on success. */
+static int tpmWriteKeyFile(const char* name, const char* buf, word32 sz)
+{
+    WFILE* fp = NULL;
+    int ret = 0;
+
+    if (WFOPEN(NULL, &fp, name, "wb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFWRITE(NULL, buf, 1, sz, fp) != sz)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+
+/* LoadTpmSshKey() appends " <user>\n" plus a NUL. Without a trailing newline
+ * the trim loop reclaims nothing, so the NUL runs past an undersized buffer.
+ * That byte lands in allocator slack: only a sanitizer build fails here. */
+static void test_LoadTpmSshKey_NoTrailingNewline(void)
+{
+    const char keyPath[] = "./tpm-key-line.tmp";
+    char trailing[sizeof(tpmKeyLine) + 1];
+    char expected[sizeof(tpmKeyLine) + 8];
+    char* line = NULL;
+
+    WSNPRINTF(expected, sizeof(expected), "%s hansel\n", tpmKeyLine);
+    WSNPRINTF(trailing, sizeof(trailing), "%s\n", tpmKeyLine);
+
+    AssertIntEQ(tpmWriteKeyFile(keyPath, tpmKeyLine,
+                (word32)WSTRLEN(tpmKeyLine)), 0);
+    line = LoadTpmSshKey(keyPath, "hansel");
+    AssertNotNull(line);
+    AssertStrEQ(line, expected);
+    WFREE(line, NULL, DYNTYPE_BUFFER);
+    line = NULL;
+    /* WREMOVE is only defined for SCP, SFTP and SSHD builds. */
+    AssertIntEQ(0, remove(keyPath));
+
+    /* The trimmed path always fit; confirm it yields the same line. */
+    AssertIntEQ(tpmWriteKeyFile(keyPath, trailing,
+                (word32)WSTRLEN(trailing)), 0);
+    line = LoadTpmSshKey(keyPath, "hansel");
+    AssertNotNull(line);
+    AssertStrEQ(line, expected);
+    WFREE(line, NULL, DYNTYPE_BUFFER);
+    line = NULL;
+    AssertIntEQ(0, remove(keyPath));
+
+    /* An empty file drives the same sizing with a length of 0. */
+    AssertIntEQ(tpmWriteKeyFile(keyPath, tpmKeyLine, 0), 0);
+    line = LoadTpmSshKey(keyPath, "hansel");
+    AssertNotNull(line);
+    AssertStrEQ(line, " hansel\n");
+    WFREE(line, NULL, DYNTYPE_BUFFER);
+    AssertIntEQ(0, remove(keyPath));
+
+    AssertNull(LoadTpmSshKey(keyPath, "hansel"));
+}
+
+#endif /* WOLFSSH_TPM && FILESYSTEM && !USER_FILESYSTEM */
 
 
 static void test_wolfSSH_ReadKey_badPad(void)
@@ -6433,6 +6505,10 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadPublicKey_pem();
     test_wolfSSH_ReadKey_badPad();
+#if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
+    test_LoadTpmSshKey_NoTrailingNewline();
+#endif
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
     test_wolfSSH_ReadKey_sshNoComment();
