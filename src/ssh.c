@@ -1641,6 +1641,11 @@ int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
 
 int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataSz, int reply)
 {
+    int ret;
+#ifdef WOLFSSH_FWD
+    WOLFSSH_FWD_PENDING pend;
+#endif
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_global_request");
     if (ssh == NULL || data == NULL)
         return WS_BAD_ARGUMENT;
@@ -1648,7 +1653,34 @@ int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataS
         return WS_BAD_ARGUMENT;
     if (SendAfterDisconnect(ssh))
         return WS_FATAL_ERROR;
-    return SendGlobalRequest(ssh, data, dataSz, reply, NULL);
+
+#ifdef WOLFSSH_FWD
+    /* A want-reply request consumes one of the peer's replies, so it takes a
+     * place in the same queue the forwarding requests use; otherwise its reply
+     * reads as the answer to an outstanding tcpip-forward. */
+    if (reply) {
+        int sent = 0;
+
+        ret = FwdReplyPrepare(ssh, &pend);
+        if (ret != WS_SUCCESS)
+            return ret;
+
+        /* A request the peer received is owed a reply whatever this call
+         * returns, so the slot goes by what reached the wire, not by the
+         * error. */
+        ret = SendGlobalRequest(ssh, data, dataSz, reply, &sent);
+        if (sent)
+            FwdPendingCommit(ssh, &pend);
+        else
+            FwdPendingDiscard(ssh, &pend);
+
+        return ret;
+    }
+#endif /* WOLFSSH_FWD */
+
+    ret = SendGlobalRequest(ssh, data, dataSz, reply, NULL);
+
+    return ret;
 }
 
 
@@ -3918,16 +3950,12 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
 }
 
 
-/* Send "tcpip-forward", asking the peer to listen on bindAddr:bindPort. Port 0
- * lets the peer choose; with wantReply it names the port it bound through the
- * request-success callback (wolfSSH_SetReqSuccess). Inbound connections arrive
- * as "forwarded-tcpip" channels via the forwarding callback.
- *
- * RFC 4254 7.1 defines tcpip-forward as client-to-server, and a server rejects
- * the resulting forwarded-tcpip opens, so this is client-only. */
+/* Send "tcpip-forward" and register the forward. See wolfssh/ssh.h for the
+ * matching rules and what a port-0 request needs. */
 int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
         word32 bindPort, int wantReply)
 {
+    WOLFSSH_FWD_PENDING pend;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteSetup()");
@@ -3942,6 +3970,12 @@ int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
     if (ret == WS_SUCCESS && wantReply != 0 && wantReply != 1)
         ret = WS_BAD_ARGUMENT;
 
+    /* The peer's reply is the only place a port-0 request learns the port it
+     * got, and neither the caller nor the forwarded-tcpip check works without
+     * one. */
+    if (ret == WS_SUCCESS && bindPort == 0 && !wantReply)
+        ret = WS_BAD_ARGUMENT;
+
     if (ret == WS_SUCCESS && ssh->ctx->side != WOLFSSH_ENDPOINT_CLIENT)
         ret = WS_BAD_ARGUMENT;
 
@@ -3952,9 +3986,26 @@ int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
     if (ret == WS_SUCCESS && ssh->isKeying)
         ret = WS_REKEYING;
 
+    /* Everything that can fail is allocated before the request goes out, so an
+     * error from here means the peer heard nothing. */
     if (ret == WS_SUCCESS)
+        ret = FwdRemotePrepare(ssh, bindAddr, bindPort, wantReply, 0, &pend);
+
+    if (ret == WS_SUCCESS) {
+        int sent = 0;
+
         ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply,
-                NULL);
+                &sent);
+
+        /* Whether the peer will bind the listener, not whether this call
+         * succeeded: a request still framed and waiting to flush reaches it,
+         * and so does one the post-send highwater callback reports an error
+         * for. Only what never left unwinds. */
+        if (sent)
+            FwdPendingCommit(ssh, &pend);
+        else
+            FwdPendingDiscard(ssh, &pend);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteSetup(), ret = %d", ret);
     return ret;
@@ -3962,11 +4013,11 @@ int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
 
 
 /* Send "cancel-tcpip-forward", tearing down a wolfSSH_FwdRemoteSetup()
- * listener. bindPort must be the port the peer bound, which after a port-0
- * request is the one it reported, not 0. Client-only, as with the setup. */
+ * listener. See wolfssh/ssh.h for when the registration actually drops. */
 int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
         word32 bindPort, int wantReply)
 {
+    WOLFSSH_FWD_PENDING pend;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_FwdRemoteCancel()");
@@ -3992,8 +4043,19 @@ int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
         ret = WS_REKEYING;
 
     if (ret == WS_SUCCESS)
+        ret = FwdRemotePrepare(ssh, bindAddr, bindPort, wantReply, 1, &pend);
+
+    if (ret == WS_SUCCESS) {
+        int sent = 0;
+
         ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply,
-                NULL);
+                &sent);
+
+        if (sent)
+            FwdPendingCommit(ssh, &pend);
+        else
+            FwdPendingDiscard(ssh, &pend);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteCancel(), ret = %d", ret);
     return ret;
