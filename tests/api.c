@@ -7084,6 +7084,10 @@ static void test_wolfSSH_FwdRemote_badArgs(void)
     AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "0.0.0.0", 0, 1),
             WS_BAD_ARGUMENT);
 
+    /* The reply is the only place a port-0 request learns its port. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, "0.0.0.0", 0, 0),
+            WS_BAD_ARGUMENT);
+
     /* wantReply is a boolean. */
     AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, "0.0.0.0", 22, 2),
             WS_BAD_ARGUMENT);

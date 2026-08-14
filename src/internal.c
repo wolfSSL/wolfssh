@@ -1802,6 +1802,9 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->modesSz = 0;
     }
 #endif
+#ifdef WOLFSSH_FWD
+    FwdRemoteFreeList(ssh, heap);
+#endif
 #ifdef WOLFSSH_STATIC_MEMORY
     if (heap) {
         WOLFSSL_HEAP_HINT* hint = (WOLFSSL_HEAP_HINT*)heap;
@@ -3913,6 +3916,578 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
     }
 
     return ret;
+}
+
+
+/* A bind address naming every local address. There is no telling which of
+ * these the peer echoes back, so a wildcard registration matches whatever
+ * address it reports. */
+static int FwdRemoteAddrIsWild(const char* addr)
+{
+    static const char* wild[] = {
+        "*", "0.0.0.0", "::", "::0", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"
+    };
+    word32 i;
+
+    if (addr[0] == '\0')
+        return 1;
+
+    for (i = 0; i < (word32)(sizeof(wild) / sizeof(wild[0])); i++) {
+        if (WSTRCMP(addr, wild[i]) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+
+/* Detach this forward from every queued reply slot. The slots stay queued to
+ * keep the send order; they just no longer name it. */
+static void FwdReplyVoid(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_REPLY* reply;
+
+    for (reply = ssh->fwdReplyHead; reply != NULL; reply = reply->next) {
+        if (reply->entry == entry)
+            reply->entry = NULL;
+    }
+}
+
+
+static void FwdRemoteUnlink(WOLFSSH* ssh, void* heap,
+        WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_REMOTE* cur;
+
+    if (ssh->fwdRemoteList == entry) {
+        ssh->fwdRemoteList = entry->next;
+    }
+    else {
+        for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
+            if (cur->next == entry) {
+                cur->next = entry->next;
+                break;
+            }
+        }
+    }
+
+    FwdReplyVoid(ssh, entry);
+
+    WFREE(entry->bindAddr, heap, DYNTYPE_STRING);
+    WFREE(entry, heap, DYNTYPE_FWD);
+}
+
+
+/* The last queued request naming this forward, or NULL. The queue is in send
+ * order, so this is what the application asked for most recently. */
+static WOLFSSH_FWD_REPLY* FwdReplyNewest(WOLFSSH* ssh,
+        const WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_REPLY* cur;
+    WOLFSSH_FWD_REPLY* newest = NULL;
+
+    for (cur = ssh->fwdReplyHead; cur != NULL; cur = cur->next) {
+        if (cur->entry == entry)
+            newest = cur;
+    }
+
+    return newest;
+}
+
+
+/* Is a tcpip-forward naming this forward still waiting on the peer? */
+static int FwdReplyHasSetup(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_REPLY* cur;
+
+    for (cur = ssh->fwdReplyHead; cur != NULL; cur = cur->next) {
+        if (cur->entry == entry && !cur->isCancel)
+            return 1;
+    }
+
+    return 0;
+}
+
+
+/* The registration for bindAddr:bindPort, or NULL. A port-0 request has no
+ * port to be found by until the peer's reply names the one it bound. An entry
+ * with a cancel outstanding is still found, since a later request names the
+ * same listener. */
+static WOLFSSH_FWD_REMOTE* FwdRemoteFind(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort)
+{
+    WOLFSSH_FWD_REMOTE* cur;
+
+    for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
+        if (cur->portPending || cur->bindPort != bindPort)
+            continue;
+        if (WSTRCMP(cur->bindAddr, bindAddr) == 0)
+            return cur;
+    }
+
+    return NULL;
+}
+
+
+/* Apply an answer to the forward it names. Only a port-0 request has any use
+ * for the port the answer carried. */
+static void FwdRemoteSettle(WOLFSSH* ssh, WOLFSSH_FWD_REMOTE* entry,
+        int isCancel, int success, word32 port)
+{
+    /* The application framed this request itself, or the forward it named is
+     * already gone. */
+    if (entry == NULL)
+        return;
+
+    if (isCancel) {
+        if (!success) {
+            /* The peer kept the listener, so the forward stands and matching
+             * resumes unless a later cancel is outstanding. */
+            return;
+        }
+
+        /* The listener is down. A setup sent after this cancel asks the peer
+         * to bind anew, so the forward waits on that answer instead of
+         * going. */
+        if (FwdReplyHasSetup(ssh, entry))
+            entry->confirmed = 0;
+        else
+            FwdRemoteUnlink(ssh, ssh->ctx->heap, entry);
+        return;
+    }
+
+    if (!success) {
+        /* The peer bound nothing for this request. Repeat setups share one
+         * registration and a peer refuses the duplicates it already has a
+         * listener for, so only unwind a forward nothing else has established
+         * or is still owed an answer on. */
+        if (!entry->confirmed && FwdReplyNewest(ssh, entry) == NULL)
+            FwdRemoteUnlink(ssh, ssh->ctx->heap, entry);
+        return;
+    }
+
+    if (entry->portPending) {
+        WOLFSSH_FWD_REMOTE* dup;
+        WOLFSSH_FWD_REMOTE* next;
+
+        if (port == 0 || port > 65535) {
+            WLOG(WS_LOG_WARN, "Remote forward reply named no usable port");
+            FwdRemoteUnlink(ssh, ssh->ctx->heap, entry);
+            return;
+        }
+        entry->bindPort = port;
+        entry->portPending = 0;
+
+        /* The peer named a port another registration already stands for. It
+         * has one listener there, so the older entry is stale. A cancel names
+         * a forward by its bind alone, so a bind gets one registration. */
+        for (dup = ssh->fwdRemoteList; dup != NULL; dup = next) {
+            next = dup->next;
+            if (dup == entry || dup->portPending ||
+                    dup->bindPort != entry->bindPort ||
+                    WSTRCMP(dup->bindAddr, entry->bindAddr) != 0)
+                continue;
+
+            WLOG(WS_LOG_INFO, "Remote forward reply named a port already "
+                    "registered");
+            FwdRemoteUnlink(ssh, ssh->ctx->heap, dup);
+        }
+    }
+
+    entry->confirmed = 1;
+}
+
+
+/* Take this request's place in the reply queue before it is sent, so a
+ * callback that reenters the library mid-send cannot queue ahead of it. Which
+ * forward the slot answers for is filled in on commit. */
+static WOLFSSH_FWD_REPLY* FwdReplyNew(WOLFSSH* ssh, int isCancel)
+{
+    WOLFSSH_FWD_REPLY* reply;
+
+    reply = (WOLFSSH_FWD_REPLY*)WMALLOC(sizeof(WOLFSSH_FWD_REPLY),
+            ssh->ctx->heap, DYNTYPE_FWD);
+    if (reply != NULL) {
+        WMEMSET(reply, 0, sizeof(WOLFSSH_FWD_REPLY));
+        reply->isCancel = (byte)(isCancel != 0);
+        /* The sender owns this slot until it commits; an answer arriving
+         * meanwhile parks its verdict here. */
+        reply->uncommitted = 1;
+
+        if (ssh->fwdReplyTail == NULL)
+            ssh->fwdReplyHead = reply;
+        else
+            ssh->fwdReplyTail->next = reply;
+        ssh->fwdReplyTail = reply;
+    }
+
+    return reply;
+}
+
+
+/* Give back a slot the request never went out to claim. An answer that arrived
+ * mid-send may have dequeued it already. */
+static void FwdReplyUnqueue(WOLFSSH* ssh, WOLFSSH_FWD_REPLY* reply)
+{
+    WOLFSSH_FWD_REPLY* cur;
+    WOLFSSH_FWD_REPLY* prev = NULL;
+
+    for (cur = ssh->fwdReplyHead; cur != NULL; cur = cur->next) {
+        if (cur == reply)
+            break;
+        prev = cur;
+    }
+
+    if (cur == NULL)
+        return;
+
+    if (prev == NULL)
+        ssh->fwdReplyHead = reply->next;
+    else
+        prev->next = reply->next;
+
+    if (ssh->fwdReplyTail == reply)
+        ssh->fwdReplyTail = prev;
+
+    WFREE(reply, ssh->ctx->heap, DYNTYPE_FWD);
+}
+
+
+/* Build the bookkeeping for a tcpip-forward or cancel-tcpip-forward the client
+ * is about to send. Allocating up front keeps every failure ahead of the send.
+ * Nothing is registered until the caller commits, but a want-reply request
+ * claims its reply-queue slot here, which a discard gives back. */
+int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr, word32 bindPort,
+        int wantReply, int isCancel, WOLFSSH_FWD_PENDING* pend)
+{
+    WOLFSSH_FWD_REMOTE* found;
+    void* heap;
+    word32 addrSz;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering FwdRemotePrepare()");
+
+    if (pend != NULL)
+        WMEMSET(pend, 0, sizeof(*pend));
+
+    if (ssh == NULL || ssh->ctx == NULL || bindAddr == NULL || pend == NULL)
+        return WS_BAD_ARGUMENT;
+
+    heap = ssh->ctx->heap;
+    pend->isCancel = (byte)(isCancel != 0);
+    pend->bindAddr = bindAddr;
+    pend->bindPort = bindPort;
+    found = FwdRemoteFind(ssh, bindAddr, bindPort);
+
+    if (isCancel) {
+        if (found == NULL) {
+            WOLFSSH_FWD_REMOTE* cur;
+            int pending = 0;
+
+            /* A port-0 forward cannot be cancelled until the peer's reply
+             * names the port it bound. Worth telling apart from a bind that
+             * was never registered at all. */
+            for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
+                if (cur->portPending &&
+                        WSTRCMP(cur->bindAddr, bindAddr) == 0) {
+                    pending = 1;
+                    break;
+                }
+            }
+
+            if (pending)
+                WLOG(WS_LOG_WARN, "Cancelling a remote forward before the "
+                        "peer has named the port it bound");
+            else
+                WLOG(WS_LOG_WARN,
+                        "Cancelling a remote forward that wasn't registered");
+        }
+    }
+    else if (found == NULL) {
+        /* A repeat setup of a registered addr:port reuses that entry, so one
+         * cancel undoes it. Port 0 always makes a new entry, since the peer
+         * picks a different port each time. */
+        addrSz = (word32)WSTRLEN(bindAddr);
+        pend->entry = (WOLFSSH_FWD_REMOTE*)WMALLOC(sizeof(WOLFSSH_FWD_REMOTE),
+                heap, DYNTYPE_FWD);
+        if (pend->entry == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            WMEMSET(pend->entry, 0, sizeof(WOLFSSH_FWD_REMOTE));
+            pend->entry->bindAddr = (char*)WMALLOC(addrSz + 1, heap,
+                    DYNTYPE_STRING);
+            if (pend->entry->bindAddr == NULL) {
+                WFREE(pend->entry, heap, DYNTYPE_FWD);
+                pend->entry = NULL;
+                ret = WS_MEMORY_E;
+            }
+            else {
+                WMEMCPY(pend->entry->bindAddr, bindAddr, addrSz);
+                pend->entry->bindAddr[addrSz] = '\0';
+                pend->entry->bindPort = bindPort;
+                /* Nothing to match on until the peer's reply names the port
+                 * it bound. */
+                pend->entry->portPending = (byte)(bindPort == 0);
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS && wantReply) {
+        pend->reply = FwdReplyNew(ssh, isCancel);
+        if (pend->reply == NULL) {
+            if (pend->entry != NULL) {
+                WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
+                WFREE(pend->entry, heap, DYNTYPE_FWD);
+            }
+            ret = WS_MEMORY_E;
+        }
+    }
+
+    /* An error leaves nothing to commit and nothing to give back. */
+    if (ret != WS_SUCCESS)
+        WMEMSET(pend, 0, sizeof(*pend));
+
+    WLOG(WS_LOG_DEBUG, "Leaving FwdRemotePrepare(), ret = %d", ret);
+    return ret;
+}
+
+
+/* Reserve a reply slot for a want-reply global request the application framed
+ * itself. It names no forward, but it consumes a reply, so it holds a place in
+ * the queue. */
+int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
+{
+    int ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering FwdReplyPrepare()");
+
+    if (pend != NULL)
+        WMEMSET(pend, 0, sizeof(*pend));
+
+    if (ssh == NULL || ssh->ctx == NULL || pend == NULL)
+        return WS_BAD_ARGUMENT;
+
+    pend->reply = FwdReplyNew(ssh, 0);
+    ret = pend->reply == NULL ? WS_MEMORY_E : WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Leaving FwdReplyPrepare(), ret = %d", ret);
+    return ret;
+}
+
+
+/* The request reached the wire, so link what was prepared. The registration it
+ * names is looked up again here: the send runs the application's send and
+ * highwater callbacks, which can reenter the library and free the entry a
+ * pointer held across the send would name. */
+void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
+{
+    WOLFSSH_FWD_REMOTE* target = NULL;
+    WOLFSSH_FWD_REMOTE* cur;
+    void* heap;
+
+    WLOG(WS_LOG_DEBUG, "Entering FwdPendingCommit()");
+
+    if (ssh == NULL || ssh->ctx == NULL || pend == NULL)
+        return;
+
+    heap = ssh->ctx->heap;
+
+    if (pend->bindAddr != NULL)
+        target = FwdRemoteFind(ssh, pend->bindAddr, pend->bindPort);
+
+    if (pend->entry != NULL && target != NULL) {
+        /* A callback the send ran registered this bind first, so the entry
+         * built for it is one too many. */
+        WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
+        WFREE(pend->entry, heap, DYNTYPE_FWD);
+        pend->entry = NULL;
+    }
+
+    if (pend->entry != NULL) {
+        for (cur = ssh->fwdRemoteList; cur != NULL && cur->next != NULL;
+                cur = cur->next) {
+            /* walk to the tail */
+        }
+        if (cur == NULL)
+            ssh->fwdRemoteList = pend->entry;
+        else
+            cur->next = pend->entry;
+
+        /* From here on, forwarded-tcpip opens are matched against this list. A
+         * client that never calls wolfSSH_FwdRemoteSetup() never sets this and
+         * has its opens go unchecked. */
+        ssh->fwdRemoteTracked = 1;
+        target = pend->entry;
+    }
+
+    if (pend->reply != NULL && pend->reply->answered) {
+        /* The peer answered mid-send, parking its verdict on the slot. The
+         * forward it answers for is known now, so settle it. */
+        FwdRemoteSettle(ssh, target, pend->reply->isCancel,
+                pend->reply->success, pend->reply->port);
+        WFREE(pend->reply, heap, DYNTYPE_FWD);
+    }
+    else if (pend->reply != NULL) {
+        /* The slot is queued already; naming the forward makes it the newest
+         * request outstanding on it. */
+        pend->reply->entry = target;
+        pend->reply->uncommitted = 0;
+    }
+    else if (target != NULL) {
+        /* No reply was asked for, so this request is the last word on the
+         * forward. It went out after everything still queued, so those answers
+         * no longer speak for it. */
+        if (pend->isCancel) {
+            FwdRemoteUnlink(ssh, heap, target);
+        }
+        else {
+            FwdReplyVoid(ssh, target);
+            target->confirmed = 1;
+        }
+    }
+
+    WMEMSET(pend, 0, sizeof(*pend));
+
+    WLOG(WS_LOG_DEBUG, "Leaving FwdPendingCommit()");
+}
+
+
+/* The request never went out. Give back the memory and the queue slot, leaving
+ * the session as it was. */
+void FwdPendingDiscard(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
+{
+    void* heap;
+
+    WLOG(WS_LOG_DEBUG, "Entering FwdPendingDiscard()");
+
+    if (ssh == NULL || ssh->ctx == NULL || pend == NULL)
+        return;
+
+    heap = ssh->ctx->heap;
+
+    if (pend->entry != NULL) {
+        WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
+        WFREE(pend->entry, heap, DYNTYPE_FWD);
+    }
+    if (pend->reply != NULL) {
+        /* An answer that arrived mid-send dequeued the slot already, and
+         * settles nothing now that the request isn't going out. */
+        if (pend->reply->answered)
+            WFREE(pend->reply, heap, DYNTYPE_FWD);
+        else
+            FwdReplyUnqueue(ssh, pend->reply);
+    }
+
+    WMEMSET(pend, 0, sizeof(*pend));
+
+    WLOG(WS_LOG_DEBUG, "Leaving FwdPendingDiscard()");
+}
+
+
+/* Does an inbound forwarded-tcpip name a forward this client registered? */
+static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
+{
+    WOLFSSH_FWD_REMOTE* cur;
+
+    if (ssh == NULL || addr == NULL)
+        return 0;
+
+    for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
+        WOLFSSH_FWD_REPLY* newest;
+
+        /* No port to match on until the peer's reply names the one it
+         * bound. */
+        if (cur->portPending || cur->bindPort != port)
+            continue;
+
+        /* The newest request governs: a cancel stops matching as it goes out,
+         * so revoking never waits on the peer, and the peer refusing it puts
+         * the forward back. */
+        newest = FwdReplyNewest(ssh, cur);
+        if (newest != NULL && newest->isCancel)
+            continue;
+
+        /* A forward stands on the peer having bound it, or on a request still
+         * owed an answer. With neither, nothing speaks for it. */
+        if (!cur->confirmed && newest == NULL)
+            continue;
+
+        if (FwdRemoteAddrIsWild(cur->bindAddr) ||
+                WSTRCMP(cur->bindAddr, addr) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+
+/* Pair a REQUEST_SUCCESS or REQUEST_FAILURE with the request it answers.
+ * Replies carry no request id, so the queue answers them in send order. */
+static void FwdRemoteReply(WOLFSSH* ssh, int success, const byte* buf,
+        word32 len)
+{
+    WOLFSSH_FWD_REPLY* reply;
+    WOLFSSH_FWD_REMOTE* entry;
+    word32 port = 0;
+    byte isCancel;
+
+    if (ssh == NULL || ssh->ctx == NULL)
+        return;
+
+    reply = ssh->fwdReplyHead;
+    if (reply == NULL)
+        return;
+
+    ssh->fwdReplyHead = reply->next;
+    if (ssh->fwdReplyHead == NULL)
+        ssh->fwdReplyTail = NULL;
+
+    if (reply->uncommitted) {
+        /* The request this answers is still being sent -- a callback the send
+         * ran pumped it in. Which forward it settles isn't known until that
+         * send commits, so park the verdict for the commit to apply and leave
+         * the slot to the sender that owns it. */
+        reply->answered = 1;
+        reply->success = (byte)(success != 0);
+        if (success && buf != NULL && len >= UINT32_SZ)
+            ato32(buf, &reply->port);
+        return;
+    }
+
+    entry = reply->entry;
+    isCancel = reply->isCancel;
+    if (success && buf != NULL && len >= UINT32_SZ)
+        ato32(buf, &port);
+    WFREE(reply, ssh->ctx->heap, DYNTYPE_FWD);
+
+    FwdRemoteSettle(ssh, entry, isCancel, success, port);
+}
+
+
+void FwdRemoteFreeList(WOLFSSH* ssh, void* heap)
+{
+    WOLFSSH_FWD_REMOTE* cur;
+    WOLFSSH_FWD_REMOTE* next;
+    WOLFSSH_FWD_REPLY* reply;
+    WOLFSSH_FWD_REPLY* replyNext;
+
+    if (ssh == NULL)
+        return;
+
+    for (cur = ssh->fwdRemoteList; cur != NULL; cur = next) {
+        next = cur->next;
+        WFREE(cur->bindAddr, heap, DYNTYPE_STRING);
+        WFREE(cur, heap, DYNTYPE_FWD);
+    }
+    ssh->fwdRemoteList = NULL;
+
+    for (reply = ssh->fwdReplyHead; reply != NULL; reply = replyNext) {
+        replyNext = reply->next;
+        WFREE(reply, heap, DYNTYPE_FWD);
+    }
+    ssh->fwdReplyHead = NULL;
+    ssh->fwdReplyTail = NULL;
 }
 #endif /* WOLFSSH_FWD */
 
@@ -8044,6 +8619,10 @@ static int DoRequestSuccess(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
     WLOG(WS_LOG_DEBUG, "DoRequestSuccess, *idx=%d, len=%d", *idx, len);
     begin += len;
 
+#ifdef WOLFSSH_FWD
+    FwdRemoteReply(ssh, 1, &(buf[*idx]), len);
+#endif
+
     if (ssh->ctx->reqSuccessCb != NULL)
         ret = ssh->ctx->reqSuccessCb(ssh, &(buf[*idx]), len, ssh->reqSuccessCtx);
 
@@ -8059,6 +8638,10 @@ static int DoRequestFailure(WOLFSSH *ssh, byte *buf, word32 len, word32 *idx)
 
     WLOG(WS_LOG_DEBUG, "DoRequestFailure, *idx=%d, len=%d", *idx, len);
     begin += len;
+
+#ifdef WOLFSSH_FWD
+    FwdRemoteReply(ssh, 0, NULL, 0);
+#endif
 
     if (ssh->ctx->reqFailureCb != NULL)
         ret = ssh->ctx->reqFailureCb(ssh, &(buf[*idx]), len, ssh->reqFailureCtx);
@@ -11039,6 +11622,20 @@ static int DoChannelOpen(WOLFSSH* ssh,
                     ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
                 WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
                         "received by a server (wrong direction)");
+                fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                ret = WS_ERROR;
+            }
+
+            /* Per RFC 4254 7.2, a forwarded-tcpip open answers a forward the
+             * client registered with tcpip-forward, so refuse one naming
+             * anything else before the policy callback sees it. Only a client
+             * that used wolfSSH_FwdRemoteSetup() has a list to check. */
+            if (ret == WS_SUCCESS && typeId == ID_CHANTYPE_TCPIP_FORWARD &&
+                    ssh->fwdRemoteTracked &&
+                    !FwdRemoteMatch(ssh, host, hostPort)) {
+                WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
+                        "for the unregistered forward %s:%u",
+                        host != NULL ? host : "", hostPort);
                 fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                 ret = WS_ERROR;
             }

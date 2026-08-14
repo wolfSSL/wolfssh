@@ -268,6 +268,43 @@ DEPRECATED WOLFSSH_API int wolfSSH_ChannelSetFwdFd(WOLFSSH_CHANNEL* channel,
         int fwdFd);
 DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(
         const WOLFSSH_CHANNEL* channel);
+/* Ask the peer to listen on bindAddr:bindPort and tunnel what arrives back as
+ * "forwarded-tcpip" channels. Client-only, per RFC 4254 7.1. bindPort 0 asks
+ * the peer to choose, and needs wantReply, since its reply is the only place
+ * the bound port is named; without it the call returns WS_BAD_ARGUMENT.
+ *
+ * From the first call on, this session refuses any "forwarded-tcpip" open
+ * naming a bind it did not register, per RFC 4254 7.2. A bind of "", "*",
+ * "0.0.0.0", or an IPv6 any-address matches on port alone; anything else must
+ * equal the address the peer reports. Register the spelling the peer will echo
+ * back, or a wildcard: a peer that canonicalises the bind, answering an open
+ * for "127.0.0.1" against a registered "localhost", has those opens refused.
+ *
+ * One bindAddr:bindPort is one registration however often it is registered,
+ * since it is one listener on the peer, so one cancel undoes it. That covers a
+ * port-0 request the peer answers with a port already registered, and a repeat
+ * the peer refuses because it already has that listener keeps what the first
+ * request registered.
+ *
+ * Several requests can name one bind at once, and the last one sent governs.
+ * Registering again while a cancel is outstanding brings the forward back as
+ * the request goes out, and no answer to that older cancel takes it away
+ * again, whatever order the peer answers in.
+ *
+ * WS_WANT_WRITE means the request is framed and goes out on the next flush,
+ * with the forward registered. So does an error reported after the request
+ * reached the peer: the rekey a send can trigger runs once the last byte is
+ * out and fails here. Retrying then is a repeat setup, which is harmless. Only
+ * an error that kept the request off the wire leaves nothing registered.
+ *
+ * Cancel takes the port the peer bound, which after a port-0 request is the
+ * one it reported, not 0; the forward cannot be cancelled before that reply
+ * arrives. The forward stops matching as the cancel goes out, so revoking one
+ * never waits on the peer and an open racing it is refused. Without wantReply
+ * that is the end of it. With it the registration is held until the peer
+ * answers: a refusal leaves the listener up and puts the forward back, and a
+ * confirmation drops it. With several cancels outstanding, every one of them
+ * has to be refused for the forward to come back. */
 WOLFSSH_API int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
         word32 bindPort, int wantReply);
 WOLFSSH_API int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
@@ -594,6 +631,11 @@ WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH* ssh, word32 reason);
+/* Send a global request under a name the caller supplies. The request-specific
+ * data RFC 4254 7.1 puts after the want-reply boolean cannot be carried here,
+ * so requests needing it have their own calls. Replies carry no request id, so
+ * with reply set this claims a place in the same send-order queue
+ * wolfSSH_FwdRemoteSetup() uses. */
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH* ssh, const unsigned char* data,
         word32 dataSz, int reply);
 WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
