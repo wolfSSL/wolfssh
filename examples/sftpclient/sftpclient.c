@@ -1709,7 +1709,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     else
 #endif
     {
-        ret = ClientUsePubKey(pubKeyName, 0, heap);
+        ret = ClientUsePubKey(pubKeyName, userEcc, heap);
     }
     if (ret != 0) {
         err_sys("Error setting public key");
