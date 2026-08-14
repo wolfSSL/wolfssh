@@ -5955,6 +5955,12 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = SendKexDhReply(ssh);
     }
 
+    /* RFC 8731 sec. 3: a rejected key exchange input aborts with a
+     * disconnect */
+    if (ret == WS_CRYPTO_FAILED || ret == WS_PUBKEY_REJECTED_E) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+    }
+
     return ret;
 }
 
@@ -7638,6 +7644,15 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    /* RFC 4253 11.1: WS_PUBKEY_REJECTED_E here is only the host key check,
+     * which is server authentication, so it gets its own reason. */
+    if (ret == WS_CRYPTO_FAILED) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+    }
+    else if (ret == WS_PUBKEY_REJECTED_E) {
+        (void)SendDisconnect(ssh,
+                WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE);
+    }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
     return ret;
 }
@@ -8040,6 +8055,12 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
         *idx = begin;
         ret = SendKexDhInit(ssh);
+    }
+
+    /* A group under the enforced floor (RFC 8270) or a bad generator ends
+     * the key exchange, so tell the peer why. */
+    if (ret == WS_CRYPTO_FAILED || ret == WS_DH_SIZE_E) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
     }
 
     return ret;
@@ -16300,9 +16321,8 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
         }
     }
 
-    /* RFC 4419 sec. 3 requires min <= preferred <= max on the wire. Clamp
-     * preferred into that range in both directions; riding it up with a raised
-     * min or down under a lowered max keeps the advertised triple ordered. */
+    /* Keep the advertised triple ordered: clamp preferred into [min, max]
+     * in both directions. */
     if (ret == WS_SUCCESS) {
         if (ssh->handshake->dhGexPreferredSz < ssh->handshake->dhGexMinSz)
             ssh->handshake->dhGexPreferredSz = ssh->handshake->dhGexMinSz;
