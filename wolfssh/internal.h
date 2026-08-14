@@ -1010,6 +1010,55 @@ struct WS_SFTP_RENAME_STATE;
 
 struct WOLFSSH_AGENT_CTX;
 
+#ifdef WOLFSSH_FWD
+
+/* A remote forward this client asked the peer to listen on with
+ * wolfSSH_FwdRemoteSetup(), kept so an inbound forwarded-tcpip open can be
+ * matched against it. */
+typedef struct WOLFSSH_FWD_REMOTE {
+    struct WOLFSSH_FWD_REMOTE* next;
+    char* bindAddr;
+    word32 bindPort;     /* port the peer bound, 0 while still unknown */
+    byte portPending;    /* asked for port 0, so the reply names the port */
+    byte confirmed;      /* the peer bound it, or nothing will ever say */
+} WOLFSSH_FWD_REMOTE;
+
+/* One want-reply global request waiting on the peer. Replies carry no request
+ * id, so the queue answers them in send order. Requests an application sent
+ * through wolfSSH_global_request() queue here too with a NULL entry, so their
+ * replies consume their own slot instead of a forward's.
+ *
+ * Several requests can name one forward, and this queue is the only record of
+ * which are outstanding and of the order they will be answered in. What the
+ * application last asked for is the last slot naming the forward. */
+typedef struct WOLFSSH_FWD_REPLY {
+    struct WOLFSSH_FWD_REPLY* next;
+    WOLFSSH_FWD_REMOTE* entry; /* forward answered, NULL once it is gone or if
+                                * the application sent the request */
+    word32 port;               /* port a parked answer named */
+    byte isCancel;             /* answers cancel-tcpip-forward */
+    byte uncommitted;          /* its request has not reached the wire, so the
+                                * sender still owns this slot */
+    byte answered;             /* answered while still uncommitted, so the
+                                * verdict is parked here for the commit */
+    byte success;              /* what that parked answer said */
+} WOLFSSH_FWD_REPLY;
+
+/* Bookkeeping for a global request that has not been sent yet. Everything that
+ * can fail is allocated into one of these first, so a caller that gets an error
+ * back knows nothing reached the peer. The registration is named by its bind
+ * rather than by a pointer, since sending runs application callbacks that may
+ * reenter the library and free it. */
+typedef struct WOLFSSH_FWD_PENDING {
+    WOLFSSH_FWD_REMOTE* entry;  /* new registration to link on commit */
+    WOLFSSH_FWD_REPLY* reply;   /* reply slot to queue on commit */
+    const char* bindAddr;       /* bind the request names, NULL if none */
+    word32 bindPort;
+    byte isCancel;
+} WOLFSSH_FWD_PENDING;
+
+#endif /* WOLFSSH_FWD */
+
 /* our wolfSSH session */
 struct WOLFSSH {
     WOLFSSH_CTX* ctx;      /* owner context */
@@ -1242,6 +1291,10 @@ struct WOLFSSH {
 #endif /* WOLFSSH_AGENT */
 #ifdef WOLFSSH_FWD
     void* fwdCbCtx;
+    WOLFSSH_FWD_REMOTE* fwdRemoteList; /* remote forwards this client asked for */
+    WOLFSSH_FWD_REPLY* fwdReplyHead;   /* oldest want-reply request owed */
+    WOLFSSH_FWD_REPLY* fwdReplyTail;
+    byte fwdRemoteTracked; /* wolfSSH_FwdRemoteSetup() was used */
 #endif /* WOLFSSH_FWD */
 #ifdef WOLFSSH_TERM
     WS_CallbackTerminalSize termResizeCb;
@@ -1570,6 +1623,15 @@ WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH * ssh,
 WOLFSSH_LOCAL int SendGlobalRequestFwd(WOLFSSH* ssh,
         const char* bindAddr, word32 bindPort, int isCancel, int wantReply,
         int* sent);
+/* On success pend holds what to commit once the request reaches the wire; on
+ * error it is zeroed, so there is nothing to commit or give back. */
+WOLFSSH_LOCAL int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort, int wantReply, int isCancel,
+        WOLFSSH_FWD_PENDING* pend);
+WOLFSSH_LOCAL int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend);
+WOLFSSH_LOCAL void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend);
+WOLFSSH_LOCAL void FwdPendingDiscard(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend);
+WOLFSSH_LOCAL void FwdRemoteFreeList(WOLFSSH* ssh, void* heap);
 #endif
 WOLFSSH_LOCAL int SendDebug(WOLFSSH* ssh, byte alwaysDisplay, const char* msg);
 WOLFSSH_LOCAL int SendServiceRequest(WOLFSSH* ssh, byte serviceId);
@@ -2010,7 +2072,8 @@ enum WS_DynamicTypes {
     DYNTYPE_FILE,
     DYNTYPE_TEMP,
     DYNTYPE_PATH,
-    DYNTYPE_SSHD
+    DYNTYPE_SSHD,
+    DYNTYPE_FWD
 };
 
 
