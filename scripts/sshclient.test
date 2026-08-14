@@ -10,10 +10,10 @@ server_pid=$no_pid
 client_pid=$no_pid
 input_pid=$no_pid
 killer_pid=$no_pid
-work_dir=`pwd`/wolfssh_client_test$$
-ready_file=$work_dir/ready
-input_file=$work_dir/input
-client_out=$work_dir/client.out
+work_dir="`pwd`/wolfssh_client_test$$"
+ready_file="$work_dir/ready"
+input_file="$work_dir/input"
+client_out="$work_dir/client.out"
 port=0
 counter=0
 # Seconds to give the client before killing it. Nothing here takes more
@@ -66,7 +66,7 @@ do_cleanup() {
         kill -9 $server_pid 2>/dev/null
         server_pid=$no_pid
     fi
-    rm -rf $work_dir
+    rm -rf -- "$work_dir"
 }
 
 do_trap() {
@@ -94,9 +94,9 @@ start_server() {
         server_pid=$no_pid
     fi
 
-    rm -f $ready_file
-    ./examples/echoserver/echoserver -1 -f -R $ready_file \
-        > $work_dir/server.log 2>&1 &
+    rm -f "$ready_file"
+    ./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+        > "$work_dir/server.log" 2>&1 &
     server_pid=$!
 
     # A debug build starting up under a parallel make check needs more than
@@ -109,17 +109,17 @@ start_server() {
     done
 
     if [ ! -s "$ready_file" ]; then
-        echo -e "\n\nNO ready file ending test..."
+        printf '\n\nNO ready file ending test...\n'
         do_cleanup
         exit 1
     fi
 
-    port=`cat $ready_file`
+    port=`cat "$ready_file"`
     echo "server listening on port $port"
 }
 
 fail() {
-    echo -e "\n\n$1"
+    printf '\n\n%s\n' "$1"
     do_cleanup
     exit 1
 }
@@ -130,7 +130,7 @@ fail() {
 wait_for_output() {
     count=0
     while [ "$count" -lt 300 ]; do
-        grep -q "$1" $client_out 2>/dev/null && return 0
+        grep -q "$1" "$client_out" 2>/dev/null && return 0
         sleep 0.1
         count=$((count + 1))
     done
@@ -152,9 +152,9 @@ run_client() {
     confirm=$1
     shift
 
-    rm -f $input_file $client_out
-    touch $client_out
-    mkfifo $input_file || fail "couldn't create the input fifo"
+    rm -f "$input_file" "$client_out"
+    touch "$client_out"
+    mkfifo "$input_file" || fail "couldn't create the input fifo"
 
     (
         # GetConfirmation() reads a single character. A newline here would
@@ -170,11 +170,11 @@ run_client() {
         sleep 2
 
         printf 'hello\003'
-    ) > $input_file 2>/dev/null &
+    ) > "$input_file" 2>/dev/null &
     input_pid=$!
 
-    HOME=$work_dir ./apps/wolfssh/wolfssh "$@" \
-        < $input_file > $client_out 2>&1 &
+    HOME="$work_dir" ./apps/wolfssh/wolfssh "$@" \
+        < "$input_file" > "$client_out" 2>&1 &
     client_pid=$!
 
     # Poll rather than sleep through the whole limit. Killing a subshell
@@ -201,20 +201,20 @@ run_client() {
     kill $input_pid 2>/dev/null
     input_pid=$no_pid
 
-    cat $client_out
+    cat "$client_out"
     return $client_status
 }
 
-mkdir -p $work_dir/.ssh
+mkdir -p "$work_dir/.ssh"
 
 # The known hosts check rejects a missing or empty file without asking, so
 # seed the file with an entry for another host. The first connection then
 # gets the "server is unknown" prompt and answers it.
-echo "example.invalid ssh-rsa AAAA" > $work_dir/.ssh/known_hosts
+echo "example.invalid ssh-rsa AAAA" > "$work_dir/.ssh/known_hosts"
 
 echo "Test learning the server's key"
 start_server
-run_client confirm -E $work_dir/learn.log -p $port jill@127.0.0.1 "echo one"
+run_client confirm -E "$work_dir/learn.log" -p $port jill@127.0.0.1 "echo one"
 RESULT=$?
 
 if [ $RESULT -ne 0 ]; then
@@ -222,41 +222,41 @@ if [ $RESULT -ne 0 ]; then
     fail "failed to connect"
 fi
 
-grep -q "^127.0.0.1 " $work_dir/.ssh/known_hosts \
+grep -q "^127.0.0.1 " "$work_dir/.ssh/known_hosts" \
     || fail "server key not added to the known hosts"
-grep -q "hello" $client_out \
+grep -q "hello" "$client_out" \
     || fail "the echoserver's reply didn't make it back"
 
 # With the server's key known, the client only prompts for the password.
 # The log file is empty unless the library has logging compiled in.
 echo "Test a session given a command, with a log file"
 start_server
-run_client "" -E $work_dir/command.log -p $port jill@127.0.0.1 "echo two"
+run_client "" -E "$work_dir/command.log" -p $port jill@127.0.0.1 "echo two"
 [ $? -ne 0 ] && fail "failed to open the session"
 
-grep -q "hello" $client_out \
+grep -q "hello" "$client_out" \
     || fail "the echoserver's reply didn't make it back"
 
-if [ -s $work_dir/command.log ]; then
+if [ -s "$work_dir/command.log" ]; then
     echo "checking the log file"
 
     # The log is redirected before wolfSSH_Init(), so the library's start up
     # message is the first thing in the file.
-    head -n 1 $work_dir/command.log | grep -q "Entering wolfSSH_Init()" \
+    head -n 1 "$work_dir/command.log" | grep -q "Entering wolfSSH_Init()" \
         || fail "log file is missing the wolfSSH_Init() message"
 
     # The log is closed after wolfSSH_Cleanup(), which logs as well.
-    grep -q "Leaving wolfSSH_Cleanup()" $work_dir/command.log \
+    grep -q "Leaving wolfSSH_Cleanup()" "$work_dir/command.log" \
         || fail "log file is missing the wolfSSH_Cleanup() message"
 
     # Given a command the client opens an exec channel to carry it, with no
     # terminal request to discard it.
-    grep -q "type = exec" $work_dir/command.log \
+    grep -q "type = exec" "$work_dir/command.log" \
         || fail "the client didn't open an exec channel for the command"
 
     # The command string itself is only logged by a debug build.
-    if grep -q "  command = " $work_dir/command.log; then
-        grep -q "command = echo two" $work_dir/command.log \
+    if grep -q "  command = " "$work_dir/command.log"; then
+        grep -q "command = echo two" "$work_dir/command.log" \
             || fail "the client didn't send the command it was given"
     fi
 else
@@ -265,20 +265,20 @@ fi
 
 echo "Test terminal session"
 start_server
-run_client "" -E $work_dir/terminal.log -p $port jill@127.0.0.1
+run_client "" -E "$work_dir/terminal.log" -p $port jill@127.0.0.1
 [ $? -ne 0 ] && fail "failed to open the terminal session"
 
-grep -q "hello" $client_out \
+grep -q "hello" "$client_out" \
     || fail "the echoserver's reply didn't make it back"
 
-if [ -s $work_dir/terminal.log ]; then
-    grep -q "Leaving wolfSSH_Cleanup()" $work_dir/terminal.log \
+if [ -s "$work_dir/terminal.log" ]; then
+    grep -q "Leaving wolfSSH_Cleanup()" "$work_dir/terminal.log" \
         || fail "log file is missing the wolfSSH_Cleanup() message"
 
     # No command was given, the client asks for a terminal instead.
-    grep -q "type = exec" $work_dir/terminal.log \
+    grep -q "type = exec" "$work_dir/terminal.log" \
         && fail "the client opened an exec channel it wasn't asked for"
-    grep -q "  command = " $work_dir/terminal.log \
+    grep -q "  command = " "$work_dir/terminal.log" \
         && fail "the client sent a command it wasn't given"
 fi
 
