@@ -1422,8 +1422,16 @@ int main(int argc, char** argv)
     /* Close the log last, wolfSSH_Cleanup() still logs and the callback
      * cannot be uninstalled. */
     if (logFileStream != NULL) {
+#ifdef _MSC_VER
+        /* The terminal session's input thread is left running, it blocks in
+         * a console read with nothing to cancel it. Flush the log and let
+         * process exit close it, rather than close the stream out from under
+         * a write that thread is making. */
+        WFFLUSH(logFileStream);
+#else
         WFCLOSE(NULL, logFileStream);
         logFileStream = NULL;
+#endif
     }
     config_cleanup(&clientConfig);
 
