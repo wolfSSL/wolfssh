@@ -234,8 +234,10 @@ static word32 BuildDisconnectPacket(word32 reason, byte* out, word32 outSz)
 }
 
 #ifdef WOLFSSH_FWD
-static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
-        const char* origin, word32 originPort, byte* out, word32 outSz)
+/* Callers sit in separate conditional blocks; some builds have none. */
+static WS_MAYBE_UNUSED word32 BuildDirectTcpipExtra(const char* host,
+        word32 hostPort, const char* origin, word32 originPort, byte* out,
+        word32 outSz)
 {
     word32 idx = 0;
 
@@ -247,8 +249,8 @@ static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
     return idx;
 }
 
-static word32 BuildGlobalRequestFwdPacket(const char* bindAddr, word32 bindPort,
-        int isCancel, byte wantReply, byte* out, word32 outSz)
+static WS_MAYBE_UNUSED word32 BuildGlobalRequestFwdPacket(const char* bindAddr,
+        word32 bindPort, int isCancel, byte wantReply, byte* out, word32 outSz)
 {
     byte payload[256];
     word32 idx = 0;
