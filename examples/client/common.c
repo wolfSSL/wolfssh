@@ -1008,12 +1008,23 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
     (void)tpmKeyAuth; /* Not used */
 
     if (privKeyName == NULL) {
+    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECC)
+        /* No built-in key to load. Leave the client to authenticate
+         * some other way rather than failing here. */
+        userPrivateKeySz = 0;
+        userPrivateKeyType = NULL;
+        (void)userEcc;
+        (void)heap;
+    #else
         if (userEcc) {
         #ifndef WOLFSSH_NO_ECC
             userPrivateKeySz = sizeof(userPrivateKeyBuf);
             ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
                     &userPrivateKeyType, &userPrivateKeyTypeSz, heap);
+        #else
+            fprintf(stderr, "ECC not compiled in, no default private key\n");
+            ret = WS_NOT_COMPILED;
         #endif
         }
         else {
@@ -1022,9 +1033,13 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
             ret = wolfSSH_ReadKey_buffer(hanselPrivateRsa, hanselPrivateRsaSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
                     &userPrivateKeyType, &userPrivateKeyTypeSz, heap);
+        #else
+            fprintf(stderr, "RSA not compiled in, no default private key\n");
+            ret = WS_NOT_COMPILED;
         #endif
         }
         isPrivate = 1;
+    #endif
     }
     else {
     #if defined(WOLFSSH_TPM)
@@ -1065,6 +1080,14 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
     int ret = 0;
 
     if (pubKeyName == NULL) {
+    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECC)
+        /* No built-in key to load. Leave the client to authenticate
+         * some other way rather than failing here. */
+        userPublicKeySz = 0;
+        userPublicKeyType = NULL;
+        (void)userEcc;
+        (void)heap;
+    #else
         byte* p = userPublicKey;
         userPublicKeySz = sizeof(userPublicKeyBuf);
 
@@ -1074,6 +1097,9 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
                     (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
                     &userPublicKeyType, &userPublicKeyTypeSz, heap);
+        #else
+            fprintf(stderr, "ECC not compiled in, no default public key\n");
+            ret = WS_NOT_COMPILED;
         #endif
         }
         else {
@@ -1082,9 +1108,13 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
                     (word32)strlen(hanselPublicRsa), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,
                     &userPublicKeyType, &userPublicKeyTypeSz, heap);
+        #else
+            fprintf(stderr, "RSA not compiled in, no default public key\n");
+            ret = WS_NOT_COMPILED;
         #endif
         }
         isPrivate = 1;
+    #endif
     }
     else {
     #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)

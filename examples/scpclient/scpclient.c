@@ -112,6 +112,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     byte nonBlock = 0;
     enum copyDir dir = copyNone;
     int ch;
+    int userEcc = 0;
     char* pubKeyName = NULL;
     char* privKeyName = NULL;
     char* certName = NULL;
@@ -218,7 +219,11 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         err_sys("Empty path values");
     }
 
-    ret = ClientSetPrivateKey(privKeyName, 0, NULL, NULL);
+#ifdef WOLFSSH_NO_RSA
+    userEcc = 1;
+#endif
+
+    ret = ClientSetPrivateKey(privKeyName, userEcc, NULL, NULL);
     if (ret != 0) {
         err_sys("Error setting private key");
     }
@@ -231,7 +236,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     else
 #endif
     {
-        ret = ClientUsePubKey(pubKeyName, 0, NULL);
+        ret = ClientUsePubKey(pubKeyName, userEcc, NULL);
     }
     if (ret != 0) {
         err_sys("Error setting public key");

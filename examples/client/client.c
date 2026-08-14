@@ -895,6 +895,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         err_sys("You must specify a password for the TPM key");
     }
 #endif
+#ifdef WOLFSSH_NO_RSA
+    userEcc = 1;
+#endif
+
     ret = ClientSetPrivateKey(privKeyName, userEcc, NULL, tpmKeyAuth);
     if (ret != 0) {
         err_sys("Error setting private key");
