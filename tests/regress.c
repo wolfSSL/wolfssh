@@ -493,6 +493,10 @@ static void TestKbInfoResponseMismatchKeepsFraming(void)
         #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group14-sha1"
     #elif !defined(WOLFSSH_NO_DH_GROUP1_SHA1)
         #define KEXDH_REPLY_REGRESS_KEX_ALGO "diffie-hellman-group1-sha1"
+    #elif !defined(WOLFSSH_NO_CURVE25519_SHA256)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "curve25519-sha256"
+    #elif !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+        #define KEXDH_REPLY_REGRESS_KEX_ALGO "ecdh-sha2-nistp256"
     #endif
 #endif
 
@@ -564,10 +568,29 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
     #define REGRESS_DEFAULT_KEY_PATH REGRESS_SERVER_KEY_ED25519_PATH
 #endif
 
-/* KEXDH_REPLY mutation modes for the duplex mutator. */
+/* KEX algorithm for the truncated peer-key tests */
+#if !defined(WOLFSSH_NO_CURVE25519_SHA256)
+    #define REGRESS_TRUNC_KEX_ALGO "curve25519-sha256"
+#elif !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+    #define REGRESS_TRUNC_KEX_ALGO "ecdh-sha2-nistp256"
+#endif
+
+/* KEX algorithm for the GEX group test */
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    #define REGRESS_GEX_KEX_ALGO "diffie-hellman-group-exchange-sha256"
+    /* Well under WOLFSSH_DH_GEX_MIN_BITS, so the client's range check
+     * rejects the group before any primality work. */
+    #define REGRESS_GEX_SHRUNK_PRIME_SZ 128U
+#endif
+
 #define REGRESS_MUTATE_SIG_NAME 0
 #define REGRESS_MUTATE_SIG_DATA 1
 #define REGRESS_MUTATE_SIG_NAME_OVERRUN 2
+#define REGRESS_MUTATE_F_TRUNC 3
+#define REGRESS_MUTATE_E_TRUNC 4
+#define REGRESS_MUTATE_E_EMPTY 5
+#define REGRESS_MUTATE_GEX_GROUP_SHRINK 6
+#define REGRESS_MUTATE_GEX_GEN_BAD 7
 
 typedef struct {
     byte data[REGRESS_DUPLEX_QUEUE_SZ];
@@ -589,7 +612,9 @@ typedef struct DuplexEndpoint {
     DuplexQueue inbound;
     struct DuplexEndpoint* peer;
     KexReplyMutator* mutator;
+    word32 disconnectReason;
     byte isServer;
+    byte sawDisconnect;
 } DuplexEndpoint;
 
 typedef struct {
@@ -719,33 +744,12 @@ static int QueueAppend(DuplexQueue* queue, const byte* data, word32 dataSz)
     return WS_SUCCESS;
 }
 
-/* SIG_NAME replaces the signature name; SIG_DATA flips a signature byte. */
-static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
-        byte mode, const char* replacement, byte* out, word32 outSz,
-        word32* outLen)
+/* Locate the payload of an unbundled packet carrying msgId. Returns 1 with
+ * payload set, 0 when the packet does not match, negative on bad framing. */
+static int LocateSinglePacketPayload(const byte* packet, word32 packetSz,
+        byte msgId, const byte** payload, word32* payloadSz)
 {
-    const byte* payload;
-    const byte* pubKey;
-    const byte* f;
-    const byte* sigBlob;
-    const byte* sigName;
-    const byte* sigData;
-    word32 packetLen, padLen, payloadSz;
-    word32 pubKeySz, fSz, sigBlobSz;
-    word32 sigNameSz, sigDataSz;
-    word32 idx = 0;
-    word32 innerIdx = 0;
-    word32 outerIdx = 0;
-    word32 innerSigSz;
-    byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
-    byte innerSig[REGRESS_MUTATION_SCRATCH_SZ];
-
-    if (out == NULL || outLen == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
-    if (mode == REGRESS_MUTATE_SIG_NAME && replacement == NULL) {
-        return WS_BAD_ARGUMENT;
-    }
+    word32 packetLen, padLen;
 
     if (packetSz < UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ) {
         return 0;
@@ -761,12 +765,50 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
         return WS_PARSE_E;
     }
 
-    if (packet[UINT32_SZ + PAD_LENGTH_SZ] != MSGID_KEXDH_REPLY) {
+    if (packet[UINT32_SZ + PAD_LENGTH_SZ] != msgId) {
         return 0;
     }
 
-    payload = packet + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
-    payloadSz = packetSz - UINT32_SZ - PAD_LENGTH_SZ - MSG_ID_SZ - padLen;
+    *payload = packet + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+    *payloadSz = packetSz - UINT32_SZ - PAD_LENGTH_SZ - MSG_ID_SZ - padLen;
+
+    return 1;
+}
+
+/* SIG_NAME replaces the signature name; SIG_DATA flips a signature byte. */
+static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
+        byte mode, const char* replacement, byte* out, word32 outSz,
+        word32* outLen)
+{
+    const byte* payload;
+    const byte* pubKey;
+    const byte* f;
+    const byte* sigBlob;
+    const byte* sigName;
+    const byte* sigData;
+    word32 payloadSz;
+    word32 pubKeySz, fSz, sigBlobSz;
+    word32 sigNameSz, sigDataSz;
+    word32 idx = 0;
+    word32 innerIdx = 0;
+    word32 outerIdx = 0;
+    word32 innerSigSz;
+    int ret;
+    byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
+    byte innerSig[REGRESS_MUTATION_SCRATCH_SZ];
+
+    if (out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    if (mode == REGRESS_MUTATE_SIG_NAME && replacement == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = LocateSinglePacketPayload(packet, packetSz, MSGID_KEXDH_REPLY,
+            &payload, &payloadSz);
+    if (ret != 1) {
+        return ret;
+    }
 
     if (ReadStringRef(&pubKeySz, &pubKey, payload, payloadSz, &idx) !=
             WS_SUCCESS) {
@@ -824,6 +866,17 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
          * the end of the blob. */
         innerSigSz = AppendUint32(innerSig, sizeof(innerSig), innerSigSz,
                 sigNameSz);
+    }
+    else if (mode == REGRESS_MUTATE_F_TRUNC) {
+        /* Signature blob is copied through untouched; only f shrinks below. */
+        if (fSz == 0) {
+            return WS_PARSE_E;
+        }
+        fSz--;
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigName, sigNameSz);
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigData, sigDataSz);
     }
     else {
         innerSigSz = AppendString(innerSig, sizeof(innerSig), innerSigSz,
@@ -885,6 +938,159 @@ static int RewriteKexDhReplyPacket(const byte* packet, word32 packetSz,
     return 0;
 }
 
+/* Drop one byte from the peer public key string e of a KEXDH_INIT. */
+static int RewriteSingleKexDhInitPacket(const byte* packet, word32 packetSz,
+        byte mode, byte* out, word32 outSz, word32* outLen)
+{
+    const byte* payload;
+    const byte* e;
+    word32 payloadSz;
+    word32 eSz;
+    word32 idx = 0;
+    word32 outerIdx = 0;
+    int ret;
+    byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
+
+    if (out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = LocateSinglePacketPayload(packet, packetSz, MSGID_KEXDH_INIT,
+            &payload, &payloadSz);
+    if (ret != 1) {
+        return ret;
+    }
+
+    if (ReadStringRef(&eSz, &e, payload, payloadSz, &idx) != WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+    if (eSz == 0) {
+        return WS_PARSE_E;
+    }
+
+    /* E_EMPTY keeps the framing valid but leaves e zero length, which is what
+     * DoKexDhInit's range check rejects. E_TRUNC drops one byte instead. */
+    if (mode == REGRESS_MUTATE_E_EMPTY) {
+        outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx, e, 0);
+    }
+    else {
+        outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx, e,
+                eSz - 1);
+    }
+    *outLen = WrapPacket(MSGID_KEXDH_INIT, payloadBuf, outerIdx, out, outSz);
+
+    return 1;
+}
+
+#ifdef REGRESS_GEX_KEX_ALGO
+/* Rewrite a KEXDH_GEX_GROUP: SHRINK puts the prime under the client's
+ * requested floor, GEN_BAD drops the generator below 2. */
+static int RewriteSingleKexDhGexGroupPacket(const byte* packet,
+        word32 packetSz, byte mode, byte* out, word32 outSz, word32* outLen)
+{
+    const byte* payload;
+    const byte* primeGroup;
+    const byte* generator;
+    word32 payloadSz;
+    word32 primeGroupSz, generatorSz;
+    word32 idx = 0;
+    word32 outerIdx = 0;
+    int ret;
+    byte badGenerator = 1;
+    byte payloadBuf[REGRESS_MUTATION_SCRATCH_SZ];
+
+    if (out == NULL || outLen == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    ret = LocateSinglePacketPayload(packet, packetSz, MSGID_KEXDH_GEX_GROUP,
+            &payload, &payloadSz);
+    if (ret != 1) {
+        return ret;
+    }
+
+    if (ReadStringRef(&primeGroupSz, &primeGroup, payload, payloadSz, &idx)
+            != WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+    if (ReadStringRef(&generatorSz, &generator, payload, payloadSz, &idx)
+            != WS_SUCCESS) {
+        return WS_PARSE_E;
+    }
+
+    if (mode == REGRESS_MUTATE_GEX_GROUP_SHRINK) {
+        /* A group already at the target size would leave the test asserting
+         * nothing, so fail loudly rather than pass the group through. */
+        if (primeGroupSz <= REGRESS_GEX_SHRUNK_PRIME_SZ) {
+            return WS_PARSE_E;
+        }
+        primeGroupSz = REGRESS_GEX_SHRUNK_PRIME_SZ;
+    }
+    else {
+        /* Leave the prime valid so the range check passes and the generator
+         * check is what rejects the group. */
+        generator = &badGenerator;
+        generatorSz = 1;
+    }
+
+    outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx,
+            primeGroup, primeGroupSz);
+    outerIdx = AppendBlob(payloadBuf, sizeof(payloadBuf), outerIdx,
+            generator, generatorSz);
+    *outLen = WrapPacket(MSGID_KEXDH_GEX_GROUP, payloadBuf, outerIdx,
+            out, outSz);
+
+    return 1;
+}
+#endif /* REGRESS_GEX_KEX_ALGO */
+
+/* SIG_*, F_TRUNC and the GEX_* modes rewrite the server's messages;
+ * E_TRUNC and E_EMPTY the client's init. */
+static int MutatorTargetsEndpoint(byte mode, byte isServer)
+{
+    if (mode == REGRESS_MUTATE_E_TRUNC || mode == REGRESS_MUTATE_E_EMPTY) {
+        return !isServer;
+    }
+    return isServer != 0;
+}
+
+/* Record a plaintext DISCONNECT leaving this endpoint. KEX-time traffic is
+ * unencrypted, so the reason code is readable straight off the wire. */
+static void NoteOutboundDisconnect(DuplexEndpoint* endpoint,
+        const byte* packet, word32 packetSz)
+{
+    word32 offset = 0;
+    word32 packetLen;
+    word32 padLen;
+
+    while (packetSz - offset >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ) {
+        word32 curPacketSz = ReadUint32(packet + offset) + UINT32_SZ;
+
+        /* Valid framing carries a pad length, a message id and the minimum
+         * padding, so a shorter declared packet cannot hold the id read
+         * below. */
+        if (curPacketSz > packetSz - offset ||
+                curPacketSz < UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ +
+                        MIN_PAD_LENGTH) {
+            return;
+        }
+
+        /* The reason code lives in the payload, so bound it against the
+         * payload rather than the buffer: padding is not readable content. */
+        packetLen = curPacketSz - UINT32_SZ;
+        padLen = packet[offset + UINT32_SZ];
+        if (packet[offset + UINT32_SZ + PAD_LENGTH_SZ] == MSGID_DISCONNECT &&
+                packetLen >= padLen + PAD_LENGTH_SZ + MSG_ID_SZ + UINT32_SZ) {
+            endpoint->sawDisconnect = 1;
+            endpoint->disconnectReason = ReadUint32(packet + offset +
+                    UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ);
+            return;
+        }
+
+        offset += curPacketSz;
+    }
+}
+
 static int DuplexRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 {
     DuplexEndpoint* endpoint = (DuplexEndpoint*)ctx;
@@ -922,14 +1128,14 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     word32 outputSz = sz;
     int ret;
 
-    (void)ssh;
-
     if (endpoint == NULL || endpoint->peer == NULL || buf == NULL) {
         return WS_CBIO_ERR_GENERAL;
     }
 
-    if (endpoint->isServer && endpoint->mutator != NULL &&
+    if (endpoint->mutator != NULL &&
             endpoint->mutator->enabled &&
+            MutatorTargetsEndpoint(endpoint->mutator->mode,
+                    endpoint->isServer) &&
             endpoint->mutator->mutatedPackets == 0 &&
             outputSz >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ &&
             !(outputSz >= REGRESS_SSH_PROTO_PREFIX_SZ &&
@@ -938,10 +1144,28 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
         word32 mutatedSz = 0;
         int mutateRet;
 
-        mutateRet = RewriteKexDhReplyPacket(output, outputSz,
-                endpoint->mutator->mode, endpoint->mutator->replaceName,
-                endpoint->mutator->scratch,
-                (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
+        if (endpoint->mutator->mode == REGRESS_MUTATE_E_TRUNC ||
+                endpoint->mutator->mode == REGRESS_MUTATE_E_EMPTY) {
+            /* KEXDH_INIT is never bundled, so no packet scan is needed. */
+            mutateRet = RewriteSingleKexDhInitPacket(output, outputSz,
+                    endpoint->mutator->mode, endpoint->mutator->scratch,
+                    (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
+        }
+#ifdef REGRESS_GEX_KEX_ALGO
+        else if (endpoint->mutator->mode == REGRESS_MUTATE_GEX_GROUP_SHRINK ||
+                endpoint->mutator->mode == REGRESS_MUTATE_GEX_GEN_BAD) {
+            /* GEX_GROUP answers a request of its own, so it is not bundled. */
+            mutateRet = RewriteSingleKexDhGexGroupPacket(output, outputSz,
+                    endpoint->mutator->mode, endpoint->mutator->scratch,
+                    (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
+        }
+#endif
+        else {
+            mutateRet = RewriteKexDhReplyPacket(output, outputSz,
+                    endpoint->mutator->mode, endpoint->mutator->replaceName,
+                    endpoint->mutator->scratch,
+                    (word32)sizeof(endpoint->mutator->scratch), &mutatedSz);
+        }
         if (mutateRet < 0) {
             endpoint->mutator->parseError = mutateRet;
             return WS_CBIO_ERR_GENERAL;
@@ -953,6 +1177,16 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
             output = endpoint->mutator->scratch;
             outputSz = mutatedSz;
         }
+    }
+
+    /* Only scan plaintext records. AEAD modes send the packet length as
+     * cleartext AAD, so an encrypted payload byte can look like a message
+     * id and trip the sniffer. Every disconnect under test predates NEWKEYS. */
+    if (ssh != NULL && ssh->encryptId == ID_NONE &&
+            !(outputSz >= REGRESS_SSH_PROTO_PREFIX_SZ &&
+              WMEMCMP(output, REGRESS_SSH_PROTO_PREFIX,
+                      REGRESS_SSH_PROTO_PREFIX_SZ) == 0)) {
+        NoteOutboundDisconnect(endpoint, output, outputSz);
     }
 
     ret = QueueAppend(&endpoint->peer->inbound, output, outputSz);
@@ -971,6 +1205,7 @@ static void InitDuplexPair(DuplexEndpoint* client, DuplexEndpoint* server,
 
     client->peer = server;
     server->peer = client;
+    client->mutator = mutator;
     server->mutator = mutator;
     server->isServer = 1;
 }
@@ -991,12 +1226,17 @@ static void FreeKexReplyHarness(KexReplyHarness* harness)
     }
 }
 
-static void InitKexReplyHarnessEx(KexReplyHarness* harness,
-        const char* keyAlgo, const char* keyPath, byte mutateReply,
-        byte mutateMode, const char* replaceName, byte skipPublicKeyCheck)
+static void InitKexReplyHarnessKex(KexReplyHarness* harness,
+        const char* kexAlgo, const char* keyAlgo, const char* keyPath,
+        byte mutateReply, byte mutateMode, const char* replaceName,
+        byte skipPublicKeyCheck)
 {
     byte keyBuf[2048];
     word32 keySz;
+
+    if (kexAlgo == NULL) {
+        kexAlgo = KEXDH_REPLY_REGRESS_KEX_ALGO;
+    }
 
     WMEMSET(harness, 0, sizeof(*harness));
 
@@ -1010,10 +1250,10 @@ static void InitKexReplyHarnessEx(KexReplyHarness* harness,
     harness->serverCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(harness->serverCtx);
 
-    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->clientCtx,
-            KEXDH_REPLY_REGRESS_KEX_ALGO), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->serverCtx,
-            KEXDH_REPLY_REGRESS_KEX_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->clientCtx, kexAlgo),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListKex(harness->serverCtx, kexAlgo),
+            WS_SUCCESS);
     AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(harness->clientCtx, keyAlgo),
             WS_SUCCESS);
     AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(harness->serverCtx, keyAlgo),
@@ -1047,6 +1287,14 @@ static void InitKexReplyHarnessEx(KexReplyHarness* harness,
 
     AssertIntEQ(wolfSSH_SetUsername(harness->client, REGRESS_USERNAME),
             WS_SUCCESS);
+}
+
+static void InitKexReplyHarnessEx(KexReplyHarness* harness,
+        const char* keyAlgo, const char* keyPath, byte mutateReply,
+        byte mutateMode, const char* replaceName, byte skipPublicKeyCheck)
+{
+    InitKexReplyHarnessKex(harness, NULL, keyAlgo, keyPath, mutateReply,
+            mutateMode, replaceName, skipPublicKeyCheck);
 }
 
 static void InitKexReplyHarness(KexReplyHarness* harness,
@@ -1120,6 +1368,10 @@ static void AssertHandshakeSucceeds(const char* keyAlgo, const char* keyPath)
     AssertIntEQ(harness.mutator.mutatedPackets, 0);
     AssertIntEQ(harness.client->connectState, CONNECT_SERVER_CHANNEL_REQUEST_DONE);
     AssertIntEQ(harness.server->acceptState, ACCEPT_CLIENT_SESSION_ESTABLISHED);
+    /* A clean handshake sends no disconnect, so the sniffer the rejection
+     * tests rely on is proven not to fire on its own. */
+    AssertFalse(harness.clientIo.sawDisconnect);
+    AssertFalse(harness.serverIo.sawDisconnect);
 
     FreeKexReplyHarness(&harness);
 }
@@ -1198,6 +1450,9 @@ static void AssertHandshakeRejectsWithNoPublicKeyCheck(const char* keyAlgo,
     AssertTrue(result.clientErr != WS_WANT_READ && result.clientErr != WS_WANT_WRITE);
     AssertIntEQ(result.clientErr, WS_PUBKEY_REJECTED_E);
     AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE);
 
     FreeKexReplyHarness(&harness);
 }
@@ -1227,6 +1482,9 @@ static void AssertHandshakeRejectsWhenCallbackRejects(const char* keyAlgo,
     AssertTrue(result.clientErr != WS_WANT_READ && result.clientErr != WS_WANT_WRITE);
     AssertIntEQ(result.clientErr, WS_PUBKEY_REJECTED_E);
     AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE);
 
     FreeKexReplyHarness(&harness);
 }
@@ -1320,6 +1578,131 @@ static void TestKexDhReplyRejectsSigNameOverrun(void)
 
     FreeKexReplyHarness(&harness);
 }
+
+#ifdef REGRESS_TRUNC_KEX_ALGO
+/* RFC 8731 sec. 3: a peer public key of the wrong length aborts with a
+ * disconnect. The truncated key is rejected during key agreement, before
+ * signature verification. */
+static void TestKexDhReplyTruncatedFSendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_TRUNC_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_F_TRUNC, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.clientErr, WS_CRYPTO_FAILED);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestKexDhInitTruncatedESendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_TRUNC_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_E_TRUNC, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.serverSuccess);
+    AssertTrue(result.serverRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.serverErr, WS_CRYPTO_FAILED);
+    AssertTrue(harness.serverIo.sawDisconnect);
+    AssertIntEQ(harness.serverIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+/* Covers the WS_PUBKEY_REJECTED_E arm of the server's disconnect guard, which
+ * the truncated-e case cannot reach. */
+static void TestKexDhInitEmptyESendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_TRUNC_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_E_EMPTY, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(result.serverErr, WS_PUBKEY_REJECTED_E);
+    AssertTrue(harness.serverIo.sawDisconnect);
+    AssertIntEQ(harness.serverIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* REGRESS_TRUNC_KEX_ALGO */
+
+#ifdef REGRESS_GEX_KEX_ALGO
+/* A GEX group below the floor this client enforces (RFC 8270) ends the key
+ * exchange. Covers the WS_DH_SIZE_E arm of the client's guard, which no
+ * other mutator reaches. */
+static void TestKexDhGexGroupShrunkPrimeSendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_GEX_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_GEX_GROUP_SHRINK, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.clientErr, WS_DH_SIZE_E);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* Covers the WS_CRYPTO_FAILED arm of the client's GEX guard, which the
+ * shrunk-prime case cannot reach. */
+static void TestKexDhGexGroupBadGeneratorSendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_GEX_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_GEX_GEN_BAD, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.clientErr, WS_CRYPTO_FAILED);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* REGRESS_GEX_KEX_ALGO */
 
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
@@ -6639,6 +7022,15 @@ int main(int argc, char** argv)
     TestKexDhReplyRejectsEd25519CorruptSig();
     #endif
     TestKexDhReplyRejectsSigNameOverrun();
+    #ifdef REGRESS_TRUNC_KEX_ALGO
+    TestKexDhReplyTruncatedFSendsDisconnect();
+    TestKexDhInitTruncatedESendsDisconnect();
+    TestKexDhInitEmptyESendsDisconnect();
+    #endif
+    #ifdef REGRESS_GEX_KEX_ALGO
+    TestKexDhGexGroupShrunkPrimeSendsDisconnect();
+    TestKexDhGexGroupBadGeneratorSendsDisconnect();
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP
