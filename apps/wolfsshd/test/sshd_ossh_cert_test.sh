@@ -58,8 +58,8 @@ mkdir -p "$MARKERDIR"
 chown "$LOGINUSER" "$MARKERDIR" 2>/dev/null
 chmod 700 "$MARKERDIR"
 
-# The host private key is a secret loaded through the secure gate, which refuses
-# a group/world readable file. The committed key is 644, so use a 600 copy.
+# wolfSSHd refuses a group/world accessible host key it owns, and the committed
+# key is 644, so use a 600 copy.
 HOSTKEY="$WORK/hostkey.pem"
 cp "$ROOT/keys/server-key.pem" "$HOSTKEY"
 chmod 600 "$HOSTKEY"

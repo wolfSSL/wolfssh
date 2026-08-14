@@ -1270,6 +1270,80 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #endif
 }
 
+/* Open the host private key. See auth.h for the contract. */
+int wolfSSHD_OpenHostKeyFile(const char* path, WFILE** out)
+{
+#ifndef _WIN32
+    struct stat st;
+    WFILE* f;
+    int fd;
+    int flags;
+
+    if (path == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    *out = WBADFILE;
+
+    /* O_NONBLOCK so a FIFO cannot stall the open */
+    fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", path);
+        return WS_BAD_FILE_E;
+    }
+
+    if (fstat(fd, &st) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to stat %s", path);
+        close(fd);
+        return WS_BAD_FILE_E;
+    }
+
+    /* a FIFO or device would misbehave on read */
+    if (!S_ISREG(st.st_mode)) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Refusing to load (not a regular file): %s", path);
+        close(fd);
+        return WS_BAD_FILE_E;
+    }
+
+    /* sshd polices only a key the daemon owns; loaded before any
+     * privilege drop, so geteuid() is the invoking user. */
+    if (st.st_uid == geteuid() && (st.st_mode & 077) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Permissions %04o are too open: %s",
+            (unsigned int)(st.st_mode & 07777), path);
+        close(fd);
+        return WS_BAD_FILE_E;
+    }
+
+    /* restore blocking reads */
+    flags = fcntl(fd, F_GETFL);
+    if (flags != -1) {
+        (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    }
+
+    f = fdopen(fd, "rb");
+    if (f == NULL) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Unable to open stream for %s", path);
+        close(fd);
+        return WS_BAD_FILE_E;
+    }
+
+    *out = f;
+    return WS_SUCCESS;
+#else
+    if (path == NULL || out == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    *out = WBADFILE;
+    if (WFOPEN(NULL, out, path, "rb") != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to open %s", path);
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+#endif
+}
+
 /* Scan a resolved keys file (authorized_keys or TrustedUserCAKeys) for
  * (key, keySz). Fails closed with WSSHD_AUTH_FAILURE when no line matches.
  * strictModes opens through the secure gate; the file must be owned by uid. */
@@ -1780,11 +1854,11 @@ static int CheckPublicKeyUnix(const char* name,
             }
         }
 
-        /* The signing CA must be listed in TrustedUserCAKeys. A daemon trust
-         * anchor, so it is always secure-gated, regardless of StrictModes. */
+        /* The signing CA must be listed in TrustedUserCAKeys, a file sshd
+         * applies no permission policy to. */
         if (ret == WSSHD_AUTH_SUCCESS) {
             ret = SearchKeysFile(usrCaKeysFile, pubKeyCtx->caKey,
-                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */);
+                    pubKeyCtx->caKeySz, geteuid(), 0 /* strictModes */);
         }
 
         /* Bind the certificate to the requested user via its principals. */

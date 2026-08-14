@@ -102,11 +102,21 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth);
 int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int outSz);
 #endif
 
-/* Secure open for trusted files, shared by the authorized_keys path (auth.c)
- * and the trust-anchor loads in wolfsshd.c (host key, host cert, user CA keys).
- * See the definition in auth.c for the meaning of each argument. */
+/* Secure open for the authorized_keys path and the shadow file lookup, both
+ * in auth.c. See the definition there for the meaning of each argument. */
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     int rejectReadable, void* heap, WFILE** out);
+
+/* Open the host private key, returning a stream ready for reading.
+ *
+ * Matches sshd: refuse the key only when the daemon owns it and it is group or
+ * world accessible. Owner, directories and symlinks on the path are left to
+ * the administrator. A non-regular file is refused too, which sshd does not
+ * do, so a FIFO cannot stall the daemon at startup.
+ *
+ * Returns WS_SUCCESS and sets *out, else logs the reason. On _WIN32 the file
+ * is opened directly, relying on filesystem ACLs. */
+int wolfSSHD_OpenHostKeyFile(const char* path, WFILE** out);
 
 /* classifies a loaded host private key buffer as OpenSSH or ASN1/DER.
  * *keyDer is a WMALLOC'd (heap, DYNTYPE_SSHD) buffer to WS_FORCEZERO +

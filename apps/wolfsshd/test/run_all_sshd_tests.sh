@@ -124,34 +124,29 @@ run_test() {
     fi
 }
 
-# Negative trust-anchor check: a group/world readable host private key must make
-# wolfSSHd refuse to start. The host private key is a secret loaded through the
-# secure gate (getBufferFromFile/wolfSSHD_OpenSecureFile in SetupCTX), which is
-# always enforced and independent of StrictModes, so this config sets
-# "StrictModes no" to prove the gate still rejects. Runs without sudo: privilege
-# separation is off and a high port is used, so no root is needed.
-run_strictmodes_negative_test() {
-    printf "Host key trust-anchor negative test ... "
+# A group/world accessible host key owned by the daemon's user must make
+# wolfSSHd refuse to start, as sshd does. No sudo, so the key copy is owned by
+# the invoking user, which is what arms the check, and a high port needs no root.
+run_hostkey_mode_negative_test() {
+    printf "Host key mode negative test ... "
     # A local copy of the host key, made group/world readable.
     cp ../../../keys/server-key.pem strictmodes_hostkey.pem
     chmod 644 strictmodes_hostkey.pem
     cat <<EOF > sshd_config_test_strictmodes
 Port 22622
-StrictModes no
 UsePrivilegeSeparation no
 HostKey strictmodes_hostkey.pem
 EOF
     rm -f strictmodes_log.txt
-    # -D keeps wolfSSHd in the foreground; a StrictModes failure makes it exit
-    # rather than serve, so this returns on its own. Wrap in 'timeout' when
-    # available so a regression fails the test instead of hanging the runner.
+    # -D keeps wolfSSHd in the foreground; the rejection makes it exit, so this
+    # returns on its own. 'timeout' keeps a regression from hanging the runner.
     TIMEOUT=""
     if command -v timeout >/dev/null 2>&1; then
         TIMEOUT="timeout 30"
     fi
     $TIMEOUT ../wolfsshd -D -d -f sshd_config_test_strictmodes -E strictmodes_log.txt
     TOTAL=$((TOTAL+1))
-    if grep -q "group or world readable" strictmodes_log.txt; then
+    if grep -q "are too open" strictmodes_log.txt; then
         printf "PASSED\n"
     else
         printf "FAILED!\n"
@@ -212,18 +207,13 @@ run_strictmodes_authkeys_negative_test() {
     fi
 }
 
-# Self-contained check for the ownership and symlink gate in getBufferFromFile().
-# The host key, host certificate, and user CA all load through the same
-# getBufferFromFile(..., WOLFSSHD_LOAD_SECRET/WOLFSSHD_LOAD_TRUST) call, which
-# delegates to wolfSSHD_OpenSecureFile(), so exercising the gate via the host
-# key covers the identical code for the other two trust anchors. Starts a
-# private wolfSSHd with substituted host keys and asserts startup is refused for
-# a symlink, a group/world-writable file, and (when run as a non-root user with
-# sudo) a file owned by another user, and accepted for a proper mode-600 regular
-# file. Does not use the shared daemon, so it runs the same whether or not one
-# was started.
+# Host key checks, matching sshd: refuse a group/world accessible key the daemon
+# owns, do not police one owned by someone else, and inspect neither the
+# directories leading to the key nor a symlinked path. A non-regular file is
+# refused so a FIFO cannot stall startup. Uses a private wolfSSHd with
+# substituted host keys, not the shared daemon.
 run_hostkey_perm_check() {
-    printf "host key ownership/symlink gate ... "
+    printf "host key permission check ... "
     TOTAL=$((TOTAL+1))
 
     HK_SSHD=../wolfsshd
@@ -263,9 +253,9 @@ AuthorizedKeysFile $HK_WORK/authorized_keys
 EOF
     }
 
-    # Load happens during startup before the listener; start, poll the log
-    # rather than sleeping a fixed time, then stop. Both the host key load and
-    # the listener emit a line, so stop as soon as either appears (max ~15s).
+    # The key loads before the listener; poll the log rather than sleeping a
+    # fixed time. Both a rejection and the listener emit a line, so stop as soon
+    # as either appears (max ~15s).
     # $1 (optional): "sudo" to launch the daemon as root for the owner branch.
     hk_run() {
         HK_PRE="$1"
@@ -273,7 +263,7 @@ EOF
         HK_PID=$!
         i=0
         while [ $i -lt 15 ]; do
-            if grep -qE "Listening on port|Refusing to load" "$HK_WORK/log.txt" 2>/dev/null; then
+            if grep -qE "Listening on port|Refusing to load|are too open" "$HK_WORK/log.txt" 2>/dev/null; then
                 break
             fi
             sleep 1
@@ -301,12 +291,10 @@ EOF
         exit 1
     }
 
-    # proper mode-600 regular file must load. The only gate failure here is the
-    # daemon refusing a properly-owned key; any other reason the daemon does not
-    # reach the listener (port in use, environment cannot run the daemon) is
-    # unrelated to the gate, so skip rather than fail the whole suite.
+    # proper mode-600 regular file must load. Anything else that keeps the daemon
+    # from the listener (port in use, cannot run here) is unrelated, so skip.
     hk_cfg "$HK_WORK/hostkey.pem"; hk_run
-    if grep -q "Refusing to load" "$HK_WORK/log.txt"; then
+    if grep -qE "Refusing to load|are too open" "$HK_WORK/log.txt"; then
         hk_fail "valid host key was refused"
     fi
     if ! grep -q "Listening on port" "$HK_WORK/log.txt"; then
@@ -316,29 +304,36 @@ EOF
         return
     fi
 
-    # symlink must be refused
+    # a symlink to a good key must load; sshd does not inspect the path
     ln -s "$HK_WORK/hostkey.pem" "$HK_WORK/link.pem"
     hk_cfg "$HK_WORK/link.pem"; hk_run
-    grep -q "Refusing to load" "$HK_WORK/log.txt" || hk_fail "symlinked host key was not refused"
+    grep -q "Listening on port" "$HK_WORK/log.txt" || hk_fail "symlinked host key was refused"
 
-    # non-regular file (FIFO) must be refused. Skip where mkfifo is unavailable.
+    # a key in a world-writable directory must load; sshd walks no parent chain
+    mkdir -p "$HK_WORK/wwdir" && chmod 777 "$HK_WORK/wwdir"
+    cp "$HK_WORK/hostkey.pem" "$HK_WORK/wwdir/hostkey.pem"
+    chmod 600 "$HK_WORK/wwdir/hostkey.pem"
+    hk_cfg "$HK_WORK/wwdir/hostkey.pem"; hk_run
+    grep -q "Listening on port" "$HK_WORK/log.txt" || hk_fail "host key under a world-writable dir was refused"
+
+    # non-regular file (FIFO) must be refused rather than stall the daemon.
+    # Skip where mkfifo is unavailable.
     if mkfifo "$HK_WORK/fifo.pem" 2>/dev/null; then
         hk_cfg "$HK_WORK/fifo.pem"; hk_run
         grep -q "Refusing to load" "$HK_WORK/log.txt" || hk_fail "FIFO host key was not refused"
     fi
 
-    # group/world-writable file must be refused
+    # group/world-writable file owned by the daemon must be refused
     cp "$HK_KEY" "$HK_WORK/ww.pem"; chmod 666 "$HK_WORK/ww.pem"
     hk_cfg "$HK_WORK/ww.pem"; hk_run
-    grep -q "Refusing to load" "$HK_WORK/log.txt" || hk_fail "world-writable host key was not refused"
+    grep -q "are too open" "$HK_WORK/log.txt" || hk_fail "world-writable host key was not refused"
 
-    # Owner-rejection branch (st_uid != 0 && st_uid != geteuid()): the primary
-    # substitution vector. The mode-600 host key is owned by the invoking user,
-    # so launching the daemon as root (euid 0) must refuse it. Needs a non-root
-    # invoker and non-interactive sudo; skip the sub-case otherwise.
+    # sshd does not police a key owned by another user: the mode-600 key belongs
+    # to the invoking user, so a root daemon (euid 0) must still load it. Needs a
+    # non-root invoker and non-interactive sudo.
     if [ "`id -u`" -ne 0 ] && sudo -n true 2>/dev/null; then
         hk_cfg "$HK_WORK/hostkey.pem"; hk_run sudo
-        grep -q "Refusing to load" "$HK_WORK/log.txt" || hk_fail "non-root-owned host key was not refused under root daemon"
+        grep -q "Listening on port" "$HK_WORK/log.txt" || hk_fail "non-root-owned host key was refused under root daemon"
     fi
 
     rm -rf "$HK_WORK"
@@ -396,7 +391,7 @@ else
         run_test "sshd_permitroot_test.sh"
         run_test "sshd_permitroot_prohibit_password.sh"
         run_test "sshd_permitroot_forced_cmd.sh"
-        run_strictmodes_negative_test
+        run_hostkey_mode_negative_test
         run_test "sshd_login_grace_test.sh"
         run_test "sshd_privdrop_fail_test.sh"
     else
