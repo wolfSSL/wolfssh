@@ -572,7 +572,7 @@ static THREAD_RET readPeer(void* in)
     int ret = 0;
     int stop = 0;
     int fd = wolfSSH_get_fd(args->ssh);
-    word32 bytes;
+    int bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 #endif
@@ -619,6 +619,20 @@ static THREAD_RET readPeer(void* in)
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         bytes = select(fd + 1, &readSet, NULL, &errSet, &timeout);
+        if (bytes < 0) {
+        #ifdef USE_WINDOWS_API
+            if (WSAGetLastError() == WSAEINTR)
+                continue;
+            fprintf(stderr, "select on peer socket failed, error %d\n",
+                    WSAGetLastError());
+        #else
+            /* the SIGWINCH handler interrupts this select */
+            if (errno == EINTR)
+                continue;
+            perror("select on peer socket failed ");
+        #endif
+            break;
+        }
         if (bytes == 0) {
             /* Nothing new on the socket, but a flush in the send thread may
              * have already taken the peer's reply off it, so run the read
