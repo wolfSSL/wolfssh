@@ -74,9 +74,8 @@
     #include <sys/select.h>
 #endif
 
-#ifndef WOLFSSH_NO_TIMESTAMP
-    #include <time.h>
-#endif
+#include <errno.h>
+#include <time.h>
 
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
@@ -303,14 +302,21 @@ static void PauseForSocket(void)
 }
 
 
+/* Seconds to keep pushing a queued packet at a peer that isn't reading. A
+ * busy peer gets time to come back, a stalled one doesn't hang the client. */
+#define FLUSH_QUEUE_TIMEOUT 10
+
+
 /* A packet the socket wasn't ready for stays queued in the session, and the
  * send that queued it still reports the data as taken. The peer can't answer
  * a message it never received, so push the queue out here rather than go
  * back to waiting on the peer. The lock is NULL when no other thread is
- * using the session. */
+ * using the session. Returns WS_WANT_WRITE with the packet still queued when
+ * the peer stops reading for the whole timeout. */
 static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
 {
     int ret;
+    time_t deadline = WTIME(NULL) + FLUSH_QUEUE_TIMEOUT;
 
     do {
         PauseForSocket();
@@ -326,11 +332,13 @@ static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
         if (lock != NULL) {
             wc_UnLockMutex(lock);
         }
-    } while (ret == WS_WANT_WRITE);
+    } while (ret == WS_WANT_WRITE && WTIME(NULL) < deadline);
 
     /* The queue is out. Whatever the worker made of the peer's end of the
-     * conversation is for the reader to sort out. */
-    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
+     * conversation is for the reader to sort out. A rekey started on the way
+     * through is the reader's as well, the send itself went out. */
+    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+            || ret == WS_REKEYING) {
         ret = WS_SUCCESS;
     }
 
@@ -1321,6 +1329,11 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             /* The close messages are queued and the threads are done, no
              * one else is going to send them. */
             ret = FlushQueuedSend(ssh, NULL);
+            if (ret == WS_WANT_WRITE) {
+                /* The peer stopped reading. The socket closes next, there is
+                 * nothing left to push the messages out with. */
+                ret = WS_SUCCESS;
+            }
         }
 #endif
 
