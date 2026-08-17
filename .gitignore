@@ -96,6 +96,7 @@ client.plist
 
 # misc
 .DS_Store
+compile_commands.json
 
 # Visual Studio Code Workspace Files
 *.vscode
