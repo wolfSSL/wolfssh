@@ -1308,14 +1308,18 @@ static void test_wolfSSH_CTX_SetWindowPacketSize(void)
             wolfSSH_CTX_SetWindowPacketSize(ctx,
                     WINDOW_SZ_UPPER_BOUND + 1, 0));
 
-    /* maxPacketSz exactly at transport limit: must succeed and be stored. */
+    /* maxPacketSz exactly at the channel limit: must succeed and be stored. */
     AssertIntEQ(WS_SUCCESS,
-            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ));
-    AssertIntEQ(MAX_PACKET_SZ, (int)ctx->maxPacketSz);
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_CHANNEL_PACKET_SZ));
+    AssertIntEQ(MAX_CHANNEL_PACKET_SZ, (int)ctx->maxPacketSz);
 
-    /* maxPacketSz one above transport limit: must fail. */
+    /* maxPacketSz one above the channel limit: must fail. */
     AssertIntEQ(WS_BAD_ARGUMENT,
-            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ + 1));
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_CHANNEL_PACKET_SZ + 1));
+
+    /* The transport limit itself does not fit once framing is added. */
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ));
 
     /* Both valid non-zero values: must succeed and be stored. */
     AssertIntEQ(WS_SUCCESS,

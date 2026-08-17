@@ -3314,7 +3314,7 @@ int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     if (windowSz == 0)
         windowSz = DEFAULT_WINDOW_SZ;
-    if (maxPacketSz != 0 && maxPacketSz > MAX_PACKET_SZ)
+    if (maxPacketSz != 0 && maxPacketSz > MAX_CHANNEL_PACKET_SZ)
         return WS_BAD_ARGUMENT;
     if (maxPacketSz == 0)
         maxPacketSz = DEFAULT_MAX_PACKET_SZ;
