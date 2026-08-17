@@ -1348,6 +1348,279 @@ static int test_GetUserConfMatchNoInherit(void)
 }
 
 
+/* Builds "global, Match User alice, Match Group nopw" or the reverse order,
+ * depending on 'userFirst'. Only the group block sets PasswordAuthentication;
+ * only the user block sets AuthorizedKeysFile. Returns the head on success. */
+static WOLFSSHD_CONFIG* BuildOverlapConfig(int userFirst)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        return NULL;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication yes");
+
+    if (userFirst) {
+        if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+        if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/alice_keys");
+        if (ret == WS_SUCCESS) ret = PCL("Match Group nopw");
+        if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+    }
+    else {
+        if (ret == WS_SUCCESS) ret = PCL("Match Group nopw");
+        if (ret == WS_SUCCESS) ret = PCL("PasswordAuthentication no");
+        if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+        if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/alice_keys");
+    }
+#undef PCL
+
+    if (ret != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+    }
+    return head;
+}
+
+
+/* OpenSSH resolves sshd_config one keyword at a time: "For each keyword, the
+ * first obtained value will be used", scanning every Match block that applies
+ * to the connection. A user who matches two blocks therefore gets the union of
+ * what those blocks set, and the result does not depend on the order the blocks
+ * appear in.
+ *
+ * This locks in that behaviour for wolfSSHD_GetUserConf: a restriction named in
+ * only one of the matching blocks must survive, whichever block that is, and a
+ * keyword named in both must resolve to the value from the earlier block.
+ * Returning a single whole block drops half of the administrator's policy. */
+static int test_GetUserConfMatchOverlapCompose(void)
+{
+    int ret = WS_SUCCESS;
+    int fail = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head = NULL;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match;
+    const char* keys;
+    const char* cmd;
+    const char* grps[1];
+
+    /* alice is in nopw, so both blocks apply to her. The group block's
+     * PasswordAuthentication no must hold even though the user block, which
+     * never mentions the keyword, also matches. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: later Match Group restriction, user block "
+            "first.");
+        head = BuildOverlapConfig(1);
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            grps[0] = "nopw";
+            match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match == NULL) {
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPwAuth(match) != 0) {
+                Log(" [dropped PasswordAuthentication no]");
+                ret = WS_FATAL_ERROR;
+            }
+            /* the user block's own setting must survive too */
+            if (ret == WS_SUCCESS) {
+                keys = wolfSSHD_ConfigGetAuthKeysFile(match);
+                if (keys == NULL || XSTRCMP(keys, ".ssh/alice_keys") != 0) {
+                    Log(" [dropped AuthorizedKeysFile]");
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+        if (ret != WS_SUCCESS) {
+            /* keep going so every scenario gets reported, not just the
+             * first one that fails */
+            fail = ret;
+            ret  = WS_SUCCESS;
+        }
+    }
+
+    /* same two blocks, opposite order, same answer */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: same blocks, group block first.");
+        head = BuildOverlapConfig(0);
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            grps[0] = "nopw";
+            match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match == NULL) {
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPwAuth(match) != 0) {
+                Log(" [dropped PasswordAuthentication no]");
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS) {
+                keys = wolfSSHD_ConfigGetAuthKeysFile(match);
+                if (keys == NULL || XSTRCMP(keys, ".ssh/alice_keys") != 0) {
+                    Log(" [dropped AuthorizedKeysFile]");
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+        if (ret != WS_SUCCESS) {
+            /* keep going so every scenario gets reported, not just the
+             * first one that fails */
+            fail = ret;
+            ret  = WS_SUCCESS;
+        }
+    }
+
+    /* a user who matches only one of the two blocks is unaffected: nopw's
+     * restriction must not leak to a user outside the group */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: single matching block is unchanged.");
+        head = BuildOverlapConfig(1);
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            grps[0] = "users";
+            match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match == NULL || wolfSSHD_ConfigGetPwAuth(match) != 1) {
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS) {
+                keys = wolfSSHD_ConfigGetAuthKeysFile(match);
+                if (keys == NULL || XSTRCMP(keys, ".ssh/alice_keys") != 0)
+                    ret = WS_FATAL_ERROR;
+            }
+        }
+
+        /* and a user who matches neither keeps the global values */
+        if (ret == WS_SUCCESS) {
+            grps[0] = "users";
+            match = wolfSSHD_GetUserConf(head, "bob", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match != head || wolfSSHD_ConfigGetPwAuth(match) != 1) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+        if (ret != WS_SUCCESS) {
+            /* keep going so every scenario gets reported, not just the
+             * first one that fails */
+            fail = ret;
+            ret  = WS_SUCCESS;
+        }
+    }
+
+    /* ForceCommand resolves through the same lookup, so a confinement set only
+     * in the group block must apply to a user whose own block matched first */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: ForceCommand from the later group block.");
+        head = wolfSSHD_ConfigNew(NULL);
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+        if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+        if (ret == WS_SUCCESS) ret = PCL("AuthorizedKeysFile .ssh/alice_keys");
+        if (ret == WS_SUCCESS) ret = PCL("Match Group jailed");
+        if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+#undef PCL
+
+        if (ret == WS_SUCCESS) {
+            grps[0] = "jailed";
+            match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match == NULL) {
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS) {
+                cmd = wolfSSHD_ConfigGetForcedCmd(match);
+                if (cmd == NULL || XSTRCMP(cmd, "internal-sftp") != 0) {
+                    Log(" [dropped ForceCommand, resolved to %s]",
+                        (cmd == NULL) ? "none" : cmd);
+                    ret = WS_FATAL_ERROR;
+                }
+            }
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+        if (ret != WS_SUCCESS) {
+            /* keep going so every scenario gets reported, not just the
+             * first one that fails */
+            fail = ret;
+            ret  = WS_SUCCESS;
+        }
+    }
+
+    /* when both matching blocks set the same keyword the earlier one wins,
+     * which is the "first obtained value" half of the rule */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: earlier block wins a direct conflict.");
+        head = wolfSSHD_ConfigNew(NULL);
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+        if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/global");
+        if (ret == WS_SUCCESS) ret = PCL("Match User alice");
+        if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/alice");
+        if (ret == WS_SUCCESS) ret = PCL("Match Group jailed");
+        if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+#undef PCL
+
+        if (ret == WS_SUCCESS) {
+            grps[0] = "jailed";
+            match = wolfSSHD_GetUserConf(head, "alice", grps, 1, NULL, NULL,
+                                         NULL, NULL, NULL);
+            if (match == NULL) {
+                ret = WS_FATAL_ERROR;
+            }
+            if (ret == WS_SUCCESS) {
+                cmd = wolfSSHD_ConfigGetForcedCmd(match);
+                if (cmd == NULL || XSTRCMP(cmd, "/bin/alice") != 0)
+                    ret = WS_FATAL_ERROR;
+            }
+        }
+        Log((ret == WS_SUCCESS) ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+        head = NULL;
+        if (ret != WS_SUCCESS) {
+            /* keep going so every scenario gets reported, not just the
+             * first one that fails */
+            fail = ret;
+            ret  = WS_SUCCESS;
+        }
+    }
+
+    return (fail != WS_SUCCESS) ? fail : ret;
+}
+
+
 /* A Match block inside an Include'd file must survive a later Match block in
  * the including file, and the include must not export its Match scope: a
  * directive after the Include belongs to the global config, the way OpenSSH
@@ -6245,6 +6518,11 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_CheckPublicKeyUnixOrdering),
 #endif
 #endif
+    /* Runs last: the first failing case stops the run, and this one is a known
+     * gap. wolfSSHD_GetUserConf returns the first matching Match block whole
+     * instead of composing per keyword, so a setting made only in a later
+     * matching block is dropped. */
+    TEST_DECL(test_GetUserConfMatchOverlapCompose),
 };
 
 int main(int argc, char** argv)
