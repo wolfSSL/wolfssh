@@ -11611,6 +11611,23 @@ static int ChannelRequestIs(const char* type, word32 typeSz, const char* name)
 }
 
 
+#ifdef WOLFSSH_TERM
+/* Store the terminal size a pty-req or window-change carried. All four
+ * are taken as sent, zero included, as others do; a zero is how a peer
+ * reports a dimension it has no value for. The clamp is for the
+ * consumers, which copy these into the unsigned short fields of a
+ * struct winsize, and for termResizeCb, which sees them first. */
+static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
+        word32 widthPixels, word32 heightPixels)
+{
+    ssh->widthChar = min(widthChar, TERMINAL_DIMENSION_MAX);
+    ssh->heightRows = min(heightRows, TERMINAL_DIMENSION_MAX);
+    ssh->widthPixels = min(widthPixels, TERMINAL_DIMENSION_MAX);
+    ssh->heightPixels = min(heightPixels, TERMINAL_DIMENSION_MAX);
+}
+#endif /* WOLFSSH_TERM */
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -11698,23 +11715,26 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
             char term[32];
             word32 termSz;
+            word32 widthChar, heightRows, widthPixels, heightPixels;
 
             channel->ptyReq = 1; /* received a pty request */
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->widthChar, buf, len, &begin);
+                ret = GetUint32(&widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->heightRows, buf, len, &begin);
+                ret = GetUint32(&heightRows, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->widthPixels, buf, len, &begin);
+                ret = GetUint32(&widthPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->heightPixels, buf, len, &begin);
+                ret = GetUint32(&heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetStringAlloc(ssh->ctx->heap,
                         (char**)&ssh->modes, &ssh->modesSz,
                         buf, len, &begin);
             if (ret == WS_SUCCESS) {
+                SetTerminalSize(ssh, widthChar, heightRows,
+                        widthPixels, heightPixels);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", ssh->heightRows);
@@ -11746,17 +11766,16 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 ret = GetUint32(&heightPixels, buf, len, &begin);
 
             if (ret == WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
-                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
-                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
-                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                ssh->widthChar = widthChar;
-                ssh->heightRows = heightRows;
-                ssh->widthPixels = widthPixels;
-                ssh->heightPixels = heightPixels;
+                SetTerminalSize(ssh, widthChar, heightRows,
+                        widthPixels, heightPixels);
+                WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
+                WLOG(WS_LOG_DEBUG, "  heightRows = %u", ssh->heightRows);
+                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", ssh->widthPixels);
+                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", ssh->heightPixels);
                 if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
-                            widthPixels, heightPixels,
+                    if (ssh->termResizeCb(ssh,
+                            ssh->widthChar, ssh->heightRows,
+                            ssh->widthPixels, ssh->heightPixels,
                             ssh->termCtx) != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
