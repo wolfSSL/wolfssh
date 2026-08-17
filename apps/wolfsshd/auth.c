@@ -2331,6 +2331,7 @@ static int DoCheckUser(const char* usr, WOLFSSHD_AUTH* auth, int isRoot)
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Login as root not permitted");
             ret = WOLFSSH_USERAUTH_REJECTED;
         }
+        wolfSSHD_ConfigFree(usrConf);
     }
 
     if (ret == WOLFSSH_USERAUTH_SUCCESS) {
@@ -2821,6 +2822,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     }
 
 
+    wolfSSHD_ConfigFree(usrConf);
+
     if (wolfSSHD_AuthReducePermissions(authCtx) != WS_SUCCESS) {
         /* stop everything if not able to reduce permissions level */
         exit(1);
@@ -2908,6 +2911,7 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
     }
     else {
         ret = wolfSSHD_GetUserAuthTypes(usrConf);
+        wolfSSHD_ConfigFree(usrConf);
     }
 
     return ret;

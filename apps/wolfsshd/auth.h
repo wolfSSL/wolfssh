@@ -93,6 +93,8 @@ const char* wolfSSHD_AuthMergeForcedCmd(const char* configCmd,
 int wolfSSHD_AuthSetCertForcedCmd(WOLFSSHD_AUTH* auth, const byte* cmd,
         word32 cmdSz);
 #endif
+/* Wraps wolfSSHD_GetUserConf with this user's resolved group set. The result is
+ * a newly allocated config the caller frees with wolfSSHD_ConfigFree(). */
 WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
         const char* usr, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
