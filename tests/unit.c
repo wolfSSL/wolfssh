@@ -1267,6 +1267,140 @@ static word32 BuildMacTestPacketPrefix(byte msgId, byte* out, word32 outSz)
 #endif
 
 
+/* The test below drives a server-side session. With NO_WOLFSSH_SERVER the
+ * message filter has no server branch, so every message on such a session is
+ * refused and the test cannot run. */
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_WOLFSSH_SERVER)
+
+/* Swallow the SSH_MSG_UNIMPLEMENTED that DoPacket sends back, so its send
+ * does not decide the result of the test. */
+static int SinkIoSendUnimplemented(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    return (int)sz;
+}
+
+/* Two back-to-back packets in one buffer. DoPacket() is driven directly:
+ * DoReceive() force-frees the buffer after every packet, zeroing the cursor
+ * under test. */
+static const byte s_unimplStream[] = {
+    /* unimplemented message, 8 bytes of payload that no handler reads */
+    0x00, 0x00, 0x00, 0x10,                         /* packetSz = 16   */
+    0x06,                                           /* padSz = 6       */
+    0x0A,                                           /* msgId = 10      */
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, /* payload         */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* padding         */
+    /* MSGID_IGNORE carrying a zero-length string */
+    0x00, 0x00, 0x00, 0x0C,                         /* packetSz = 12   */
+    0x06,                                           /* padSz = 6       */
+    0x02,                                           /* msgId = IGNORE  */
+    0x00, 0x00, 0x00, 0x00,                         /* string, len 0   */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00              /* padding         */
+};
+
+/* Message ID 10 is unassigned and always allowed, so it reaches DoPacket's
+ * default case, which reads none of its 8 payload bytes. DoPacket must step
+ * over them itself. Checked by the cursor it leaves, and by the length peeked
+ * there being the next packet's. Framing from payloadIdx lands 8 short. */
+static int test_DoPacket_UnimplementedConsumesPayload(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    int ret;
+    int i;
+    /* packetSz of each packet in s_unimplStream, in order */
+    static const word32 pktSizes[] = { 16, 12 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -220;
+    wolfSSH_SetIOSend(ctx, SinkIoSendUnimplemented);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -221; goto done; }
+
+    /* Past user auth, so the connection-layer message IDs are allowed. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+    ssh->peerEncryptId = ID_NONE;
+    ssh->peerMacId = ID_NONE;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
+    ssh->peerMacSz = 0;
+    ssh->peerSeq = 0;
+    ssh->error = 0;
+
+    /* Both packets in the buffer at once. */
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    if (GrowBuffer(&ssh->inputBuffer, (word32)sizeof(s_unimplStream))
+            != WS_SUCCESS) {
+        result = -222;
+        goto done;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, s_unimplStream, sizeof(s_unimplStream));
+    ssh->inputBuffer.length = (word32)sizeof(s_unimplStream);
+    ssh->inputBuffer.idx = 0;
+
+    for (i = 0; i < (int)(sizeof(pktSizes) / sizeof(pktSizes[0])); i++) {
+        word32 pktStart = ssh->inputBuffer.idx;
+        const byte* lenField = ssh->inputBuffer.buffer + pktStart;
+        word32 curSz;
+        byte bufferConsumed = 0;
+
+        /* The peek DoReceive does; a short cursor reads leftover payload. */
+        curSz = ((word32)lenField[0] << 24) | ((word32)lenField[1] << 16)
+                | ((word32)lenField[2] << 8) | (word32)lenField[3];
+        if (curSz != pktSizes[i]) {
+            printf("DoPacket[%d]: packetSz=%u at cursor %u, expected %u\n",
+                    i, curSz, pktStart, pktSizes[i]);
+            result = -223;
+            goto done;
+        }
+        ssh->curSz = curSz;
+
+        ret = wolfSSH_TestDoPacket(ssh, &bufferConsumed);
+        if (ret != WS_SUCCESS) {
+            printf("DoPacket[%d]: ret=%d, error=%d\n", i, ret, ssh->error);
+            result = -224;
+            goto done;
+        }
+        if (!bufferConsumed) {
+            printf("DoPacket[%d]: packet not consumed\n", i);
+            result = -225;
+            goto done;
+        }
+        /* The whole packet, no more and no less. */
+        if (ssh->inputBuffer.idx != pktStart + UINT32_SZ + curSz) {
+            printf("DoPacket[%d]: cursor at %u, expected %u\n", i,
+                    ssh->inputBuffer.idx, pktStart + UINT32_SZ + curSz);
+            result = -226;
+            goto done;
+        }
+        if (ssh->peerSeq != (word32)(i + 1)) {
+            printf("DoPacket[%d]: peerSeq=%u, expected %d\n", i,
+                    ssh->peerSeq, i + 1);
+            result = -227;
+            goto done;
+        }
+    }
+
+    /* Buffer exactly spent. */
+    if (ssh->inputBuffer.idx != (word32)sizeof(s_unimplStream)) {
+        printf("DoPacket: %u of %u bytes consumed\n", ssh->inputBuffer.idx,
+                (word32)sizeof(s_unimplStream));
+        result = -228;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !NO_WOLFSSH_SERVER */
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \
      !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
@@ -16124,6 +16258,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_GetMpint();
     printf("GetMpint: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_WOLFSSH_SERVER)
+    unitResult = test_DoPacket_UnimplementedConsumesPayload();
+    printf("DoPacketUnimplemented: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 
