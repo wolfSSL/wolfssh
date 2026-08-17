@@ -299,6 +299,7 @@ static void test_wolfSSH_SetChannelType(void)
     const byte sub1[] = "sftp";
     const byte sub2[] = "a-longer-subsystem-name";
     byte* prevName;
+    byte* maxName;
 
     AssertIntNE(WS_SUCCESS, wolfSSH_SetChannelType(NULL,
                 WOLFSSH_SESSION_SHELL, NULL, 0));
@@ -311,11 +312,19 @@ static void test_wolfSSH_SetChannelType(void)
     AssertNull(ssh->channelName);
     AssertIntEQ(0, ssh->channelNameSz);
 
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    /* subsystem carries a required name string, so with none stored and
+     * none given the request would go out without one */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, NULL, 0));
     AssertNull(ssh->channelName);
 
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    /* likewise for a size with no name behind it */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, NULL, 4));
+    AssertNull(ssh->channelName);
+
+    /* an oversized name is reported, not silently dropped */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertNull(ssh->channelName);
 
@@ -335,7 +344,7 @@ static void test_wolfSSH_SetChannelType(void)
     AssertIntEQ(1, ssh->channelName == prevName);
 
     /* a rejected (oversize) name must leave the previous buffer intact */
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertIntEQ(1, ssh->channelName == prevName);
     AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
@@ -346,6 +355,19 @@ static void test_wolfSSH_SetChannelType(void)
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, 0));
     AssertIntEQ(1, ssh->channelName == prevName);
     AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+
+    /* the largest name the limit still admits is stored, pinning the
+     * other side of the boundary the oversize checks above cover */
+    AssertNotNull(maxName = (byte*)malloc(WOLFSSH_MAX_CHN_NAMESZ - 1));
+    memset(maxName, 'a', WOLFSSH_MAX_CHN_NAMESZ - 1);
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, maxName,
+                WOLFSSH_MAX_CHN_NAMESZ - 1));
+    AssertIntEQ(WOLFSSH_MAX_CHN_NAMESZ - 1, (int)ssh->channelNameSz);
+    AssertIntEQ(0, memcmp(ssh->channelName, maxName,
+                WOLFSSH_MAX_CHN_NAMESZ - 1));
+    AssertIntEQ(0, ssh->channelName[ssh->channelNameSz]); /* NUL terminated */
+    free(maxName);
 
     /* repeated set frees the previous buffer before replacing it */
     AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
