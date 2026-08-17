@@ -36,7 +36,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
+#include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssh/port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
@@ -5815,6 +5817,209 @@ static void TestAppendKeyToFile(void)
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
+#ifdef WOLFSSL_BASE64_ENCODE
+
+static void WriteKnownHosts(const char* path, const char* contents)
+{
+    WFILE* f = WBADFILE;
+    word32 sz = (word32)WSTRLEN(contents);
+
+    AssertIntEQ(WFOPEN(NULL, &f, path, "wb"), 0);
+    AssertTrue(f != WBADFILE);
+    /* With WOLFSSH_NO_ABORT the asserts above do not stop the run, so return
+     * rather than write through a handle the open never produced. */
+    if (f == WBADFILE) {
+        return;
+    }
+    AssertIntEQ((word32)WFWRITE(NULL, contents, 1, sz, f), sz);
+    AssertIntEQ(WFCLOSE(NULL, f), 0);
+}
+
+
+/* Every known_hosts rejection returns -1: a known host with the wrong key, and
+ * an unrecognized host whose "add it?" prompt reads EOF. Only the message
+ * tells them apart, so run the check with stdout captured and let the caller
+ * assert on what was printed. Returns the check's own return value. */
+static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
+        char* targetName, char* out, word32 outSz)
+{
+    char capPath[64];
+    int savedStdout, capFd, ret;
+    long readSz = 0;
+    WFILE* f = WBADFILE;
+
+    WSNPRINTF(capPath, sizeof(capPath), "wolfssh_kh_out_%d.tmp", (int)getpid());
+    out[0] = 0;
+
+    capFd = open(capPath, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    AssertTrue(capFd >= 0);
+    savedStdout = dup(STDOUT_FILENO);
+    AssertTrue(savedStdout >= 0);
+    fflush(stdout);
+    AssertTrue(dup2(capFd, STDOUT_FILENO) >= 0);
+
+    ret = ClientPublicKeyCheck(pubKey, pubKeySz, targetName);
+
+    /* stdout is a file here, so it is fully buffered; flush before restoring */
+    fflush(stdout);
+    AssertTrue(dup2(savedStdout, STDOUT_FILENO) >= 0);
+    close(savedStdout);
+    close(capFd);
+
+    if (WFOPEN(NULL, &f, capPath, "rb") == 0 && f != WBADFILE) {
+        readSz = (long)WFREAD(NULL, out, 1, outSz - 1, f);
+        WFCLOSE(NULL, f);
+    }
+    if (readSz < 0) {
+        readSz = 0;
+    }
+    out[readSz] = 0;
+    (void)remove(capPath);
+
+    return ret;
+}
+
+
+/* known_hosts is a text file and POSIX lets its last line end without a
+ * newline. The parser used to nul out the final byte of the file, which ate
+ * the last base64 character of the last entry and made that host read as
+ * unknown. Match the last entry with a trailing newline, without one, and
+ * with CRLF line endings, then check that a wrong key on that same last
+ * entry is still rejected. */
+static void TestKnownHostsLastEntry(void)
+{
+    /* string("ssh-rsa"), then a zero certificate count so the RFC 6187 parse
+     * declines this blob, then filler. Only the name and the base64 of the
+     * whole blob matter to the known_hosts search. */
+    static const byte pubKey[] = {
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h', '-', 'r', 's', 'a',
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04
+    };
+    static const struct {
+        const char* sep;
+        const char* tail;
+        const char* label;
+    } cases[] = {
+        { "\n",   "\n",   "trailing newline" },
+        { "\n",   "",     "no trailing newline" },
+        { "\r\n", "\r\n", "CRLF endings" },
+    };
+    char targetName[] = "last.example.com";
+    char homeDir[64];
+    char sshDir[80];
+    char hostsPath[112];
+    char encoded[64];
+    char wrongKey[64];
+    char contents[256];
+    char captured[512];
+    char* savedHome = NULL;
+    const char* home;
+    word32 encodedSz = (word32)sizeof(encoded);
+    int savedStdin, devNull;
+    unsigned int i;
+
+    WSNPRINTF(homeDir, sizeof(homeDir), "wolfssh_kh_%d.tmp", (int)getpid());
+    WSNPRINTF(sshDir, sizeof(sshDir), "%s/.ssh", homeDir);
+    WSNPRINTF(hostsPath, sizeof(hostsPath), "%s/known_hosts", sshDir);
+
+    AssertIntEQ(Base64_Encode_NoNl(pubKey, (word32)sizeof(pubKey),
+                (byte*)encoded, &encodedSz), 0);
+    AssertTrue(encodedSz < sizeof(encoded));
+    encoded[encodedSz] = 0;
+
+    /* Same length and alphabet, different key, for the rejection case. */
+    WMEMCPY(wrongKey, encoded, encodedSz + 1);
+    wrongKey[0] = (encoded[0] == 'A') ? 'B' : 'A';
+
+    home = getenv("HOME");
+    if (home != NULL) {
+        savedHome = (char*)WMALLOC(WSTRLEN(home) + 1, NULL, 0);
+        AssertNotNull(savedHome);
+        WSTRCPY(savedHome, home);
+    }
+
+    /* The name only varies by pid, so an aborted run can leave the tree
+     * behind and make the mkdir below fail. Clear it first. */
+    (void)remove(hostsPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+
+    /* Plain mkdir/rmdir rather than WMKDIR/WRMDIR: those only exist in
+     * builds that compile the SCP or SFTP file system layer. */
+    AssertIntEQ(mkdir(homeDir, 0700), 0);
+    AssertIntEQ(mkdir(sshDir, 0700), 0);
+    AssertIntEQ(setenv("HOME", homeDir, 1), 0);
+
+    /* A regression falls through to the "add it to known hosts?" prompt, so
+     * point stdin at EOF: the test then fails rather than waiting forever.
+     * Check each step, otherwise a failure here leaves the prompt reading
+     * the real stdin. */
+    savedStdin = dup(STDIN_FILENO);
+    AssertTrue(savedStdin >= 0);
+    devNull = open("/dev/null", O_RDONLY);
+    AssertTrue(devNull >= 0);
+    AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
+
+    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        printf("    known_hosts with %s.\n", cases[i].label);
+
+        /* An entry for a different host goes first, so the match lands on the
+         * last line, the one the terminator used to overwrite. */
+        WSNPRINTF(contents, sizeof(contents),
+                "other.example.com ssh-rsa AAAA%s%s ssh-rsa %s%s",
+                cases[i].sep, targetName, encoded, cases[i].tail);
+        WriteKnownHosts(hostsPath, contents);
+        AssertIntEQ(ClientPublicKeyCheck(pubKey, (word32)sizeof(pubKey),
+                    targetName), 0);
+
+        /* The same host listed with a different key is a known host with an
+         * unknown key, which must be rejected rather than prompted for. A
+         * regression that never parses the last entry also returns non-zero,
+         * by prompting and reading EOF, so require the message that only the
+         * known-host-wrong-key path prints and reject the prompt text. */
+        WSNPRINTF(contents, sizeof(contents),
+                "other.example.com ssh-rsa AAAA%s%s ssh-rsa %s%s",
+                cases[i].sep, targetName, wrongKey, cases[i].tail);
+        WriteKnownHosts(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(pubKey, (word32)sizeof(pubKey),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "That server is known, but that key is not."));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* The CR strip makes a non-matching host's key compare equal under
+         * CRLF, which is the only way the "matches other servers" branch is
+         * reached with those endings. Same key on both lines: the first
+         * reports the other server, the last one still matches the target. */
+        WSNPRINTF(contents, sizeof(contents),
+                "other.example.com ssh-rsa %s%s%s ssh-rsa %s%s",
+                encoded, cases[i].sep, targetName, encoded, cases[i].tail);
+        WriteKnownHosts(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(pubKey, (word32)sizeof(pubKey),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNotNull(WSTRSTR(captured, "This key matches other servers:"));
+        AssertNotNull(WSTRSTR(captured, "other.example.com"));
+    }
+
+    AssertTrue(dup2(savedStdin, STDIN_FILENO) >= 0);
+    close(devNull);
+    close(savedStdin);
+
+    if (savedHome != NULL) {
+        AssertIntEQ(setenv("HOME", savedHome, 1), 0);
+        WFREE(savedHome, NULL, 0);
+    }
+    else {
+        unsetenv("HOME");
+    }
+
+    (void)remove(hostsPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+}
+#endif /* WOLFSSL_BASE64_ENCODE */
+
+
 int main(int argc, char** argv)
 {
     WOLFSSH_CTX* ctx;
@@ -5846,6 +6051,9 @@ int main(int argc, char** argv)
     TestClientParseDestination();
 #ifdef WOLFSSH_TEST_INTERNAL
     TestAppendKeyToFile();
+#endif
+#ifdef WOLFSSL_BASE64_ENCODE
+    TestKnownHostsLastEntry();
 #endif
     TestAuthMessageBlockedDuringKeying(ssh);
     TestUserauthFailureDuringKeying(ssh);

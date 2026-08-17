@@ -417,6 +417,14 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         lineCount++;
         line = WSTRSEP(&cursor, "\n");
         if (line != NULL && *line) {
+            /* Non-empty was checked above, so the last byte is a real one. */
+            size_t lineSz = WSTRLEN(line);
+
+            /* Remove trailing CR if present for comparison below */
+            if (line[lineSz - 1] == '\r') {
+                line[lineSz - 1] = 0;
+            }
+
             name = WSTRSEP(&line, " ");
             keyType = WSTRSEP(&line, " ");
             key = WSTRSEP(&line, " ");
