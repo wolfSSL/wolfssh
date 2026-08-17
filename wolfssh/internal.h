@@ -572,6 +572,7 @@ enum NameIdType {
 #define TERMINAL_MODES_MAX_SZ 4096
 #define TERMINAL_WIDTH_DEFAULT 80 /* used when there is no terminal */
 #define TERMINAL_HEIGHT_DEFAULT 24
+#define TERMINAL_DIMENSION_MAX 65535 /* what struct winsize can hold */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
 #define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)

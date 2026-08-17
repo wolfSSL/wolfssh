@@ -7056,6 +7056,82 @@ static int test_DoChannelRequest(void)
             goto done;
         }
     }
+
+    /* Dimensions are stored as sent, zero included, as others do.
+     * Oversized ones are clamped to what a struct winsize holds. */
+    {
+        static byte payWindowChange[] = {
+            0x00,0x00,0x00,0x00,                    /* channelId = 0        */
+            0x00,0x00,0x00,0x0D,                    /* typeSz = 13          */
+            0x77,0x69,0x6E,0x64,0x6F,0x77,0x2D,    /* "window-"            */
+            0x63,0x68,0x61,0x6E,0x67,0x65,         /* "change"             */
+            0x00,                                   /* wantReply = 0        */
+            0x00,0x00,0x00,0x00,                    /* widthChar            */
+            0x00,0x00,0x00,0x00,                    /* heightRows           */
+            0x00,0x00,0x00,0x00,                    /* widthPixels          */
+            0x00,0x00,0x00,0x00                     /* heightPixels         */
+        };
+        /* offsets of the four dimensions within the payload above */
+        const word32 wcOff = 22, hrOff = 26, wpOff = 30, hpOff = 34;
+        word32 idx2;
+        int    ret2;
+        int    d;
+        struct {
+            const char* label;
+            word32 widthChar;
+            word32 heightRows;
+            word32 widthPixels;
+            word32 heightPixels;
+            word32 expectWidth;
+            word32 expectRows;
+            word32 expectPixWidth;
+            word32 expectPixHeight;
+            int    errBase;
+        } dimCases[] = {
+            /* establish a known size first */
+            { "baseline",  120, 40, 960, 640,  120, 40, 960, 640,  -1600 },
+            /* zeros are stored as sent, not merged with the previous size */
+            { "zeroes",    0,   0,  0,   0,    0,   0,  0,   0,    -1602 },
+            /* including a zero in one dimension only */
+            { "zeroWidth", 0,   50, 0,   640,  0,   50, 0,   640,  -1604 },
+            /* out of range is clamped, not wrapped to zero */
+            { "wrapping",  0x10000, 0x10000, 0x10000, 0x10000,
+                           65535, 65535, 65535, 65535,           -1606 },
+            { "huge",      0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+                           65535, 65535, 65535, 65535,           -1608 }
+        };
+
+        for (d = 0; d < (int)(sizeof(dimCases) / sizeof(dimCases[0])); d++) {
+            PutU32BE(payWindowChange + wcOff, dimCases[d].widthChar);
+            PutU32BE(payWindowChange + hrOff, dimCases[d].heightRows);
+            PutU32BE(payWindowChange + wpOff, dimCases[d].widthPixels);
+            PutU32BE(payWindowChange + hpOff, dimCases[d].heightPixels);
+
+            idx2 = 0;
+            ret2 = wolfSSH_TestDoChannelRequest(ssh, payWindowChange,
+                    (word32)sizeof(payWindowChange), &idx2);
+            if (ret2 != WS_SUCCESS) {
+                printf("DoChannelRequest[%s]: ret=%d, expected=%d\n",
+                        dimCases[d].label, ret2, WS_SUCCESS);
+                result = dimCases[d].errBase;
+                goto done;
+            }
+            if (ssh->widthChar != dimCases[d].expectWidth ||
+                    ssh->heightRows != dimCases[d].expectRows ||
+                    ssh->widthPixels != dimCases[d].expectPixWidth ||
+                    ssh->heightPixels != dimCases[d].expectPixHeight) {
+                printf("DoChannelRequest[%s]: got %ux%u %ux%u, "
+                        "expected %ux%u %ux%u\n", dimCases[d].label,
+                        ssh->widthChar, ssh->heightRows,
+                        ssh->widthPixels, ssh->heightPixels,
+                        dimCases[d].expectWidth, dimCases[d].expectRows,
+                        dimCases[d].expectPixWidth,
+                        dimCases[d].expectPixHeight);
+                result = dimCases[d].errBase - 1;
+                goto done;
+            }
+        }
+    }
 #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
 
 done:
