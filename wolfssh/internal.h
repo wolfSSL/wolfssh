@@ -1810,6 +1810,8 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
     WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
+    WOLFSSH_API int wolfSSH_TestDoPacket(WOLFSSH* ssh,
+            byte* bufferConsumed);
     WOLFSSH_API int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestPassword(WOLFSSH* ssh,

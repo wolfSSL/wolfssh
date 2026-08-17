@@ -12106,7 +12106,9 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
 static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 {
     byte* buf = (byte*)ssh->inputBuffer.buffer;
-    word32 idx = ssh->inputBuffer.idx;
+    word32 pktStart = ssh->inputBuffer.idx;
+    word32 pktSz = ssh->curSz;
+    word32 idx = pktStart;
     word32 len = ssh->inputBuffer.length;
     word32 payloadSz;
     byte padSz;
@@ -12129,11 +12131,11 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     }
 
     /* check for underflow */
-    if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > ssh->curSz) {
+    if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > pktSz) {
         return WS_OVERFLOW_E;
     }
 
-    payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
+    payloadSz = pktSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
 
     msg = buf[idx++];
     /* At this point, payload starts at "buf + idx". */
@@ -12362,15 +12364,17 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 
     /* if the auth is still pending, don't discard the packet data */
     if (ret != WS_AUTH_PENDING) {
-        if (payloadSz > 0) {
-            idx += payloadIdx;
-            if (idx + padSz > len) {
-                WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-                ret = WS_BUFFER_E;
-            }
+        /* Step over the packet using the length DoReceive already validated,
+         * not payloadIdx. A handler is free to read less than the payload it
+         * was handed -- the default case above reads none of it -- and that
+         * must not decide where the next packet begins. pktStart and pktSz
+         * are both from entry, so a handler cannot move the frame either. */
+        idx = pktStart + UINT32_SZ + pktSz;
+        if (idx > len) {
+            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for packet.");
+            ret = WS_BUFFER_E;
+            idx = len;
         }
-
-        idx += padSz;
         ssh->inputBuffer.idx = idx;
         ssh->peerSeq++;
         ssh->rxMsgCount++;
@@ -22919,6 +22923,11 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 int wolfSSH_TestDoReceive(WOLFSSH* ssh)
 {
     return DoReceive(ssh);
+}
+
+int wolfSSH_TestDoPacket(WOLFSSH* ssh, byte* bufferConsumed)
+{
+    return DoPacket(ssh, bufferConsumed);
 }
 
 int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,
