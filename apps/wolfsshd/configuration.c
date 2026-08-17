@@ -96,6 +96,10 @@ struct WOLFSSHD_CONFIG {
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
     WOLFSSHD_CONFIG* next; /* next config in list */
     WOLFSSHD_CONFIG* head; /* global config the Match nodes branch from */
+    /* one bit per OPT_ tag, set when this node set that keyword itself rather
+     * than inheriting it. Drives the per keyword Match composition done by
+     * wolfSSHD_GetUserConf. */
+    word32 setMask;
     long  loginTimer;
     word16 port;
     byte usePrivilegeSeparation:2;
@@ -254,7 +258,8 @@ WOLFSSHD_CONFIG* wolfSSHD_ConfigNew(void* heap)
 
 /* on success return a newly create WOLFSSHD_CONFIG structure that has the
  * same values set as the input 'conf'. User and group match values are not
- * copied */
+ * copied, and neither is setMask: the copy inherits values but has set nothing
+ * of its own, which is what lets composition tell the two apart. */
 static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
 {
     int ret = WS_SUCCESS;
@@ -433,6 +438,17 @@ enum {
 enum {
     NUM_OPTIONS = 27
 };
+
+/* bit in WOLFSSHD_CONFIG.setMask recording that option 'o' was set on a node.
+ * setMask is a word32, so NUM_OPTIONS must stay at or below 32. */
+#define OPT_BIT(o) ((word32)1 << (o))
+
+/* A tag past bit 31 shifts out of setMask. The shift count wraps on the usual
+ * targets rather than trapping, so OPT_BIT(32) would quietly alias onto
+ * OPT_AUTH_KEYS_FILE and let composition claim a keyword no Match block named.
+ * Break the build instead. Kept local rather than using wc_static_assert so
+ * this file does not gain a minimum wolfSSL version. */
+typedef char wolfsshd_opt_bits_fit[(NUM_OPTIONS <= 32) ? 1 : -1];
 
 static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_AUTH_KEYS_FILE,          "AuthorizedKeysFile"},
@@ -1233,6 +1249,15 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         const char* value, const char* full, int fullSz, int depth)
 {
     int ret = WS_BAD_ARGUMENT;
+    WOLFSSHD_CONFIG* target;
+
+    if (conf == NULL || *conf == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* the node the setting lands on. Match replaces the caller's cursor, so
+     * remember where we started. */
+    target = *conf;
 
     switch (opt) {
         case OPT_AUTH_KEYS_FILE:
@@ -1332,6 +1357,12 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         default:
             break;
+    }
+
+    /* Match sets no keyword of its own, and Include's own lines were already
+     * recorded on whichever node they landed on. */
+    if (ret == WS_SUCCESS && opt != OPT_MATCH && opt != OPT_INCLUDE) {
+        target->setMask |= OPT_BIT(opt);
     }
 
     return ret;
@@ -1483,61 +1514,174 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
 }
 
 
-/* returns the config associated with the user */
+/* Replaces *dst with a copy of 'src', freeing whatever *dst held. A NULL 'src'
+ * just clears *dst. Returns WS_SUCCESS on success. */
+static int ComposeString(char** dst, const char* src, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    FreeString(dst, heap);
+    if (src != NULL) {
+        ret = CreateString(dst, src, (int)WSTRLEN(src), heap);
+    }
+
+    return ret;
+}
+
+
+/* Applies to 'dst' every keyword that 'src' set itself and that 'dst' has not
+ * already taken from an earlier block. Returns WS_SUCCESS on success. */
+static int ConfigComposeFrom(WOLFSSHD_CONFIG* dst, const WOLFSSHD_CONFIG* src)
+{
+    int ret = WS_SUCCESS;
+    word32 take = src->setMask & ~dst->setMask;
+
+    if (take & OPT_BIT(OPT_AUTH_KEYS_FILE)) {
+        ret = ComposeString(&dst->authKeysFile, src->authKeysFile, dst->heap);
+        dst->authKeysFileSet = src->authKeysFileSet;
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_BANNER))) {
+        ret = ComposeString(&dst->banner, src->banner, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_CHROOT_DIR))) {
+        ret = ComposeString(&dst->chrootDir, src->chrootDir, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_HOST_KEY))) {
+        ret = ComposeString(&dst->hostKeyFile, src->hostKeyFile, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_HOST_CERT))) {
+        ret = ComposeString(&dst->hostCertFile, src->hostCertFile, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_TRUSTED_USER_CA_KEYS))) {
+        ret = ComposeString(&dst->userCAKeysFile, src->userCAKeysFile,
+                dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_FORCE_CMD))) {
+        ret = ComposeString(&dst->forceCmd, src->forceCmd, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_PIDFILE))) {
+        ret = ComposeString(&dst->pidFile, src->pidFile, dst->heap);
+    }
+    if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_AUTHORIZED_UPN_DOMAINS))) {
+        ret = ComposeString(&dst->authorizedUPNDomains,
+                src->authorizedUPNDomains, dst->heap);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (take & OPT_BIT(OPT_LOGIN_GRACE_TIME)) {
+            dst->loginTimer = src->loginTimer;
+        }
+        if (take & OPT_BIT(OPT_PORT)) {
+            dst->port = src->port;
+        }
+        if (take & OPT_BIT(OPT_PRIV_SEP)) {
+            dst->usePrivilegeSeparation = src->usePrivilegeSeparation;
+        }
+        if (take & OPT_BIT(OPT_PASSWORD_AUTH)) {
+            dst->passwordAuth = src->passwordAuth;
+        }
+        if (take & OPT_BIT(OPT_PUBKEY_AUTH)) {
+            dst->pubKeyAuth = src->pubKeyAuth;
+        }
+        if (take & OPT_BIT(OPT_PERMIT_ROOT)) {
+            dst->permitRootLogin = src->permitRootLogin;
+        }
+        if (take & OPT_BIT(OPT_PERMIT_EMPTY_PW)) {
+            dst->permitEmptyPasswords = src->permitEmptyPasswords;
+        }
+        if (take & OPT_BIT(OPT_STRICT_MODES)) {
+            dst->strictModes = src->strictModes;
+        }
+
+        dst->setMask |= take;
+    }
+
+    return ret;
+}
+
+
+/* returns 1 when the Match block 'node' applies to the connection described by
+ * 'usr' and the group list, and 0 otherwise. A node carrying no selector at all
+ * is the global config, never a Match candidate. */
+static int MatchApplies(const WOLFSSHD_CONFIG* node, const char* usr,
+        const char** grps, word32 grpCount)
+{
+    int matches = 0;
+    word32 i;
+
+    /* Every non-NULL selector on the node must match, so a combined
+     * 'Match User X Group Y' is a conjunction the same way OpenSSH treats a
+     * Match line. A NULL selector acts as a wildcard. */
+    if (node->usrAppliesTo != NULL || node->groupAppliesTo != NULL) {
+        matches = 1;
+
+        if (node->usrAppliesTo != NULL) {
+            if (usr == NULL || XSTRCMP(node->usrAppliesTo, usr) != 0) {
+                matches = 0;
+            }
+        }
+
+        /* The group selector matches when it equals any group the user belongs
+         * to, primary or supplementary, mirroring how OpenSSH evaluates
+         * 'Match Group'. An empty group list matches no group selector, so
+         * combined blocks fail closed. */
+        if (matches && node->groupAppliesTo != NULL) {
+            matches = 0;
+            if (grps != NULL) {
+                for (i = 0; i < grpCount; i++) {
+                    if (grps[i] == NULL)
+                        continue;
+                    if (XSTRCMP(node->groupAppliesTo, grps[i]) == 0) {
+                        matches = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return matches;
+}
+
+
+/* returns the config associated with the user, or NULL on failure. The result
+ * is a new config the caller frees with wolfSSHD_ConfigFree(). */
 WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
         const char* usr, const char** grps, word32 grpCount, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
         const char* adr)
 {
     WOLFSSHD_CONFIG* ret;
-    WOLFSSHD_CONFIG* current;
-    int matches;
-    word32 i;
+    const WOLFSSHD_CONFIG* current;
+    int rc = WS_SUCCESS;
 
-    /* default to return head of list */
-    ret = current = (WOLFSSHD_CONFIG*)conf;
-    while (current != NULL) {
-        /* A node is a Match candidate only if it carries at least one
-         * selector. Every non-NULL selector on the node must match for the
-         * node to apply, so a combined 'Match User X Group Y' is treated as a
-         * conjunction the same way OpenSSH treats a Match line. A NULL
-         * selector acts as a wildcard. */
-        matches = 0;
-        if (current->usrAppliesTo != NULL || current->groupAppliesTo != NULL) {
-            matches = 1;
+    if (conf == NULL) {
+        return NULL;
+    }
 
-            if (current->usrAppliesTo != NULL) {
-                if (usr == NULL ||
-                        XSTRCMP(current->usrAppliesTo, usr) != 0) {
-                    matches = 0;
-                }
-            }
+    /* Start from the global values. They carry setMask 0, so any keyword a
+     * matching block sets outranks them. */
+    ret = wolfSSHD_ConfigCopy((WOLFSSHD_CONFIG*)conf);
+    if (ret == NULL) {
+        return NULL;
+    }
 
-            /* The group selector matches when it equals any group the user
-             * belongs to, primary or supplementary, mirroring how OpenSSH
-             * evaluates 'Match Group'. An empty group list matches no group
-             * selector, so combined blocks fail closed. */
-            if (matches && current->groupAppliesTo != NULL) {
-                matches = 0;
-                if (grps != NULL) {
-                    for (i = 0; i < grpCount; i++) {
-                        if (grps[i] == NULL)
-                            continue;
-                        if (XSTRCMP(current->groupAppliesTo, grps[i]) == 0) {
-                            matches = 1;
-                            break;
-                        }
-                    }
-                }
+    /* OpenSSH resolves one keyword at a time over every Match block that
+     * applies, "the first obtained value will be used". Walking the list in
+     * order and only taking keywords not already taken does the same, so a
+     * setting made in just one of several matching blocks still applies. */
+    for (current = conf; current != NULL; current = current->next) {
+        if (MatchApplies(current, usr, grps, grpCount)) {
+            rc = ConfigComposeFrom(ret, current);
+            if (rc != WS_SUCCESS) {
+                break;
             }
         }
+    }
 
-        if (matches) {
-            ret = current;
-            break;
-        }
-
-        current = current->next;
+    if (rc != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(ret);
+        ret = NULL;
     }
 
     /* @TODO */

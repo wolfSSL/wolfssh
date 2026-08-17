@@ -9,9 +9,9 @@
 # on which block is written first.
 #
 # This test writes the same two blocks in both orders. Only the group block sets
-# ForceCommand, so a shell exec must be refused either way. wolfsshd resolves
-# the whole first matching block instead of composing per keyword, so the
-# user-first order currently drops the forced command and the exec succeeds.
+# ForceCommand, so a shell exec must be refused either way. Resolving the whole
+# first matching block instead of composing per keyword would drop the forced
+# command in the user-first order and let the exec through.
 #
 # Expects ./authorized_keys_test to exist, as the other tests here do. Create it
 # with ./create_authorized_test_file.sh when running this script on its own.

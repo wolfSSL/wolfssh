@@ -76,6 +76,11 @@ byte wolfSSHD_ConfigGetPrivilegeSeparation(const WOLFSSHD_CONFIG* conf);
 long wolfSSHD_ConfigGetGraceTime(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPwAuth(const WOLFSSHD_CONFIG* conf);
 byte wolfSSHD_ConfigGetPubKeyAuth(const WOLFSSHD_CONFIG* conf);
+/* Resolves the configuration for one connection. Every Match block that applies
+ * contributes, one keyword at a time, and the first block to name a keyword
+ * wins it; keywords no matching block names keep the global value. Returns a
+ * newly allocated config the caller frees with wolfSSHD_ConfigFree(), or NULL
+ * on failure. */
 WOLFSSHD_CONFIG* wolfSSHD_GetUserConf(const WOLFSSHD_CONFIG* conf,
         const char* usr, const char** grps, word32 grpCount, const char* host,
         const char* localAdr, word16* localPort, const char* RDomain,
