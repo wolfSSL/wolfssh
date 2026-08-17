@@ -129,11 +129,15 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
+            word64 offset;
             int ret = -1;
 
-            if (WFSEEK_SUCCESS(WFSEEK(
-                               NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET))) {
-                ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) == 0) {
+                if (WFSEEK_SUCCESS(WFSEEK(NULL, &fd, (int32_t)offset,
+                                   SYS_FS_SEEK_SET))) {
+                    ret = (int)WFWRITE(NULL, buf, 1, sz, &fd);
+                }
             }
 
             return ret;
@@ -142,11 +146,16 @@ int wfopen(WFILE** f, const char* filename, const char* mode)
         int wPread(WFD fd, unsigned char* buf, unsigned int sz,
                 const unsigned int* shortOffset)
         {
+            word64 offset;
             int ret = -1;
 
-            if (WFSEEK_SUCCESS(WFSEEK(
-                               NULL, &fd, shortOffset[0], SYS_FS_SEEK_SET)))
-                ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
+            if (wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                        &offset) == 0) {
+                if (WFSEEK_SUCCESS(WFSEEK(NULL, &fd, (int32_t)offset,
+                                   SYS_FS_SEEK_SET))) {
+                    ret = (int)WFREAD(NULL, buf, 1, sz, &fd);
+                }
+            }
 
             return ret;
         }
@@ -643,12 +652,15 @@ int wssh_z_close(WFD fd)
 int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
         const unsigned int* shortOffset)
 {
+    word64 offset;
     int ret = -1;
-    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS &&
+            wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                &offset) == 0) {
         if (wc_LockMutex(&z_fds_mutex) == 0) {
             if (z_fds[fd].open) {
-                const word32* offset = (const word32*)shortOffset;
-                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                if (fs_seek(&z_fds[fd].zfp, (off_t)offset, FS_SEEK_SET) == 0)
                     ret = fs_write(&z_fds[fd].zfp, buf, sz);
             }
             wc_UnLockMutex(&z_fds_mutex);
@@ -660,12 +672,15 @@ int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
 int wPread(WFD fd, unsigned char* buf, unsigned int sz,
         const unsigned int* shortOffset)
 {
+    word64 offset;
     int ret = -1;
-    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS) {
+
+    if (fd >= 0 && fd < WOLFSSH_MAX_DESCIPRTORS &&
+            wResolveOffset(shortOffset, WOLFSSH_MAX_FILE_OFFSET,
+                &offset) == 0) {
         if (wc_LockMutex(&z_fds_mutex) == 0) {
             if (z_fds[fd].open) {
-                const word32* offset = (const word32*)shortOffset;
-                if (fs_seek(&z_fds[fd].zfp, offset[0], FS_SEEK_SET) == 0)
+                if (fs_seek(&z_fds[fd].zfp, (off_t)offset, FS_SEEK_SET) == 0)
                     ret = fs_read(&z_fds[fd].zfp, buf, sz);
             }
             wc_UnLockMutex(&z_fds_mutex);

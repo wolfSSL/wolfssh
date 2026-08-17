@@ -1537,6 +1537,11 @@ extern "C" {
 
     /* Our "file descriptor" wrapper */
 
+    /* SYS_FS_FileSeek takes an int32_t offset */
+    #ifndef WOLFSSH_MAX_FILE_OFFSET
+        #define WOLFSSH_MAX_FILE_OFFSET W64LIT(0x7FFFFFFF)
+    #endif
+
     #define WFD SYS_FS_HANDLE
     int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
             const unsigned int* shortOffset);

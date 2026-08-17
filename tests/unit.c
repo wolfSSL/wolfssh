@@ -94,6 +94,24 @@
 #define WOLFSSH_TEST_PREAD_PWRITE
 #endif
 
+/* A port whose seek type cannot reach 4 GiB rejects the offset instead of
+ * truncating it. Needs a mounted filesystem for the scratch file. */
+#if defined(WOLFSSH_ZEPHYR) && !defined(NO_FILESYSTEM) && \
+    (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+    !defined(NO_WOLFSSH_SERVER) && defined(CONFIG_WOLFSSH_SFTP_DEFAULT_DIR) && \
+    defined(SIZEOF_OFF_T) && SIZEOF_OFF_T == 4
+#define WOLFSSH_TEST_PREAD_PWRITE_CEILING
+#endif
+
+/* wResolveOffset() is defined whenever a port that does file transfers is
+ * built, so testing it directly needs no filesystem. */
+#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP) || \
+     defined(WOLFSSH_SSHD)) && \
+    !(defined(NO_WOLFSSH_SERVER) && defined(NO_WOLFSSH_CLIENT)) && \
+    (!defined(NO_FILESYSTEM) || defined(WOLFSSH_FATFS))
+#define WOLFSSH_TEST_RESOLVE_OFFSET
+#endif
+
 /* SendChannelTerminalRequest() reads the terminal settings of stdin, so the
  * no-tty case needs POSIX file descriptors to point stdin at /dev/null. */
 #if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_TERM) && \
@@ -15939,6 +15957,130 @@ static int test_PreadPwriteHighOffset(void)
 #endif /* WOLFSSH_TEST_PREAD_PWRITE */
 
 
+#ifdef WOLFSSH_TEST_PREAD_PWRITE_CEILING
+/* The offset arrives as two 32-bit words, low first. A port that seeks with
+ * a 32-bit type must reject anything the high word reaches, not wrap to the
+ * low word and read or write the wrong part of the file. */
+static int test_PreadPwriteOffsetCeiling(void)
+{
+    static const char contents[] = "0123456789ABCDEF";
+    char name[64];
+    unsigned char buf[8];
+    unsigned int shortOffset[2];
+    int result = 0;
+    WFD fd;
+
+    WSNPRINTF(name, sizeof(name), "%s/%s", CONFIG_WOLFSSH_SFTP_DEFAULT_DIR,
+            "pofst.bin");
+
+    fd = WOPEN(NULL, name, WOLFSSH_O_RDWR | WOLFSSH_O_CREAT, 0);
+    if (fd < 0)
+        return -942;
+
+    shortOffset[0] = 0;
+    shortOffset[1] = 0;
+    if (wPwrite(fd, (unsigned char*)contents,
+                (unsigned int)(sizeof(contents) - 1), shortOffset)
+            != (int)(sizeof(contents) - 1)) {
+        result = -943;
+    }
+
+    /* An in-range offset must land where it points, not at the file start. */
+    if (result == 0) {
+        shortOffset[0] = 8;
+        WMEMSET(buf, 0, sizeof(buf));
+        if (wPread(fd, buf, (unsigned int)sizeof(buf), shortOffset)
+                != (int)sizeof(buf)) {
+            result = -947;
+        }
+        else if (WMEMCMP(buf, contents + 8, sizeof(buf)) != 0) {
+            result = -948;
+        }
+    }
+
+    /* Exactly 4 GiB, so the offset lives only in the high word. Dropping it
+     * rereads the file start instead of failing the request. */
+    shortOffset[0] = 0;
+    shortOffset[1] = 1;
+
+    if (result == 0) {
+        WMEMSET(buf, 0, sizeof(buf));
+        if (wPread(fd, buf, (unsigned int)sizeof(buf), shortOffset) >= 0)
+            result = -944;
+    }
+
+    if (result == 0) {
+        if (wPwrite(fd, (unsigned char*)"Z", 1, shortOffset) >= 0)
+            result = -945;
+    }
+
+    if (WCLOSE(NULL, fd) != 0 && result == 0)
+        result = -946;
+    (void)WREMOVE(NULL, name);
+
+    return result;
+}
+#endif /* WOLFSSH_TEST_PREAD_PWRITE_CEILING */
+
+
+#ifdef WOLFSSH_TEST_RESOLVE_OFFSET
+/* The ports pass their own seek-type ceiling, so check the boundary against
+ * an explicit maxOffset rather than whatever this build resolved to. */
+static int test_ResolveOffset(void)
+{
+    unsigned int shortOffset[2];
+    word64 offset;
+
+    /* a low word on its own arrives unchanged */
+    shortOffset[0] = 0x100;
+    shortOffset[1] = 0;
+    offset = 1;
+    if (wResolveOffset(shortOffset, W64LIT(0x7FFFFFFF), &offset) != 0)
+        return -949;
+    if (offset != W64LIT(0x100))
+        return -950;
+
+    /* exactly at the ceiling is accepted */
+    shortOffset[0] = 0x7FFFFFFF;
+    if (wResolveOffset(shortOffset, W64LIT(0x7FFFFFFF), &offset) != 0)
+        return -951;
+    if (offset != W64LIT(0x7FFFFFFF))
+        return -952;
+
+    /* one past it is not */
+    shortOffset[0] = 0x80000000;
+    if (wResolveOffset(shortOffset, W64LIT(0x7FFFFFFF), &offset) == 0)
+        return -953;
+
+    /* the high word must reach the result rather than be dropped */
+    shortOffset[0] = 0;
+    shortOffset[1] = 1;
+    if (wResolveOffset(shortOffset, W64LIT(0x1FFFFFFFF), &offset) != 0)
+        return -954;
+    if (offset != W64LIT(0x100000000))
+        return -955;
+
+    /* both words together, still inside a wide ceiling */
+    shortOffset[0] = 0x10;
+    if (wResolveOffset(shortOffset, W64LIT(0x1FFFFFFFF), &offset) != 0)
+        return -956;
+    if (offset != W64LIT(0x100000010))
+        return -957;
+
+    /* the same offset is refused by a 32-bit ceiling */
+    if (wResolveOffset(shortOffset, W64LIT(0x7FFFFFFF), &offset) == 0)
+        return -958;
+
+    if (wResolveOffset(NULL, W64LIT(0x7FFFFFFF), &offset) == 0)
+        return -959;
+    if (wResolveOffset(shortOffset, W64LIT(0x1FFFFFFFF), NULL) == 0)
+        return -960;
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_RESOLVE_OFFSET */
+
+
 int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
@@ -16587,6 +16729,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_PREAD_PWRITE
     unitResult = test_PreadPwriteHighOffset();
     printf("PreadPwriteHighOffset: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#ifdef WOLFSSH_TEST_PREAD_PWRITE_CEILING
+    unitResult = test_PreadPwriteOffsetCeiling();
+    printf("PreadPwriteOffsetCeiling: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#ifdef WOLFSSH_TEST_RESOLVE_OFFSET
+    unitResult = test_ResolveOffset();
+    printf("ResolveOffset: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
