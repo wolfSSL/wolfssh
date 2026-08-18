@@ -24,6 +24,18 @@
  */
 
 
+/* CompareStringOrdinal() and friends need a Vista-or-later SDK profile;
+ * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so pin the
+ * floor before the first header that pulls in <windows.h> (wolfssh/ssh.h via
+ * port.h does). This only helps when WOLFSSH_WINDOWS_CERT_STORE is defined on
+ * the command line (configure/mingw builds); user_settings.h builds see it
+ * too late, but those use MSVC SDKs whose default is already >= Vista. */
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0600
+    #endif
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -36,12 +48,6 @@
 #include <wolfssl/wolfcrypt/random.h>
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    /* CompareStringOrdinal() and friends need a Vista-or-later SDK profile;
-     * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so pin
-     * the floor here before <windows.h> is pulled in. */
-    #ifndef _WIN32_WINNT
-        #define _WIN32_WINNT 0x0600
-    #endif
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>

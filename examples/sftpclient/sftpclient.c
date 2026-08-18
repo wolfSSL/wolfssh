@@ -496,24 +496,24 @@ static int sftpParseModeAndPath(char* pt, char* modeBuf, char** pathOut,
         sz--;
     }
 
-    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+    for (idx = 0; idx < sz && (pt[0] == ' ' || pt[0] == '\t'); idx++, pt++);
     sz = (word32)WSTRLEN(pt);
 
     sz = (sz < WOLFSSH_MAX_OCTET_LEN - 1) ? sz : WOLFSSH_MAX_OCTET_LEN - 1;
     WMEMCPY(modeBuf, pt, sz);
     modeBuf[sz] = '\0';
     for (idx = 0; idx < sz; idx++) {
-        if (modeBuf[idx] == ' ') {
+        if (modeBuf[idx] == ' ' || modeBuf[idx] == '\t') {
             modeBuf[idx] = '\0';
             break;
         }
     }
-    if (idx == 0 || (idx == sz && pt[sz] != ' '))
+    if (idx == 0 || (idx == sz && pt[sz] != ' ' && pt[sz] != '\t'))
         return 1;
 
     pt += (word32)WSTRLEN(modeBuf);
     sz = (word32)WSTRLEN(pt);
-    for (idx = 0; idx < sz && pt[0] == ' '; idx++, pt++);
+    for (idx = 0; idx < sz && (pt[0] == ' ' || pt[0] == '\t'); idx++, pt++);
 
     if (pt[0] == '\0')
         return 1;

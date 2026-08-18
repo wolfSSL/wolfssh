@@ -179,10 +179,15 @@ run_upn_unenforceable_negative_test() {
         SKIPPED=$((SKIPPED+1))
         return
     fi
+    # The host key must clear the secure-file gate (owner-only perms), which
+    # runs before the UPN gate in SetupCTX; the checked-in key is 0644, so use
+    # a local mode-600 copy like run_strictmodes_negative_test does.
+    cp ../../../keys/server-key.pem upn_hostkey.pem
+    chmod 600 upn_hostkey.pem
     cat <<EOF > sshd_config_test_upn_nofpki
 Port 22623
 UsePrivilegeSeparation no
-HostKey $PWD/../../../keys/server-key.pem
+HostKey upn_hostkey.pem
 Match User $USER
 AuthorizedUPNDomains example
 EOF
@@ -193,16 +198,19 @@ EOF
     fi
     $TIMEOUT ../wolfsshd -D -d -f sshd_config_test_upn_nofpki \
         -E upn_nofpki_log.txt
-    if grep -q "cannot enforce it" upn_nofpki_log.txt; then
+    # Also require that the host key loaded: a "Refusing to load" failure would
+    # exit before the UPN gate and must not pass off as the UPN rejection.
+    if grep -q "cannot enforce it" upn_nofpki_log.txt &&
+            ! grep -q "Refusing to load" upn_nofpki_log.txt; then
         printf "PASSED\n"
     else
         printf "FAILED!\n"
         cat upn_nofpki_log.txt
-        rm -f sshd_config_test_upn_nofpki upn_nofpki_log.txt
+        rm -f upn_hostkey.pem sshd_config_test_upn_nofpki upn_nofpki_log.txt
         stop_wolfsshd
         exit 1
     fi
-    rm -f sshd_config_test_upn_nofpki upn_nofpki_log.txt
+    rm -f upn_hostkey.pem sshd_config_test_upn_nofpki upn_nofpki_log.txt
 }
 
 # Negative authorized_keys StrictModes test: a group/world writable

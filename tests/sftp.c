@@ -136,6 +136,14 @@ static int checkLsSize(void)
                 sizeof(inBuf)) == NULL) ? 1 : 0;
 }
 
+/* a creat parse failure prints an error and creates nothing, so verify the
+ * tab-separated form actually created the file */
+static int checkLsHasCreatMtab(void)
+{
+    return (WSTRNSTR(inBuf, "test-creat-mtab",
+                sizeof(inBuf)) == NULL) ? 1 : 0;
+}
+
 static int checkCdNonexistent(void)
 {
     if (WSTRNSTR(inBuf, "Error changing directory",
@@ -276,6 +284,7 @@ static const SftpTestCmd cmds[] = {
     { "rm test-creat-special", NULL },
     { "rm test-creat-ws",      NULL },
     { "rm test-creat-tab",     NULL },
+    { "rm test-creat-mtab",    NULL },
 
     /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
@@ -322,6 +331,11 @@ static const SftpTestCmd cmds[] = {
     { "rm test-creat-ws",            NULL },
     { "creat\t0644 test-creat-tab",  NULL },
     { "rm test-creat-tab",           NULL },
+    /* tab between mode and path must also parse; a parse failure would skip
+     * creation silently (rm ignores a missing file), so check with ls */
+    { "creat 0644\ttest-creat-mtab", NULL },
+    { "ls",                          checkLsHasCreatMtab },
+    { "rm test-creat-mtab",          NULL },
     { "ls -s",          checkLsSize },
     { "cd /nonexistent_path_xyz", checkCdNonexistent },
 #if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)
