@@ -1645,7 +1645,18 @@ int wolfSSH_SetExitStatus(WOLFSSH* ssh, word32 exitStatus)
  * name     name or command in the case of subsystem and exec channel types
  * nameSz   size of name buffer
  *
+ * Exec and subsystem carry a name string the peer requires, so one must be
+ * available. Passing none keeps the name an earlier call stored; with
+ * nothing stored the call is refused rather than sending a request the peer
+ * reads as malformed. Shell and terminal take no name and drop any stored
+ * one. A refused call changes nothing, the selected type included.
+ *
  * returns WS_SUCCESS on success
+ * returns WS_BAD_ARGUMENT for a NULL ssh or an unknown type, for exec on
+ *   the server side, for a name at or above WOLFSSH_MAX_CHN_NAMESZ, for a
+ *   nameSz with no name behind it, and for exec or subsystem with no name
+ *   given and none stored
+ * returns WS_MEMORY_E if the name cannot be allocated
  */
 int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
 {

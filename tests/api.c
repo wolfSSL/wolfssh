@@ -317,16 +317,20 @@ static void test_wolfSSH_SetChannelType(void)
     AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, NULL, 0));
     AssertNull(ssh->channelName);
+    /* a refused call leaves the selected type alone, not just the name */
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
 
     /* likewise for a size with no name behind it */
     AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, NULL, 4));
     AssertNull(ssh->channelName);
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
 
     /* an oversized name is reported, not silently dropped */
     AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertNull(ssh->channelName);
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
 
     AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1,
@@ -347,6 +351,7 @@ static void test_wolfSSH_SetChannelType(void)
     AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertIntEQ(1, ssh->channelName == prevName);
+    AssertIntEQ(WOLFSSH_SESSION_SUBSYSTEM, ssh->connectChannelId);
     AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
     AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub1));
 
