@@ -743,6 +743,10 @@ static void test_wolfSSH_CTX_UseCert_buffer(void)
             wolfSSH_CTX_UseCert_buffer(ctx, cert, certSz, WOLFSSH_FORMAT_PEM));
     AssertIntEQ(1, ctx->privateKeyCount);
     AssertNotNull(ctx->privateKey[0].cert);
+    /* A certificate with no key behind it has no signing source, so
+     * RefreshPublicKeyAlgo must not advertise it yet; loading the matching
+     * key below is what makes the slot advertisable. */
+    AssertIntEQ(0, ctx->publicKeyAlgoCount);
 #endif
 
     AssertIntEQ(WS_BAD_FILETYPE_E,

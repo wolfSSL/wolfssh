@@ -294,6 +294,9 @@ AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_OSSH_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_OSSH_CERTS"])
+dnl Initialize before the feature block so a stray WINCERT_LIBS value in the
+dnl environment is never silently appended to LIBS for an unrelated build.
+WINCERT_LIBS=
 AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
     [AS_IF([test "x$ENABLED_CERTS" != "xyes"],
         [AC_MSG_ERROR([--enable-windows-cert-store requires X.509 cert support (--enable-certs)])])
@@ -306,7 +309,16 @@ AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
      dnl error messages.
      AS_CASE([$host],
          [*mingw*],[WINCERT_LIBS="-lcrypt32 -lncrypt"],
-         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw)])])])
+         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw)])])
+     dnl Fail at configure time, not first link, when the SDK headers are
+     dnl absent. The link libraries are stock mingw import libs, so probing
+     dnl the headers is enough and keeps working without a cross-built
+     dnl wolfSSL installed.
+     AC_CHECK_HEADERS([windows.h],,
+         [AC_MSG_ERROR([windows.h not found; --enable-windows-cert-store needs the Windows SDK headers])])
+     AC_CHECK_HEADERS([wincrypt.h ncrypt.h],,
+         [AC_MSG_ERROR([wincrypt.h/ncrypt.h not found; --enable-windows-cert-store needs the Windows SDK headers])],
+         [[#include <windows.h>]])])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_NONE_CIPHER" = "xyes"],

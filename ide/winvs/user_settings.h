@@ -60,8 +60,9 @@
 
 /* Host and user keys held in the MS Certificate Store. Needs WOLFSSH_CERTS
  * above, and the projects link crypt32.lib and ncrypt.lib for it. Left
- * commented rather than behind an "#if 0" so enabling the X.509 block above
- * does not silently pull it in.
+ * commented rather than behind a disabled preprocessor block so enabling
+ * the X.509 block above does not silently pull it in (and so CI's global
+ * block-enabling sed cannot flip it either).
  *
  * #undef  WOLFSSH_WINDOWS_CERT_STORE
  * #define WOLFSSH_WINDOWS_CERT_STORE

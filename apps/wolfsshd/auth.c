@@ -2585,9 +2585,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL, NULL, NULL,
                                            NULL);
         if (usrConf == NULL) {
+            /* bound the untrusted name so it cannot consume the whole
+             * fixed-width log message (control bytes are scrubbed by
+             * wolfSSH_Log itself) */
             wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Failure to get user configuration for auth (user=%s)",
-                    usr);
+                    "[SSHD] Failure to get user configuration for auth "
+                    "(user=%.32s)", usr);
             ret = WOLFSSH_USERAUTH_FAILURE;
             needFakeCheck = 1;
         }
@@ -2684,7 +2687,11 @@ static int RequestAuthentication(WS_UserAuthData* authData,
          * (checked below) is a stronger binding than a CN name match. A
          * shared AuthorizedKeysFile (an absolute pattern with no %u or %h)
          * resolves to one file for every account and binds the certificate to
-         * nothing, so the name match still has to run. */
+         * nothing, so the name match still has to run. Note the strength of
+         * the file binding rests on the file's integrity: on Windows,
+         * wolfSSHD_OpenSecureFile() performs no ownership or ACL checks, so
+         * the guarantee is only as good as the NTFS ACLs on the profile
+         * directory. */
     #ifdef WOLFSSL_FPKI
         if (authData->sf.publicKey.isCert) {
     #else
@@ -2741,11 +2748,20 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         current = current->next;
                     }
 
-                    /* a UPN matched but no realm policy is set; note per auth
-                     * attempt so the opt-in gap is visible, no shared state */
+                    /* a UPN matched but no realm policy is set; this states a
+                     * fixed configuration property, so emit it once per
+                     * process rather than on every auth attempt (an attempt
+                     * is peer-triggered and the log callback writes WARN
+                     * unconditionally) */
                     if (upnRealmUnchecked) {
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
-                            "not set; certificate UPN domain is not checked");
+                        static int upnRealmWarned = 0;
+
+                        if (!upnRealmWarned) {
+                            upnRealmWarned = 1;
+                            wolfSSH_Log(WS_LOG_WARN,
+                                "[SSHD] AuthorizedUPNDomains not set; "
+                                "certificate UPN domain is not checked");
+                        }
                     }
                 #else
                     /* Without FPKI compare subject CN with user name. Only
@@ -2761,18 +2777,30 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                             WSTRNCASECMP(usr, dCert->subjectCN,
                                 (size_t)dCert->subjectCNLen) == 0) {
                         usrMatch = 1;
-                        /* note per auth attempt so the weaker binding is
-                         * visible without -d, no shared state */
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] certificate bound to "
-                            "user by subject CN only; no issuer constraint is "
-                            "applied, keep the trusted user CA set narrow");
+                        /* states a fixed build/configuration property, so
+                         * emit once per process; a per-attempt WARN would
+                         * let a peer grow the log with every attempt now
+                         * that the log callback writes WARN without -d */
+                        {
+                            static int cnBindWarned = 0;
+
+                            if (!cnBindWarned) {
+                                cnBindWarned = 1;
+                                wolfSSH_Log(WS_LOG_WARN,
+                                    "[SSHD] certificate bound to user by "
+                                    "subject CN only; no issuer constraint");
+                                wolfSSH_Log(WS_LOG_WARN,
+                                    "[SSHD] keep the trusted user CA set "
+                                    "narrow");
+                            }
+                        }
                     }
                 #endif
 
                     if (usrMatch == 0) {
                         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
                             "sent; certificate identity does not match the "
-                            "requested user (user=%s)", usr);
+                            "requested user (user=%.32s)", usr);
                         ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                     }
                 }
@@ -2801,7 +2829,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     wolfSSHD_ConfigGetUserCAKeysFile(usrConf))) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Per-user TrustedUserCAKeys override is not enforced "
-                    "for certificate authentication; rejecting (user=%s)", usr);
+                    "for certificate authentication; rejecting (user=%.32s)",
+                    usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
@@ -2839,7 +2868,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Certificate authentication cannot bind the requested "
                     "user without FPKI or AuthorizedKeysFile; rejecting "
-                    "(user=%s)", usr);
+                    "(user=%.32s)", usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             #endif
             }

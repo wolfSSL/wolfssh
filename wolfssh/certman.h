@@ -31,12 +31,7 @@
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
 #ifdef WOLFSSH_CERTS
-    /* ssh.h establishes wolfSSL's build configuration (options.h or
-     * user settings) and must come before any wolfSSL header so the
-     * WOLFSSL_CERT_MANAGER/WOLFSSL_CTX layouts match the compiled
-     * library. */
     #include <wolfssh/ssh.h> /* included for WOLFSSH_CTX */
-    #include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
 #endif
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <wchar.h>
@@ -52,16 +47,23 @@ typedef struct WOLFSSH_CERTMAN WOLFSSH_CERTMAN;
 
 
 #ifdef WOLFSSH_CERTS
+/* Only a pointer to the wolfSSL cert manager is named here, so a forward
+ * struct reference keeps <wolfssl/ssl.h> out of every translation unit that
+ * includes wolfssh/internal.h; src/certman.c includes the real header. */
+struct WOLFSSL_CERT_MANAGER;
+
 /* Replaces the CTX's cert manager with cm, taking a reference on it and
  * applying wolfSSH's revocation policy. The caller retains ownership, but
- * note the policy is applied to the shared object: in an HAVE_OCSP build
- * this enables WOLFSSL_OCSP_CHECKALL on cm, so a caller that keeps using
- * the same manager for TLS will find every chain requiring an OCSP
- * response. Returns WS_NOT_COMPILED for any arguments when built against
- * wolfSSL older than 4.6.0 (wolfSSL_CertManager_up_ref() is unavailable
- * there). */
+ * note wolfSSH mutates the shared object: in an HAVE_OCSP build this
+ * enables WOLFSSL_OCSP_CHECKALL on cm, so a caller that keeps using the
+ * same manager for TLS will find every chain requiring an OCSP response,
+ * and during certificate authentication wolfSSH permanently adds verified
+ * peer intermediate CAs to the manager as trusted roots. Prefer a manager
+ * dedicated to wolfSSH over one shared with a live TLS stack. Returns
+ * WS_NOT_COMPILED for any arguments when built against wolfSSL older than
+ * 4.6.0 (wolfSSL_CertManager_up_ref() is unavailable there). */
 WOLFSSH_API
-int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm);
+int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, struct WOLFSSL_CERT_MANAGER* cm);
 #endif /* WOLFSSH_CERTS */
 
 WOLFSSH_API
@@ -80,14 +82,25 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
 
 
 #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
-/* Splits "store:subject[:flags]", where flags is CURRENT_USER,
- * LOCAL_MACHINE, USERS, or a decimal or 0x hex CERT_SYSTEM_STORE_* location,
- * and defaults to CURRENT_USER. The spec is split at the first two ':', so
- * neither the store name nor the subject may contain one and a third ':' is
- * rejected. Returns WS_SUCCESS and gives the caller ownership of the two
- * allocated wide strings, which must be released with
- * wolfSSH_FreeCertStoreSpec() using the same heap. On failure both
- * out-pointers are set to NULL and dwFlags is untouched. */
+/* Parses a Windows system-store location name into its CERT_SYSTEM_STORE_*
+ * value. Accepts the short names CURRENT_USER, LOCAL_MACHINE, USERS,
+ * CURRENT_SERVICE, SERVICES, CURRENT_USER_GROUP_POLICY,
+ * LOCAL_MACHINE_GROUP_POLICY and LOCAL_MACHINE_ENTERPRISE, the same names
+ * with a CERT_SYSTEM_STORE_ prefix, or a decimal/0x-hex number consumed
+ * whole (a leading sign or whitespace is rejected). Only assigned store
+ * locations are accepted, never control flags. Returns WS_SUCCESS on
+ * success. */
+WOLFSSH_API
+int wolfSSH_CertStoreLocationFromName(const char* in, word32* out);
+
+/* Splits "store:subject[:flags]", where flags takes any spelling
+ * wolfSSH_CertStoreLocationFromName() accepts and defaults to CURRENT_USER.
+ * The spec is split at the first two ':', so neither the store name nor the
+ * subject may contain one and a third ':' is rejected. Returns WS_SUCCESS
+ * and gives the caller ownership of the two allocated wide strings, which
+ * must be released with wolfSSH_FreeCertStoreSpec() using the same heap. On
+ * failure any non-NULL out-pointer is set to NULL and dwFlags is
+ * untouched. */
 WOLFSSH_API
 int wolfSSH_ParseCertStoreSpec(const char* spec,
         wchar_t** wStoreName, wchar_t** wSubjectName,

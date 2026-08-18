@@ -1228,62 +1228,36 @@ int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
  * is the x509v3 name that matches the key algorithm. */
 int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
 {
-    const byte* keyType = NULL;
-    WOLFSSH_PVT_KEY* pvtKey = NULL;
+    const char* keyType = NULL;
+    const byte* cert = NULL;
+    word32 certSz = 0;
     byte* certCopy = NULL;
-    word32 i;
 
     if (ctx == NULL)
         return WS_BAD_ARGUMENT;
 
     /* wolfSSH_CTX_UsePrivateKey_fromStore() registers a store key under its
      * plain key type and, when the build has one, under the matching x509v3
-     * type. Only the x509v3 slot can be offered for certificate user auth,
-     * and it only exists when that algorithm is compiled in, so select on it
-     * rather than trusting slot ordering. */
-    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
-        WOLFSSH_PVT_KEY* cur = &ctx->privateKey[i];
-
-        if (!cur->useCertStore || cur->cert == NULL || cur->certSz == 0)
-            continue;
-
-        /* Map the internal key format to the x509v3 SSH type name. Resolve
-         * it before touching the globals so a failure leaves them alone. */
-        switch (cur->publicKeyFmt) {
-            case ID_X509V3_SSH_RSA:
-                keyType = (const byte*)"x509v3-ssh-rsa";
-                break;
-            case ID_X509V3_ECDSA_SHA2_NISTP256:
-                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp256";
-                break;
-            case ID_X509V3_ECDSA_SHA2_NISTP384:
-                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp384";
-                break;
-            case ID_X509V3_ECDSA_SHA2_NISTP521:
-                keyType = (const byte*)"x509v3-ecdsa-sha2-nistp521";
-                break;
-            default:
-                /* the plain twin of the same store key, keep looking */
-                continue;
-        }
-        pvtKey = cur;
-        break;
-    }
-
-    if (pvtKey == NULL) {
+     * type. Only the x509v3 slot can be offered for certificate user auth;
+     * the accessor reports that slot's certificate and algorithm name. */
+    if (wolfSSH_CTX_GetCertStoreCert(ctx, &cert, &certSz, &keyType)
+            != WS_SUCCESS || cert == NULL || certSz == 0) {
         fprintf(stderr, "No cert store key with an x509v3 algorithm found in "
-                "CTX. RSA cert store keys are unavailable when built with "
-                "WOLFSSH_NO_SSH_RSA_SHA1.\n");
+                "CTX. In the default build RSA cert store keys carry no "
+                "x509v3 slot because x509v3-ssh-rsa signs with SHA-1, which "
+                "is soft disabled; define WOLFSSH_NO_SHA1_SOFT_DISABLE (and "
+                "keep WOLFSSH_NO_SSH_RSA_SHA1 undefined) to enable it, see "
+                "ide/winvs/user_settings.h.\n");
         return WS_BAD_ARGUMENT;
     }
 
     /* Copy the DER certificate before touching the globals so a failure
      * leaves them alone. ClientFreeBuffers() frees the copy. */
-    certCopy = (byte*)WMALLOC(pvtKey->certSz, heap, DYNTYPE_PRIVKEY);
+    certCopy = (byte*)WMALLOC(certSz, heap, DYNTYPE_PRIVKEY);
     if (certCopy == NULL) {
         return WS_MEMORY_E;
     }
-    WMEMCPY(certCopy, pvtKey->cert, pvtKey->certSz);
+    WMEMCPY(certCopy, cert, certSz);
 
     /* Drop anything an earlier file based load left behind, the cert
      * store key replaces it. Freed with the same heap the loaders in this
@@ -1300,10 +1274,10 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
     }
 
     userPublicKey = certCopy;
-    userPublicKeySz = pvtKey->certSz;
+    userPublicKeySz = certSz;
     userPublicKeyAlloc = 1;
-    userPublicKeyType = keyType;
-    userPublicKeyTypeSz = (word32)WSTRLEN((const char*)keyType);
+    userPublicKeyType = (const byte*)keyType;
+    userPublicKeyTypeSz = (word32)WSTRLEN(keyType);
 
     /* No in-memory private key, signing goes through the cert store. */
     userPrivateKey = userPrivateKeyBuf;

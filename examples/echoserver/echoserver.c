@@ -2995,8 +2995,16 @@ static void ShowUsage(void)
            "to use\n");
     printf(" -m <list>     set the comma separated list of mac algos to use\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    printf(" -W <spec>     Windows cert store: \"store:subject:flags\" "
+    printf(" -W <spec>     Windows cert store: \"store:subject[:flags]\" "
            "(e.g. My:CN=Server:CURRENT_USER)\n");
+    printf("               flags: CURRENT_USER (default), LOCAL_MACHINE, "
+           "USERS,\n");
+    printf("               CURRENT_SERVICE, SERVICES, "
+           "CURRENT_USER_GROUP_POLICY,\n");
+    printf("               LOCAL_MACHINE_GROUP_POLICY, "
+           "LOCAL_MACHINE_ENTERPRISE,\n");
+    printf("               each also with a CERT_SYSTEM_STORE_ prefix, or a "
+           "number\n");
     printf("               with -W set, file names are relative to the "
            "current directory\n");
 #endif

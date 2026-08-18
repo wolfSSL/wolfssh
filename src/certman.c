@@ -137,7 +137,19 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
         return WS_BAD_ARGUMENT;
     }
 
-    /* importing the manager already in use is a no-op */
+#ifdef HAVE_OCSP
+    /* an imported manager gets the same policy _CertMan_init() applies, and
+     * is rejected if it can't, rather than silently skipping revocation.
+     * Applied before the re-import short circuit below so the documented
+     * side effect holds even when the same manager is imported twice. */
+    if (wolfSSL_CertManagerEnableOCSP(cm, WOLFSSL_OCSP_CHECKALL)
+            != WOLFSSL_SUCCESS) {
+        WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP on imported cert manager");
+        return WS_FATAL_ERROR;
+    }
+#endif
+
+    /* importing the manager already in use is a no-op beyond the policy */
     if (ctx->certMan->cm == cm) {
         return WS_SUCCESS;
     }
@@ -146,17 +158,6 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
         WLOG(WS_LOG_CERTMAN, "Failed to increment cert manager reference");
         return WS_FATAL_ERROR;
     }
-
-#ifdef HAVE_OCSP
-    /* an imported manager gets the same policy _CertMan_init() applies, and
-     * is rejected if it can't, rather than silently skipping revocation */
-    if (wolfSSL_CertManagerEnableOCSP(cm, WOLFSSL_OCSP_CHECKALL)
-            != WOLFSSL_SUCCESS) {
-        WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP on imported cert manager");
-        wolfSSL_CertManagerFree(cm);
-        return WS_FATAL_ERROR;
-    }
-#endif
 
     /* free up existing cm if present */
     if (ctx->certMan->cm != NULL) {
@@ -746,6 +747,81 @@ int wolfSSH_CertStoreLocationValid(word32 dwFlags)
 }
 
 
+/* The one name-to-value table for CERT_SYSTEM_STORE_* locations, shared by
+ * wolfSSH_ParseCertStoreSpec() and wolfsshd's HostKeyStoreFlags and
+ * wolfSSH_WinUserDwFlags parsing so the accepted spellings cannot drift. */
+static const struct {
+    const char* shortName;
+    const char* longName;
+    word32 value;
+} certStoreLocations[] = {
+    { "CURRENT_USER", "CERT_SYSTEM_STORE_CURRENT_USER",
+      (word32)CERT_SYSTEM_STORE_CURRENT_USER },
+    { "LOCAL_MACHINE", "CERT_SYSTEM_STORE_LOCAL_MACHINE",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE },
+    { "USERS", "CERT_SYSTEM_STORE_USERS",
+      (word32)CERT_SYSTEM_STORE_USERS },
+    { "CURRENT_SERVICE", "CERT_SYSTEM_STORE_CURRENT_SERVICE",
+      (word32)CERT_SYSTEM_STORE_CURRENT_SERVICE },
+    { "SERVICES", "CERT_SYSTEM_STORE_SERVICES",
+      (word32)CERT_SYSTEM_STORE_SERVICES },
+    { "CURRENT_USER_GROUP_POLICY",
+      "CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY",
+      (word32)CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY },
+    { "LOCAL_MACHINE_GROUP_POLICY",
+      "CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY },
+    { "LOCAL_MACHINE_ENTERPRISE",
+      "CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE },
+};
+
+
+/* Parse a Windows system-store location, given as a CERT_SYSTEM_STORE_* name
+ * (long or short form) or as a number in strtoul() base 0 form, so both 65536
+ * and 0x00010000 work. The number must be consumed whole and start with a
+ * digit: strtoul()'s leading whitespace and sign handling is rejected so a
+ * config typo such as "-0xFFFF0000" cannot wrap to a valid location. Only
+ * location bits are accepted; anything else is either not a location or a
+ * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make CertOpenStore
+ * destructive. Returns WS_SUCCESS on success. */
+int wolfSSH_CertStoreLocationFromName(const char* in, word32* out)
+{
+    int ret = WS_BAD_ARGUMENT;
+    word32 i;
+    unsigned long val;
+    char* end;
+
+    if (in == NULL || out == NULL || *in == '\0') {
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < (word32)(sizeof(certStoreLocations) /
+            sizeof(*certStoreLocations)); i++) {
+        if (WSTRCMP(in, certStoreLocations[i].shortName) == 0 ||
+                WSTRCMP(in, certStoreLocations[i].longName) == 0) {
+            *out = certStoreLocations[i].value;
+            ret = WS_SUCCESS;
+            break;
+        }
+    }
+
+    if (ret != WS_SUCCESS && *in >= '0' && *in <= '9') {
+        end = NULL;
+        errno = 0;
+        val = strtoul(in, &end, 0);
+        if (end != in && *end == '\0' && errno != ERANGE &&
+                wolfSSH_CertStoreLocationValid((word32)val) &&
+                val == (unsigned long)(word32)val) {
+            *out = (word32)val;
+            ret = WS_SUCCESS;
+        }
+    }
+
+    return ret;
+}
+
+
 /* Parse a cert store spec string "store:subject[:flags]" into wide-string
  * components.  The spec is split at the first ':' for the store name and at
  * the next one for the flags, so neither the store name nor the subject may
@@ -763,20 +839,22 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
     char* storeName = NULL;
     char* subjectName = NULL;
     char* flagsStr = NULL;
-    char* flagsEnd = NULL;
-    unsigned long flagsVal;
     word32 flags;
     int wStoreNameLen, wSubjectNameLen;
     size_t specLen;
 
-    /* NULL the supplied out-pointers before any failure return so the
-     * documented "out-pointers are NULL on failure" contract holds even for
-     * a bad spec argument. */
+    /* NULL every supplied out-pointer before any failure return, including
+     * the argument rejections below, so the documented "out-pointers are
+     * NULL on failure" contract holds even when only one argument is bad. */
+    if (wStoreName != NULL) {
+        *wStoreName = NULL;
+    }
+    if (wSubjectName != NULL) {
+        *wSubjectName = NULL;
+    }
     if (wStoreName == NULL || wSubjectName == NULL || dwFlags == NULL) {
         return WS_BAD_ARGUMENT;
     }
-    *wStoreName = NULL;
-    *wSubjectName = NULL;
     if (spec == NULL) {
         return WS_BAD_ARGUMENT;
     }
@@ -812,69 +890,17 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                 return WS_BAD_ARGUMENT;
             }
             /* Accept the same spellings as wolfsshd's HostKeyStoreFlags and
-             * wolfSSH_WinUserDwFlags so one name works everywhere. */
-            if (WSTRCMP(flagsStr, "CURRENT_USER") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_CURRENT_USER") == 0) {
-                flags = CERT_SYSTEM_STORE_CURRENT_USER;
-            }
-            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_LOCAL_MACHINE") == 0) {
-                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE;
-            }
-            else if (WSTRCMP(flagsStr, "USERS") == 0
-                    || WSTRCMP(flagsStr, "CERT_SYSTEM_STORE_USERS") == 0) {
-                flags = CERT_SYSTEM_STORE_USERS;
-            }
-            else if (WSTRCMP(flagsStr, "CURRENT_SERVICE") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_CURRENT_SERVICE") == 0) {
-                flags = CERT_SYSTEM_STORE_CURRENT_SERVICE;
-            }
-            else if (WSTRCMP(flagsStr, "SERVICES") == 0
-                    || WSTRCMP(flagsStr, "CERT_SYSTEM_STORE_SERVICES") == 0) {
-                flags = CERT_SYSTEM_STORE_SERVICES;
-            }
-            else if (WSTRCMP(flagsStr, "CURRENT_USER_GROUP_POLICY") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY") == 0) {
-                flags = CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY;
-            }
-            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE_GROUP_POLICY") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY") == 0) {
-                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY;
-            }
-            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE_ENTERPRISE") == 0
-                    || WSTRCMP(flagsStr,
-                        "CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE") == 0) {
-                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE;
-            }
-            else {
-                /* Fall back to a raw numeric value, decimal or 0x hex, that
-                 * has to be consumed whole. Only system-store location bits
-                 * are accepted. Anything else is either not a location or a
-                 * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make
-                 * CertOpenStore destructive. */
-                errno = 0;
-                flagsVal = strtoul(flagsStr, &flagsEnd, 0);
-                if (flagsEnd == flagsStr || *flagsEnd != '\0'
-                        || errno == ERANGE) {
-                    WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value "
-                            "'%s'; expected store:subject[:flags] with a "
-                            "CERT_SYSTEM_STORE_* name or number", flagsStr);
-                    WFREE(specCopy, heap, DYNTYPE_TEMP);
-                    return WS_BAD_ARGUMENT;
-                }
-                if (!wolfSSH_CertStoreLocationValid((word32)flagsVal)) {
-                    WLOG(WS_LOG_CERTMAN,
-                            "Cert store flags are not an assigned store "
-                            "location");
-                    WFREE(specCopy, heap, DYNTYPE_TEMP);
-                    return WS_BAD_ARGUMENT;
-                }
-                flags = (word32)flagsVal;
+             * wolfSSH_WinUserDwFlags so one name works everywhere; the
+             * shared parser also handles the numeric location forms and
+             * rejects control flags. */
+            if (wolfSSH_CertStoreLocationFromName(flagsStr, &flags)
+                    != WS_SUCCESS) {
+                WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value "
+                        "'%s'; expected store:subject[:flags] with a "
+                        "CERT_SYSTEM_STORE_* name or store location number",
+                        flagsStr);
+                WFREE(specCopy, heap, DYNTYPE_TEMP);
+                return WS_BAD_ARGUMENT;
             }
         }
     }

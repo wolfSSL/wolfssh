@@ -569,15 +569,25 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
      * key is still selected, preferring expired over not yet valid and
      * then the latest NotAfter; the fallback is logged, but only in
      * builds with logging compiled in (DEBUG_WOLFSSH or WOLFSSH_SSHD).
-     * Returns WS_SUCCESS on success, WS_BAD_FILE_E when the store cannot
-     * be opened, WS_CRYPTO_FAILED when certificates match but none has an
-     * accessible private key (check key permissions for the service
-     * account), WS_CTX_KEY_COUNT_E when two key slots are not free, and
-     * WS_FATAL_ERROR when no certificate matches; on any failure the
-     * context is left unchanged. */
+     * Returns WS_SUCCESS on success, WS_BAD_ARGUMENT on a NULL argument,
+     * bad dwFlags, or an unsupported/mixed key configuration, WS_BAD_FILE_E
+     * when the store cannot be opened, WS_CRYPTO_FAILED when certificates
+     * match but none has an accessible private key (check key permissions
+     * for the service account), WS_CTX_KEY_COUNT_E when two key slots are
+     * not free, WS_MEMORY_E on an allocation failure, and WS_FATAL_ERROR
+     * when no certificate matches; on any failure the context is left
+     * unchanged. */
     WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             const wchar_t* storeName, word32 dwFlags,
             const wchar_t* subjectName);
+    /* Report the certificate a loaded cert-store host key is bound to, so
+     * an application can offer it for certificate user auth. cert/certSz
+     * point at DER owned by the CTX and algoName at the static x509v3
+     * algorithm name; each out pointer may be NULL. Returns WS_SUCCESS,
+     * WS_BAD_ARGUMENT on a NULL ctx, or WS_FATAL_ERROR when no
+     * cert-store-backed x509v3 slot exists. */
+    WOLFSSH_API int wolfSSH_CTX_GetCertStoreCert(WOLFSSH_CTX* ctx,
+            const byte** cert, word32* certSz, const char** algoName);
     #endif
 #endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,

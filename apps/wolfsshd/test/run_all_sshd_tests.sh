@@ -166,6 +166,45 @@ EOF
     rm -f strictmodes_hostkey.pem sshd_config_test_strictmodes strictmodes_log.txt
 }
 
+# Negative test: on a build that cannot enforce AuthorizedUPNDomains (wolfSSL
+# without FPKI), wolfSSHd must refuse to start rather than silently ignore the
+# configured realm policy. The directive is placed inside a Match block so the
+# config-node traversal in SetupCTX is exercised, not just the head node. On
+# an FPKI build the directive is enforced instead of rejected, so skip.
+run_upn_unenforceable_negative_test() {
+    printf "AuthorizedUPNDomains unenforceable-build negative test ... "
+    TOTAL=$((TOTAL+1))
+    if ../wolfsshd "-?" 2>&1 | grep -q "FPKI"; then
+        printf "SKIPPED (FPKI build enforces the directive)\n"
+        SKIPPED=$((SKIPPED+1))
+        return
+    fi
+    cat <<EOF > sshd_config_test_upn_nofpki
+Port 22623
+UsePrivilegeSeparation no
+HostKey $PWD/../../../keys/server-key.pem
+Match User $USER
+AuthorizedUPNDomains example
+EOF
+    rm -f upn_nofpki_log.txt
+    TIMEOUT=""
+    if command -v timeout >/dev/null 2>&1; then
+        TIMEOUT="timeout 30"
+    fi
+    $TIMEOUT ../wolfsshd -D -d -f sshd_config_test_upn_nofpki \
+        -E upn_nofpki_log.txt
+    if grep -q "cannot enforce it" upn_nofpki_log.txt; then
+        printf "PASSED\n"
+    else
+        printf "FAILED!\n"
+        cat upn_nofpki_log.txt
+        rm -f sshd_config_test_upn_nofpki upn_nofpki_log.txt
+        stop_wolfsshd
+        exit 1
+    fi
+    rm -f sshd_config_test_upn_nofpki upn_nofpki_log.txt
+}
+
 # Negative authorized_keys StrictModes test: a group/world writable
 # authorized_keys file must make public-key authentication fail (exercises the
 # StrictModes branch in SearchForPubKey). Uses the already-running local sshd,
@@ -400,11 +439,12 @@ else
         run_test "sshd_permitroot_prohibit_password.sh"
         run_test "sshd_permitroot_forced_cmd.sh"
         run_strictmodes_negative_test
+        run_upn_unenforceable_negative_test
         run_test "sshd_login_grace_test.sh"
         run_test "sshd_privdrop_fail_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+9))
+        SKIPPED=$((SKIPPED+10))
     fi
 
     # these tests run with X509 sshd-config loaded

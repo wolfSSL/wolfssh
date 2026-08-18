@@ -412,10 +412,18 @@ static void ShowUsage(void)
     printf(" -k <list>     set the comma separated list of server host key "
            "algos to accept\n");
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    printf(" -W <spec>     Windows cert store: \"store:subject:flags\"\n");
+    printf(" -W <spec>     Windows cert store: \"store:subject[:flags]\"\n");
     printf("               Example: -W \"My:CN=MyCert:CURRENT_USER\"\n");
+    printf("               flags: CURRENT_USER (default), LOCAL_MACHINE,\n");
+    printf("               USERS, CURRENT_SERVICE, SERVICES,\n");
+    printf("               CURRENT_USER_GROUP_POLICY,\n");
+    printf("               LOCAL_MACHINE_GROUP_POLICY,\n");
+    printf("               LOCAL_MACHINE_ENTERPRISE, each also with a\n");
+    printf("               CERT_SYSTEM_STORE_ prefix, or a number\n");
     printf("               supplies both keys, can not be used with "
            "-i, -j or -J\n");
+    printf("               skips the wolfssh home directory search, so\n");
+    printf("               -A/-d/-l resolve against the current directory\n");
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");
@@ -562,6 +570,100 @@ static int doCmds(func_args* args)
             return -1;
         }
         msg[WOLFSSH_MAX_FILENAME * 2 - 1] = '\0';
+
+        /* Anchored to the start of the line so a file name containing
+         * "creat" in another command does not match, and dispatched ahead
+         * of the unanchored substring matchers below so none of them can
+         * steal a creat line whose mode or path contains "get", "cd", etc.
+         * The keyword may be followed by a space, tab, or end of line; the
+         * bare-keyword form still reaches sftpParseModeAndPath so its
+         * empty-argument handling stays covered. */
+        pt = msg;
+        while (*pt == ' ' || *pt == '\t')
+            pt++;
+        if (WSTRNCMP(pt, "creat", 5) == 0 &&
+                (pt[5] == '\0' || pt[5] == ' ' || pt[5] == '\t' ||
+                 pt[5] == '\n')) {
+            char*            f = NULL;
+            char*            path;
+            char             mode[WOLFSSH_MAX_OCTET_LEN];
+            byte             handle[WOLFSSH_MAX_HANDLE];
+            word32           handleSz = WOLFSSH_MAX_HANDLE;
+            WS_SFTP_FILEATRB atr;
+            int              parseRet;
+            int              openRet = WS_FATAL_ERROR;
+            unsigned long    perVal;
+            char*            modeEnd;
+
+            pt += 5;
+            while (*pt == ' ' || *pt == '\t')
+                pt++;
+            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
+            if (parseRet == 1) {
+                printf("error with getting mode\r\n");
+                continue;
+            }
+            if (parseRet == -1) {
+                err_msg("Error malloc'ing");
+                return -1;
+            }
+
+            /* build permission attribute from octal mode string;
+             * wolfSSH_oct2dec is internal scope so strtoul is used here */
+            perVal = strtoul(mode, &modeEnd, 8);
+            if (*modeEnd == '\0' && perVal <= 07777) {
+                WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
+                atr.flags = WOLFSSH_FILEATRB_PERM;
+                atr.per   = (word32)perVal;
+
+                /* open (create) remote file with the given permissions */
+                handleSz = WOLFSSH_MAX_HANDLE;
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Open(ssh, path,
+                            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
+                            WOLFSSH_FXF_TRUNC, &atr, handle, &handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                openRet = ret;
+            }
+            if (openRet == WS_SUCCESS) {
+                do {
+                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
+                        ret = wolfSSH_worker(ssh, NULL);
+                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(ssh);
+                        }
+                    }
+                    ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
+                    err = wolfSSH_get_error(ssh);
+                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                            err == WS_REKEYING) && ret != WS_SUCCESS);
+                if (ret != WS_SUCCESS) {
+                    if (SFTP_FPUTS(args, "Unable to close file handle\n") < 0) {
+                        err_msg("fputs error");
+                        WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                        return -1;
+                    }
+                }
+            }
+            else {
+                if (SFTP_FPUTS(args, "Unable to create file\n") < 0) {
+                    err_msg("fputs error");
+                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+                    return -1;
+                }
+            }
+
+            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            continue;
+        }
 
         if ((pt = WSTRNSTR(msg, "mkdir", sizeof(msg))) != NULL) {
             WS_SFTP_FILEATRB atrb;
@@ -960,91 +1062,6 @@ static int doCmds(func_args* args)
                     return -1;
                 }
                 if (SFTP_FPUTS(args, "\n") < 0) {
-                    err_msg("fputs error");
-                    WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                    return -1;
-                }
-            }
-
-            WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-            continue;
-        }
-
-        /* anchor to the start of the line so a file name containing "creat"
-         * in another command does not match */
-        pt = msg;
-        while (*pt == ' ' || *pt == '\t')
-            pt++;
-        if (WSTRNCMP(pt, "creat ", 6) == 0) {
-            char*            f = NULL;
-            char*            path;
-            char             mode[WOLFSSH_MAX_OCTET_LEN];
-            byte             handle[WOLFSSH_MAX_HANDLE];
-            word32           handleSz = WOLFSSH_MAX_HANDLE;
-            WS_SFTP_FILEATRB atr;
-            int              parseRet;
-            int              openRet = WS_FATAL_ERROR;
-            unsigned long    perVal;
-            char*            modeEnd;
-
-            pt += sizeof("creat");
-            parseRet = sftpParseModeAndPath(pt, mode, &path, &f, workingDir);
-            if (parseRet == 1) {
-                printf("error with getting mode\r\n");
-                continue;
-            }
-            if (parseRet == -1) {
-                err_msg("Error malloc'ing");
-                return -1;
-            }
-
-            /* build permission attribute from octal mode string;
-             * wolfSSH_oct2dec is internal scope so strtoul is used here */
-            perVal = strtoul(mode, &modeEnd, 8);
-            if (*modeEnd == '\0' && perVal <= 07777) {
-                WMEMSET(&atr, 0, sizeof(WS_SFTP_FILEATRB));
-                atr.flags = WOLFSSH_FILEATRB_PERM;
-                atr.per   = (word32)perVal;
-
-                /* open (create) remote file with the given permissions */
-                handleSz = WOLFSSH_MAX_HANDLE;
-                do {
-                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
-                        ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
-                    }
-                    ret = wolfSSH_SFTP_Open(ssh, path,
-                            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
-                            WOLFSSH_FXF_TRUNC, &atr, handle, &handleSz);
-                    err = wolfSSH_get_error(ssh);
-                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                            err == WS_REKEYING) && ret != WS_SUCCESS);
-                openRet = ret;
-            }
-            if (openRet == WS_SUCCESS) {
-                do {
-                    while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
-                        ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
-                    }
-                    ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
-                    err = wolfSSH_get_error(ssh);
-                } while ((err == WS_WANT_READ || err == WS_WANT_WRITE ||
-                            err == WS_REKEYING) && ret != WS_SUCCESS);
-                if (ret != WS_SUCCESS) {
-                    if (SFTP_FPUTS(args, "Unable to close file handle\n") < 0) {
-                        err_msg("fputs error");
-                        WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
-                        return -1;
-                    }
-                }
-            }
-            else {
-                if (SFTP_FPUTS(args, "Unable to create file\n") < 0) {
                     err_msg("fputs error");
                     WFREE(f, NULL, DYNAMIC_TYPE_TMP_BUFFER);
                     return -1;
@@ -1874,8 +1891,13 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     else
         ret = NonBlockSSH_connect();
     if (ret != WS_SUCCESS) {
-        fprintf(stderr, "wolfSSH_SFTP_connect failed: %d, %s\n", ret,
-                wolfSSH_ErrorToName(ret));
+        /* the return is a generic failure code; the real cause is kept in
+         * the session error */
+        int err;
+
+        err = wolfSSH_get_error(ssh);
+        fprintf(stderr, "wolfSSH_SFTP_connect failed: %d, %s\n", err,
+                wolfSSH_ErrorToName(err));
         err_sys("Couldn't connect SFTP");
     }
 

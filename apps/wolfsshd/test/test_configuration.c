@@ -290,6 +290,29 @@ static int test_ParseConfigLine(void)
         /* Whitespace tests. */
         {"Extra leading whitespace", "Port   22", 0},
         {"Extra trailing whitespace", "Port 22   \n", 0},
+        {"Tab delimiter", "Port\t22", 0},
+        {"Trailing tabs", "Port 22\t\t\n", 0},
+
+        /* The option matcher requires whitespace (or end of line) after the
+         * matched name, so an unknown name that extends a real one must not
+         * prefix-match it. */
+        {"Unknown extension of Port", "PortFoo 22", 1},
+        {"Unknown extension of HostKey", "HostKeyFoo /tmp/x", 1},
+        {"Unknown extension of HostKeyStore", "HostKeyStoreX MY", 1},
+        {"Unknown extension of TrustedUserCAStore",
+            "wolfSSH_TrustedUserCAStoreX yes", 1},
+        {"Keyword=value form is rejected", "Port=22", 1},
+
+        /* The two store-trust toggles follow the same yes/no/invalid
+         * convention as every other boolean option. Note: on builds without
+         * WOLFSSH_CERTS support these still parse; only SetupCTX rejects
+         * them, so parse success is the right expectation everywhere. */
+        {"System CA yes", "wolfSSH_TrustedSystemCAKeys yes", 0},
+        {"System CA no", "wolfSSH_TrustedSystemCAKeys no", 0},
+        {"System CA invalid", "wolfSSH_TrustedSystemCAKeys wolfsshd", 1},
+        {"User CA store yes", "wolfSSH_TrustedUserCAStore yes", 0},
+        {"User CA store no", "wolfSSH_TrustedUserCAStore no", 0},
+        {"User CA store invalid", "wolfSSH_TrustedUserCAStore wolfsshd", 1},
 
         /* Privilege separation tests. */
         {"Privilege separation yes", "UsePrivilegeSeparation yes", 0},
@@ -425,7 +448,7 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_TrustedSystemCAKeys yes");
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_TrustedUserCAStore yes");
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
     if (ret == WS_SUCCESS) ret = PCL("HostKeyStore MY");
     if (ret == WS_SUCCESS) ret = PCL("HostKeyStoreSubject wolfSSH Host");
     if (ret == WS_SUCCESS) ret = PCL("HostKeyStoreFlags 0x1000");
@@ -547,7 +570,7 @@ static int test_ConfigCopy(void)
             ret = WS_FATAL_ERROR;
     }
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
     if (ret == WS_SUCCESS) {
         if (wolfSSHD_ConfigGetHostKeyStore(match) == NULL ||
             XSTRCMP(wolfSSHD_ConfigGetHostKeyStore(match), "MY") != 0)
@@ -581,7 +604,7 @@ static int test_ConfigCopy(void)
                     "subjectName") != 0)
             ret = WS_FATAL_ERROR;
     }
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
     wolfSSHD_ConfigFree(head);
     return ret;
@@ -4496,7 +4519,12 @@ static int test_ConfigOptionPrefixOrder(void)
 }
 
 /* Every CheckNotInMatch-guarded option must fail to parse inside a Match
- * block; these settings are loaded once at startup from the global config. */
+ * block with WS_BAD_ARGUMENT (the value CheckNotInMatch returns, so a
+ * rejection cannot be confused with an unrecognised option name), while the
+ * same line parses successfully at global scope as a positive control.
+ * TrustedUserCAKeys is deliberately absent: its per-user resolved value is
+ * honored live at authentication time, so a Match-scoped setting is
+ * supported and must keep parsing (asserted at the end). */
 static int test_ConfigGlobalOnlyOptionsInMatch(void)
 {
     int ret = WS_SUCCESS;
@@ -4507,11 +4535,15 @@ static int test_ConfigGlobalOnlyOptionsInMatch(void)
     static const char* lines[] = {
         "wolfSSH_TrustedSystemCAKeys yes",
         "wolfSSH_TrustedUserCAStore yes",
-        "TrustedUserCAKeys /etc/ssh/ca.pub",
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+        "HostKey /etc/ssh/host_key",
+        "HostCertificate /etc/ssh/host_cert.pem",
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
         "HostKeyStore MY",
         "HostKeyStoreSubject wolfSSH Host",
         "HostKeyStoreFlags 0x1000",
+        "wolfSSH_WinUserStores CERT_STORE_PROV_SYSTEM",
+        "wolfSSH_WinUserDwFlags LOCAL_MACHINE",
+        "wolfSSH_WinUserPvPara SSH_UserCA",
 #endif
     };
 
@@ -4523,13 +4555,23 @@ static int test_ConfigGlobalOnlyOptionsInMatch(void)
         if (head == NULL) {
             ret = WS_MEMORY_E;
         }
+        /* positive control: the same line is valid at global scope */
+        if (ret == WS_SUCCESS) {
+            rc = ParseConfigLine(&conf, lines[i],
+                    (int)WSTRLEN(lines[i]), 0);
+            if (rc != WS_SUCCESS) {
+                Log(" global-scope control parse failed (%d).", rc);
+                ret = WS_FATAL_ERROR;
+            }
+        }
         if (ret == WS_SUCCESS) {
             ret = PCL("Match User testuser");
         }
         if (ret == WS_SUCCESS) {
             rc = ParseConfigLine(&conf, lines[i],
                     (int)WSTRLEN(lines[i]), 0);
-            if (rc == WS_SUCCESS) {
+            if (rc != WS_BAD_ARGUMENT) {
+                Log(" expected WS_BAD_ARGUMENT, got %d.", rc);
                 ret = WS_FATAL_ERROR;
             }
         }
@@ -4539,10 +4581,91 @@ static int test_ConfigGlobalOnlyOptionsInMatch(void)
             break;
         }
     }
+
+    /* TrustedUserCAKeys stays legal inside a Match block */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: TrustedUserCAKeys in Match block "
+            "accepted.");
+        head = wolfSSHD_ConfigNew(NULL);
+        conf = head;
+        if (head == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        if (ret == WS_SUCCESS) {
+            ret = PCL("Match User testuser");
+        }
+        if (ret == WS_SUCCESS) {
+            ret = PCL("TrustedUserCAKeys /etc/ssh/ca.pub");
+        }
+        Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(head);
+    }
 #undef PCL
 
     return ret;
 }
+
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+/* NULL-argument and replace-existing coverage for the three wolfSSH_WinUser*
+ * setters, modelled on test_ConfigSetAuthKeysFile. The replace path frees
+ * the previous value, which the sanitizer builds verify. */
+static int test_ConfigSetWinUserOptions(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        ret = WS_MEMORY_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: WinUser setters NULL arguments.");
+        if (wolfSSHD_ConfigSetWinUserStores(NULL, "x") != WS_BAD_ARGUMENT ||
+            wolfSSHD_ConfigSetWinUserStores(conf, NULL) != WS_BAD_ARGUMENT ||
+            wolfSSHD_ConfigSetWinUserDwFlags(NULL, "x") != WS_BAD_ARGUMENT ||
+            wolfSSHD_ConfigSetWinUserDwFlags(conf, NULL) != WS_BAD_ARGUMENT ||
+            wolfSSHD_ConfigSetWinUserPvPara(NULL, "x") != WS_BAD_ARGUMENT ||
+            wolfSSHD_ConfigSetWinUserPvPara(conf, NULL) != WS_BAD_ARGUMENT) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: WinUser setters replace existing value.");
+        if (wolfSSHD_ConfigSetWinUserStores(conf,
+                    "CERT_STORE_PROV_SYSTEM") != WS_SUCCESS ||
+            wolfSSHD_ConfigSetWinUserStores(conf, "second") != WS_SUCCESS ||
+            WSTRCMP(wolfSSHD_ConfigGetWinUserStores(conf), "second") != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                (wolfSSHD_ConfigSetWinUserDwFlags(conf,
+                    "LOCAL_MACHINE") != WS_SUCCESS ||
+                 wolfSSHD_ConfigSetWinUserDwFlags(conf,
+                    "CURRENT_USER") != WS_SUCCESS ||
+                 WSTRCMP(wolfSSHD_ConfigGetWinUserDwFlags(conf),
+                    "CURRENT_USER") != 0)) {
+            ret = WS_FATAL_ERROR;
+        }
+        if (ret == WS_SUCCESS &&
+                (wolfSSHD_ConfigSetWinUserPvPara(conf,
+                    "SSH_UserCA") != WS_SUCCESS ||
+                 wolfSSHD_ConfigSetWinUserPvPara(conf,
+                    "OtherStore") != WS_SUCCESS ||
+                 WSTRCMP(wolfSSHD_ConfigGetWinUserPvPara(conf),
+                    "OtherStore") != 0)) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log(ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+    }
+
+    wolfSSHD_ConfigFree(conf);
+
+    return ret;
+}
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
 /* Exercises the exported per-user AuthorizedKeysFile predicate that decides
  * whether an entry in the resolved file is an implicit user binding. */
@@ -4564,10 +4687,26 @@ static int test_AuthKeysPatternIsPerUser(void)
         {"absolute with %h component", "/etc/ssh/%h/keys", 1},
         {"absolute with embedded %u", "/etc/ssh/keys%u", 1},
         {"absolute with only literal %%u", "/etc/ssh/%%u", 0},
-        {"relative literal percent then %u", "%%%u", 1},
+        /* relative, so per-user regardless of its percent content */
+        {"relative with literal percents", "%%%u", 1},
         {"absolute literal percent then %u", "/a%%%u", 1},
+        /* the %% skip must not let the 'u' after a literal percent pair
+         * count as a %u token */
+        {"absolute double literal percent then u", "/a%%%%u", 0},
         {"absolute %u escaped by ..", "/etc/ssh/%u/../shared", 0},
         {"relative escaped by ..", "../shared", 0},
+#ifdef _WIN32
+        /* Windows-rooted forms are only absolute on a _WIN32 build; these
+         * are the security-relevant shared-file shapes that must NOT
+         * classify as per-user there */
+        {"drive-rooted shared file",
+            "C:\\ProgramData\\ssh\\authorized_keys_all", 0},
+        {"UNC shared file", "\\\\server\\share\\authorized_keys", 0},
+        {"drive-rooted with %u", "C:\\ProgramData\\ssh\\%u", 1},
+        {"drive-rooted %u escaped by ..", "C:\\keys\\%u\\..\\shared", 0},
+        /* drive-relative resolves under home and fails closed there */
+        {"drive-relative path", "C:foo", 1},
+#endif
     };
 
     for (i = 0; i < (int)(sizeof(vectors) / sizeof(*vectors)); i++) {
@@ -6316,6 +6455,9 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ParseConfigLine),
     TEST_DECL(test_ConfigOptionPrefixOrder),
     TEST_DECL(test_ConfigGlobalOnlyOptionsInMatch),
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+    TEST_DECL(test_ConfigSetWinUserOptions),
+#endif
     TEST_DECL(test_AuthKeysPatternIsPerUser),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),

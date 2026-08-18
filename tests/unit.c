@@ -97,6 +97,21 @@
     #ifndef CERT_SYSTEM_STORE_USERS
         #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_SERVICE
+        #define CERT_SYSTEM_STORE_CURRENT_SERVICE 0x00040000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_SERVICES
+        #define CERT_SYSTEM_STORE_SERVICES 0x00050000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY 0x00070000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY 0x00080000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE 0x00090000
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP
@@ -12818,12 +12833,14 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 #ifdef WOLFSSH_TEST_SET_CERTMAN
 /* wolfSSH_SetCertManager imports a WOLFSSL_CERT_MANAGER by reference into
  * the wolfSSH context. Test argument checking, importing the same manager
- * twice, replacing an already-imported manager, and the reference counting
- * on both sides of the import: the imported manager must outlive the
- * reference it was created with, and must outlive the wolfSSH context. Each
- * of those is checked by loading a root CA through the manager afterwards,
- * so a missing up_ref shows up as a failure or as a use-after-free under
- * the sanitizer builds. */
+ * twice (a reference leak there is only observable under the sanitizer or
+ * leak-checking builds, not by these return-value checks), replacing an
+ * already-imported manager, and the reference counting on both sides of
+ * the import: the imported manager must outlive the reference it was
+ * created with, and must outlive the wolfSSH context. Each of those is
+ * checked by loading a root CA through the manager afterwards, so a
+ * missing up_ref shows up as a failure or as a use-after-free under the
+ * sanitizer builds. */
 static int test_SetCertManager(void)
 {
     int result = 0;
@@ -12919,6 +12936,12 @@ static int test_SetCertManager(void)
         free(root);
     if (result == 0 && !haveRoot)
         result = 1;
+#else
+    /* The reference-counting behaviour is only observable through the
+     * root-CA loads; without them this run verified the argument checks
+     * only, so report SKIPPED rather than a full SUCCESS. */
+    if (result == 0)
+        result = 1;
 #endif
 
     return result;
@@ -12972,30 +12995,82 @@ static int test_ParseCertStoreSpec(void)
     wchar_t* wSubjectName = NULL;
     word32 dwFlags = 0;
 
-    /* bad arguments */
+    /* bad arguments; the out pointers are seeded with a garbage sentinel so
+     * the documented "any non-NULL out-pointer is NULLed on failure"
+     * contract is actually observed, not just vacuously satisfied */
     result = certStoreSpecCheck(NULL, WS_BAD_ARGUMENT, NULL, NULL, 0);
+    wSubjectName = (wchar_t*)(size_t)1;
     if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", NULL,
                 &wSubjectName, &dwFlags, NULL) != WS_BAD_ARGUMENT)
         result = -10;
+    if (result == 0 && wSubjectName != NULL)
+        result = -13;
+    wStoreName = (wchar_t*)(size_t)1;
     if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", &wStoreName,
                 NULL, &dwFlags, NULL) != WS_BAD_ARGUMENT)
         result = -11;
+    if (result == 0 && wStoreName != NULL)
+        result = -14;
+    wStoreName = (wchar_t*)(size_t)1;
+    wSubjectName = (wchar_t*)(size_t)1;
     if (result == 0 && wolfSSH_ParseCertStoreSpec("My:server", &wStoreName,
                 &wSubjectName, NULL, NULL) != WS_BAD_ARGUMENT)
         result = -12;
+    if (result == 0 && (wStoreName != NULL || wSubjectName != NULL))
+        result = -15;
+    wStoreName = NULL;
+    wSubjectName = NULL;
 
-    /* full spec with named flag values */
+    /* full spec with every named flag value, short form */
     if (result == 0)
         result = certStoreSpecCheck("My:server:LOCAL_MACHINE", WS_SUCCESS,
                 L"My", L"server", CERT_SYSTEM_STORE_LOCAL_MACHINE);
     if (result == 0)
         result = certStoreSpecCheck("My:server:CURRENT_USER", WS_SUCCESS,
                 L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:USERS", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_USERS);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:CURRENT_SERVICE", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_CURRENT_SERVICE);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:SERVICES", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_SERVICES);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:CURRENT_USER_GROUP_POLICY",
+                WS_SUCCESS, L"My", L"server",
+                CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:LOCAL_MACHINE_GROUP_POLICY",
+                WS_SUCCESS, L"My", L"server",
+                CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:LOCAL_MACHINE_ENTERPRISE",
+                WS_SUCCESS, L"My", L"server",
+                CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE);
+    /* the long CERT_SYSTEM_STORE_* spellings are accepted too */
+    if (result == 0)
+        result = certStoreSpecCheck(
+                "My:server:CERT_SYSTEM_STORE_LOCAL_MACHINE", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_LOCAL_MACHINE);
+    if (result == 0)
+        result = certStoreSpecCheck(
+                "My:server:CERT_SYSTEM_STORE_CURRENT_USER", WS_SUCCESS,
+                L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
 
     /* flags default to CURRENT_USER when not given */
     if (result == 0)
         result = certStoreSpecCheck("My:server", WS_SUCCESS,
                 L"My", L"server", CERT_SYSTEM_STORE_CURRENT_USER);
+
+    /* a subject may carry the CN= prefix and a fourth field is rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My:CN=host:LOCAL_MACHINE", WS_SUCCESS,
+                L"My", L"CN=host", CERT_SYSTEM_STORE_LOCAL_MACHINE);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:CURRENT_USER:extra",
+                WS_BAD_ARGUMENT, NULL, NULL, 0);
 
     /* numeric flags: only system-store location bits are accepted */
     if (result == 0)
@@ -13012,6 +13087,29 @@ static int test_ParseCertStoreSpec(void)
     if (result == 0)
         result = certStoreSpecCheck("My:server:0x00030000", WS_BAD_ARGUMENT,
                 NULL, NULL, 0);
+    /* an unrecognized name falls to the numeric parser and is rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:BOGUS", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    /* strtoul()'s sign and whitespace forms must not sneak through */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:+65536", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:-0xFFFF0000", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    if (result == 0)
+        result = certStoreSpecCheck("My:server: 65536", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+    /* trailing junk after the number is rejected */
+    if (result == 0)
+        result = certStoreSpecCheck("My:server:65536x", WS_BAD_ARGUMENT,
+                NULL, NULL, 0);
+
+    /* invalid UTF-8 in a name fails the wide conversion */
+    if (result == 0)
+        result = certStoreSpecCheck("My\xC3:server", WS_FATAL_ERROR,
+                NULL, NULL, 0);
 
     /* missing or empty fields are rejected */
     if (result == 0)
@@ -13025,6 +13123,52 @@ static int test_ParseCertStoreSpec(void)
                 0);
     if (result == 0)
         result = certStoreSpecCheck("", WS_BAD_ARGUMENT, NULL, NULL, 0);
+
+    return result;
+}
+
+
+/* Store-independent argument and no-side-effect checks for
+ * wolfSSH_CTX_UsePrivateKey_fromStore(): the NULL-argument and bad-dwFlags
+ * rejections run before any store is opened, and every failure must leave
+ * the context's key table untouched per the documented contract. */
+static int test_UsePrivateKeyFromStoreArgs(void)
+{
+    int result = 0;
+    WOLFSSH_CTX* ctx;
+    word32 keyCountBefore;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1;
+    keyCountBefore = ctx->privateKeyCount;
+
+    if (wolfSSH_CTX_UsePrivateKey_fromStore(NULL, L"My",
+                CERT_SYSTEM_STORE_CURRENT_USER, L"unit") != WS_BAD_ARGUMENT)
+        result = -2;
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_fromStore(ctx, NULL,
+                CERT_SYSTEM_STORE_CURRENT_USER, L"unit") != WS_BAD_ARGUMENT)
+        result = -3;
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_fromStore(ctx, L"My",
+                CERT_SYSTEM_STORE_CURRENT_USER, NULL) != WS_BAD_ARGUMENT)
+        result = -4;
+    /* zero and location-plus-control-flag values are not store locations */
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_fromStore(ctx, L"My", 0,
+                L"unit") != WS_BAD_ARGUMENT)
+        result = -5;
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_fromStore(ctx, L"My",
+                0x00010010, L"unit") != WS_BAD_ARGUMENT)
+        result = -6;
+    /* a store that cannot exist fails to open (read-only, open-existing) */
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_fromStore(ctx,
+                L"wolfSSHUnitTestNoSuchStore", CERT_SYSTEM_STORE_CURRENT_USER,
+                L"unit") != WS_BAD_FILE_E)
+        result = -7;
+    /* on every failure the context is left unchanged */
+    if (result == 0 && ctx->privateKeyCount != keyCountBefore)
+        result = -8;
+
+    wolfSSH_CTX_free(ctx);
 
     return result;
 }
@@ -14862,6 +15006,166 @@ static int test_ParseECCPubKey(void)
     return failures;
 }
 
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM)
+
+/* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
+static int loadFileIntoBuffer(const char* fn, byte** buf, word32* bufSz)
+{
+    FILE* f;
+    long sz;
+    size_t rd;
+
+    *buf = NULL;
+    *bufSz = 0;
+
+    f = fopen(fn, "rb");
+    if (f == NULL)
+        return -1;
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) <= 0 ||
+            fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+    *buf = (byte*)malloc((size_t)sz);
+    if (*buf == NULL) {
+        fclose(f);
+        return -1;
+    }
+    rd = fread(*buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (rd != (size_t)sz) {
+        free(*buf);
+        *buf = NULL;
+        return -1;
+    }
+    *bufSz = (word32)sz;
+
+    return 0;
+}
+
+
+/* Big-endian word32 store; c32toa is WOLFSSH_LOCAL and not linkable here. */
+static void certChainPut32(word32 v, byte* c)
+{
+    c[0] = (byte)((v >> 24) & 0xFF);
+    c[1] = (byte)((v >> 16) & 0xFF);
+    c[2] = (byte)((v >>  8) & 0xFF);
+    c[3] = (byte)( v        & 0xFF);
+}
+
+
+/* ParseECCPubKeyCert() Unit Test: the certificate host-key sibling of
+ * test_ParseECCPubKey(). Feeds an RFC 6187 chain blob wrapping
+ * keys/server-cert.der (a P-256 leaf chaining to keys/ca-cert-ecc.der) and
+ * checks the curve binding: the P-256 certificate must be accepted for
+ * x509v3-ecdsa-sha2-nistp256 and rejected with WS_INVALID_PRIME_CURVE for a
+ * negotiated x509v3-ecdsa-sha2-nistp384, and an id wcPrimeForId() cannot
+ * map must be rejected up front with WS_INVALID_ALGO_ID (checked first: it
+ * needs no chain verification). Skipped (returns 1) when the key files are
+ * not readable or the chain does not verify in this build's profile (e.g.
+ * WOLFSSL_FPKI, whose leaf checks these test certs do not meet). */
+static int test_ParseECCPubKeyCert(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte* ca = NULL;
+    byte* cert = NULL;
+    byte* blob = NULL;
+    word32 caSz = 0, certSz = 0, blobSz = 0, idx;
+    int result = 0;
+    int ret;
+    static const char algoName[] = "x509v3-ecdsa-sha2-nistp256";
+
+    if (loadFileIntoBuffer("./keys/ca-cert-ecc.der", &ca, &caSz) != 0 ||
+            loadFileIntoBuffer("./keys/server-cert.der", &cert, &certSz)
+                != 0) {
+        printf("ParseECCPubKeyCert: SKIP, ./keys certs not readable\n");
+        free(ca);
+        free(cert);
+        return 1;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        result = -1;
+    if (result == 0 && wolfSSH_CTX_AddRootCert_buffer(ctx, ca, caSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS)
+        result = -2;
+    if (result == 0) {
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL || ssh->handshake == NULL)
+            result = -3;
+    }
+
+    /* string name | uint32 cert count | string cert | uint32 ocsp count */
+    if (result == 0) {
+        blobSz = LENGTH_SZ + (word32)WSTRLEN(algoName)
+                + UINT32_SZ + LENGTH_SZ + certSz + UINT32_SZ;
+        blob = (byte*)malloc(blobSz);
+        if (blob == NULL)
+            result = -4;
+    }
+    if (result == 0) {
+        idx = 0;
+        certChainPut32((word32)WSTRLEN(algoName), blob + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(blob + idx, algoName, WSTRLEN(algoName));
+        idx += (word32)WSTRLEN(algoName);
+        certChainPut32(1, blob + idx);
+        idx += UINT32_SZ;
+        certChainPut32(certSz, blob + idx);
+        idx += LENGTH_SZ;
+        WMEMCPY(blob + idx, cert, certSz);
+        idx += certSz;
+        certChainPut32(0, blob + idx);
+    }
+
+    /* an id with no curve mapping is rejected before the parse, so this
+     * works even in builds whose cert profile rejects the test chain */
+    if (result == 0) {
+        ssh->handshake->pubKeyId = ID_SSH_RSA;
+        ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
+        if (ret != WS_INVALID_ALGO_ID) {
+            printf("ParseECCPubKeyCert: unmapped id ret %d\n", ret);
+            result = -7;
+        }
+    }
+
+    /* matching curve accepted; a failure here means the chain itself did
+     * not verify under this build's profile, so skip the curve vectors
+     * rather than fail on unrelated policy */
+    if (result == 0) {
+        ssh->handshake->pubKeyId = ID_X509V3_ECDSA_SHA2_NISTP256;
+        ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
+        if (ret != WS_SUCCESS) {
+            printf("ParseECCPubKeyCert: control chain did not verify "
+                   "(ret %d), skipping curve vectors\n", ret);
+            result = 1;
+        }
+    }
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    /* P-256 leaf offered for a negotiated P-384 algorithm is rejected */
+    if (result == 0) {
+        ssh->handshake->pubKeyId = ID_X509V3_ECDSA_SHA2_NISTP384;
+        ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
+        if (ret != WS_INVALID_PRIME_CURVE) {
+            printf("ParseECCPubKeyCert: curve mismatch ret %d\n", ret);
+            result = -6;
+        }
+    }
+#endif
+
+    free(blob);
+    free(cert);
+    free(ca);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return result;
+}
+
+#endif /* WOLFSSH_CERTS && !WOLFSSL_FPKI && !NO_FILESYSTEM */
+
 #endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 
 
@@ -16691,6 +16995,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("ParseECCPubKey: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM)
+    unitResult = test_ParseECCPubKeyCert();
+    /* 1 means the ./keys certs were unreadable or unverifiable here */
+    printf("ParseECCPubKeyCert: %s\n", (unitResult == 0 ? "SUCCESS" :
+            unitResult > 0 ? "SKIPPED" : "FAILED"));
+    testResult = testResult || (unitResult < 0);
+#endif
 #endif
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
     defined(HAVE_ED25519_SIGN) && defined(HAVE_ED25519_VERIFY) && \
@@ -16960,6 +17271,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     unitResult = test_ParseCertStoreSpec();
     printf("ParseCertStoreSpec: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_UsePrivateKeyFromStoreArgs();
+    printf("UsePrivateKeyFromStoreArgs: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

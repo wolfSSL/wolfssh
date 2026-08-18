@@ -64,8 +64,8 @@
     #ifndef WOLFSSH_CERTS
         #error "WOLFSSH_WINDOWS_CERT_STORE requires WOLFSSH_CERTS"
     #endif
-    #ifndef _WIN32
-        #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows (_WIN32) target"
+    #if !defined(_WIN32) && !defined(USE_WINDOWS_API)
+        #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows target"
     #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -1905,6 +1905,10 @@ enum WS_MessageIdLimits {
 #ifndef WOLFSSH_NO_ECDSA
     WOLFSSH_API int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey,
             word32 pubKeySz);
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_TestParseECCPubKeyCert(WOLFSSH* ssh, byte* pubKey,
+            word32 pubKeySz);
+#endif /* WOLFSSH_CERTS */
 #endif /* !WOLFSSH_NO_ECDSA */
 #ifndef WOLFSSH_NO_ED25519
     WOLFSSH_API int wolfSSH_TestParseEd25519PubKey(WOLFSSH* ssh, byte* pubKey,

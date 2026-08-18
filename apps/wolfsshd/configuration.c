@@ -87,11 +87,11 @@ struct WOLFSSHD_CONFIG {
     char* hostKeyFile;
     char* hostCertFile;
     char* userCAKeysFile;
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
     char* hostKeyStore;
     char* hostKeyStoreSubject;
     char* hostKeyStoreFlags;
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
     char* hostKeyAlgos;
     char* kekAlgos;
     char* listenAddress;
@@ -99,11 +99,11 @@ struct WOLFSSHD_CONFIG {
     char* forceCmd;
     char* pidFile;
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
     char* winUserStores;
     char* winUserDwFlags;
     char* winUserPvPara;
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
     WOLFSSHD_CONFIG* next; /* next config in list */
     WOLFSSHD_CONFIG* head; /* global config the Match nodes branch from */
     long  loginTimer;
@@ -354,7 +354,7 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         newConf->heap);
         }
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
         if (ret == WS_SUCCESS && conf->hostKeyStore) {
             ret = CreateString(&newConf->hostKeyStore, conf->hostKeyStore,
                                         (int)WSTRLEN(conf->hostKeyStore),
@@ -392,7 +392,7 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         (int)WSTRLEN(conf->winUserPvPara),
                                         newConf->heap);
         }
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
         if (ret == WS_SUCCESS) {
             newConf->loginTimer   = conf->loginTimer;
@@ -443,14 +443,14 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authorizedUPNDomains, heap);
         FreeString(&current->usrAppliesTo,    heap);
         FreeString(&current->groupAppliesTo,  heap);
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
         FreeString(&current->hostKeyStore,        heap);
         FreeString(&current->hostKeyStoreSubject, heap);
         FreeString(&current->hostKeyStoreFlags,   heap);
         FreeString(&current->winUserStores,       heap);
         FreeString(&current->winUserDwFlags,      heap);
         FreeString(&current->winUserPvPara,       heap);
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -477,9 +477,6 @@ enum {
     OPT_PROTOCOL                = 9,
     OPT_LOGIN_GRACE_TIME        = 10,
     OPT_HOST_KEY                = 11,
-    OPT_HOST_KEY_STORE          = 50,
-    OPT_HOST_KEY_STORE_SUBJECT  = 51,
-    OPT_HOST_KEY_STORE_FLAGS    = 52,
     OPT_PASSWORD_AUTH           = 12,
     OPT_PORT                    = 13,
     OPT_PERMIT_ROOT             = 14,
@@ -499,7 +496,10 @@ enum {
     OPT_WIN_USER_STORES         = 28,
     OPT_WIN_USER_DW_FLAGS       = 29,
     OPT_WIN_USER_PV_PARA        = 30,
-    OPT_AUTHORIZED_UPN_DOMAINS  = 31
+    OPT_AUTHORIZED_UPN_DOMAINS  = 31,
+    OPT_HOST_KEY_STORE          = 32,
+    OPT_HOST_KEY_STORE_SUBJECT  = 33,
+    OPT_HOST_KEY_STORE_FLAGS    = 34
 };
 static const CONFIG_OPTION options[] = {
     {OPT_AUTH_KEYS_FILE,          "AuthorizedKeysFile"},
@@ -1347,12 +1347,18 @@ static int SetListString(char** dst, const char* value, int valueSz,
  * WS_SUCCESS when conf is the global config. */
 static int CheckNotInMatch(const WOLFSSHD_CONFIG* conf, const char* option)
 {
-    if (conf->usrAppliesTo != NULL || conf->groupAppliesTo != NULL) {
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+    else if (conf->usrAppliesTo != NULL || conf->groupAppliesTo != NULL) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Option %s is not supported inside a Match block", option);
-        return WS_BAD_ARGUMENT;
+        ret = WS_BAD_ARGUMENT;
     }
-    return WS_SUCCESS;
+
+    return ret;
 }
 
 /* returns WS_SUCCESS on success */
@@ -1405,11 +1411,15 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_HOST_KEY:
             /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
+            ret = CheckNotInMatch(*conf, "HostKey");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
             break;
         case OPT_HOST_CERT:
             /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
+            ret = CheckNotInMatch(*conf, "HostCertificate");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
             break;
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(*conf, value);
@@ -1442,9 +1452,11 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
                     (*conf)->heap);
             break;
         case OPT_TRUSTED_USER_CA_KEYS:
-            ret = CheckNotInMatch(*conf, "TrustedUserCAKeys");
-            if (ret == WS_SUCCESS)
-                ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
+            /* Deliberately allowed inside a Match block: the resolved per-user
+             * value is consumed live at authentication time for OpenSSH
+             * certificates (CheckPublicKeyUnix/SetupUserTokenWin), so
+             * Match-scoped CA scoping works and must keep working. */
+            ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
         case OPT_TRUSTED_SYSTEM_CA_KEYS:
             ret = CheckNotInMatch(*conf, "wolfSSH_TrustedSystemCAKeys");
@@ -1465,7 +1477,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             if (ret == WS_SUCCESS)
                 ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
             break;
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #ifdef WOLFSSHD_WIN_STORE_CONFIG
         case OPT_WIN_USER_STORES:
             ret = CheckNotInMatch(*conf, "wolfSSH_WinUserStores");
             if (ret == WS_SUCCESS)
@@ -1485,17 +1497,24 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_WIN_USER_STORES:
         case OPT_WIN_USER_DW_FLAGS:
         case OPT_WIN_USER_PV_PARA:
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Ignoring wolfSSH_WinUser* option: requires a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_SUCCESS;
+        #else
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] wolfSSH_WinUser* options require a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
             ret = WS_NOT_COMPILED;
+        #endif
             break;
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+    #endif /* WOLFSSHD_WIN_STORE_CONFIG */
         case OPT_AUTHORIZED_UPN_DOMAINS:
             ret = SetListString(&(*conf)->authorizedUPNDomains, full, fullSz,
                     (*conf)->heap);
             break;
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #ifdef WOLFSSHD_WIN_STORE_CONFIG
         case OPT_HOST_KEY_STORE:
             ret = CheckNotInMatch(*conf, "HostKeyStore");
             if (ret == WS_SUCCESS)
@@ -1520,12 +1539,19 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_HOST_KEY_STORE:
         case OPT_HOST_KEY_STORE_SUBJECT:
         case OPT_HOST_KEY_STORE_FLAGS:
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Ignoring HostKeyStore* option: requires a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_SUCCESS;
+        #else
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] HostKeyStore* options require a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
             ret = WS_NOT_COMPILED;
+        #endif
             break;
-    #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+    #endif /* WOLFSSHD_WIN_STORE_CONFIG */
         default:
             break;
     }
@@ -1542,12 +1568,12 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
     if (in != NULL) {
         for (; i < inSz; ++i) {
             if (inv) {
-                if (WISSPACE(in[i])) {
+                if (WISSPACE((unsigned char)in[i])) {
                     break;
                 }
             }
             else {
-                if (!WISSPACE(in[i])) {
+                if (!WISSPACE((unsigned char)in[i])) {
                     break;
                 }
             }
@@ -1574,7 +1600,7 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
     for (idx = 0; idx < NUM_OPTIONS; ++idx) {
         sz = (int)WSTRLEN(options[idx].name);
         if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
-                (lSz == sz || WISSPACE(l[sz]))) {
+                (lSz == sz || WISSPACE((unsigned char)l[sz]))) {
             found = &options[idx];
             break;
         }
@@ -1957,7 +1983,7 @@ int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
     return ret;
 }
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
 /* Returns the configured store provider, or NULL when not configured. The
  * caller decides what an unset value means. */
 char* wolfSSHD_ConfigGetWinUserStores(const WOLFSSHD_CONFIG* conf)
@@ -2050,7 +2076,7 @@ int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value)
 
     return ret;
 }
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {
@@ -2109,7 +2135,7 @@ static int SetFileString(char** dst, const char* src, void* heap)
     return ret;
 }
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
 char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
@@ -2144,7 +2170,7 @@ char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf)
 
     return ret;
 }
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {

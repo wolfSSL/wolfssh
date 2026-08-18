@@ -32,6 +32,14 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 #define WOLFSSHD_STATIC static
 #endif
 
+/* The Windows cert-store config plumbing (parse, copy, get/set) is plain
+ * string handling with no Windows dependency, so compile it for unit tests
+ * on every platform; only the consumers in wolfsshd.c/auth.c need the real
+ * WOLFSSH_WINDOWS_CERT_STORE build. */
+#if defined(WOLFSSH_WINDOWS_CERT_STORE) || defined(WOLFSSHD_UNIT_TEST)
+#define WOLFSSHD_WIN_STORE_CONFIG
+#endif
+
 #include "auth.h"
 
 /* 0 so that privilege separation is default on after struct memset'd on init */
@@ -65,23 +73,23 @@ char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf);
 const WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file);
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
 char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostKeyStoreSubject(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf);
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value);
 int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value);
 int wolfSSHD_ConfigGetUserCAStore(const WOLFSSHD_CONFIG* conf);
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
 char* wolfSSHD_ConfigGetWinUserStores(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value);
 char* wolfSSHD_ConfigGetWinUserDwFlags(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value);
 char* wolfSSHD_ConfigGetWinUserPvPara(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value);
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 int wolfSSHD_ConfigSetUserCAKeysFile(WOLFSSHD_CONFIG* conf, const char* file);
 word16 wolfSSHD_ConfigGetPort(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthKeysFile(const WOLFSSHD_CONFIG* conf);

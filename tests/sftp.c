@@ -274,6 +274,8 @@ static const SftpTestCmd cmds[] = {
     { "rm test-get",           NULL },
     { "rm test-get-2",         NULL },
     { "rm test-creat-special", NULL },
+    { "rm test-creat-ws",      NULL },
+    { "rm test-creat-tab",     NULL },
 
     /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
@@ -310,6 +312,16 @@ static const SftpTestCmd cmds[] = {
 #endif
     { "chmod 600 test-get-2", NULL },
     { "rm test-get-2",  NULL },
+    /* the creat matcher is anchored to the line start: an argument
+     * containing the substring must stay with its own command (rm of a
+     * nonexistent file is silently ignored, but a mis-dispatch to creat
+     * would create it and the later ls checks would see it) */
+    { "rm mycreat",     NULL },
+    /* leading whitespace and a tab separator both reach the creat handler */
+    { "  creat 0644 test-creat-ws",  NULL },
+    { "rm test-creat-ws",            NULL },
+    { "creat\t0644 test-creat-tab",  NULL },
+    { "rm test-creat-tab",           NULL },
     { "ls -s",          checkLsSize },
     { "cd /nonexistent_path_xyz", checkCdNonexistent },
 #if !defined(NO_WOLFSSH_DIR) && !defined(WOLFSSH_FATFS)

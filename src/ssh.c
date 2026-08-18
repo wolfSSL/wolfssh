@@ -36,27 +36,23 @@
 #include <wolfssl/wolfcrypt/random.h>
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* CompareStringOrdinal() and friends need a Vista-or-later SDK profile;
+     * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so pin
+     * the floor here before <windows.h> is pulled in. */
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0600
+    #endif
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
     #include <string.h>
     #include <wchar.h>
-    /* Fallbacks for SDKs that predate these wincrypt.h definitions. The
-     * values must match wincrypt.h exactly. */
+    /* Fallback for SDKs that predate this wincrypt.h definition. The value
+     * must match wincrypt.h exactly. The CERT_SYSTEM_STORE_* location
+     * constants are consumed only by src/certman.c, which carries its own
+     * fallbacks. */
     #ifndef CERT_NCRYPT_KEY_SPEC
         #define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
-    #endif
-    #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
-        #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_USERS
-        #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -3335,6 +3331,9 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE hKey = 0;
     DWORD dwKeySpec = 0;
     BOOL fCallerFree = FALSE;
+    DWORD keyUsage = 0;
+    DWORD cbOut = 0;
+    int canSign = 1;
 
     if (!CryptAcquireCertificatePrivateKey(pCertContext,
             CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
@@ -3342,7 +3341,21 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
         return 0;
     }
 
+    /* An acquirable key is not necessarily a signing key: an enterprise My
+     * store commonly holds a keyEncipherment-only RSA certificate next to
+     * the signing one with the same CN. Require NCRYPT_ALLOW_SIGNING_FLAG
+     * when the provider exposes the usage property; a provider that does
+     * not expose it is treated as usable rather than rejected. */
+    if (NCryptGetProperty(hKey, NCRYPT_KEY_USAGE_PROPERTY,
+            (PBYTE)&keyUsage, (DWORD)sizeof(keyUsage), &cbOut, 0) == 0 &&
+            cbOut == (DWORD)sizeof(keyUsage) &&
+            (keyUsage & NCRYPT_ALLOW_SIGNING_FLAG) == 0) {
+        canSign = 0;
+    }
+
     if (fCallerFree) {
+        /* Only NCRYPT keys are acquired above, so dwKeySpec is always
+         * CERT_NCRYPT_KEY_SPEC; the CSP release arm is defensive. */
         if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
             NCryptFreeObject(hKey);
         }
@@ -3351,7 +3364,7 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
         }
     }
 
-    return 1;
+    return canSign;
 }
 
 
@@ -3596,19 +3609,20 @@ static int PrepCertStoreSlot(void* heap, byte keyId, word32 keyIdx,
 
 /* Move the prepared resources into the context. The slot may previously
  * have held either a cert-store key or a file-based key/cert, so clear
- * both kinds of resources.
- * Returns WS_SUCCESS on success. */
-static int CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
+ * both kinds of resources. Infallible by design: the caller bounds-checks
+ * every index before preparing a slot, which is what makes the two-slot
+ * commit in wolfSSH_CTX_UsePrivateKey_fromStore() all-or-nothing. */
+static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
 {
     WOLFSSH_PVT_KEY* pvtKey;
     void* heap;
 
     heap = ctx->heap;
     if (slot->keyIdx >= WOLFSSH_MAX_PVT_KEYS) {
-        /* Unreachable: the caller bounds checks before preparing a slot. */
+        /* Unreachable; free defensively so even this path cannot leak. */
         WLOG(WS_LOG_ERROR, "CommitCertStoreSlot: Slot index out of range");
         FreeCertStoreSlot(heap, slot);
-        return WS_CTX_KEY_COUNT_E;
+        return;
     }
     pvtKey = &ctx->privateKey[slot->keyIdx];
 
@@ -3642,8 +3656,6 @@ static int CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
 
     /* Ownership moved to the context. */
     WMEMSET(slot, 0, sizeof(*slot));
-
-    return WS_SUCCESS;
 }
 
 
@@ -3868,10 +3880,22 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
      * an index a full table legitimately computes. */
     certId = CertTypeForId(keyId);
 #if !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
-    /* x509v3-ssh-rsa signs with SHA-1 and is absent from the canned key
-     * algo lists in a soft-disabled build; do not register an unusable
-     * slot. */
+    /* x509v3-ssh-rsa signs with SHA-1; with SHA-1 soft disabled do not
+     * register a slot for it. Note the canned lists only gate the client
+     * default; a server would advertise the slot via RefreshPublicKeyAlgo,
+     * which is exactly why it must not be registered. If an earlier
+     * file-based load already claimed that slot, reject the mixed
+     * configuration outright rather than leaving a stale file key and
+     * certificate advertised beside the store key. */
     if (certId == ID_X509V3_SSH_RSA) {
+        if (FindKeySlot(ctx, certId) != WOLFSSH_MAX_PVT_KEYS) {
+            WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: An "
+                 "x509v3-ssh-rsa file host key/certificate is already "
+                 "loaded; it cannot be paired with a store key");
+            CertFreeCertificateContext(pCertContext);
+            CertCloseStore(hStore, 0);
+            return WS_BAD_ARGUMENT;
+        }
         certId = keyId;
     }
 #endif
@@ -3906,17 +3930,16 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = CommitCertStoreSlot(ctx, &keySlot);
-    }
-    if (ret == WS_SUCCESS && haveCertSlot) {
-        ret = CommitCertStoreSlot(ctx, &certSlot);
-    }
-    if (ret == WS_SUCCESS) {
+        /* Committing cannot fail (see CommitCertStoreSlot), so once both
+         * slots are prepared the context update is atomic from the caller's
+         * point of view. */
+        CommitCertStoreSlot(ctx, &keySlot);
+        if (haveCertSlot) {
+            CommitCertStoreSlot(ctx, &certSlot);
+        }
         ctx->privateKeyCount = newCount;
     }
     else {
-        /* Committed or bailed-out slots are already zeroed; freeing them
-         * again is a no-op. */
         FreeCertStoreSlot(ctx->heap, &keySlot);
         FreeCertStoreSlot(ctx->heap, &certSlot);
     }
@@ -3939,6 +3962,63 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CTX_UsePrivateKey_fromStore(), "
          "ret = %d", ret);
     return ret;
+}
+
+
+/* Report the certificate a cert-store host key is bound to, so an
+ * application can offer it for certificate user auth without reaching into
+ * the private CTX layout. Returns the first cert-store backed slot
+ * registered under an x509v3 algorithm: cert/certSz point at the DER copy
+ * owned by the CTX (valid until the CTX is freed or the slot replaced) and
+ * algoName at the static SSH algorithm name string. Any out pointer may be
+ * NULL to skip it. Returns WS_SUCCESS, WS_BAD_ARGUMENT on a NULL ctx, or
+ * WS_FATAL_ERROR when no such slot exists (e.g. the x509v3 form of the key
+ * type is compiled out or soft disabled). */
+int wolfSSH_CTX_GetCertStoreCert(WOLFSSH_CTX* ctx, const byte** cert,
+        word32* certSz, const char** algoName)
+{
+    const WOLFSSH_PVT_KEY* pvtKey;
+    word32 i;
+    int isX509Id;
+
+    if (ctx == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
+        pvtKey = &ctx->privateKey[i];
+        if (!pvtKey->useCertStore || pvtKey->certStoreContext == NULL ||
+                pvtKey->key != NULL ||
+                pvtKey->cert == NULL || pvtKey->certSz == 0) {
+            continue;
+        }
+        switch (pvtKey->publicKeyFmt) {
+            case ID_X509V3_SSH_RSA:
+            case ID_X509V3_ECDSA_SHA2_NISTP256:
+            case ID_X509V3_ECDSA_SHA2_NISTP384:
+            case ID_X509V3_ECDSA_SHA2_NISTP521:
+                isX509Id = 1;
+                break;
+            default:
+                isX509Id = 0;
+                break;
+        }
+        if (!isX509Id) {
+            continue;
+        }
+        if (cert != NULL) {
+            *cert = pvtKey->cert;
+        }
+        if (certSz != NULL) {
+            *certSz = pvtKey->certSz;
+        }
+        if (algoName != NULL) {
+            *algoName = IdToName(pvtKey->publicKeyFmt);
+        }
+        return WS_SUCCESS;
+    }
+
+    return WS_FATAL_ERROR;
 }
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #endif /* WOLFSSH_CERTS */
