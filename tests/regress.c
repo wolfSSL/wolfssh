@@ -418,6 +418,9 @@ static void InitChannelOpenHarnessClient(ChannelOpenHarness* harness,
     MemIoInit(&harness->io, in, inSz, harness->out, sizeof(harness->out));
     wolfSSH_SetIOReadCtx(harness->ssh, &harness->io);
     wolfSSH_SetIOWriteCtx(harness->ssh, &harness->io);
+    /* A rekey cannot fit the 256-byte mem buffer, so keep a build-time
+     * DEFAULT_HIGHWATER_MARK from firing one mid-test. */
+    AssertIntEQ(wolfSSH_SetHighwater(harness->ssh, 0), WS_SUCCESS);
     harness->ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
 }
 #endif /* WOLFSSH_FWD && !NO_WOLFSSH_CLIENT */
@@ -444,6 +447,9 @@ static void InitChannelOpenHarness(ChannelOpenHarness* harness,
     MemIoInit(&harness->io, in, inSz, harness->out, sizeof(harness->out));
     wolfSSH_SetIOReadCtx(harness->ssh, &harness->io);
     wolfSSH_SetIOWriteCtx(harness->ssh, &harness->io);
+    /* A rekey cannot fit the 256-byte mem buffer, so keep a build-time
+     * DEFAULT_HIGHWATER_MARK from firing one mid-test. */
+    AssertIntEQ(wolfSSH_SetHighwater(harness->ssh, 0), WS_SUCCESS);
     harness->ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
 }
 
