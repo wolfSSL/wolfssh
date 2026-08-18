@@ -132,9 +132,7 @@ run_test() {
 # separation is off and a high port is used, so no root is needed.
 run_strictmodes_negative_test() {
     printf "Host key trust-anchor negative test ... "
-    # Use a relative host key path: wolfSSH log lines are capped at 120 chars,
-    # so a long absolute path would truncate the "group or world readable"
-    # message this test greps for.
+    # A local copy of the host key, made group/world readable.
     cp ../../../keys/server-key.pem strictmodes_hostkey.pem
     chmod 644 strictmodes_hostkey.pem
     cat <<EOF > sshd_config_test_strictmodes
