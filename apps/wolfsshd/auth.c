@@ -1099,8 +1099,8 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
      * attacker-chosen target. */
     if (lstat(path, &lst) != 0 || !S_ISREG(lst.st_mode)) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] Refusing to load %s: missing, not a regular file, or a "
-            "symlink", path);
+            "[SSHD] Refusing to load (missing, not a regular file, or a "
+            "symlink): %s", path);
         ret = WS_BAD_FILE_E;
     }
 
@@ -1146,28 +1146,29 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     if (ret == WS_SUCCESS) {
         if (!S_ISREG(st.st_mode)) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing to load %s: not a regular file", path);
+                "[SSHD] Refusing to load (not a regular file): %s", path);
             ret = WS_BAD_FILE_E;
         }
         else if (st.st_uid != ownerUid && st.st_uid != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing to load %s: not owned by the user or root",
+                "[SSHD] Refusing to load (not owned by the user or root): %s",
                 path);
             ret = WS_BAD_FILE_E;
         }
         else if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing to load %s: group or world writable", path);
+                "[SSHD] Refusing to load (group or world writable): %s", path);
             ret = WS_BAD_FILE_E;
         }
         else if (rejectReadable && (st.st_mode & (S_IRGRP | S_IROTH)) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing to load %s: group or world readable", path);
+                "[SSHD] Refusing to load (group or world readable): %s", path);
             ret = WS_BAD_FILE_E;
         }
         else if (st.st_dev != lst.st_dev || st.st_ino != lst.st_ino) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing to load %s: file changed during open", path);
+                "[SSHD] Refusing to load (file changed during open): %s",
+                path);
             ret = WS_BAD_FILE_E;
         }
     }
@@ -1294,7 +1295,7 @@ static int SearchKeysFile(const char* keysFilePath, const byte* key,
         if (wolfSSHD_OpenSecureFile(keysFilePath, uid,
                 0 /* rejectReadable */, NULL, &f) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Keys file %s failed StrictModes check", keysFilePath);
+                "[SSHD] Keys file failed StrictModes check: %s", keysFilePath);
             ret = WSSHD_AUTH_FAILURE;
         }
     }
