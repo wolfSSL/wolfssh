@@ -98,6 +98,14 @@
 
 #include <wolfssl/wolfcrypt/coding.h>
 
+
+/* The #error in internal.h can't compare the two: the expression's terms are
+ * enum constants that #if reads as zero. Here both are ordinary constant
+ * expressions, so a term added without bumping the literal fails the build. */
+typedef char wolfSSH_channel_overhead_check[
+        (CHANNEL_PACKET_OVERHEAD_SZ <= CHANNEL_PACKET_OVERHEAD_MAX) ? 1 : -1];
+
+
 /*
 Flags:
   HAVE_WC_ECC_SET_RNG
