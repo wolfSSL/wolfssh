@@ -51,6 +51,14 @@
     #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
+/* Shared by sftpclient_test() and the -W pre-scan in main(). */
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #define SFTPC_OPTLIST_STORE "W:"
+#else
+    #define SFTPC_OPTLIST_STORE ""
+#endif
+#define SFTPC_OPTLIST "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:X" SFTPC_OPTLIST_STORE
+
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 
 /* static so that signal handler can access and interrupt get/put */
@@ -962,7 +970,12 @@ static int doCmds(func_args* args)
             continue;
         }
 
-        if ((pt = WSTRNSTR(msg, "creat", MAX_CMD_SZ)) != NULL) {
+        /* anchor to the start of the line so a file name containing "creat"
+         * in another command does not match */
+        pt = msg;
+        while (*pt == ' ' || *pt == '\t')
+            pt++;
+        if (WSTRNCMP(pt, "creat ", 6) == 0) {
             char*            f = NULL;
             char*            path;
             char             mode[WOLFSSH_MAX_OCTET_LEN];
@@ -1587,11 +1600,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:X"
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
-            "W:"
-#endif /* WOLFSSH_WINDOWS_CERT_STORE */
-            )) != -1) {
+    while ((ch = mygetopt(argc, argv, SFTPC_OPTLIST)) != -1) {
         switch (ch) {
             case 'd':
                 defaultSftpPath = myoptarg;
@@ -1953,8 +1962,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
 
-    /* Clear the auth globals before the CTX, with a cert store key they
-     * alias memory owned by the CTX. */
+    /* ClientFreeBuffers() releases the certificate copy
+     * ClientSetupCertStoreAuth() made; it must use the same heap that was
+     * passed there. */
     ClientFreeBuffers(pubKeyName, privKeyName, heap);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS) {
@@ -2016,7 +2026,30 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
         wolfSSH_Init();
 
-        ChangeToWolfSshRoot();
+        {
+            int useStore = 0;
+        #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            {
+                int ch;
+
+                /* With -W the keys come from the Windows certificate store
+                 * and no file-based keys are needed, so skip the root
+                 * directory search. Parse rather than match on argv, an
+                 * option value could start with "-W". */
+                myoptind = 0;
+                while ((ch = mygetopt(argc, argv, SFTPC_OPTLIST)) != -1) {
+                    if (ch == 'W') {
+                        useStore = 1;
+                        break;
+                    }
+                }
+                myoptind = 0;
+            }
+        #endif
+            if (!useStore) {
+                ChangeToWolfSshRoot();
+            }
+        }
         sftpclient_test(&args);
 
         wolfSSH_Cleanup();

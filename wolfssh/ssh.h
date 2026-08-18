@@ -566,11 +566,13 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
      * CERT_STORE_DELETE_FLAG are rejected with WS_BAD_ARGUMENT. The store
      * is opened read-only. When no time-valid certificate with a usable
      * private key matches, an expired or not-yet-valid one with a usable
-     * key is still selected with only a logged warning, so a renewal whose
-     * key is not yet readable can fall back to the previous certificate.
+     * key is still selected, preferring expired over not yet valid and
+     * then the latest NotAfter; the fallback is logged, but only in
+     * builds with logging compiled in (DEBUG_WOLFSSH or WOLFSSH_SSHD).
      * Returns WS_SUCCESS on success, WS_BAD_FILE_E when the store cannot
-     * be opened, WS_CRYPTO_FAILED when the private key is inaccessible,
-     * WS_CTX_KEY_COUNT_E when two key slots are not free, and
+     * be opened, WS_CRYPTO_FAILED when certificates match but none has an
+     * accessible private key (check key permissions for the service
+     * account), WS_CTX_KEY_COUNT_E when two key slots are not free, and
      * WS_FATAL_ERROR when no certificate matches; on any failure the
      * context is left unchanged. */
     WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,

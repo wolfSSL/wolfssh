@@ -12833,13 +12833,15 @@ static int test_SetCertManager(void)
 #ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
     byte* root = NULL;
     word32 rootSz = 0;
+    int haveRoot;
+
     /* Autotools builds link keys/ca-cert-ecc.der into the build tree, but
      * other runners (e.g. the VS unit-test.exe) may not run from a tree with
      * ./keys. The argument and reference-count checks below need no file, so
-     * treat a missing cert as a SKIP of the root-CA half, not a failure. */
-    int haveRoot = (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz)
+     * treat a missing cert as a SKIP of the root-CA half, not a failure. The
+     * skip is reported by returning 1 so it cannot pass as a full SUCCESS. */
+    haveRoot = (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz)
             == 0);
-
     if (!haveRoot) {
         printf("SetCertManager: SKIP root cert checks, "
                 "./keys/ca-cert-ecc.der not readable\n");
@@ -12915,6 +12917,8 @@ static int test_SetCertManager(void)
 #ifdef WOLFSSH_TEST_CERTMAN_ROOTCA
     if (root != NULL)
         free(root);
+    if (result == 0 && !haveRoot)
+        result = 1;
 #endif
 
     return result;
@@ -16947,8 +16951,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
 #ifdef WOLFSSH_TEST_SET_CERTMAN
     unitResult = test_SetCertManager();
-    printf("SetCertManager: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
-    testResult = testResult || unitResult;
+    /* 1 means the argument checks passed but the root-CA half was skipped */
+    printf("SetCertManager: %s\n", (unitResult == 0 ? "SUCCESS" :
+            unitResult > 0 ? "SKIPPED (root CA checks)" : "FAILED"));
+    testResult = testResult || (unitResult < 0);
 #endif
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE

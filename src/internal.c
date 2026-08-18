@@ -2645,6 +2645,8 @@ static int UpdateHostCertificates(WOLFSSH_CTX* ctx,
                             ctx->privateKey[certHint].keySz);
                     WFREE(ctx->privateKey[certHint].key,
                             ctx->heap, DYNTYPE_PRIVKEY);
+                    ctx->privateKey[certHint].key = NULL;
+                    ctx->privateKey[certHint].keySz = 0;
                 }
             #ifdef WOLFSSH_WINDOWS_CERT_STORE
                 /* The slot's key material and its cert-store state change
@@ -2786,6 +2788,8 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
             if (pvtKey->key != NULL) {
                 WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
                 WFREE(pvtKey->key, ctx->heap, dynamicType);
+                pvtKey->key = NULL;
+                pvtKey->keySz = 0;
             }
         }
         else {
@@ -11261,7 +11265,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
                             ssh->channelOpenCtx);
                 }
                 else {
-                    WLOG(WS_LOG_WARN, "No channel open callback set "
+                    /* Fires per channel open, so DEBUG: at WARN an app that
+                     * logs warnings unconditionally (e.g. wolfsshd) would let
+                     * a peer grow the log with every open request. */
+                    WLOG(WS_LOG_DEBUG, "No channel open callback set "
                             "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
                             "channel open by default; typeId=%u, "
                             "peerChannelId=%u",
@@ -13566,7 +13573,7 @@ int SendKexInit(WOLFSSH* ssh)
      * skips them); fail here rather than send an empty, RFC 4253
      * violating, server-host-key-algorithms list. */
     if (ret == WS_SUCCESS && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
-            ssh->algoListKey == NULL && ssh->ctx->publicKeyAlgoCount == 0) {
+            ssh->ctx->publicKeyAlgoCount == 0) {
         WLOG(WS_LOG_ERROR, "No usable host key: every loaded slot lacks a "
              "certificate or signing source");
         ret = WS_BAD_ARGUMENT;
@@ -14148,7 +14155,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     if (pubKeyDer != NULL)
                         WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
 
-                    if (ret != 0) {
+                    if (ret != 0 && ret != WS_MEMORY_E) {
                         WLOG(WS_LOG_DEBUG,
                             "SendKexDhReply: cert store RSA pubkey "
                             "decode failed %d", ret);
@@ -14323,7 +14330,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     if (pubKeyDer != NULL)
                         WFREE(pubKeyDer, heap, DYNTYPE_PUBKEY);
 
-                    if (ret != 0) {
+                    if (ret != 0 && ret != WS_MEMORY_E) {
                         WLOG(WS_LOG_DEBUG,
                             "SendKexDhReply: cert store ECC pubkey "
                             "decode failed %d", ret);
@@ -15546,9 +15553,6 @@ static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
         byte** outDer, word32* outDerSz, void* heap)
 {
     struct DecodedCert* dCert = NULL;
-#ifndef WOLFSSH_SMALL_STACK
-    struct DecodedCert dCert_s;
-#endif
     byte* pubKeyDer = NULL;
     word32 pubKeyDerSz = 0;
     int ret = 0;
@@ -15558,15 +15562,13 @@ static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
         return WS_BAD_ARGUMENT;
     }
 
-#ifndef WOLFSSH_SMALL_STACK
-    dCert = &dCert_s;
-#else
+    /* Heap-allocate unconditionally; DecodedCert is several KB and this is
+     * called on an already deep KEX path. */
     dCert = (struct DecodedCert*)WMALLOC(sizeof(struct DecodedCert),
             heap, DYNTYPE_CERT);
     if (dCert == NULL) {
         return WS_MEMORY_E;
     }
-#endif
 
     wc_InitDecodedCert(dCert, certDer, certDerSz, heap);
     ret = wc_ParseCert(dCert, CERT_TYPE, 0, NULL);
@@ -15582,9 +15584,7 @@ static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
     if (ret == 0)
         ret = wc_GetPubKeyDerFromCert(dCert, pubKeyDer, &pubKeyDerSz);
     wc_FreeDecodedCert(dCert);
-#ifdef WOLFSSH_SMALL_STACK
     WFREE(dCert, heap, DYNTYPE_CERT);
-#endif
 
     if (ret == 0) {
         *outDer = pubKeyDer;
@@ -15603,7 +15603,6 @@ static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
 }
 
 
-#ifdef WOLFSSH_CERTS
 /* Map a public key algorithm ID to the base key format ID stored in a
  * private key slot's publicKeyFmt. The RSA signature variants and the
  * X509 form collapse to ID_SSH_RSA, and the X509 ECDSA forms collapse to
@@ -15634,6 +15633,7 @@ static byte CertStoreBaseKeyId(byte id)
 }
 
 
+#ifdef WOLFSSH_CERTS
 /* Resolve the cert-store slot to sign a client user-auth request with. The
  * slot must match the key type of the public key algorithm keyId AND hold
  * the exact certificate being offered, so a credential the application
@@ -16057,10 +16057,7 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         /* Check if this is a cert store key */
         if (IsCertStoreKey(sigKey->pvtKey)) {
             /* Use cert store signing abstraction - ECDSA uses raw hash.
-             * Note: unlike the RSA path, the server does not self-verify
-             * this signature; CertStoreEccSigToRs() below validates the
-             * blob length against the curve, and only the peer performs a
-             * cryptographic verification. */
+             * The signature is self-verified after the r/s split below. */
             ret = SignWithCertStoreKey(ssh, sigKey->pvtKey, digest, digestSz,
                     hashId, sig, sigSz);
             if (ret != WS_SUCCESS) {
@@ -16127,6 +16124,32 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
             ret = CertStoreEccSigToRs(sig, *sigSz,
                     CertStoreCurveSzForId(sigKey->pvtKey->publicKeyFmt),
                     r, &rSz, s, &sSz);
+            if (ret == WS_SUCCESS) {
+                /* Self-verify with the certificate public key decoded into
+                 * sk.ecc.key by SendKexGetSigningKey(), matching the RSA
+                 * path's wolfSSH_RsaVerify() check. */
+                byte derSig[ECC_MAX_SIG_SIZE];
+                word32 derSigSz;
+                int verified;
+
+                derSigSz = (word32)sizeof(derSig);
+                verified = 0;
+                ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz,
+                        derSig, &derSigSz);
+                if (ret == 0) {
+                    ret = wc_ecc_verify_hash(derSig, derSigSz,
+                            digest, digestSz, &verified,
+                            &sigKey->sk.ecc.key);
+                }
+                if (ret != 0 || verified != 1) {
+                    WLOG(WS_LOG_DEBUG, "SignHEcdsa: Cert store signature "
+                         "failed self-verify");
+                    ret = WS_ECC_E;
+                }
+                else {
+                    ret = WS_SUCCESS;
+                }
+            }
         }
         else
     #endif /* WOLFSSH_WINDOWS_CERT_STORE */

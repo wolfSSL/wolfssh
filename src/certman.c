@@ -65,6 +65,21 @@
     #ifndef CERT_SYSTEM_STORE_USERS
         #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_SERVICE
+        #define CERT_SYSTEM_STORE_CURRENT_SERVICE 0x00040000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_SERVICES
+        #define CERT_SYSTEM_STORE_SERVICES 0x00050000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY 0x00070000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY 0x00080000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE 0x00090000
+    #endif
 #endif
 
 #ifdef WOLFSSH_CERTS
@@ -750,20 +765,23 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
     char* flagsStr = NULL;
     char* flagsEnd = NULL;
     unsigned long flagsVal;
-    unsigned long locationMask;
     word32 flags;
     int wStoreNameLen, wSubjectNameLen;
     size_t specLen;
 
-    if (spec == NULL || wStoreName == NULL || wSubjectName == NULL ||
-            dwFlags == NULL) {
+    /* NULL the supplied out-pointers before any failure return so the
+     * documented "out-pointers are NULL on failure" contract holds even for
+     * a bad spec argument. */
+    if (wStoreName == NULL || wSubjectName == NULL || dwFlags == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    *wStoreName = NULL;
+    *wSubjectName = NULL;
+    if (spec == NULL) {
         return WS_BAD_ARGUMENT;
     }
 
-    *wStoreName = NULL;
-    *wSubjectName = NULL;
     flags = CERT_SYSTEM_STORE_CURRENT_USER;
-    locationMask = (unsigned long)CERT_SYSTEM_STORE_LOCATION_MASK;
 
     specLen = WSTRLEN(spec) + 1;
     specCopy = (char*)WMALLOC(specLen, heap, DYNTYPE_TEMP);
@@ -809,6 +827,30 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                     || WSTRCMP(flagsStr, "CERT_SYSTEM_STORE_USERS") == 0) {
                 flags = CERT_SYSTEM_STORE_USERS;
             }
+            else if (WSTRCMP(flagsStr, "CURRENT_SERVICE") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_CURRENT_SERVICE") == 0) {
+                flags = CERT_SYSTEM_STORE_CURRENT_SERVICE;
+            }
+            else if (WSTRCMP(flagsStr, "SERVICES") == 0
+                    || WSTRCMP(flagsStr, "CERT_SYSTEM_STORE_SERVICES") == 0) {
+                flags = CERT_SYSTEM_STORE_SERVICES;
+            }
+            else if (WSTRCMP(flagsStr, "CURRENT_USER_GROUP_POLICY") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY") == 0) {
+                flags = CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY;
+            }
+            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE_GROUP_POLICY") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY") == 0) {
+                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY;
+            }
+            else if (WSTRCMP(flagsStr, "LOCAL_MACHINE_ENTERPRISE") == 0
+                    || WSTRCMP(flagsStr,
+                        "CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE") == 0) {
+                flags = CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE;
+            }
             else {
                 /* Fall back to a raw numeric value, decimal or 0x hex, that
                  * has to be consumed whole. Only system-store location bits
@@ -843,12 +885,17 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
         return WS_BAD_ARGUMENT;
     }
 
-    /* Convert to wide strings */
-    wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeName, -1, NULL, 0);
-    wSubjectNameLen = MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
-            NULL, 0);
+    /* Convert to wide strings. MB_ERR_INVALID_CHARS makes a non-UTF-8 byte
+     * sequence fail here instead of being silently replaced with U+FFFD and
+     * then never matching any certificate CN. */
+    wStoreNameLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            storeName, -1, NULL, 0);
+    wSubjectNameLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            subjectName, -1, NULL, 0);
 
     if (wStoreNameLen == 0 || wSubjectNameLen == 0) {
+        WLOG(WS_LOG_CERTMAN,
+                "Cert store spec is not valid UTF-8");
         WFREE(specCopy, heap, DYNTYPE_TEMP);
         return WS_FATAL_ERROR;
     }
@@ -871,9 +918,9 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
         return WS_MEMORY_E;
     }
 
-    if (MultiByteToWideChar(CP_UTF8, 0, storeName, -1,
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, storeName, -1,
                 *wStoreName, wStoreNameLen) == 0 ||
-            MultiByteToWideChar(CP_UTF8, 0, subjectName, -1,
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, subjectName, -1,
                 *wSubjectName, wSubjectNameLen) == 0) {
         WLOG(WS_LOG_CERTMAN, "Cert store spec wide-string conversion failed");
         WFREE(*wStoreName, heap, DYNTYPE_TEMP);

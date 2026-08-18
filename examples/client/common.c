@@ -1272,8 +1272,8 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
 
     if (pvtKey == NULL) {
         fprintf(stderr, "No cert store key with an x509v3 algorithm found in "
-                "CTX. RSA cert store keys need SHA-1 enabled "
-                "(WOLFSSH_NO_SHA1_SOFT_DISABLE) on both ends.\n");
+                "CTX. RSA cert store keys are unavailable when built with "
+                "WOLFSSH_NO_SSH_RSA_SHA1.\n");
         return WS_BAD_ARGUMENT;
     }
 

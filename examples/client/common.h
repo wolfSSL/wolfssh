@@ -46,7 +46,9 @@ int ClientSetPrivateKeyFromStore(WOLFSSH_CTX* ctx,
         const wchar_t* storeName, word32 dwFlags, const wchar_t* subjectName);
 /* Supersedes ClientUseCert()/ClientUsePubKey()/ClientSetPrivateKey(), any key
  * they loaded is released. Copies the certificate out of ctx; call
- * ClientFreeBuffers() to release the copy. */
+ * ClientFreeBuffers() to release the copy. heap must be the same heap
+ * previously passed to those loaders and later to ClientFreeBuffers(),
+ * since buffers they allocated are freed here. */
 int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap);
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 

@@ -300,8 +300,12 @@ AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
      AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WINDOWS_CERT_STORE"
      dnl Only the mingw triplets define _WIN32, which wolfssh/internal.h
      dnl requires. MSYS/Cygwin toolchains do not.
+     dnl Accumulate the libraries in WINCERT_LIBS; they are appended to LIBS
+     dnl after the remaining AC_CHECK_LIB/AX_HARDEN_CC_COMPILER_FLAGS probes
+     dnl so a missing libncrypt cannot make those probes fail with unrelated
+     dnl error messages.
      AS_CASE([$host],
-         [*mingw*],[LIBS="$LIBS -lcrypt32 -lncrypt"],
+         [*mingw*],[WINCERT_LIBS="-lcrypt32 -lncrypt"],
          [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw)])])])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
@@ -384,6 +388,8 @@ AM_CONDITIONAL([BUILD_TPM],[test "x$ENABLED_TPM" = "xyes"])
 AM_CONDITIONAL([BUILD_KEYBOARD_INTERACTIVE],[test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
+
+AS_IF([test -n "$WINCERT_LIBS"],[LIBS="$LIBS $WINCERT_LIBS"])
 
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])

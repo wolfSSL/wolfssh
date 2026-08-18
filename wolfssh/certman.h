@@ -30,9 +30,13 @@
 
 #include <wolfssh/settings.h>
 #include <wolfssh/port.h>
-#include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
 #ifdef WOLFSSH_CERTS
+    /* ssh.h establishes wolfSSL's build configuration (options.h or
+     * user settings) and must come before any wolfSSL header so the
+     * WOLFSSL_CERT_MANAGER/WOLFSSL_CTX layouts match the compiled
+     * library. */
     #include <wolfssh/ssh.h> /* included for WOLFSSH_CTX */
+    #include <wolfssl/ssl.h> /* included for WOLFSSL_CERT_MANAGER struct */
 #endif
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <wchar.h>

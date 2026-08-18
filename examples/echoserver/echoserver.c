@@ -121,7 +121,12 @@
 #endif
 
 /* Shared by echoserver_test() and the -W pre-scan in wolfSSH_Echoserver(). */
-#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #define ES_OPTLIST_STORE "W:"
+#else
+    #define ES_OPTLIST_STORE ""
+#endif
+#define ES_OPTLIST "?1a:d:efEp:R:Ni:j:I:J:K:P:k:b:x:m:c:s:G:H" ES_OPTLIST_STORE
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -2992,9 +2997,7 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     printf(" -W <spec>     Windows cert store: \"store:subject:flags\" "
            "(e.g. My:CN=Server:CURRENT_USER)\n");
-    printf("               also read from the WOLFSSH_CERT_STORE environment "
-           "variable\n");
-    printf("               with either set, file names are relative to the "
+    printf("               with -W set, file names are relative to the "
            "current directory\n");
 #endif
     printf(" -b <num>      test user auth would block\n");
@@ -3250,14 +3253,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     useCustomHighWaterCb = 1;
                     break;
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
                 case 'W':
-                    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-                        certStoreSpec = myoptarg;
-                    #else
-                        ES_ERROR("-W requires wolfSSH built with "
-                                 "WOLFSSH_WINDOWS_CERT_STORE\n");
-                    #endif
+                    certStoreSpec = myoptarg;
                     break;
+#endif
 
                 default:
                     ShowUsage();
@@ -3268,19 +3268,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* -W takes priority over the environment; empty means unset. */
-        if (certStoreSpec == NULL) {
-            certStoreSpec = getenv("WOLFSSH_CERT_STORE");
-            if (certStoreSpec != NULL && certStoreSpec[0] == '\0') {
-                certStoreSpec = NULL;
-            }
-            if (certStoreSpec != NULL) {
-                printf("Taking the host key from the WOLFSSH_CERT_STORE "
-                       "environment variable\n");
-            }
-        }
-    #endif
     wc_InitMutex(&doneLock);
 
 #ifdef WOLFSSH_TEST_BLOCK
@@ -3492,6 +3479,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
                 #endif
+                wc_FreeMutex(&doneLock);
+                PwMapListDelete(&pwMapList);
+                wolfSSH_CTX_free(ctx);
                 ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
             }
 
@@ -3503,6 +3493,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
                 #endif
+                wc_FreeMutex(&doneLock);
+                PwMapListDelete(&pwMapList);
+                wolfSSH_CTX_free(ctx);
                 ES_ERROR("Couldn't load host key from certificate store.\n");
             }
             loadDefaultHostKeys = 0;
@@ -3937,21 +3930,13 @@ int wolfSSH_Echoserver(int argc, char** argv)
     {
         int useStore = 0;
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        const char* envStore;
-
-        /* When using the Windows certificate store for host keys, the
-         * echoserver does not need file-based keys, so skip the root
-         * directory search that looks for ./keys/server-key-rsa.pem.
-         * An empty WOLFSSH_CERT_STORE means unset. */
-        envStore = getenv("WOLFSSH_CERT_STORE");
-        if (envStore != NULL && envStore[0] != '\0') {
-            useStore = 1;
-        }
-        else {
+        {
             int ch;
 
-            /* Parse rather than match on argv, an option value could
-             * start with "-W" too. */
+            /* With -W the host key comes from the Windows certificate store
+             * and no file-based keys are needed, so skip the root directory
+             * search that looks for ./keys/server-key-rsa.pem. Parse rather
+             * than match on argv, an option value could start with "-W". */
             myoptind = 0;
             while ((ch = mygetopt(argc, argv, ES_OPTLIST)) != -1) {
                 if (ch == 'W') {

@@ -998,14 +998,18 @@ static int IsAbsoluteAuthKeysPath(const char* path)
     return ret;
 }
 
-#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
-/* True when the AuthorizedKeysFile pattern is guaranteed to resolve to a
- * different file for every account, which is what makes an entry in it an
- * implicit user-to-credential binding. A relative pattern resolves under the
- * account's home directory, and an absolute one qualifies only when it carries
- * a %u or %h token. An absolute pattern with neither (e.g.
+#if (defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)) || \
+    defined(WOLFSSHD_UNIT_TEST)
+/* True when the AuthorizedKeysFile pattern resolves to a different file for
+ * every account, which is what makes an entry in it an implicit
+ * user-to-credential binding. A relative pattern resolves under the account's
+ * home directory, and an absolute one qualifies only when it carries a %u or
+ * %h token. An absolute pattern with neither (e.g.
  * "/etc/ssh/authorized_keys_all") is one shared file for every account and
- * binds a credential to nothing. */
+ * binds a credential to nothing. Caveat: accounts that share a home directory
+ * (or Windows profile path) also share the file a relative pattern resolves
+ * to, so the per-user property holds only when home directories are
+ * distinct. */
 static int IsPerUserAuthKeysPattern(const char* pattern)
 {
     word32 i;
@@ -1050,16 +1054,15 @@ static int IsPerUserAuthKeysPattern(const char* pattern)
 
     return 0;
 }
-#endif /* WOLFSSH_CERTS && (WOLFSSL_FPKI || _WIN32) */
+#endif /* (WOLFSSH_CERTS && !WOLFSSL_FPKI && _WIN32) || WOLFSSHD_UNIT_TEST */
 
 /* Exported predicate matching the runtime identity-check skip; on builds
- * without that check it always returns 0. */
+ * without that check it always returns 0. Unit test builds always compile
+ * the real predicate so its logic can be exercised anywhere. */
 int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern)
 {
-#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
-    if (pattern == NULL) {
-        return 0;
-    }
+#if (defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)) || \
+    defined(WOLFSSHD_UNIT_TEST)
     return IsPerUserAuthKeysPattern(pattern);
 #else
     (void)pattern;
@@ -2672,19 +2675,24 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        /* Bind the certificate to the requested user name via UPN with FPKI or
-         * CN without FPKI. Skipped only when a per-user AuthorizedKeysFile is
-         * configured, because such an entry is itself an explicit user to cert
-         * binding and is checked below. A shared AuthorizedKeysFile (an
-         * absolute pattern with no %u or %h) resolves to one file for every
-         * account and binds the certificate to nothing, so the identity check
-         * still has to run. Never skipped when AuthorizedUPNDomains is set, so
-         * the configured realm allowlist is always enforced. */
+        /* Bind the certificate to the requested user name via UPN with FPKI
+         * or CN without FPKI. With FPKI the check always runs: it is cheap
+         * defense in depth on top of any authorized_keys lookup and is what
+         * enforces the AuthorizedUPNDomains realm allowlist. Without FPKI the
+         * CN name match is skipped when a per-user AuthorizedKeysFile is
+         * configured, because the exact certificate match against that file
+         * (checked below) is a stronger binding than a CN name match. A
+         * shared AuthorizedKeysFile (an absolute pattern with no %u or %h)
+         * resolves to one file for every account and binds the certificate to
+         * nothing, so the name match still has to run. */
+    #ifdef WOLFSSL_FPKI
+        if (authData->sf.publicKey.isCert) {
+    #else
         if (authData->sf.publicKey.isCert &&
                 !(wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
-                  wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf) == NULL &&
                   IsPerUserAuthKeysPattern(
                       wolfSSHD_ConfigGetAuthKeysFile(usrConf)))) {
+    #endif
         #ifdef WOLFSSH_SMALL_STACK
             DecodedCert* dCert;
 
@@ -2736,7 +2744,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     /* a UPN matched but no realm policy is set; note per auth
                      * attempt so the opt-in gap is visible, no shared state */
                     if (upnRealmUnchecked) {
-                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] AuthorizedUPNDomains "
+                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
                             "not set; certificate UPN domain is not checked");
                     }
                 #else
@@ -2754,8 +2762,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                                 (size_t)dCert->subjectCNLen) == 0) {
                         usrMatch = 1;
                         /* note per auth attempt so the weaker binding is
-                         * visible, no shared state */
-                        wolfSSH_Log(WS_LOG_INFO, "[SSHD] certificate bound to "
+                         * visible without -d, no shared state */
+                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] certificate bound to "
                             "user by subject CN only; no issuer constraint is "
                             "applied, keep the trusted user CA set narrow");
                     }

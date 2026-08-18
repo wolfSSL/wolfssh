@@ -193,7 +193,7 @@ static int CreateString(char** out, const char* in, int inSz, void* heap)
     }
 
     /* remove leading white spaces */
-    while (idx < inSz && in[idx] == ' ') idx++;
+    while (idx < inSz && (in[idx] == ' ' || in[idx] == '\t')) idx++;
 
     if (idx == inSz) {
         ret = WS_BAD_ARGUMENT;
@@ -201,7 +201,8 @@ static int CreateString(char** out, const char* in, int inSz, void* heap)
 
     if (ret == WS_SUCCESS) {
         for (tail = inSz - 1; tail > idx; tail--) {
-            if (in[tail] != '\n' && in[tail] != ' ' && in[tail] != '\r') {
+            if (in[tail] != '\n' && in[tail] != ' ' && in[tail] != '\r' &&
+                    in[tail] != '\t') {
                 break;
             }
         }
@@ -512,11 +513,13 @@ static const CONFIG_OPTION options[] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
-    /* The config parser uses strncmp with the option-name length, so longer
-     * option names that share a common prefix MUST appear before the shorter
-     * one.  HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore,
-     * and all HostKeyStore* before HostKey.  Kept unconditional so
-     * "HostKeyStore" never prefix-matches "HostKey" on non-store builds. */
+    /* The parser requires a whitespace delimiter after the option name, which
+     * is the primary defence against a shorter name prefix-matching a longer
+     * one.  As belt-and-braces, longer option names that share a common prefix
+     * MUST still appear before the shorter one:
+     * HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore, and all
+     * HostKeyStore* before HostKey.  Kept unconditional so "HostKeyStore"
+     * never matches "HostKey" on non-store builds. */
     {OPT_HOST_KEY_STORE_SUBJECT,  "HostKeyStoreSubject"},
     {OPT_HOST_KEY_STORE_FLAGS,    "HostKeyStoreFlags"},
     {OPT_HOST_KEY_STORE,          "HostKeyStore"},
@@ -558,7 +561,7 @@ int wolfSSHD_ConfigOptionPrefixShadow(const char** earlier, const char** later)
     for (i = 0; i < NUM_OPTIONS; i++) {
         len = (int)WSTRLEN(options[i].name);
         for (j = i + 1; j < NUM_OPTIONS; j++) {
-            if ((int)WSTRLEN(options[j].name) > len &&
+            if ((int)WSTRLEN(options[j].name) >= len &&
                     WSTRNCMP(options[i].name, options[j].name, len) == 0) {
                 if (earlier != NULL) {
                     *earlier = options[i].name;
@@ -1439,8 +1442,9 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
                     (*conf)->heap);
             break;
         case OPT_TRUSTED_USER_CA_KEYS:
-            /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
+            ret = CheckNotInMatch(*conf, "TrustedUserCAKeys");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
             break;
         case OPT_TRUSTED_SYSTEM_CA_KEYS:
             ret = CheckNotInMatch(*conf, "wolfSSH_TrustedSystemCAKeys");
@@ -1569,7 +1573,8 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
 
     for (idx = 0; idx < NUM_OPTIONS; ++idx) {
         sz = (int)WSTRLEN(options[idx].name);
-        if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0) {
+        if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
+                (lSz == sz || WISSPACE(l[sz]))) {
             found = &options[idx];
             break;
         }
@@ -2071,9 +2076,9 @@ char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf)
 
 /* returns the next config node in the list (the global config is the head,
  * each Match block adds a node) or NULL at the end of the list */
-WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf)
+const WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf)
 {
-    WOLFSSHD_CONFIG* ret = NULL;
+    const WOLFSSHD_CONFIG* ret = NULL;
 
     if (conf != NULL) {
         ret = conf->next;

@@ -62,7 +62,7 @@ char* wolfSSHD_ConfigGetHostKeyFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf);
 char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf);
-WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf);
+const WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf);
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file);
 int wolfSSHD_ConfigSetHostCertFile(WOLFSSHD_CONFIG* conf, const char* file);
 #ifdef WOLFSSH_WINDOWS_CERT_STORE

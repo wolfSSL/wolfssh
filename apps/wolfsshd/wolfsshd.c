@@ -60,6 +60,21 @@
     #ifndef CERT_SYSTEM_STORE_USERS
         #define CERT_SYSTEM_STORE_USERS 0x00060000
     #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_SERVICE
+        #define CERT_SYSTEM_STORE_CURRENT_SERVICE 0x00040000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_SERVICES
+        #define CERT_SYSTEM_STORE_SERVICES 0x00050000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY 0x00070000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY 0x00080000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE 0x00090000
+    #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #define WOLFSSH_TEST_SERVER
@@ -498,13 +513,23 @@ static int CertIsCA(const byte* der, word32 derSz, void* heap)
  * compared, case-insensitively. */
 static int IsWinPublicTrustStoreName(const char* name)
 {
+    /* Includes every store Windows itself populates (Trusted Root Program,
+     * Windows Update, Group Policy). Revisit for new OS-managed stores when
+     * supporting a new Windows release. */
     static const char* const deny[] = {
-        "Root", "AuthRoot", "CA", "Disallowed", "TrustedPublisher", "trust"
+        "Root", "AuthRoot", "CA", "Disallowed", "TrustedPublisher", "trust",
+        "SmartCardRoot", "ClientAuthIssuer", "TrustedPeople", "TrustedDevices",
+        "FlightRoot", "TestSignRoot"
     };
     const char* base;
     const char* sep;
     word32 len;
     word32 i;
+
+    if (name == NULL) {
+        /* fail closed */
+        return 1;
+    }
 
     base = name;
     sep = WSTRCHR(base, '\\');
@@ -769,13 +794,27 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     /* Load in host private key */
     if (ret == WS_SUCCESS) {
 #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
-        char* hostKeyStore = wolfSSHD_ConfigGetHostKeyStore(conf);
-        char* hostKeyStoreSubject = wolfSSHD_ConfigGetHostKeyStoreSubject(conf);
-        char* hostKeyStoreFlags = wolfSSHD_ConfigGetHostKeyStoreFlags(conf);
+        char* hostKeyStore;
+        char* hostKeyStoreSubject;
+        char* hostKeyStoreFlags;
+
+        hostKeyStore = wolfSSHD_ConfigGetHostKeyStore(conf);
+        hostKeyStoreSubject = wolfSSHD_ConfigGetHostKeyStoreSubject(conf);
+        hostKeyStoreFlags = wolfSSHD_ConfigGetHostKeyStoreFlags(conf);
 
         if (hostKeyStore != NULL && hostKeyStoreSubject == NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] HostKeyStore set but HostKeyStoreSubject is missing");
+            ret = WS_BAD_ARGUMENT;
+        }
+        /* The location is mandatory for the same reason wolfSSH_WinUserDwFlags
+         * is: the per-user hive is writable by the daemon's own account
+         * without elevation, so silently defaulting to CURRENT_USER would let
+         * anything running as that account install a host key. */
+        else if (hostKeyStore != NULL && hostKeyStoreFlags == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] HostKeyStore set but HostKeyStoreFlags is missing. "
+                "Set the store location explicitly, normally LOCAL_MACHINE.");
             ret = WS_BAD_ARGUMENT;
         }
         else if (hostKeyStore == NULL &&
@@ -812,13 +851,11 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             /* Use cert store host key */
             wchar_t* wStoreName = NULL;
             wchar_t* wSubjectName = NULL;
-            word32 dwFlags = CERT_SYSTEM_STORE_CURRENT_USER;
+            word32 dwFlags = 0;
             int storeNameLen = 0;
             int subjectNameLen = 0;
 
-            /* An unset location keeps the CURRENT_USER default set above. */
-            if (hostKeyStoreFlags != NULL &&
-                    ParseCertStoreLocation(hostKeyStoreFlags, &dwFlags)
+            if (ParseCertStoreLocation(hostKeyStoreFlags, &dwFlags)
                         != WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Unrecognized host key store flags '%s'",
@@ -887,8 +924,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         else if (ret == WS_SUCCESS)
 #endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
         {
-            char* hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
+            char* hostKey;
 
+            hostKey = wolfSSHD_ConfigGetHostKeyFile(conf);
             if (hostKey == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No host private key set");
                 ret = WS_BAD_ARGUMENT;
@@ -1158,35 +1196,42 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             "any CN, so keep that set narrow. Build wolfSSL with FPKI for "
             "UPN binding and AuthorizedUPNDomains.");
     }
-    #endif
 
-    /* AuthorizedUPNDomains is only enforced by the FPKI UPN check. Fail
-     * startup rather than silently ignore a configured realm policy. Check
-     * every config node since the directive may sit in a Match block. */
-    #ifndef WOLFSSL_FPKI
-    if (ret == WS_SUCCESS) {
+    /* With CN-only binding, the OS trust store holds every commercial root
+     * CA, any of which could mint a certificate whose CN names a local
+     * account. Require every account to also have a per-user
+     * AuthorizedKeysFile so a subject CN match alone is never sufficient to
+     * log in; the exact certificate match in that file is the real binding.
+     * The curated wolfSSH_TrustedUserCAStore path is not held to this because
+     * its store is admin-created and the public store names are refused. */
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
         const WOLFSSHD_CONFIG* cur;
 
         cur = conf;
         while (cur != NULL) {
-            if (wolfSSHD_ConfigGetAuthorizedUPNDomains(cur) != NULL) {
+            if (!wolfSSHD_ConfigGetAuthKeysFileSet(cur) ||
+                    !wolfSSHD_AuthKeysPatternIsPerUser(
+                        wolfSSHD_ConfigGetAuthKeysFile(cur))) {
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] AuthorizedUPNDomains is set but wolfSSL was "
-                    "built without WOLFSSL_FPKI, so the UPN realm allowlist "
-                    "cannot be enforced.");
+                    "[SSHD] wolfSSH_TrustedSystemCAKeys with CN-only "
+                    "certificate binding requires a per-user "
+                    "AuthorizedKeysFile for every account. Set "
+                    "AuthorizedKeysFile, use wolfSSH_TrustedUserCAStore with "
+                    "a curated store, or build wolfSSL with FPKI.");
                 ret = WS_BAD_ARGUMENT;
                 break;
             }
             cur = wolfSSHD_ConfigGetNext(cur);
         }
     }
-    #endif /* !WOLFSSL_FPKI */
+    #endif
 
     /* A per-user AuthorizedKeysFile is its own user-to-certificate binding,
-     * so the certificate identity check is skipped for those accounts unless
-     * AuthorizedUPNDomains is set. Warn once at startup, checking every
-     * config node since AuthorizedKeysFile may be set in a Match block. */
-    #if defined(WOLFSSL_FPKI) || defined(_WIN32)
+     * so the CN-only certificate identity check is skipped for those
+     * accounts. Warn once at startup, checking every config node since
+     * AuthorizedKeysFile may be set in a Match block. With FPKI the UPN
+     * identity check always runs, so there is nothing to note. */
+    #if !defined(WOLFSSL_FPKI) && defined(_WIN32)
     if (ret == WS_SUCCESS) {
         const WOLFSSHD_CONFIG* cur;
 
@@ -1194,10 +1239,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         while (cur != NULL) {
             if (wolfSSHD_ConfigGetAuthKeysFileSet(cur) &&
                     wolfSSHD_AuthKeysPatternIsPerUser(
-                        wolfSSHD_ConfigGetAuthKeysFile(cur)) &&
-                    wolfSSHD_ConfigGetAuthorizedUPNDomains(cur) == NULL) {
+                        wolfSSHD_ConfigGetAuthKeysFile(cur))) {
                 wolfSSH_Log(WS_LOG_WARN,
-                    "[SSHD] The certificate identity check is skipped for "
+                    "[SSHD] The subject CN identity check is skipped for "
                     "accounts with a per-user AuthorizedKeysFile; those "
                     "certificates are bound by their authorized_keys entry "
                     "instead.");
@@ -1206,7 +1250,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             cur = wolfSSHD_ConfigGetNext(cur);
         }
     }
-    #endif /* WOLFSSL_FPKI || _WIN32 */
+    #endif /* !WOLFSSL_FPKI && _WIN32 */
 
     /* load in CA certs from file set */
     if (ret == WS_SUCCESS) {
@@ -1269,6 +1313,29 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         ret = WS_NOT_COMPILED;
     }
 #endif
+
+    /* AuthorizedUPNDomains is only enforced by the FPKI UPN check, which
+     * also needs certificate support. Fail startup rather than silently
+     * ignore a configured realm policy. Check every config node since the
+     * directive may sit in a Match block. */
+#if !defined(WOLFSSL_FPKI) || !defined(WOLFSSH_CERTS)
+    if (ret == WS_SUCCESS) {
+        const WOLFSSHD_CONFIG* upnCur;
+
+        upnCur = conf;
+        while (upnCur != NULL) {
+            if (wolfSSHD_ConfigGetAuthorizedUPNDomains(upnCur) != NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] AuthorizedUPNDomains is set but this build "
+                    "cannot enforce it; it requires wolfSSL with "
+                    "WOLFSSL_FPKI and wolfSSH with certificate support.");
+                ret = WS_BAD_ARGUMENT;
+                break;
+            }
+            upnCur = wolfSSHD_ConfigGetNext(upnCur);
+        }
+    }
+#endif /* !WOLFSSL_FPKI || !WOLFSSH_CERTS */
 
     if (ret == WS_SUCCESS) {
         wolfSSH_SetUserAuthTypes(*ctx, DefaultUserAuthTypes);

@@ -3360,16 +3360,17 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
  * CERT_FIND_SUBJECT_STR_W is only used as a substring pre-filter to
  * enumerate candidates; each candidate's CN is then compared in full so
  * that a lookup for "server1" does not select "server1.example" or
- * "myserver1". The compare is case insensitive, matching both the
- * pre-filter and X.500 name semantics. Candidates are ranked by how
- * usable they are: time-valid with a usable key first, then any candidate
- * with a usable key. A candidate with no usable key is never selected --
- * the caller repeats the same key acquisition and would only fail with a
- * misleading error -- so a public-only duplicate neither ends the search
- * nor is returned. The selected certificate is stored in out, and is NULL
- * when no usable match exists. The caller frees it with
+ * "myserver1". The compare is ordinal and case insensitive, so it cannot
+ * change with the thread locale. Candidates are ranked by how usable they
+ * are: time-valid with a usable key first, then expired over not yet
+ * valid, then the latest NotAfter. A candidate with no usable key is
+ * never selected -- the caller repeats the same key acquisition and would
+ * only fail with a misleading error -- so a public-only duplicate neither
+ * ends the search nor is returned. The selected certificate is stored in
+ * out, and is NULL when no match exists. The caller frees it with
  * CertFreeCertificateContext.
- * Returns WS_SUCCESS on success. */
+ * Returns WS_SUCCESS on success, WS_CRYPTO_FAILED when the CN matched
+ * only certificates whose private key is not accessible. */
 static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         const wchar_t* subjectName, PCCERT_CONTEXT* out)
 {
@@ -3383,6 +3384,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     int timeValidity;
     int keyedEarly;
     int keylessSeen;
+    int better;
     int ret;
 
     *out = NULL;
@@ -3392,7 +3394,8 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
 
     /* Strip an optional "CN=" prefix from the requested name. */
     cn = subjectName;
-    if (wcslen(cn) >= 3 && _wcsnicmp(cn, L"CN=", 3) == 0) {
+    if (wcslen(cn) >= 3 &&
+            CompareStringOrdinal(cn, 3, L"CN=", 3, TRUE) == CSTR_EQUAL) {
         cn = cn + 3;
     }
     if (*cn == L'\0') {
@@ -3425,7 +3428,8 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         }
         certCnSz = CertGetNameStringW(pCertContext, CERT_NAME_ATTR_TYPE, 0,
                 (void*)szOID_COMMON_NAME, certCn, certCnSz);
-        match = (certCnSz > 1 && _wcsicmp(certCn, cn) == 0);
+        match = (certCnSz > 1 &&
+                CompareStringOrdinal(certCn, -1, cn, -1, TRUE) == CSTR_EQUAL);
         WFREE(certCn, heap, DYNTYPE_TEMP);
         if (!match) {
             continue;
@@ -3441,7 +3445,24 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         }
 
         if (hasKey) {
+            /* Deterministic fallback ranking: expired beats not yet valid,
+             * and within the same class the latest NotAfter wins. */
+            better = 0;
             if (keyedMatch == NULL) {
+                better = 1;
+            }
+            else if (keyedEarly && timeValidity > 0) {
+                better = 1;
+            }
+            else if (keyedEarly == (timeValidity < 0) &&
+                    CompareFileTime(&pCertContext->pCertInfo->NotAfter,
+                        &keyedMatch->pCertInfo->NotAfter) > 0) {
+                better = 1;
+            }
+            if (better) {
+                if (keyedMatch != NULL) {
+                    CertFreeCertificateContext(keyedMatch);
+                }
                 keyedMatch = CertDuplicateCertificateContext(pCertContext);
                 keyedEarly = (timeValidity < 0);
                 if (keyedMatch == NULL) {
@@ -3464,7 +3485,9 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
      * to a candidate the enumeration had already rejected. */
     if (ret == WS_SUCCESS && pCertContext == NULL) {
         if (keyedMatch != NULL) {
-            WLOG(WS_LOG_WARN, "FindCertByExactCN: No time-valid match, using "
+            /* WS_LOG_ERROR so the fallback is as visible as logging in
+             * this build allows; still only compiled in when logging is. */
+            WLOG(WS_LOG_ERROR, "FindCertByExactCN: No time-valid match, using "
                     "a %s '%ls' that has a private key",
                     keyedEarly ? "not yet valid" : "expired", subjectName);
             pCertContext = keyedMatch;
@@ -3473,6 +3496,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         else if (keylessSeen) {
             WLOG(WS_LOG_ERROR, "FindCertByExactCN: '%ls' matched only "
                     "certificates with no usable private key", subjectName);
+            ret = WS_CRYPTO_FAILED;
         }
     }
     if (keyedMatch != NULL) {
@@ -3572,8 +3596,9 @@ static int PrepCertStoreSlot(void* heap, byte keyId, word32 keyIdx,
 
 /* Move the prepared resources into the context. The slot may previously
  * have held either a cert-store key or a file-based key/cert, so clear
- * both kinds of resources. Cannot fail. */
-static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
+ * both kinds of resources.
+ * Returns WS_SUCCESS on success. */
+static int CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
 {
     WOLFSSH_PVT_KEY* pvtKey;
     void* heap;
@@ -3583,7 +3608,7 @@ static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
         /* Unreachable: the caller bounds checks before preparing a slot. */
         WLOG(WS_LOG_ERROR, "CommitCertStoreSlot: Slot index out of range");
         FreeCertStoreSlot(heap, slot);
-        return;
+        return WS_CTX_KEY_COUNT_E;
     }
     pvtKey = &ctx->privateKey[slot->keyIdx];
 
@@ -3617,6 +3642,8 @@ static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
 
     /* Ownership moved to the context. */
     WMEMSET(slot, 0, sizeof(*slot));
+
+    return WS_SUCCESS;
 }
 
 
@@ -3654,8 +3681,10 @@ static const byte certStoreOidP521[] = {
  * file-based HostKey plus HostCertificate pairing, as the matching
  * RFC6187 x509v3-* type so the store certificate itself can be sent as
  * the public host key to peers that negotiate certificate algorithms.
- * The x509v3-* registration is skipped when the build has no such
- * algorithm for the key type, e.g. RSA with SHA-1 disabled.
+ * The x509v3-* registration is skipped when the build compiles out the
+ * x509v3 algorithm for the key type (WOLFSSH_NO_SSH_RSA_SHA1, per-curve
+ * ECDSA gates) and for RSA when SHA-1 is soft disabled, since
+ * x509v3-ssh-rsa signs with SHA-1 and is then never advertised.
  * returns WS_SUCCESS on success
  */
 int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
@@ -3674,9 +3703,6 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     word32 certIdx;
     word32 newCount;
     byte   haveCertSlot;
-    HCRYPTPROV_OR_NCRYPT_KEY_HANDLE hKey = 0;
-    DWORD dwKeySpec = 0;
-    BOOL fCallerFree = FALSE;
 #ifndef WOLFSSH_NO_ECDSA
     const byte* params = NULL;
     DWORD paramsSz = 0;
@@ -3712,6 +3738,13 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
 
     /* Find the certificate by full Common Name match. */
     ret = FindCertByExactCN(ctx->heap, hStore, subjectName, &pCertContext);
+    if (ret == WS_CRYPTO_FAILED) {
+        CertCloseStore(hStore, 0);
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate "
+             "matched but its private key is not accessible; check key "
+             "permissions for the service account");
+        return WS_CRYPTO_FAILED;
+    }
     if (ret != WS_SUCCESS) {
         CertCloseStore(hStore, 0);
         return ret;
@@ -3785,6 +3818,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
             else
         #endif
             {
+                /* With all curves disabled paramsSz is set but never read. */
+                WOLFSSH_UNUSED(paramsSz);
                 WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: "
                     "Unsupported ECC curve parameters");
             }
@@ -3810,36 +3845,8 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     }
 
-    /* Verify private key is accessible before registering the key.
-     * This catches permission issues early (e.g., LocalSystem service
-     * cannot access the private key) rather than failing later during
-     * SSH handshake signing.
-     * Require a CNG/NCRYPT key. Legacy CryptoAPI/CSP keys are not
-     * supported; targets are Windows 10 and newer. */
-    if (!CryptAcquireCertificatePrivateKey(pCertContext,
-            CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
-            NULL, &hKey, &dwKeySpec, &fCallerFree)) {
-        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Cannot "
-             "access private key, error: %lu. Check that the current user "
-             "or service account has permission to access the key.",
-             (unsigned long)GetLastError());
-        CertFreeCertificateContext(pCertContext);
-        CertCloseStore(hStore, 0);
-        return WS_CRYPTO_FAILED;
-    }
-    /* Release the key handle since we just needed to verify access.
-     * CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG makes the CNG case the only
-     * reachable one; the CSP release is kept for the flags changing. */
-    if (fCallerFree) {
-        if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
-            NCryptFreeObject(hKey);
-        }
-        else {
-            CryptReleaseContext(hKey, 0);
-        }
-    }
-    WLOG(WS_LOG_DEBUG, "wolfSSH_CTX_UsePrivateKey_fromStore: Private key "
-         "access verified successfully");
+    /* FindCertByExactCN only returns a certificate whose private key
+     * CertKeyCanSign() could acquire, so key access is already verified. */
 
     /* Register the key under its plain type so peers without RFC6187
      * support get a raw public key, and under the matching X.509 type so
@@ -3860,6 +3867,14 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
      * than a certIdx sentinel, so the "skip" marker cannot be confused with
      * an index a full table legitimately computes. */
     certId = CertTypeForId(keyId);
+#if !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    /* x509v3-ssh-rsa signs with SHA-1 and is absent from the canned key
+     * algo lists in a soft-disabled build; do not register an unusable
+     * slot. */
+    if (certId == ID_X509V3_SSH_RSA) {
+        certId = keyId;
+    }
+#endif
     certIdx = 0;
     haveCertSlot = 0;
     if (certId != keyId) {
@@ -3891,13 +3906,17 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     }
 
     if (ret == WS_SUCCESS) {
-        CommitCertStoreSlot(ctx, &keySlot);
-        if (haveCertSlot) {
-            CommitCertStoreSlot(ctx, &certSlot);
-        }
+        ret = CommitCertStoreSlot(ctx, &keySlot);
+    }
+    if (ret == WS_SUCCESS && haveCertSlot) {
+        ret = CommitCertStoreSlot(ctx, &certSlot);
+    }
+    if (ret == WS_SUCCESS) {
         ctx->privateKeyCount = newCount;
     }
     else {
+        /* Committed or bailed-out slots are already zeroed; freeing them
+         * again is a no-op. */
         FreeCertStoreSlot(ctx->heap, &keySlot);
         FreeCertStoreSlot(ctx->heap, &certSlot);
     }

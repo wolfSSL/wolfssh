@@ -334,6 +334,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
+    /* release the example's own key buffers before CTX teardown */
     ClientFreeBuffers(pubKeyName, privKeyName, NULL);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
