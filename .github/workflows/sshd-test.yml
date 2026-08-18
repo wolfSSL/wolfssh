@@ -100,11 +100,52 @@ jobs:
         working-directory: ./wolfssh/
         run: make check
 
+      - name: Diagnostics before the suite
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: |
+          echo "pwd=$(pwd)"
+          echo "pwd length=${#PWD}"
+          akf="$(pwd)/authorized_keys_test"
+          echo "AuthorizedKeysFile=$akf"
+          echo "AuthorizedKeysFile length=${#akf}"
+          old="[SSHD] Keys file $akf failed StrictModes check"
+          echo "old-order msg length=${#old} (cap 120, phrase cut when >119)"
+          echo "tmux: $(command -v tmux || echo absent)"
+          echo "bash: $BASH_VERSION"
+          ls -la ../wolfsshd
+
       - name: Run wolfSSHd tests
         working-directory: ./wolfssh/apps/wolfsshd/test
         run: |
           git log -3
           sudo ./run_all_sshd_tests.sh
+
+      - name: Diagnostics after the suite
+        if: always()
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: |
+          echo "=== log.txt ==="
+          ls -la log.txt || echo "absent"
+          echo "=== StrictModes match count (0 means the phrase was cut) ==="
+          sudo grep -c "failed StrictModes check" log.txt || echo "grep exit $?"
+          echo "=== how those lines actually end ==="
+          sudo grep -n "Keys file" log.txt | head -5 || true
+          echo "=== last test stdout ==="
+          sudo cat stdout.txt || true
+
+      - name: Probe the two suspect tests standalone
+        if: always()
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: |
+          sudo pkill -x wolfsshd || true
+          ./create_authorized_test_file.sh
+          ./create_sshd_config.sh "$(whoami)"
+          echo "=== sshd_forcedcmd_test.sh (expect ../wolfsshd error if broken) ==="
+          sudo ./sshd_forcedcmd_test.sh 127.0.0.1 22222; echo "forcedcmd exit=$?"
+          sudo pkill -x wolfsshd || true
+          echo "=== sshd_privdrop_fail_test.sh ==="
+          sudo ./sshd_privdrop_fail_test.sh 127.0.0.1 22222; echo "privdrop exit=$?"
+          sudo pkill -x wolfsshd || true
 
       # could use optimization with caching
       - name: Test memory after close down
