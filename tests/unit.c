@@ -7021,7 +7021,8 @@ static int test_DoChannelRequest(void)
 #endif /* WOLFSSH_TERM || WOLFSSH_SHELL */
 
     /* RFC 4254 sec 6.7: window-change must not send a reply even if the
-     * wire wantReply byte is 1. */
+     * wire wantReply byte is 1. No pty-req has been seen on this channel
+     * yet, so the request is also rejected and the size stays put. */
 #if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
     {
         static const byte payWindowChange[] = {
@@ -7053,6 +7054,75 @@ static int test_DoChannelRequest(void)
             printf("DoChannelRequest[window-change]: unexpected reply packet "
                     "(sz=%u)\n", s_chanReqCaptureSz);
             result = -451;
+            goto done;
+        }
+        if (ssh->widthChar != 0 || ssh->heightRows != 0) {
+            printf("DoChannelRequest[window-change]: applied %ux%u without "
+                    "a pty\n", ssh->widthChar, ssh->heightRows);
+            result = -452;
+            goto done;
+        }
+    }
+
+    /* A pty-req establishes the pty and the size, and runs the same
+     * clamping the window-change branch does. */
+    {
+        static byte payPtyReq[] = {
+            0x00,0x00,0x00,0x00,                    /* channelId = 0        */
+            0x00,0x00,0x00,0x07,                    /* typeSz = 7           */
+            0x70,0x74,0x79,0x2D,0x72,0x65,0x71,    /* "pty-req"            */
+            0x00,                                   /* wantReply = 0        */
+            0x00,0x00,0x00,0x05,                    /* termSz = 5           */
+            0x76,0x74,0x31,0x30,0x30,              /* "vt100"              */
+            0x00,0x00,0x00,0x50,                    /* widthChar = 80       */
+            0x00,0x00,0x00,0x18,                    /* heightRows = 24      */
+            0x00,0x00,0x02,0x80,                    /* widthPixels = 640    */
+            0x00,0x00,0x01,0xE0,                    /* heightPixels = 480   */
+            0x00,0x00,0x00,0x01,                    /* modesSz = 1          */
+            0x00                                    /* TTY_OP_END           */
+        };
+        /* offsets of the four dimensions within the payload above */
+        const word32 pwcOff = 25, phrOff = 29, pwpOff = 33, phpOff = 37;
+        word32 idx2 = 0;
+        int    ret2;
+
+        ret2 = wolfSSH_TestDoChannelRequest(ssh, payPtyReq,
+                (word32)sizeof(payPtyReq), &idx2);
+        if (ret2 != WS_SUCCESS) {
+            printf("DoChannelRequest[pty-req]: ret=%d, expected=%d\n",
+                    ret2, WS_SUCCESS);
+            result = -453;
+            goto done;
+        }
+        if (ssh->widthChar != 80 || ssh->heightRows != 24 ||
+                ssh->widthPixels != 640 || ssh->heightPixels != 480) {
+            printf("DoChannelRequest[pty-req]: got %ux%u %ux%u, "
+                    "expected 80x24 640x480\n", ssh->widthChar,
+                    ssh->heightRows, ssh->widthPixels, ssh->heightPixels);
+            result = -454;
+            goto done;
+        }
+
+        /* the clamp is on the pty-req path too, pixels included */
+        PutU32BE(payPtyReq + pwcOff, 0x10000);
+        PutU32BE(payPtyReq + phrOff, 0x10000);
+        PutU32BE(payPtyReq + pwpOff, 0xFFFFFFFF);
+        PutU32BE(payPtyReq + phpOff, 0xFFFFFFFF);
+        idx2 = 0;
+        ret2 = wolfSSH_TestDoChannelRequest(ssh, payPtyReq,
+                (word32)sizeof(payPtyReq), &idx2);
+        if (ret2 != WS_SUCCESS) {
+            printf("DoChannelRequest[pty-req clamp]: ret=%d, expected=%d\n",
+                    ret2, WS_SUCCESS);
+            result = -455;
+            goto done;
+        }
+        if (ssh->widthChar != 65535 || ssh->heightRows != 65535 ||
+                ssh->widthPixels != 65535 || ssh->heightPixels != 65535) {
+            printf("DoChannelRequest[pty-req clamp]: got %ux%u %ux%u, "
+                    "expected 65535 throughout\n", ssh->widthChar,
+                    ssh->heightRows, ssh->widthPixels, ssh->heightPixels);
+            result = -456;
             goto done;
         }
     }

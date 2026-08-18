@@ -11714,7 +11714,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
             word32 termSz;
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
-            channel->ptyReq = 1; /* received a pty request */
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
@@ -11730,6 +11729,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                         (char**)&ssh->modes, &ssh->modesSz,
                         buf, len, &begin);
             if (ret == WS_SUCCESS) {
+                channel->ptyReq = 1; /* only on a fully parsed request */
                 SetTerminalSize(ssh, widthChar, heightRows,
                         widthPixels, heightPixels);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
@@ -11762,7 +11762,13 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
 
-            if (ret == WS_SUCCESS) {
+            if (ret == WS_SUCCESS && !channel->ptyReq) {
+                /* Nothing to resize without a pty on this channel. Dropbear
+                 * refuses the same request for the same reason. */
+                WLOG(WS_LOG_DEBUG, "  no pty on this channel, rejecting.");
+                rej = 1;
+            }
+            else if (ret == WS_SUCCESS) {
                 SetTerminalSize(ssh, widthChar, heightRows,
                         widthPixels, heightPixels);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
