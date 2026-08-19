@@ -28,13 +28,14 @@
 set +m  # quiet job-control "Terminated" notices when stopping the daemon
 
 PWD0=$(pwd)
+. ./wolfssh_options.sh
 cd ../../..
 ROOT=$(pwd)
 
 skip() { echo "$1"; cd "$PWD0"; exit 77; }
 
 # Only meaningful when wolfSSHd was built with OpenSSH certificate support.
-grep -q "WOLFSSH_OSSH_CERTS" config.log 2>/dev/null || \
+wolfssh_has OSSH_CERTS || \
     skip "wolfSSHd not built with --enable-ossh-certs, skipping"
 
 WOLFSSHD="$ROOT/apps/wolfsshd/wolfsshd"

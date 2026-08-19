@@ -8,6 +8,13 @@ if [ -z "$1" ] || [ -z "$2" ]; then
     exit 1
 fi
 
+# A password login can only be checked when a backend was compiled in.
+. ./wolfssh_options.sh
+if ! wolfssh_has PAM && ! wolfssh_has LIBCRYPT && ! wolfssh_has LIBLOGIN; then
+    echo "SKIP: wolfsshd built without a password check backend"
+    exit 77
+fi
+
 TEST_HOST="$1"
 TEST_PORT="$2"
 if [ ! -z "$3" ]; then
@@ -51,11 +58,6 @@ sleep 1
 stop_wolfsshd
 
 # log.txt is owned by root (wolfsshd ran via sudo); use sudo to read it.
-if sudo grep -q "No compiled in password check" ./log.txt; then
-    echo "SKIP: wolfsshd built without libcrypt/liblogin support"
-    exit 77
-fi
-
 if sudo grep -q "Error checking password" ./log.txt; then
     echo "FAIL: empty-password NULL-guard regression detected"
     echo "----- log.txt -----"

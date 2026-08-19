@@ -6,25 +6,28 @@ then
     exit 1
 fi
 
+WOLFSSH_OPTIONS=$(./apps/wolfssh-options) || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+
 # test SFTP client is working (that NO_WOLFSSH_CLIENT was not used)
+if ! echo "$WOLFSSH_OPTIONS" | grep -qx "CLIENT"
+then
+    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "skipping test"
+    exit 77
+fi
+
 ./examples/sftpclient/wolfsftp -h
 if [ $? -ne 0 ]
 then
-    ./examples/sftpclient/wolfsftp -h | grep NO_WOLFSSH_CLIENT
-    if [ $? -eq 0 ]
-    then
-        echo "macro NO_WOLFSSH_CLIENT was used"
-        echo "skipping test"
-        exit 77
-    else
-        echo "wolfSFTP client not compiled in or not working"
-        exit 1
-    fi
+    echo "wolfSFTP client not compiled in or not working"
+    exit 1
 fi
 
 # test for nonblocking only
-./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
-if [ $? -eq 0 ]
+if echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK"
 then
     echo "macro WOLFSSH_TEST_BLOCK was used"
     exit 77

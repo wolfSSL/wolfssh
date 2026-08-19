@@ -195,19 +195,13 @@ static void ShowUsage(void)
     printf("wolfSSHd %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
         LIBWOLFSSL_VERSION_STRING);
     printf(" -?             display this help and exit\n");
-    printf(" -f <file name> Configuration file to use, default is "
-                            "/etc/ssh/sshd_config\n");
+    printf(" -f <file name> Configuration file to use, default is:\n"
+           "                /etc/ssh/sshd_config\n");
     printf(" -p <int>       Port number to listen on\n");
     printf(" -d             Turn on debug mode\n");
     printf(" -D             Run in foreground (do not detach)\n");
     printf(" -h <file name> host private key file to use\n");
     printf(" -E <file name> append to log file\n");
-#ifdef WOLFSSL_FPKI
-    /* build-capability note, separated from the option list; also greppable by
-     * test scripts, for the cert UPN domain check (AuthorizedUPNDomains) */
-    printf("\n");
-    printf("Build features: FPKI certificate UPN domain checking\n");
-#endif
 }
 
 

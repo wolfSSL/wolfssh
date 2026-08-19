@@ -42,7 +42,12 @@ then
 fi
 
 ## test for nonblocking only
-if ./examples/client/client "-?" 2>&1 | grep WOLFSSH_TEST_BLOCK >/dev/null 2>&1
+WOLFSSH_OPTIONS=$(./apps/wolfssh-options) || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+
+if echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK"
 then
     echo "skipping: non-blocking test"
     exit 77

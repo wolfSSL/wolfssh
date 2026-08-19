@@ -3,6 +3,7 @@
 # sshd local test
 
 PWD=`pwd`
+. ./wolfssh_options.sh
 cd ../../..
 
 TEST_SCP_CLIENT="./examples/scpclient/wolfscp"
@@ -14,6 +15,11 @@ if [ -z "$1" ] || [ -z "$2" ]; then
     echo "expecting host and port as arguments"
     echo "./sshd_exec_test.sh 127.0.0.1 22222"
     exit 1
+fi
+
+if ! wolfssh_has SCP || [ ! -x "$TEST_SCP_CLIENT" ]; then
+    echo "SCP client not available in this build, skipping"
+    exit 77
 fi
 
 mkdir test-$$
