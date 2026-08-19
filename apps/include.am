@@ -4,3 +4,7 @@
 
 include apps/wolfssh/include.am
 include apps/wolfsshd/include.am
+
+noinst_PROGRAMS += apps/wolfssh-options
+apps_wolfssh_options_SOURCES      = apps/wolfssh-options.c
+apps_wolfssh_options_DEPENDENCIES = src/libwolfssh.la
