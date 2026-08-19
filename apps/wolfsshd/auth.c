@@ -2411,8 +2411,16 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
             }
         }
 
-        /* the local part must equal the requested user name exactly */
-        if ((int)XSTRLEN(usr) == idx && XSTRNCMP(usr, name, idx) == 0) {
+        /* The local part must equal the requested user name: exactly on
+         * Unix, case-insensitively on Windows where account names are
+         * case-insensitive. */
+        if ((int)XSTRLEN(usr) == idx &&
+#ifdef _WIN32
+                WSTRNCASECMP(usr, name, (size_t)idx) == 0
+#else
+                XSTRNCMP(usr, name, idx) == 0
+#endif
+                ) {
             if (allowList == NULL || *allowList == '\0') {
                 /* no allowlist configured: keep local-part-only matching */
                 ret = 1;

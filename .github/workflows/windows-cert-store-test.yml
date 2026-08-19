@@ -1372,11 +1372,16 @@ jobs:
         }
         Write-Host "Test completed - key exchange and SFTP connection succeeded"
 
-    # The subject-CN binding on non-FPKI Windows builds: a client certificate
-    # whose CN does not match the requested account must be rejected, and the
-    # match is case-insensitive like Windows account names. Runs against the
-    # already-running service on the user_ca_source: store entry, whose
-    # config sets no AuthorizedKeysFile so the CN branch is what decides.
+    # The certificate identity binding: a client certificate whose identity
+    # does not match the requested account must be rejected, and the match is
+    # case-insensitive like Windows account names. This build defines
+    # OPENSSL_ALL, which turns on WOLFSSL_ASN_ALL and with it WOLFSSL_FPKI in
+    # wolfSSL's settings.h, so the binding evaluated here is the certificate
+    # UPN (renewcerts.cnf gives the test certs an msUPN altname); the
+    # subject-CN branch only compiles on non-FPKI wolfSSL builds. Runs
+    # against the already-running service on the user_ca_source: store
+    # entry, whose config sets no AuthorizedKeysFile so the identity binding
+    # is what decides.
     - name: Client certificate CN binding is enforced
       if: matrix.user_ca_source == 'store'
       working-directory: ${{ github.workspace }}\wolfssh
@@ -1399,7 +1404,45 @@ jobs:
         if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: wronguser cert creation failed"; exit 1 }
         Pop-Location
 
+        # Recreate the service with debug logging so a rejection in this step
+        # is diagnosable: the service logs only to OutputDebugString
+        # otherwise. C:\Windows\Temp is writable by LocalSystem where the
+        # workspace is not.
+        $cnLog = "C:\Windows\Temp\wolfsshd_cn_debug.log"
+        $sshdPathFull = (Resolve-Path $env:SSHD_PATH).Path
+        $configPathFull = (Resolve-Path "sshd_config_test").Path
+        Stop-Service -Name wolfsshd -Force
+        $binPath = "`"$sshdPathFull`" -f `"$configPathFull`" -p $testPort -d -E `"$cnLog`""
+        sc.exe config wolfsshd binPath= $binPath | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: sc config failed"; exit 1 }
+        Start-Service -Name wolfsshd
+        Start-Sleep -Seconds 3
+        $svc = Get-Service -Name wolfsshd
+        if ($svc.Status -ne 'Running') {
+            Write-Host "ERROR: service not running after reconfigure"
+            sc.exe query wolfsshd
+            exit 1
+        }
+
         "quit" | Out-File -FilePath sftp_cn_commands.txt -Encoding ASCII
+
+        # Run all three connections first, then stop the service and evaluate:
+        # the service keeps the -E log open without read sharing, so the log
+        # is only readable once the service has been stopped.
+
+        # Control connection: the exact-case user against the reconfigured
+        # service must still succeed, so a later failure is attributable to
+        # the case-differing name rather than to service state.
+        $args0 = @("-u", "testuser", "-h", "localhost", "-p", "$testPort",
+                   "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path,
+                   "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path,
+                   "-A", $caCertDer, "-X")
+        $p = Start-Process -FilePath $sftpPath -ArgumentList $args0 `
+            -RedirectStandardInput "sftp_cn_commands.txt" `
+            -RedirectStandardOutput "sftp_cn0_out.txt" `
+            -RedirectStandardError "sftp_cn0_err.txt" `
+            -Wait -NoNewWindow -PassThru
+        $controlExit = $p.ExitCode
 
         # CN=wronguser presented for -u testuser must fail
         $args1 = @("-u", "testuser", "-h", "localhost", "-p", "$testPort",
@@ -1411,12 +1454,7 @@ jobs:
             -RedirectStandardOutput "sftp_cn_out.txt" `
             -RedirectStandardError "sftp_cn_err.txt" `
             -Wait -NoNewWindow -PassThru
-        if ($p.ExitCode -eq 0) {
-            Write-Host "ERROR: CN=wronguser was accepted for user testuser"
-            Get-Content sftp_cn_out.txt, sftp_cn_err.txt
-            exit 1
-        }
-        Write-Host "CN mismatch rejected (exit $($p.ExitCode))"
+        $wrongExit = $p.ExitCode
 
         # CN=testuser presented for -u TESTUSER must succeed: Windows account
         # names are case-insensitive and the CN match follows suit
@@ -1429,12 +1467,53 @@ jobs:
             -RedirectStandardOutput "sftp_cn2_out.txt" `
             -RedirectStandardError "sftp_cn2_err.txt" `
             -Wait -NoNewWindow -PassThru
-        if ($p.ExitCode -ne 0) {
+        $upperExit = $p.ExitCode
+
+        # Release the log before reading it
+        Stop-Service -Name wolfsshd -Force -ErrorAction SilentlyContinue
+        $srvLog = ""
+        if (Test-Path $cnLog) { $srvLog = Get-Content $cnLog -Raw }
+
+        $failed = $false
+        if ($controlExit -ne 0) {
+            Write-Host "ERROR: exact-case control connection failed"
+            Get-Content sftp_cn0_out.txt, sftp_cn0_err.txt
+            $failed = $true
+        } else {
+            Write-Host "Exact-case control connection accepted"
+        }
+        if ($wrongExit -eq 0) {
+            Write-Host "ERROR: CN=wronguser was accepted for user testuser"
+            Get-Content sftp_cn_out.txt, sftp_cn_err.txt
+            $failed = $true
+        }
+        elseif ($srvLog -notmatch "incorrect user cert") {
+            # The rejection must be the CN identity check, not an incidental
+            # failure earlier or later in the exchange.
+            Write-Host "ERROR: wronguser was rejected for a reason other than the CN check"
+            Get-Content sftp_cn_out.txt, sftp_cn_err.txt
+            $failed = $true
+        } else {
+            Write-Host "CN mismatch rejected (exit $wrongExit)"
+        }
+        if ($upperExit -ne 0) {
             Write-Host "ERROR: case-differing user TESTUSER was rejected"
             Get-Content sftp_cn2_out.txt, sftp_cn2_err.txt
+            $failed = $true
+        } else {
+            Write-Host "Case-insensitive CN match accepted"
+        }
+
+        if ($failed) {
+            if ($srvLog -ne "") {
+                Write-Host "=== wolfsshd debug log (tail) ==="
+                $lines = $srvLog -split "`n"
+                $lines | Select-Object -Last 400
+            } else {
+                Write-Host "(no wolfsshd debug log was written)"
+            }
             exit 1
         }
-        Write-Host "Case-insensitive CN match accepted"
 
     # -W supplies both keys, so combining it with -i/-j/-J is a usage error
     # the client must refuse before connecting.

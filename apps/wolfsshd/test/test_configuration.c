@@ -4796,6 +4796,15 @@ static int test_MatchUPNToUser(void)
         {"allowlist, empty domain", "alice", "alice@", "corp.example", 0, 0},
         {"allowlist, wrong local part", "bob", "alice@corp.example",
             "corp.example", 0, 0},
+        /* Windows account names are case-insensitive and the local part
+         * match follows suit there; on Unix the match stays exact. */
+#ifdef _WIN32
+        {"case-differing local part", "ALICE", "alice@corp.example",
+            "corp.example", 1, 0},
+#else
+        {"case-differing local part", "ALICE", "alice@corp.example",
+            "corp.example", 0, 0},
+#endif
         {"allowlist multi, first", "alice", "alice@corp.example",
             "corp.example other.example", 1, 0},
         {"allowlist multi, second", "alice", "alice@other.example",
