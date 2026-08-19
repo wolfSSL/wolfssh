@@ -800,9 +800,15 @@ jobs:
         $echoLogFile = Join-Path $wolfsshRoot "echoserver_debug.log"
         Add-Content -Path $env:GITHUB_ENV -Value "ECHOSERVER_LOG=$echoLogFile"
         Write-Host "Command: $echoserverPath $argStr"
-        $cmdLine = "`"$echoserverPath`" $argStr > `"$echoLogFile`" 2>&1"
+        # Launch via a batch file: passing the quoted command line as one
+        # Start-Process argument nests quotes, which cmd mangles.
+        $batFile = Join-Path $wolfsshRoot "start_echoserver.bat"
+        Set-Content -Path $batFile -Encoding ASCII -Value @(
+          "@echo off",
+          "`"$echoserverPath`" $argStr > `"$echoLogFile`" 2>&1"
+        )
         Start-Process -FilePath "cmd.exe" `
-          -ArgumentList "/c", "start", "/B", "cmd", "/c", $cmdLine `
+          -ArgumentList "/c", "start", "/B", "cmd", "/c", $batFile `
           -WorkingDirectory $exeDir -NoNewWindow -Wait:$false
 
         # The detached launch goes through two intermediate cmd.exe
@@ -1383,7 +1389,11 @@ jobs:
         $caCertDer = (Resolve-Path "keys\ca-cert-ecc.der").Path
 
         # Issue a certificate for a CN that names no requested account,
-        # signed by the same trusted CA.
+        # signed by the same trusted CA. Disable MSYS path conversion so Git
+        # Bash does not rewrite the leading-slash -subj argument into
+        # C:/Program Files/Git/C=US/...
+        $env:MSYS_NO_PATHCONV = "1"
+        $env:MSYS2_ARG_CONV_EXCL = "*"
         Push-Location keys
         & bash -c "touch index.txt && sed 's/fred/wronguser/g' renewcerts.cnf > renewcerts-wronguser.cnf && openssl ecparam -name prime256v1 -genkey -noout -out wronguser-key.pem && openssl req -subj '/C=US/ST=WA/L=Seattle/O=wolfSSL Inc/OU=Development/CN=wronguser' -key wronguser-key.pem -out wronguser-cert.csr -config renewcerts-wronguser.cnf -new -nodes && openssl x509 -req -in wronguser-cert.csr -days 3650 -extfile renewcerts-wronguser.cnf -extensions v3_wronguser -CA ca-cert-ecc.pem -CAkey ca-key-ecc.pem -out wronguser-cert.pem -set_serial 8 && openssl x509 -in wronguser-cert.pem -outform DER -out wronguser-cert.der && openssl ec -in wronguser-key.pem -outform DER -out wronguser-key.der"
         if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "ERROR: wronguser cert creation failed"; exit 1 }
