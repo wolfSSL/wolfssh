@@ -3,6 +3,7 @@
 # sshd local test
 
 ROOT_PWD=$(pwd)
+. ./wolfssh_options.sh
 cd ../../..
 
 TEST_CLIENT="./apps/wolfssh/wolfssh"
@@ -18,18 +19,18 @@ HOST_IP="$1"
 HOST_PORT="$2"
 USER_SET="$3"
 
-# check if wolfssh app was compiled
-OUTPUT=$("$TEST_CLIENT" -V)
-RESULT=$?
-if [ "$RESULT" != 0 ]; then
+# check if wolfssh app was compiled. test_if_supported also drives the example
+# client, and libtool can leave a script behind, so run each rather than -x.
+if ! wolfssh_has SSHCLIENT || [ ! -x "$TEST_CLIENT" ] \
+        || [ ! -x ./examples/client/client ] \
+        || "$TEST_CLIENT" -V 2>&1 | grep -q "does not exist" \
+        || ./examples/client/client "-?" 2>&1 | grep -q "does not exist"; then
     echo "wolfSSH app not compiled in";
     exit 77
 fi
 
 # Debug mode needs to be on to inspect the debug output
-printf "$OUTPUT" | grep "DEBUG"
-RESULT=$?
-if [ "$RESULT" != 0 ]; then
+if ! wolfssh_has DEBUG; then
     echo "wolfSSH app not compiled with debug mode";
     exit 77
 fi
@@ -59,8 +60,8 @@ printf "\n"
 # host key algorithms sent.
 find_substring_of_algos() {
     # Extract the substring between start and end lines
-    SUBSTRING=$(printf "$OUTPUT" | grep -A100 "Server Host Key Algorithms")
-    SUBSTRING=$(printf "$SUBSTRING" | grep -v -A95 "DKI: Enc Algorithms")
+    SUBSTRING=$(printf '%s\n' "$OUTPUT" | grep -A100 "Server Host Key Algorithms")
+    SUBSTRING=$(printf '%s\n' "$SUBSTRING" | grep -v -A95 "DKI: Enc Algorithms")
 }
 
 # take input argument $1 and checks if it is in the SUBSTRING

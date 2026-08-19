@@ -10,8 +10,12 @@ ready_file=`pwd`/wolfssh_scp_ready$$
 
 # test for nonblocking only - wolfscp does not support -N flag for non-blocking
 # mode, so we must skip when TEST_BLOCK is enabled
-./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
-if [ $? -eq 0 ]
+WOLFSSH_OPTIONS=$(./apps/wolfssh-options) || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+
+if echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK"
 then
     echo "WOLFSSH_TEST_BLOCK detected"
     echo "wolfscp client does not support non-blocking mode, skipping test"
@@ -192,12 +196,9 @@ if test $RESULT -eq 0; then
     exit 1
 fi
 
-# The symlink-rejection guard is compiled out by WOLFSSH_NO_SYMLINK_CHECK, which
-# the example client reports in its usage output (-?).  Skip this test when it is
-# set: the server then follows symlinks by design and the check below would
-# false-fail.
-./examples/client/client '-?' | grep WOLFSSH_NO_SYMLINK_CHECK
-if [ $? -eq 0 ]; then
+# Without the symlink-rejection guard the server follows symlinks by design,
+# so the check below would false-fail.
+if ! echo "$WOLFSSH_OPTIONS" | grep -qx "SYMLINK_CHECK"; then
     echo "symlink checking disabled, skipping symlink test"
 else
     echo "Test that the server refuses to follow a symlink (server to local)"

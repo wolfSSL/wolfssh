@@ -13,10 +13,14 @@ else
 fi
 
 # test for nonblocking only
-./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
-if [ $? -eq 0 ]
+WOLFSSH_OPTIONS=$(./apps/wolfssh-options) || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+
+if echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK"
 then
-    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "macro WOLFSSH_TEST_BLOCK was used"
     echo "skipping for now"
     exit 77
 fi

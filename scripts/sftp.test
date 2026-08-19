@@ -10,9 +10,13 @@ nonblockingOnly=0
 
 [ ! -x ./examples/sftpclient/wolfsftp ] && echo -e "\n\nwolfSFTP client doesn't exist" && exit 1
 
+WOLFSSH_OPTIONS=$(./apps/wolfssh-options) || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+
 # test for if the SFTP client works
-./examples/sftpclient/wolfsftp -h | grep NO_WOLFSSH_CLIENT
-if [ $? -eq 0 ]
+if ! echo "$WOLFSSH_OPTIONS" | grep -qx "CLIENT"
 then
     echo "macro NO_WOLFSSH_CLIENT was used"
     echo "skipping test"
@@ -20,10 +24,9 @@ then
 fi
 
 # test for nonblocking only
-./examples/client/client -h | grep WOLFSSH_TEST_BLOCK
-if [ $? -eq 0 ]
+if echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK"
 then
-    echo "macro NO_WOLFSSH_CLIENT was used"
+    echo "macro WOLFSSH_TEST_BLOCK was used"
     nonblockingOnly=1
 fi
 

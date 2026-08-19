@@ -6,11 +6,10 @@
 # "example". The wolfSSHd UPN domain check must therefore reject the cert.
 
 PWD=`pwd`
+. ./wolfssh_options.sh
 
-# The UPN domain check is compiled only when wolfSSL is built with FPKI. Probe
-# the daemon binary's help output, which prints an FPKI marker under the same
-# build guard, and skip when the check is not present.
-if ! ../wolfsshd "-?" 2>&1 | grep -q "FPKI"; then
+# The UPN domain check is compiled only when wolfSSL is built with FPKI.
+if ! wolfssh_has FPKI; then
     echo "wolfSSHd built without FPKI; UPN domain check not compiled in, skipping"
     exit 77
 fi
