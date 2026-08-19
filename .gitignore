@@ -65,6 +65,7 @@ examples/sftpclient/wolfsftp
 examples/scpclient/wolfscp
 
 # applications
+apps/wolfssh-options
 apps/wolfssh/wolfssh
 apps/wolfsshd/wolfsshd
 apps/wolfsshd/test/test_configuration
