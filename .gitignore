@@ -86,6 +86,9 @@ test.dat
 # Scratch file the api tests write in the working directory. Removed on a
 # clean run, left behind when one aborts.
 ossh-cert-line.tmp
+# Same for the regression tests' known_hosts fixtures, named by pid.
+wolfssh_kh_*.tmp
+regress_known_hosts*.tmp
 
 # test output
 tests/*.test

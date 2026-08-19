@@ -5714,6 +5714,27 @@ static void TestClientParseDestination(void)
 }
 
 
+#if defined(WOLFSSH_TEST_INTERNAL) || defined(WOLFSSL_BASE64_ENCODE)
+/* Write contents to path exactly as given, with no terminator added, so a
+ * test can seed a file whose last line ends without a newline. */
+static void WriteTextFile(const char* path, const char* contents)
+{
+    WFILE* f = WBADFILE;
+    word32 sz = (word32)WSTRLEN(contents);
+
+    AssertIntEQ(WFOPEN(NULL, &f, path, "wb"), 0);
+    AssertTrue(f != WBADFILE);
+    /* With WOLFSSH_NO_ABORT the asserts above do not stop the run, so return
+     * rather than write through a handle the open never produced. */
+    if (f == WBADFILE) {
+        return;
+    }
+    AssertIntEQ((word32)WFWRITE(NULL, contents, 1, sz, f), sz);
+    AssertIntEQ(WFCLOSE(NULL, f), 0);
+}
+#endif
+
+
 #ifdef WOLFSSH_TEST_INTERNAL
 /* AppendKeyToFile must refuse a host name or key type that carries whitespace
  * or control bytes, so an attacker-controlled value cannot inject extra fields
@@ -5814,27 +5835,61 @@ static void TestAppendKeyToFile(void)
 
     (void)remove(path);
 }
+
+
+/* POSIX lets the last line of a text file end without a newline. An appended
+ * entry has to start on its own line, otherwise it runs onto the last stored
+ * entry and both are corrupted: the old host ends up pinned to a key it never
+ * had, and the new host is never stored at all. */
+static void TestAppendNoTrailingNewline(void)
+{
+    const char* path = "regress_known_hosts_nl.tmp";
+    static const struct {
+        const char* seed;
+        const char* expected;
+    } cases[] = {
+        /* Unterminated last line: the entry gets a separator of its own. */
+        { "a.example.com ssh-rsa AAAA",
+          "a.example.com ssh-rsa AAAA\nb.example.com ssh-rsa BBBB\n" },
+        /* Already terminated: no separator, so no blank line. */
+        { "a.example.com ssh-rsa AAAA\n",
+          "a.example.com ssh-rsa AAAA\nb.example.com ssh-rsa BBBB\n" },
+        /* CRLF ends in a newline too, and the seed is kept byte for byte. */
+        { "a.example.com ssh-rsa AAAA\r\n",
+          "a.example.com ssh-rsa AAAA\r\nb.example.com ssh-rsa BBBB\n" },
+        /* An empty file has no last line to run onto. */
+        { "", "b.example.com ssh-rsa BBBB\n" }
+    };
+    char buf[128];
+    word32 readSz;
+    unsigned int i;
+
+    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        (void)remove(path);
+        WriteTextFile(path, cases[i].seed);
+        AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "b.example.com",
+                    "ssh-rsa", "BBBB"), WS_SUCCESS);
+        WMEMSET(buf, 0, sizeof(buf));
+        readSz = LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(buf, cases[i].expected);
+    }
+
+    /* An absent file is created, and needs no separator either. */
+    (void)remove(path);
+    AssertIntEQ(wolfSSH_TestAppendKeyToFile(path, "b.example.com",
+                "ssh-rsa", "BBBB"), WS_SUCCESS);
+    WMEMSET(buf, 0, sizeof(buf));
+    readSz = LoadFileBuffer(path, (byte*)buf, sizeof(buf) - 1);
+    AssertTrue(readSz > 0);
+    AssertStrEQ(buf, "b.example.com ssh-rsa BBBB\n");
+
+    (void)remove(path);
+}
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
 #ifdef WOLFSSL_BASE64_ENCODE
-
-static void WriteKnownHosts(const char* path, const char* contents)
-{
-    WFILE* f = WBADFILE;
-    word32 sz = (word32)WSTRLEN(contents);
-
-    AssertIntEQ(WFOPEN(NULL, &f, path, "wb"), 0);
-    AssertTrue(f != WBADFILE);
-    /* With WOLFSSH_NO_ABORT the asserts above do not stop the run, so return
-     * rather than write through a handle the open never produced. */
-    if (f == WBADFILE) {
-        return;
-    }
-    AssertIntEQ((word32)WFWRITE(NULL, contents, 1, sz, f), sz);
-    AssertIntEQ(WFCLOSE(NULL, f), 0);
-}
-
 
 /* Every known_hosts rejection returns -1: a known host with the wrong key, and
  * an unrecognized host whose "add it?" prompt reads EOF. Only the message
@@ -5881,11 +5936,10 @@ static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
 
 
 /* known_hosts is a text file and POSIX lets its last line end without a
- * newline. The parser used to nul out the final byte of the file, which ate
- * the last base64 character of the last entry and made that host read as
- * unknown. Match the last entry with a trailing newline, without one, and
- * with CRLF line endings, then check that a wrong key on that same last
- * entry is still rejected. */
+ * newline, and a file written on Windows ends its lines with CRLF. Match the
+ * last entry with a trailing newline, without one, and with CRLF line
+ * endings, then check that a wrong key on that same last entry is still
+ * rejected. */
 static void TestKnownHostsLastEntry(void)
 {
     /* string("ssh-rsa"), then a zero certificate count so the RFC 6187 parse
@@ -5915,7 +5969,7 @@ static void TestKnownHostsLastEntry(void)
     char* savedHome = NULL;
     const char* home;
     word32 encodedSz = (word32)sizeof(encoded);
-    int savedStdin, devNull;
+    int savedStdin, devNull, ready;
     unsigned int i;
 
     WSNPRINTF(homeDir, sizeof(homeDir), "wolfssh_kh_%d.tmp", (int)getpid());
@@ -5944,23 +5998,23 @@ static void TestKnownHostsLastEntry(void)
     (void)rmdir(sshDir);
     (void)rmdir(homeDir);
 
-    /* Plain mkdir/rmdir rather than WMKDIR/WRMDIR: those only exist in
-     * builds that compile the SCP or SFTP file system layer. */
-    AssertIntEQ(mkdir(homeDir, 0700), 0);
-    AssertIntEQ(mkdir(sshDir, 0700), 0);
-    AssertIntEQ(setenv("HOME", homeDir, 1), 0);
+    /* Use a single flag to avoid duplicate errors below. */
+    ready = (mkdir(homeDir, 0700) == 0)
+            && (mkdir(sshDir, 0700) == 0)
+            && (setenv("HOME", homeDir, 1) == 0);
+    AssertTrue(ready);
 
     /* A regression falls through to the "add it to known hosts?" prompt, so
      * point stdin at EOF: the test then fails rather than waiting forever.
      * Check each step, otherwise a failure here leaves the prompt reading
      * the real stdin. */
     savedStdin = dup(STDIN_FILENO);
-    AssertTrue(savedStdin >= 0);
     devNull = open("/dev/null", O_RDONLY);
-    AssertTrue(devNull >= 0);
-    AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
+    ready = ready && (savedStdin >= 0) && (devNull >= 0)
+            && (dup2(devNull, STDIN_FILENO) >= 0);
+    AssertTrue(ready);
 
-    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+    for (i = 0; ready && i < sizeof(cases)/sizeof(cases[0]); i++) {
         printf("    known_hosts with %s.\n", cases[i].label);
 
         /* An entry for a different host goes first, so the match lands on the
@@ -5968,7 +6022,7 @@ static void TestKnownHostsLastEntry(void)
         WSNPRINTF(contents, sizeof(contents),
                 "other.example.com ssh-rsa AAAA%s%s ssh-rsa %s%s",
                 cases[i].sep, targetName, encoded, cases[i].tail);
-        WriteKnownHosts(hostsPath, contents);
+        WriteTextFile(hostsPath, contents);
         AssertIntEQ(ClientPublicKeyCheck(pubKey, (word32)sizeof(pubKey),
                     targetName), 0);
 
@@ -5980,7 +6034,7 @@ static void TestKnownHostsLastEntry(void)
         WSNPRINTF(contents, sizeof(contents),
                 "other.example.com ssh-rsa AAAA%s%s ssh-rsa %s%s",
                 cases[i].sep, targetName, wrongKey, cases[i].tail);
-        WriteKnownHosts(hostsPath, contents);
+        WriteTextFile(hostsPath, contents);
         AssertTrue(KnownHostsCheckCapture(pubKey, (word32)sizeof(pubKey),
                     targetName, captured, (word32)sizeof(captured)) != 0);
         AssertNotNull(WSTRSTR(captured,
@@ -5994,16 +6048,20 @@ static void TestKnownHostsLastEntry(void)
         WSNPRINTF(contents, sizeof(contents),
                 "other.example.com ssh-rsa %s%s%s ssh-rsa %s%s",
                 encoded, cases[i].sep, targetName, encoded, cases[i].tail);
-        WriteKnownHosts(hostsPath, contents);
+        WriteTextFile(hostsPath, contents);
         AssertIntEQ(KnownHostsCheckCapture(pubKey, (word32)sizeof(pubKey),
                     targetName, captured, (word32)sizeof(captured)), 0);
         AssertNotNull(WSTRSTR(captured, "This key matches other servers:"));
         AssertNotNull(WSTRSTR(captured, "other.example.com"));
     }
 
-    AssertTrue(dup2(savedStdin, STDIN_FILENO) >= 0);
-    close(devNull);
-    close(savedStdin);
+    if (savedStdin >= 0) {
+        AssertTrue(dup2(savedStdin, STDIN_FILENO) >= 0);
+        close(savedStdin);
+    }
+    if (devNull >= 0) {
+        close(devNull);
+    }
 
     if (savedHome != NULL) {
         AssertIntEQ(setenv("HOME", savedHome, 1), 0);
@@ -6051,6 +6109,7 @@ int main(int argc, char** argv)
     TestClientParseDestination();
 #ifdef WOLFSSH_TEST_INTERNAL
     TestAppendKeyToFile();
+    TestAppendNoTrailingNewline();
 #endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TestKnownHostsLastEntry();

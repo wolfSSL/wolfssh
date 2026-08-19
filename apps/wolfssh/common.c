@@ -211,6 +211,31 @@ static int IsFieldStorable(const char* field)
 }
 
 
+/* A known_hosts entry has to start on its own line.
+ * Returns 1 when a separating newline has to go out ahead of the entry. */
+static int AppendNeedsNewline(const char* filename)
+{
+    WFILE *f = WBADFILE;
+    char last = '\n';
+    int needs = 0;
+
+    if (WFOPEN(NULL, &f, filename, "rb") != 0 || f == WBADFILE) {
+        /* No file to run into; the append creates it. */
+        return 0;
+    }
+
+    /* The seek fails on an empty file, which needs no separator either. */
+    if (WFSEEK_SUCCESS(WFSEEK(NULL, f, -1, WSEEK_END))
+            && WFREAD(NULL, &last, 1, 1, f) == 1) {
+        needs = (last != '\n');
+    }
+
+    WFCLOSE(NULL, f);
+
+    return needs;
+}
+
+
 static int AppendKeyToFile(const char* filename, const char* name,
         const char* type, const char* key)
 {
@@ -230,13 +255,16 @@ static int AppendKeyToFile(const char* filename, const char* name,
         ret = IsFieldStorable(key);
     }
     if (ret == WS_SUCCESS) {
+        const int needsNewline = AppendNeedsNewline(filename);
+
         ret = WFOPEN(NULL, &f, filename, "a");
         if (ret == 0 && f != WBADFILE) {
             /* Check the write and the close so a failed or truncated entry
              * (for example on a full disk) is reported rather than appearing
              * to pin the key. The close flushes buffered output, so a write
              * error can surface there. */
-            if (fprintf(f, "%s %s %s\n", name, type, key) < 0) {
+            if (fprintf(f, "%s%s %s %s\n", needsNewline ? "\n" : "",
+                        name, type, key) < 0) {
                 ret = WS_BAD_FILE_E;
             }
             if (WFCLOSE(NULL, f) != 0 && ret == WS_SUCCESS) {
@@ -418,7 +446,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
         line = WSTRSEP(&cursor, "\n");
         if (line != NULL && *line) {
             /* Non-empty was checked above, so the last byte is a real one. */
-            size_t lineSz = WSTRLEN(line);
+            word32 lineSz = (word32)WSTRLEN(line);
 
             /* Remove trailing CR if present for comparison below */
             if (line[lineSz - 1] == '\r') {
