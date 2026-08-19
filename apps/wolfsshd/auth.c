@@ -1908,12 +1908,14 @@ static int CheckPublicKeyUnix(const char* name,
 
 #ifdef _WIN32
 
+/* lower-case header names so mingw cross-builds resolve them on
+ * case-sensitive filesystems */
 #include <ntstatus.h>
-#include <Ntsecapi.h>
-#include <Shlobj.h>
+#include <ntsecapi.h>
+#include <shlobj.h>
 
-#include <UserEnv.h>
-#include <KnownFolders.h>
+#include <userenv.h>
+#include <knownfolders.h>
 
 /* Pulled in from Advapi32.dll */
 extern BOOL WINAPI LogonUserExExW(LPTSTR usr,
@@ -1956,7 +1958,8 @@ static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, i
         pInfo.lpUserName = usrW;
         if (LoadUserProfileW(wolfSSHD_GetAuthToken(auth), &pInfo) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Error %d loading user %s", GetLastError(), usr);
+                "[SSHD] Error %lu loading user %s",
+                (unsigned long)GetLastError(), usr);
             ret = WS_FATAL_ERROR;
         }
 
@@ -2020,7 +2023,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
-        pwWSz = MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, NULL, 0);
+        pwWSz = MultiByteToWideChar(CP_UTF8, 0, (const char*)pw, pwSz, NULL,
+            0);
         if (pwWSz <= 0) {
             ret = WSSHD_AUTH_FAILURE;
         }
@@ -2034,7 +2038,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
     
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, pwW, pwWSz) != pwWSz) {
+        if (MultiByteToWideChar(CP_UTF8, 0, (const char*)pw, pwSz, pwW, pwWSz)
+                != pwWSz) {
             ret = WSSHD_AUTH_FAILURE;
         }
         else {
@@ -2045,8 +2050,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     if (ret == WSSHD_AUTH_SUCCESS) {
         if (LogonUserExExW(usrW, dmW, pwW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, NULL,
             &authCtx->token, NULL, NULL, NULL, NULL) != TRUE) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %d when login in as user %s, "
-                "bad username or password", GetLastError(), usr);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %lu when login in as user %s, "
+                "bad username or password", (unsigned long)GetLastError(), usr);
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Check user is allowed to 'Log on as batch job'");
             ret = WSSHD_AUTH_FAILURE;
         }
@@ -2123,7 +2128,8 @@ static int SetupUserTokenWin(const char* usr,
 
 
         if ((rc = LsaRegisterLogonProcess(&processName, &lsaHandle, &oMode)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Register Logon Process Error %d", LsaNtStatusToWinError(rc));
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Register Logon Process Error %lu",
+                (unsigned long)LsaNtStatusToWinError(rc));
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -2136,7 +2142,8 @@ static int SetupUserTokenWin(const char* usr,
         authName.Length = (USHORT)WSTRLEN(MSV1_0_PACKAGE_NAME);
         authName.MaximumLength = authName.Length + 1;
         if ((rc = LsaLookupAuthenticationPackage(lsaHandle, &authName, &authId)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Lookup Authentication Package Error %d", rc);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Lookup Authentication Package Error %lu",
+                (unsigned long)rc);
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -2183,7 +2190,7 @@ static int SetupUserTokenWin(const char* usr,
         NTSTATUS     subStatus;
         QUOTA_LIMITS quotas;
         DWORD        profileSz;
-        PKERB_INTERACTIVE_PROFILE profile = NULL;
+        PVOID        profile = NULL;
         LUID logonId = { 0, 0 };
 
         WMEMSET(&originName, 0, sizeof(LSA_STRING));
@@ -2192,8 +2199,8 @@ static int SetupUserTokenWin(const char* usr,
         originName.MaximumLength = originName.Length + 1;
 
         if ((rc = LsaLogonUser(lsaHandle, &originName, Network, authId, authInfo, authInfoSz, NULL, &sourceContext, &profile, &profileSz, &logonId, &authCtx->token, &quotas, &subStatus)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %X, SubStatus %d, when login in as user %s",
-                rc, subStatus, usr);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %lX, SubStatus %ld, when login in as user %s",
+                (unsigned long)rc, (long)subStatus, usr);
             ret = WSSHD_AUTH_FAILURE;
         }
 
@@ -3317,6 +3324,7 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
     }
 
     flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
+    WOLFSSH_UNUSED(flag);
 #ifndef _WIN32
     if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");

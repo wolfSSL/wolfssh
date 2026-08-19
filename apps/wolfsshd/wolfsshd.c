@@ -22,6 +22,19 @@
     #include <config.h>
 #endif
 
+#ifdef _WIN32
+    /* ConPTY (HPCON, CreatePseudoConsole) requires a Windows 10 1809 (RS5)
+     * API target; mingw-w64 gates the declarations on NTDDI_VERSION */
+    #if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0A00
+        #undef  _WIN32_WINNT
+        #define _WIN32_WINNT 0x0A00
+    #endif
+    #if !defined(NTDDI_VERSION) || NTDDI_VERSION < 0x0A000006
+        #undef  NTDDI_VERSION
+        #define NTDDI_VERSION 0x0A000006 /* NTDDI_WIN10_RS5 */
+    #endif
+#endif
+
 #ifdef WOLFSSL_USER_SETTINGS
     #include <wolfssl/wolfcrypt/settings.h>
 #else
@@ -266,7 +279,7 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
      * a certificate was bound to an account by subject CN alone, so they must
      * not depend on -d. */
     if (lvl == WS_LOG_ERROR || lvl == WS_LOG_WARN || debugMode) {
-        fprintf(logFile, "[PID %d]: %s\n", WGETPID(), str);
+        fprintf(logFile, "[PID %lu]: %s\n", (unsigned long)WGETPID(), str);
         /* flush so each line is visible immediately, e.g. to a consumer
          * reading the log file while the daemon is still running */
         fflush(logFile);
@@ -2967,8 +2980,10 @@ static VOID CALLBACK GraceTimeoutCb(PTP_CALLBACK_INSTANCE instance, PVOID ctx,
 
     if (conn != NULL) {
         /* published with an interlocked write so the connection thread reading
-         * the flag in LoginGraceExpired() sees it without a data race */
-        InterlockedExchange8((volatile CHAR*)&conn->timeOut, 1);
+         * the flag in LoginGraceExpired() sees it without a data race; OR is
+         * used because mingw-w64 has no InterlockedExchange8, and the flag
+         * only ever transitions 0 -> 1 */
+        InterlockedOr8((volatile CHAR*)&conn->timeOut, 1);
     }
     (void)instance;
     (void)timer;
@@ -2992,7 +3007,7 @@ static void alarmCatch(int signum)
 static int LoginGraceExpired(WOLFSSHD_CONNECTION* conn)
 {
 #ifdef _WIN32
-    /* interlocked read pairs with the InterlockedExchange8 in GraceTimeoutCb;
+    /* interlocked read pairs with the InterlockedOr8 in GraceTimeoutCb;
      * the OR with 0 is a read-modify-write, hence the non-const parameter */
     return InterlockedOr8((volatile CHAR*)&conn->timeOut, 0);
 #else
@@ -3139,7 +3154,7 @@ static void* HandleConnection(void* arg)
             if (conn->loginTimer == NULL) {
                 /* fail closed: mark the connection as timed out so the accept
                  * loop exits immediately rather than enforcing no grace time */
-                InterlockedExchange8((volatile CHAR*)&conn->timeOut, 1);
+                InterlockedOr8((volatile CHAR*)&conn->timeOut, 1);
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to create login grace "
                             "timer, closing connection");
             }
@@ -3229,6 +3244,8 @@ static void* HandleConnection(void* arg)
                 ret = WS_FATAL_ERROR;
             }
         }
+    #else
+        WOLFSSH_UNUSED(pPasswd);
     #endif
 
         if (ret != WS_FATAL_ERROR) {
@@ -3423,7 +3440,7 @@ static void* HandleConnection(void* arg)
         shutdown(conn->fd, 1);
         /* Spin until socket closes. */
         do {
-            ret = (int)recv(conn->fd, sc, 1024, 0);
+            ret = (int)recv(conn->fd, (char*)sc, 1024, 0);
         } while (ret > 0);
 
         WCLOSESOCKET(conn->fd);
@@ -3482,7 +3499,8 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
             ret = WS_FATAL_ERROR;
         }
         else {
-            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new thread %d\n", id);
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Spawned new thread %lu\n",
+                (unsigned long)id);
             CloseHandle(t);
         }
     }
