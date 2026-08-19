@@ -2656,9 +2656,12 @@ static void test_wolfSSH_SCP_SendSymlinkReject(void) { ; }
 #endif
 
 #ifdef WOLFSSH_AGENT
+/* Room for an add-identity message carrying a 3072-bit RSA key. */
+#define AGENT_TEST_BUF_SZ 2048
+
 typedef struct AgentTestCtx {
     int partialWrite;
-    byte response[512];
+    byte response[AGENT_TEST_BUF_SZ];
     word32 responseSz;
     int writeCalls;
     int readCalls;
@@ -2699,9 +2702,11 @@ static void build_agent_message(byte* out, word32* outSz, byte id,
 static void build_sign_response(AgentTestCtx* ctx, const byte* sig,
         word32 sigSz)
 {
-    byte body[4 + 64];
+    byte body[AGENT_TEST_BUF_SZ];
 
-    AssertTrue(sigSz <= 64);
+    AssertTrue(LENGTH_SZ + sigSz <= sizeof(body));
+    AssertTrue(LENGTH_SZ + sigSz + LENGTH_SZ + MSG_ID_SZ
+        <= sizeof(ctx->response));
     put_uint32(body, sigSz);
     if (sigSz > 0)
         memcpy(body + LENGTH_SZ, sig, sigSz);
@@ -2752,6 +2757,36 @@ static void cleanup_agent_test(WOLFSSH_CTX* ctx, WOLFSSH* ssh)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+/* Writes an SSH string. */
+static word32 build_string(byte* out, const byte* val, word32 valSz)
+{
+    put_uint32(out, valSz);
+    if (valSz > 0)
+        memcpy(out + LENGTH_SZ, val, valSz);
+
+    return LENGTH_SZ + valSz;
+}
+
+/* Writes an mpint, padding with a zero byte when the sign bit is set.
+ * DoAddIdentity() parses the key values with GetMpint(). */
+static word32 build_mpint(byte* out, const byte* val, word32 valSz)
+{
+    word32 idx = LENGTH_SZ;
+    byte pad = (valSz > 0 && (val[0] & 0x80)) ? 1 : 0;
+
+    put_uint32(out, valSz + pad);
+    if (pad)
+        out[idx++] = 0;
+    if (valSz > 0)
+        memcpy(out + idx, val, valSz);
+
+    return idx + valSz;
+}
+
+#endif
 
 static void test_wolfSSH_agent_signrequest_partial_write(void)
 {
@@ -2830,6 +2865,35 @@ static void test_wolfSSH_agent_signrequest_signature_too_large(void)
     cleanup_agent_test(ctx, ssh);
 }
 
+/* An RSA-4096 signature makes a 521 byte reply, more than the agent
+ * read buffer held before it was sized from WOLFSSH_AGENT_MAX_RSP_SZ. */
+static void test_wolfSSH_agent_signrequest_large_response(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[512];
+    byte sig[1024];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0xa5, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(sigSz, sizeof(signatureData));
+    AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
 static void test_wolfSSH_agent_signrequest_success(void)
 {
     WOLFSSH_CTX* ctx;
@@ -2859,9 +2923,9 @@ static void test_wolfSSH_agent_signrequest_success(void)
 }
 
 #ifndef WOLFSSH_NO_RSA_SHA2_256
-/* A hostile agent can answer a sign request with its own messages. An
- * identity whose modulus exceeds the agent's signature buffer makes
- * wc_RsaSSL_Sign() fail; pre-fix that over-reads, so run this under ASan. */
+/* A hostile agent can answer a sign request with its own messages. This
+ * identity carries no private values, so signing fails and the error
+ * reaches the caller. */
 static void test_wolfSSH_agent_signrequest_oversize_rsa_key(void)
 {
     WOLFSSH_CTX* ctx;
@@ -2905,9 +2969,9 @@ static void test_wolfSSH_agent_signrequest_oversize_rsa_key(void)
         idx += LENGTH_SZ;
     }
     AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
     build_agent_message(io.response, &io.responseSz,
         MSGID_AGENT_ADD_IDENTITY, body, idx);
-    AssertTrue(io.responseSz <= sizeof(io.response));
 
     setup_agent_test(&ctx, &ssh, &io);
 
@@ -2939,9 +3003,9 @@ static void test_wolfSSH_agent_signrequest_oversize_rsa_key(void)
     put_uint32(body + idx, AGENT_SIGN_RSA_SHA2_256);
     idx += LENGTH_SZ;
     AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
     build_agent_message(io.response, &io.responseSz,
         MSGID_AGENT_SIGN_REQUEST, body, idx);
-    AssertTrue(io.responseSz <= sizeof(io.response));
 
     sigSz = sizeof(sig);
     ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
@@ -2951,6 +3015,334 @@ static void test_wolfSSH_agent_signrequest_oversize_rsa_key(void)
 
     cleanup_agent_test(ctx, ssh);
 }
+
+/* Components of a 3072-bit RSA key, in the order an add-identity message
+ * carries them. */
+static const char agentRsa3072N[] =
+    "d6232af3e38ffa6a3b46be8585b7d1284957c0bb813c19203cfd03e1bd8ae4f5"
+    "ef5ea4c11d49dd102f8f379d36c8e92d921f69958d207d73a36c4f1a06c9db80"
+    "7048c257a2adba37deac8c268120aafe81a98bcdd56399c979296d590b873baf"
+    "27cd5b35e7b4cb8aa1db862451c195f123e049a02f0a696ad83ff9b1e91b9b1a"
+    "8d355f8a085eb946d31456e47b016d5e26abeac2addee4076a984ecb31c9f005"
+    "8d2e056c9477a5c2a464bdba8e1303d58bf3d92f4be1713518f56fb39f496ea2"
+    "543782efb974b9ed9766c1a5be94f91ff3839a5c34e0d2a0958d99114ccf3241"
+    "2d8c236f545052e707e9fe2984334b75696eb830590e4a669211ca39c22df48a"
+    "6b5e35a83f95c323342d26bd9e465e5362732c1361ecb34b52761906daf01c1e"
+    "79773f40a7e59afdd7cab0bbcc8969e130c76f6bad18a8b5f7a989b538ef1520"
+    "c9db10c2ea3ffd5af49dc0529b342a8387f006684176621619fcca6994ee10ca"
+    "66ef37cb73103f6c91117e052404be4d55703c6f74efb61df9da5f2ff103501d";
+static const char agentRsa3072E[] =
+    "010001";
+static const char agentRsa3072D[] =
+    "03055d41dcf8194110580496aae7e67730aa7e6d8b076edaa513c0d7c4237bca"
+    "6da01c27a5f629c50f40d6c15100fa2308589a3c6c94e6cad85889dae0a45f84"
+    "68fbc7ed0971a87462b963501c6a71de0c92700f0b29214195e1e6b3b7dbd12e"
+    "5ef99c854dba9fba7bfccfcf385c73173ee87da059310282fb225ba6deebda25"
+    "7c3f3c25fade72f7b1a7a35e94f0ff3f1827b467b85cd442a6a86d14f1c5e7d7"
+    "a768433c53be68c61506e8022eb7cc4a2640cd318c0e11b75b266aff91b09c04"
+    "4bd66b5faf0e962104f25315985f9e15d5b8866efe6d87f4e9fe9d98b0c8bfb6"
+    "783040232f7d256a96ce15ce5f392dedb2b2d8a3318cec105078ef71aece3920"
+    "ef63d8aa2e607c1534cfabd1fb9e0962197cd60d93d12edde5d4623dbf9cc4bd"
+    "6fbd9b0695a51f3df3c8a8c4a4615568a594a08695a663c2234982ead30a4f91"
+    "a858705027159580b28823053b17cadadbba0a198beff54fc14eac76476e4594"
+    "0ff3ae2af0646a162ffa1ee5128af12909aaba7e16f4f55feedce061f4de3771";
+static const char agentRsa3072Iqmp[] =
+    "b2cbe2bd4d43bdb1ec9119abe5b3f408e193501e939460db0de6991016c76cb4"
+    "9b8f293db38cdb9842ef22ad0b64c41bbe583e20bed68a1923be1911553b47b4"
+    "ca7c3d9be5504aa37127ee8cfbd9b705290d3426bdbe8c2dbbfe5a9db1595c9e"
+    "db4d5b2d4acb028ff25af5625a20a2e2a57eba47090bfbbd87a28c33a4e55004"
+    "bbdcb5db57d5c207dde0223f37adf1f6649b716c94aadbac99026eab591df81c"
+    "cef23efadb120b2a3709eac248106303385fa7284032b4bf68b34325e43980f8";
+static const char agentRsa3072P[] =
+    "f348e42165c7545c90d12214c409af2774566c1b58ed123758f7622dd3fcb069"
+    "def6a12d963719f5f119af55234cd98a6aad12f09c0edcf5a53cd3a751304c6c"
+    "7d69d98c62ad52a6f78ce54670449d34f888ab61b16b01bdfad3a9bffa5c49ab"
+    "6dbded21d31db0811785bca44ac720681baf811b289461a682dcf4555df3ec8d"
+    "4776f6991b2a2ddb6ac06b80bd2be87041fa394bd3c14c392b65aef3a6d8c005"
+    "83c8108d0cc38ca708c20fd5635dd0b16a5f0344ef88e227552195a7ea7f5395";
+static const char agentRsa3072Q[] =
+    "e1544a375c1f125ea8590ce99ccbc986ea906b91b880f7cdb6bb4d1c9241da72"
+    "e857bf296f1359da9283e712dab9a8788830cbd3a2ca6d70b3ed5c8db3bcbebb"
+    "4c20f5d41e8c7a641f24d1fc3daeb4ecff60f187e34c6cd0d46c5217e4abaf35"
+    "a7fcab3c05eacea87937932034c8300f6a8e9f052efe5d1ee01daeac0528dc54"
+    "9666d61dc17f95b2dd1d6827ca6c196eca129254f7bbe21e53cd8167a766067f"
+    "aaa349097851c0b2d0d575e2c9425cb5f27f47484373d2dbb5e07d49401fe869";
+
+/* A 3072-bit identity needs a 384 byte signature buffer, more than the
+ * 2048-bit keys the agent used to assume. */
+static void test_wolfSSH_agent_signrequest_rsa_3072(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte body[AGENT_TEST_BUF_SZ];
+    byte data[16];
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    byte* n = NULL;
+    byte* e = NULL;
+    byte* d = NULL;
+    byte* iqmp = NULL;
+    byte* p = NULL;
+    byte* q = NULL;
+    word32 nSz = 0, eSz = 0, dSz = 0, iqmpSz = 0, pSz = 0, qSz = 0;
+    word32 sigSz = sizeof(sig);
+    word32 idx, blobSz;
+    int ret;
+
+    AssertIntEQ(0, ConvertHexToBin(agentRsa3072N, &n, &nSz,
+        agentRsa3072E, &e, &eSz, agentRsa3072D, &d, &dSz,
+        agentRsa3072Iqmp, &iqmp, &iqmpSz));
+    AssertIntEQ(0, ConvertHexToBin(agentRsa3072P, &p, &pSz,
+        agentRsa3072Q, &q, &qSz, NULL, NULL, NULL, NULL, NULL, NULL));
+
+    memset(data, 0x5a, sizeof(data));
+    memset(&io, 0, sizeof(io));
+
+    idx = 0;
+    idx += build_string(body + idx, (const byte*)"ssh-rsa", 7);
+    idx += build_mpint(body + idx, n, nSz);
+    idx += build_mpint(body + idx, e, eSz);
+    idx += build_mpint(body + idx, d, dSz);
+    idx += build_mpint(body + idx, iqmp, iqmpSz);
+    idx += build_mpint(body + idx, p, pSz);
+    idx += build_mpint(body + idx, q, qSz);
+    idx += build_string(body + idx, (const byte*)"", 0);
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_ADD_IDENTITY, body, idx);
+
+    setup_agent_test(&ctx, &ssh, &io);
+
+    /* The agent answers with an add-identity instead of a signature. The
+     * identity is stored, but the caller is told there was no key. */
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertNotNull(ssh->agent->idList);
+
+    /* Sign request for that identity. The key blob is the n and e pair,
+     * matched by its SHA-256 digest. */
+    idx = LENGTH_SZ;
+    blobSz = build_mpint(body + idx, n, nSz);
+    blobSz += build_mpint(body + idx + blobSz, e, eSz);
+    put_uint32(body, blobSz);
+    idx += blobSz;
+    idx += build_string(body + idx, data, sizeof(data));
+    put_uint32(body + idx, AGENT_SIGN_RSA_SHA2_256);
+    idx += LENGTH_SZ;
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_SIGN_REQUEST, body, idx);
+
+    /* Signing runs to completion, and SignHashRsa() verifies its own
+     * result. The reply was a request, so the caller still sees no key;
+     * a failed signature would surface as WS_RSA_E instead. */
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+
+    /* Clearing the private exponent proves the request above matched this
+     * identity and signed. A request that never matched would still
+     * report no key. */
+    memset(ssh->agent->idList->key.rsa.d, 0,
+        ssh->agent->idList->key.rsa.dSz);
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_RSA_E);
+
+    cleanup_agent_test(ctx, ssh);
+    FreeBins(n, e, d, iqmp);
+    FreeBins(p, q, NULL, NULL);
+}
+#endif /* WOLFSSH_NO_RSA_SHA2_256 */
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+/* A P-521 key produces the largest signature the ECDSA path re-encodes,
+ * so it is the tightest fit for the agent's signature buffer. */
+static const char agentEccP521Q[] =
+    "04005db4ee766c15652f9383c97e7054251d70d4c3691da61fb5b8905eba479d"
+    "28546f9d92b73ece380811e1c157a6e9402e0e9e1556b43884309b4089c4b303"
+    "b37cec0082eec861ba370fe930b48989aa7f8f96b9f226abe85916b6f452cb02"
+    "6f3f50c87a663b9fe43c143aecbcf9d42a042ef942cf672071f01170c5b66edd"
+    "b5abbfd4e0";
+
+static const char agentEccP521D[] =
+    "00a7d17630ef3ee4343ea7427745e32fa219843ba6a99f689c2948da2f3d53cc"
+    "0ae0a92d551b6f993729acada20fb52eeadfa53ac4669a3364a25947b594f085"
+    "50ae";
+
+static void test_wolfSSH_agent_signrequest_ecc_p521(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte body[AGENT_TEST_BUF_SZ];
+    byte data[16];
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    byte* q = NULL;
+    byte* d = NULL;
+    word32 qSz = 0, dSz = 0;
+    word32 sigSz = sizeof(sig);
+    word32 idx, blobSz;
+    int ret;
+
+    AssertIntEQ(0, ConvertHexToBin(agentEccP521Q, &q, &qSz,
+        agentEccP521D, &d, &dSz, NULL, NULL, NULL, NULL, NULL, NULL));
+
+    memset(data, 0x5a, sizeof(data));
+    memset(&io, 0, sizeof(io));
+
+    /* Add identity: key type, curve name, Q, d, then the comment. */
+    idx = 0;
+    idx += build_string(body + idx, (const byte*)"ecdsa-sha2-nistp521", 19);
+    idx += build_string(body + idx, (const byte*)"nistp521", 8);
+    idx += build_mpint(body + idx, q, qSz);
+    idx += build_mpint(body + idx, d, dSz);
+    idx += build_string(body + idx, (const byte*)"", 0);
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_ADD_IDENTITY, body, idx);
+
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertNotNull(ssh->agent->idList);
+
+    /* Sign request for that identity. The key blob is the curve name and
+     * Q pair, matched by its SHA-256 digest. */
+    idx = LENGTH_SZ;
+    blobSz = build_string(body + idx, (const byte*)"nistp521", 8);
+    blobSz += build_mpint(body + idx + blobSz, q, qSz);
+    put_uint32(body, blobSz);
+    idx += blobSz;
+    idx += build_string(body + idx, data, sizeof(data));
+    put_uint32(body + idx, 0);
+    idx += LENGTH_SZ;
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_SIGN_REQUEST, body, idx);
+
+    /* Signing and the r and s re-encode both run to completion. A buffer
+     * too small for either would surface as WS_ECC_E. */
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+
+    /* Corrupting the stored point proves the request above matched this
+     * identity and signed. A request that never matched would still
+     * report no key. The digest match keeps FindKeyId() finding it. */
+    ssh->agent->idList->key.ecdsa.q[0] = 0;
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_ECC_E);
+
+    cleanup_agent_test(ctx, ssh);
+    FreeBins(q, d, NULL, NULL);
+}
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP521 */
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+/* Adds an RSA identity with the given modulus through the fake agent,
+ * then signs with it. Returns the result of the sign request. */
+static int agent_rsa_sign_result(const byte* modulus, word32 modulusSz)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte body[AGENT_TEST_BUF_SZ];
+    byte e[3];
+    byte data[16];
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    word32 idx, blobSz, i;
+    int ret;
+
+    e[0] = 0x01;
+    e[1] = 0x00;
+    e[2] = 0x01;
+    memset(data, 0x5a, sizeof(data));
+    memset(&io, 0, sizeof(io));
+
+    /* Add identity: the private values are never reached. */
+    idx = 0;
+    idx += build_string(body + idx, (const byte*)"ssh-rsa", 7);
+    idx += build_mpint(body + idx, modulus, modulusSz);
+    idx += build_mpint(body + idx, e, sizeof(e));
+    for (i = 0; i < 4; i++)
+        idx += build_mpint(body + idx, NULL, 0);
+    idx += build_string(body + idx, (const byte*)"", 0);
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_ADD_IDENTITY, body, idx);
+
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
+    AssertNotNull(ssh->agent->idList);
+
+    /* Sign request for that identity, matched on the n and e pair. */
+    idx = LENGTH_SZ;
+    blobSz = build_mpint(body + idx, modulus, modulusSz);
+    blobSz += build_mpint(body + idx + blobSz, e, sizeof(e));
+    put_uint32(body, blobSz);
+    idx += blobSz;
+    idx += build_string(body + idx, data, sizeof(data));
+    put_uint32(body + idx, AGENT_SIGN_RSA_SHA2_256);
+    idx += LENGTH_SZ;
+    AssertTrue(idx <= sizeof(body));
+    AssertTrue(idx + LENGTH_SZ + MSG_ID_SZ <= sizeof(io.response));
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_SIGN_REQUEST, body, idx);
+
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+
+    cleanup_agent_test(ctx, ssh);
+
+    return ret;
+}
+
+/* An identity with no modulus is rejected before the signature buffer
+ * is allocated. */
+static void test_wolfSSH_agent_signrequest_rsa_no_modulus(void)
+{
+    AssertIntEQ(agent_rsa_sign_result(NULL, 0), WS_BUFFER_E);
+}
+
+#if defined(RSA_MAX_SIZE) && (((RSA_MAX_SIZE / 8) + 64) < AGENT_TEST_BUF_SZ)
+/* A modulus larger than wolfCrypt can sign with is rejected the same
+ * way. The leading byte keeps the sign bit clear so the value stays a
+ * canonical mpint and its length is what the guard sees. */
+static void test_wolfSSH_agent_signrequest_rsa_too_large(void)
+{
+    byte modulus[(RSA_MAX_SIZE / 8) + 2];
+
+    memset(modulus, 0xa5, sizeof(modulus));
+    modulus[0] = 0x01;
+    AssertIntEQ(agent_rsa_sign_result(modulus, sizeof(modulus)),
+        WS_BUFFER_E);
+}
+#endif /* RSA_MAX_SIZE fits AGENT_TEST_BUF_SZ */
 #endif /* WOLFSSH_NO_RSA_SHA2_256 */
 #endif /* WOLFSSH_AGENT */
 
@@ -6944,8 +7336,19 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_agent_signrequest_wrong_message();
     test_wolfSSH_agent_signrequest_signature_too_large();
     test_wolfSSH_agent_signrequest_success();
+    test_wolfSSH_agent_signrequest_large_response();
 #ifndef WOLFSSH_NO_RSA_SHA2_256
     test_wolfSSH_agent_signrequest_oversize_rsa_key();
+    test_wolfSSH_agent_signrequest_rsa_3072();
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    test_wolfSSH_agent_signrequest_ecc_p521();
+#endif
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    test_wolfSSH_agent_signrequest_rsa_no_modulus();
+#if defined(RSA_MAX_SIZE) && (((RSA_MAX_SIZE / 8) + 64) < AGENT_TEST_BUF_SZ)
+    test_wolfSSH_agent_signrequest_rsa_too_large();
+#endif
 #endif
 #endif
 #ifdef WOLFSSH_OSSH_CERTS

@@ -66,6 +66,12 @@
 #endif
 
 
+/* Read buffer size for a reply from an agent. Covers a signature and its
+ * message header for any key up to RSA-8192. */
+#ifndef WOLFSSH_AGENT_MAX_RSP_SZ
+    #define WOLFSSH_AGENT_MAX_RSP_SZ 2048
+#endif
+
 /* payloadSz is an estimate, but it shall be greater-than/equal-to
  * the actual value. */
 static int PrepareMessage(WOLFSSH_AGENT_CTX* agent, word32 payloadSz)
@@ -826,10 +832,10 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         word32 flags)
 {
     WOLFSSH_AGENT_ID* id = NULL;
+    byte* sig = NULL;
     int ret = WS_SUCCESS;
-    byte sig[256];
     byte digest[WC_MAX_DIGEST_SIZE];
-    word32 sigSz = sizeof(sig);
+    word32 sigSz = 0;
     word32 digestSz = sizeof(digest);
     enum wc_HashType hashType;
     int curveId = 0, signRsa = 0, signEcc = 0;
@@ -901,6 +907,36 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
             ret = WS_CRYPTO_FAILED;
     }
 
+    /* Size the signature buffer from the identity. */
+    if (ret == WS_SUCCESS) {
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
+    !defined(WOLFSSH_NO_RSA_SHA2_512)
+        if (signRsa) {
+            /* The signature is as long as the modulus. The stored mpint
+             * carries a leading zero byte for the sign bit. */
+            sigSz = id->key.rsa.nSz;
+            if (sigSz > (RSA_MAX_SIZE / 8) + 1) {
+                WLOG(WS_LOG_AGENT, "Sign: RSA key too large.");
+                ret = WS_BUFFER_E;
+            }
+        }
+#endif
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP521)
+        if (signEcc)
+            sigSz = ECDSA_ASN_SIG_SZ;
+#endif
+        if (ret == WS_SUCCESS && sigSz == 0)
+            ret = WS_BUFFER_E;
+    }
+
+    if (ret == WS_SUCCESS) {
+        sig = (byte*)WMALLOC(sigSz, agent->heap, DYNTYPE_AGENT_BUFFER);
+        if (sig == NULL)
+            ret = WS_MEMORY_E;
+    }
+
     if (ret == WS_SUCCESS) {
 #if !defined(WOLFSSH_NO_RSA_SHA2_256) || \
     !defined(WOLFSSH_NO_RSA_SHA2_512)
@@ -923,6 +959,9 @@ static int PostSignRequest(WOLFSSH_AGENT_CTX* agent,
         if (ret == WS_SUCCESS)
             ret = SendSignResponse(agent, sig, sigSz);
     }
+
+    if (sig != NULL)
+        WFREE(sig, agent->heap, DYNTYPE_AGENT_BUFFER);
 
     WLOG_LEAVE(ret);
     return ret;
@@ -1814,7 +1853,7 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
         word32 flags)
 {
     int ret = WS_SUCCESS;
-    byte rxBuf[512];
+    byte* rxBuf = NULL;
     int rxSz;
     word32 idx = 0;
     WOLFSSH_AGENT_CTX* agent = NULL;
@@ -1832,6 +1871,13 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         if (sigSz == NULL)
             ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        rxBuf = (byte*)WMALLOC(WOLFSSH_AGENT_MAX_RSP_SZ,
+                ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
+        if (rxBuf == NULL)
+            ret = WS_MEMORY_E;
     }
 
     if (ret == WS_SUCCESS) {
@@ -1868,7 +1914,7 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         rxSz = ssh->ctx->agentIoCb(WOLFSSH_AGENT_IO_READ,
-                rxBuf, sizeof(rxBuf), ssh->agentCbCtx);
+                rxBuf, WOLFSSH_AGENT_MAX_RSP_SZ, ssh->agentCbCtx);
         if (rxSz > 0) {
             ret = DoMessage(ssh->agent, rxBuf, rxSz, &idx);
             if (ret == WS_SUCCESS) {
@@ -1914,6 +1960,11 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
     if (ssh != NULL && ssh->ctx != NULL && ssh->ctx->agentCb != NULL) {
         ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_CLEANUP, ssh->agentCbCtx);
     }
+
+    /* The agent's message was parsed in place out of this buffer, so it is
+     * freed after the last use of agent->msg. */
+    if (rxBuf != NULL)
+        WFREE(rxBuf, ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
 
     WLOG_LEAVE(ret);
     return ret;
