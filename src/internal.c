@@ -12809,10 +12809,12 @@ int DoReceive(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
     int verifyResult;
     word32 readSz;
+    word32 alignSz;
     byte peerBlockSz = ssh->peerBlockSz;
     byte peerMacSz = ssh->peerMacSz;
     byte aeadMode = ssh->peerAeadMode;
     byte bufferConsumed = 0;
+    byte alignBlockSz;
 
     switch (ssh->processReplyState) {
         case PROCESS_INIT:
@@ -12849,6 +12851,19 @@ int DoReceive(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "Packet length overflow: size = %u",
                         ssh->curSz);
                 ssh->error = WS_OVERFLOW_E;
+                return WS_FATAL_ERROR;
+            }
+
+            /* RFC 4253 section 6: the packet is a multiple of the cipher
+             * block size, or 8, whichever is larger. */
+            alignBlockSz = peerBlockSz < MIN_BLOCK_SZ ?
+                    MIN_BLOCK_SZ : peerBlockSz;
+            alignSz = aeadMode ? ssh->curSz : UINT32_SZ + ssh->curSz;
+            if (alignSz % alignBlockSz != 0) {
+                WLOG(WS_LOG_DEBUG,
+                        "Packet not block aligned: size = %u, block = %u",
+                        alignSz, (word32)alignBlockSz);
+                ssh->error = WS_BUFFER_E;
                 return WS_FATAL_ERROR;
             }
             ssh->processReplyState = PROCESS_PACKET_FINISH;

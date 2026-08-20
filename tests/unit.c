@@ -1246,10 +1246,10 @@ static int test_OpenSshFormatNonCompositeRejected(void)
      !defined(WOLFSSH_NO_AES_GCM))
 
 /* Minimal SSH binary packet: uint32 length, padding_length, msgId, padding.
- * Same layout as tests/regress.c BuildPacket (8-byte aligned body). */
-static word32 BuildMacTestPacketPrefix(byte msgId, byte* out, word32 outSz)
+ * The caller picks padLen to get the alignment it wants. */
+static word32 BuildMacTestPacketPrefix(byte msgId, byte padLen,
+        byte* out, word32 outSz)
 {
-    byte padLen = 6;
     word32 packetLen = (word32)(1 + 1 + padLen);
     word32 need = UINT32_SZ + packetLen;
 
@@ -1284,7 +1284,7 @@ static int test_DoReceive_VerifyMacFailure(void)
     Hmac hmac;
     word32 prefixLen;
     word32 totalLen;
-    byte pkt[UINT32_SZ + 8 + MAX_HMAC_SZ];
+    byte pkt[UINT32_SZ + 12 + MAX_HMAC_SZ];
     int i;
     struct {
         byte macId;
@@ -1320,7 +1320,8 @@ static int test_DoReceive_VerifyMacFailure(void)
     WMEMSET(macKey, 0xA5, sizeof(macKey));
 
     for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
-        prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, pkt, sizeof(pkt));
+        prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, 10,
+                pkt, sizeof(pkt));
         if (prefixLen == 0) {
             result = -202;
             goto done;
@@ -1412,8 +1413,8 @@ static int test_DoReceive_AeadTagFailure(void)
     int aesInited = 0;
     byte key[AES_256_KEY_SIZE];
     byte iv[GCM_NONCE_MID_SZ];
-    byte pkt[UINT32_SZ + 8];
-    byte record[UINT32_SZ + 8 + AES_BLOCK_SIZE];
+    byte pkt[UINT32_SZ + 16];
+    byte record[UINT32_SZ + 16 + AES_BLOCK_SIZE];
     word32 prefixLen, payloadSz, totalLen;
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -1428,7 +1429,8 @@ static int test_DoReceive_AeadTagFailure(void)
     WMEMSET(key, 0x5A, sizeof(key));
     WMEMSET(iv, 0x31, sizeof(iv));
 
-    prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, pkt, sizeof(pkt));
+    prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, 14,
+            pkt, sizeof(pkt));
     if (prefixLen == 0) {
         result = -222;
         goto done;
@@ -1466,7 +1468,7 @@ static int test_DoReceive_AeadTagFailure(void)
     ssh->decryptCipher.cipherType = ID_AES256_GCM;
     ssh->peerEncryptId = ID_AES256_GCM;
     ssh->peerAeadMode = 1;
-    ssh->peerBlockSz = UINT32_SZ;
+    ssh->peerBlockSz = AES_BLOCK_SIZE;
     ssh->peerMacSz = AES_BLOCK_SIZE;
     WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
     ssh->peerKeys.ivSz = sizeof(iv);
@@ -1685,11 +1687,11 @@ static int test_DoReceive_RejectsShortPadding(void)
     int ret;
     int result = 0;
     /* A well-formed MSGID_IGNORE packet carrying an empty string, but with
-     * padding_length = 1 (below MIN_PAD_LENGTH). Aside from the short padding
-     * the packet parses cleanly, so the padding check is the only thing that
-     * can reject it. Layout: uint32 packet_length=7, padding_length=1,
-     * msgId, uint32 string_len=0, 1 pad byte => 11 bytes total. */
-    byte pkt[11];
+     * padding_length = 1 (below MIN_PAD_LENGTH). The 16-byte total keeps the
+     * packet block aligned so the padding check is the only thing that can
+     * reject it. Layout: uint32 packet_length=12, padding_length=1, msgId,
+     * uint32 string_len=0, 6 pad bytes => 16 bytes total. */
+    byte pkt[16];
     word32 totalLen = (word32)sizeof(pkt);
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -1701,11 +1703,11 @@ static int test_DoReceive_RejectsShortPadding(void)
         return -761;
     }
 
-    pkt[0] = 0; pkt[1] = 0; pkt[2] = 0; pkt[3] = 7; /* packet_length */
+    WMEMSET(pkt, 0, sizeof(pkt));
+    pkt[3] = 12;            /* packet_length */
     pkt[4] = 1;             /* padding_length, below MIN_PAD_LENGTH (4) */
     pkt[5] = MSGID_IGNORE;
-    pkt[6] = 0; pkt[7] = 0; pkt[8] = 0; pkt[9] = 0; /* string_len = 0 */
-    pkt[10] = 0;            /* padding */
+                            /* string_len = 0, then padding, both zero */
 
     ssh->peerEncryptId = ID_NONE;
     ssh->peerAeadMode = 0;
@@ -1743,6 +1745,182 @@ done2:
     return result;
 }
 
+
+/* Verify DoReceive rejects a cleartext binary packet whose length field is
+ * not block aligned. The packet is valid in every other respect, so the
+ * RFC 4253 section 6 alignment check is the only thing that can reject it. */
+static int test_DoReceive_RejectsMisalignedPacket(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    /* Layout: uint32 packet_length=10, padding_length=4, msgId,
+     * uint32 string_len=0, 4 pad bytes => 14 bytes total. 14 is not a
+     * multiple of the 8-byte minimum block size. */
+    byte pkt[14];
+    word32 totalLen = (word32)sizeof(pkt);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -770;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -771;
+    }
+
+    WMEMSET(pkt, 0, sizeof(pkt));
+    pkt[3] = 10;            /* packet_length */
+    pkt[4] = MIN_PAD_LENGTH;
+    pkt[5] = MSGID_IGNORE;
+                            /* string_len = 0, then padding, both zero */
+
+    ssh->peerEncryptId = ID_NONE;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = MIN_BLOCK_SZ;
+    ssh->peerMacId = ID_NONE;
+    ssh->peerMacSz = 0;
+    ssh->peerSeq = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+    if (ret != WS_SUCCESS) {
+        result = -772;
+        goto done3;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -773;
+        goto done3;
+    }
+    if (ssh->error != WS_BUFFER_E) {
+        result = -774;
+        goto done3;
+    }
+
+done3:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+/* Verify DoReceive rejects an AES-GCM record whose length field is not a
+ * multiple of the cipher block size. RFC 5647 aligns the body alone, so a
+ * 12-byte body is misaligned even though the tag over it is valid. */
+static int test_DoReceive_RejectsMisalignedAead(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    Aes encAes;
+    int ret;
+    int result = 0;
+    int aesInited = 0;
+    byte key[AES_256_KEY_SIZE];
+    byte iv[GCM_NONCE_MID_SZ];
+    /* Layout: uint32 packet_length=12, padding_length=6, msgId,
+     * uint32 string_len=0, 6 pad bytes => a 12-byte body, which is not a
+     * multiple of AES_BLOCK_SIZE. Valid in every other respect. */
+    byte pkt[UINT32_SZ + 12];
+    byte record[UINT32_SZ + 12 + AES_BLOCK_SIZE];
+    word32 prefixLen, payloadSz, totalLen;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -780;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -781;
+    }
+
+    WMEMSET(key, 0x5A, sizeof(key));
+    WMEMSET(iv, 0x31, sizeof(iv));
+
+    WMEMSET(pkt, 0, sizeof(pkt));
+    pkt[3] = 12;            /* packet_length */
+    pkt[4] = 6;             /* padding_length */
+    pkt[5] = MSGID_IGNORE;
+                            /* string_len = 0, then padding, both zero */
+    prefixLen = (word32)sizeof(pkt);
+    payloadSz = prefixLen - UINT32_SZ;
+
+    ret = wc_AesInit(&encAes, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        result = -783;
+        goto done4;
+    }
+    aesInited = 1;
+    if (wc_AesGcmSetKey(&encAes, key, sizeof(key)) != 0) {
+        result = -784;
+        goto done4;
+    }
+    WMEMCPY(record, pkt, UINT32_SZ);
+    if (wc_AesGcmEncrypt(&encAes, record + UINT32_SZ, pkt + UINT32_SZ,
+            payloadSz, iv, sizeof(iv), record + UINT32_SZ + payloadSz,
+            AES_BLOCK_SIZE, record, UINT32_SZ) != 0) {
+        result = -785;
+        goto done4;
+    }
+    totalLen = UINT32_SZ + payloadSz + AES_BLOCK_SIZE;
+
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
+            || wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -786;
+        goto done4;
+    }
+    ssh->decryptCipher.isInit = 1;
+    ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    ssh->peerEncryptId = ID_AES256_GCM;
+    ssh->peerAeadMode = 1;
+    ssh->peerBlockSz = AES_BLOCK_SIZE;
+    ssh->peerMacSz = AES_BLOCK_SIZE;
+    WMEMCPY(ssh->peerKeys.iv, iv, sizeof(iv));
+    ssh->peerKeys.ivSz = sizeof(iv);
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    if (GrowBuffer(&ssh->inputBuffer, totalLen) != WS_SUCCESS) {
+        result = -787;
+        goto done4;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, record, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR) {
+        result = -788;
+        goto done4;
+    }
+    if (ssh->error != WS_BUFFER_E) {
+        result = -789;
+        goto done4;
+    }
+
+done4:
+    if (aesInited)
+        wc_AesFree(&encAes);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
 /* Send sink, so a test can run a real send path (build the packet, drain it)
  * without a live transport. */
 static int UnitIoSendSink(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
@@ -16141,6 +16319,20 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_INTERNAL
     unitResult = test_DoReceive_RejectsShortPadding();
     printf("DoReceiveRejectsShortPadding: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoReceive_RejectsMisalignedPacket();
+    printf("DoReceiveRejectsMisalignedPacket: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
+    unitResult = test_DoReceive_RejectsMisalignedAead();
+    printf("DoReceiveRejectsMisalignedAead: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
