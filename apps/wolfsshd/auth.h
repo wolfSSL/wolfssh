@@ -150,6 +150,10 @@ int wolfSSHD_GetCachedFakeHashCountForTest(void);
 void AddShadowLineToFakeHashCache(char* line);
 /* Reads a shadow file stream line by line into the fake-hash cache. */
 void ScanShadowFile(WFILE* f);
+#ifndef WOLFSSH_USE_PAM
+/* Returns 1 when the shadow aging fields deny the account a login. */
+int IsShadowExpired(const struct spwd* sp, long today);
+#endif
 #endif
 #endif
 /* Not shadow-specific in auth.c, so not excluded on OSX/APPLE. */

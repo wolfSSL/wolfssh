@@ -2075,25 +2075,28 @@ static int test_CheckPasswordUnix_unknownUser(void)
     return ret;
 }
 
-/* getspnam() failing (e.g. SSHD not run as root) must fail closed rather
- * than silently falling through to compare against the "*" default hash. */
-static int test_CheckPasswordUnix_shadowLookupFails(void)
+/* Runs CheckPasswordUnix() against a synthetic shadow entry and checks the
+ * result code it returns. */
+static int wsshd_test_CheckPasswordUnixCase(struct spwd* (*stub)(const char*),
+        const byte* pw, word32 pwSz, int expected, const char* scenario)
 {
     int ret = WS_SUCCESS;
     int rc;
     struct passwd* (*savedGetpwnam)(const char*);
     struct spwd* (*savedGetspnam)(const char*);
-    static const byte pw[] = "guessme";
 
     savedGetpwnam = wsshd_getpwnam_cb;
     savedGetspnam = wsshd_getspnam_cb;
     wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
-    wsshd_getspnam_cb = stub_getspnam_null;
+    wsshd_getspnam_cb = stub;
 
-    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
-            (word32)(sizeof(pw) - 1), NULL);
-    if (rc != WS_FATAL_ERROR) {
-        Log("    FAILED: expected WS_FATAL_ERROR when getspnam() fails.\n");
+    Log("    Testing scenario: %s.", scenario);
+    rc = CheckPasswordUnix("shadow_branch_test_user", pw, pwSz, NULL);
+    if (rc == expected) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED, expected %d got %d.\n", expected, rc);
         ret = WS_FATAL_ERROR;
     }
 
@@ -2102,59 +2105,74 @@ static int test_CheckPasswordUnix_shadowLookupFails(void)
     return ret;
 }
 
-/* A shadow hash too long for CheckPasswordUnix's fixed hashBuf must fail
- * closed instead of being silently truncated. */
-static int test_CheckPasswordUnix_shadowHashTooLong(void)
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+/* Fills stub_shadow_test_hash with a real crypt() hash of pw. Returns 0 when
+ * the platform's crypt() ignores the modular $6$ salt, as macOS and the BSDs
+ * do; see test_CheckPasswordHashUnix. */
+static int wsshd_test_LoadShadowHash(const byte* pw)
+{
+    const char* salt = "$6$wolfsshtestsalt$";
+    char* hash;
+
+    hash = crypt((const char*)pw, salt);
+    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0 ||
+            WSTRNCMP(hash, "$6$", 3) != 0) {
+        return 0;
+    }
+    if (WSTRLEN(hash) >= sizeof(stub_shadow_test_hash)) {
+        return 0;
+    }
+    WMEMCPY(stub_shadow_test_hash, hash, WSTRLEN(hash) + 1);
+    return 1;
+}
+#endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
+
+/* Shadow lookups that cannot yield a usable hash. Each must fail closed
+ * rather than fall through to the "*" default or a truncated hash. */
+static const struct {
+    const char* scenario;
+    struct spwd* (*stub)(const char*);
+} shadowFailClosedCases[] = {
+    { "getspnam() fails, e.g. SSHD not run as root", stub_getspnam_null },
+    { "shadow hash too long for the copy buffer",
+      stub_getspnam_oversizedHash },
+    { "shadow entry with no password field", stub_getspnam_nullPassword }
+};
+
+static int test_CheckPasswordUnix_failClosed(void)
 {
     int ret = WS_SUCCESS;
-    int rc;
-    struct passwd* (*savedGetpwnam)(const char*);
-    struct spwd* (*savedGetspnam)(const char*);
+    word32 i;
     static const byte pw[] = "guessme";
 
-    savedGetpwnam = wsshd_getpwnam_cb;
-    savedGetspnam = wsshd_getspnam_cb;
-    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
-    wsshd_getspnam_cb = stub_getspnam_oversizedHash;
-
-    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
-            (word32)(sizeof(pw) - 1), NULL);
-    if (rc != WS_FATAL_ERROR) {
-        Log("    FAILED: expected WS_FATAL_ERROR for oversized shadow hash.\n");
-        ret = WS_FATAL_ERROR;
+    for (i = 0;
+            i < sizeof(shadowFailClosedCases)/sizeof(shadowFailClosedCases[0]);
+            i++) {
+        if (wsshd_test_CheckPasswordUnixCase(shadowFailClosedCases[i].stub,
+                pw, (word32)(sizeof(pw) - 1), WS_FATAL_ERROR,
+                shadowFailClosedCases[i].scenario) != WS_SUCCESS) {
+            ret = WS_FATAL_ERROR;
+        }
     }
 
-    wsshd_getpwnam_cb = savedGetpwnam;
-    wsshd_getspnam_cb = savedGetspnam;
     return ret;
 }
 
-/* A shadow entry with a NULL sp_pwdp (e.g. an NIS/LDAP-backed account) must
- * fail closed instead of crashing on a NULL dereference in WSTRLEN(). */
-static int test_CheckPasswordUnix_shadowNullPassword(void)
+/* Days since the epoch, the unit the shadow aging fields use. */
+static long wsshd_test_TodayDays(void)
 {
-    int ret = WS_SUCCESS;
-    int rc;
-    struct passwd* (*savedGetpwnam)(const char*);
-    struct spwd* (*savedGetspnam)(const char*);
-    static const byte pw[] = "guessme";
+    return (long)((word64)WTIME(NULL) / (24L * 60L * 60L));
+}
 
-    savedGetpwnam = wsshd_getpwnam_cb;
-    savedGetspnam = wsshd_getspnam_cb;
-    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
-    wsshd_getspnam_cb = stub_getspnam_nullPassword;
-
-    rc = CheckPasswordUnix("shadow_branch_test_user", pw,
-            (word32)(sizeof(pw) - 1), NULL);
-    if (rc != WS_FATAL_ERROR) {
-        Log("    FAILED: expected WS_FATAL_ERROR for a shadow entry with a "
-            "NULL password field, got %d.\n", rc);
-        ret = WS_FATAL_ERROR;
-    }
-
-    wsshd_getpwnam_cb = savedGetpwnam;
-    wsshd_getspnam_cb = savedGetspnam;
-    return ret;
+/* Aging fields of an account that never expires. */
+static void wsshd_test_SetLiveAging(struct spwd* sp)
+{
+    sp->sp_lstchg = wsshd_test_TodayDays();
+    sp->sp_min    = -1;
+    sp->sp_max    = -1;
+    sp->sp_warn   = -1;
+    sp->sp_inact  = -1;
+    sp->sp_expire = -1;
 }
 
 static struct spwd* stub_getspnam_validHash(const char* name)
@@ -2163,58 +2181,139 @@ static struct spwd* stub_getspnam_validHash(const char* name)
     WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
     stub_shadow_test_sp.sp_namp = (char*)"shadow_branch_test_user";
     stub_shadow_test_sp.sp_pwdp = stub_shadow_test_hash;
+    /* A zeroed spwd would read as "password change forced". */
+    wsshd_test_SetLiveAging(&stub_shadow_test_sp);
     return &stub_shadow_test_sp;
 }
 
-/* Copy-then-succeed path: a normal-length shadow hash copied into
+/* Copy-then-compare path: a normal-length shadow hash copied into
  * CheckPasswordUnix's hashBuf, then compared for real. */
 static int test_CheckPasswordUnix_shadowLookupSucceeds(void)
 {
     int ret = WS_SUCCESS;
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
-    int rc;
-    struct passwd* (*savedGetpwnam)(const char*);
-    struct spwd* (*savedGetspnam)(const char*);
     static const byte correctPw[] = "guessme";
     static const byte wrongPw[] = "wrongpw";
-    /* SHA-512 crypt salt; portable across glibc-based crypt() impls. */
-    const char* salt = "$6$wolfsshtestsalt$";
-    char* hash;
 
-    hash = crypt((const char*)correctPw, salt);
-    /* See test_CheckPasswordHashUnix: some libc (macOS/BSD) ignore the
-     * modular salt and fall back to legacy DES, so skip there. */
-    if (hash == NULL || hash[0] == '*' || WSTRLEN(hash) == 0 ||
-            WSTRNCMP(hash, "$6$", 3) != 0) {
+    if (wsshd_test_LoadShadowHash(correctPw) == 0) {
         Log("    crypt() did not honor $6$ SHA-512, skipping.\n");
         return WS_SUCCESS;
     }
-    if (WSTRLEN(hash) >= sizeof(stub_shadow_test_hash)) {
-        return WS_FATAL_ERROR;
-    }
-    WMEMCPY(stub_shadow_test_hash, hash, WSTRLEN(hash) + 1);
 
-    savedGetpwnam = wsshd_getpwnam_cb;
-    savedGetspnam = wsshd_getspnam_cb;
-    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
-    wsshd_getspnam_cb = stub_getspnam_validHash;
-
-    Log("    Testing scenario: correct password against copied shadow hash.");
-    rc = CheckPasswordUnix("shadow_branch_test_user", correctPw,
-            (word32)(sizeof(correctPw) - 1), NULL);
-    if (rc == WSSHD_AUTH_SUCCESS) {
-        Log(" PASSED.\n");
+    ret = wsshd_test_CheckPasswordUnixCase(stub_getspnam_validHash, correctPw,
+            (word32)(sizeof(correctPw) - 1), WSSHD_AUTH_SUCCESS,
+            "correct password against copied shadow hash");
+    if (ret == WS_SUCCESS) {
+        ret = wsshd_test_CheckPasswordUnixCase(stub_getspnam_validHash,
+                wrongPw, (word32)(sizeof(wrongPw) - 1), WSSHD_AUTH_FAILURE,
+                "wrong password against copied shadow hash");
     }
-    else {
-        Log(" FAILED.\n");
-        ret = WS_FATAL_ERROR;
+#else
+    (void)stub_getspnam_validHash;
+    Log("    Skipping test: password hash checking not compiled in.\n");
+#endif
+    return ret;
+}
+
+/* Account whose expiration date passed yesterday; nothing else about the
+ * entry can deny the login. */
+static struct spwd* stub_getspnam_expiredAccount(const char* name)
+{
+    (void)name;
+    WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
+    stub_shadow_test_sp.sp_namp = (char*)"shadow_branch_test_user";
+    stub_shadow_test_sp.sp_pwdp = stub_shadow_test_hash;
+    wsshd_test_SetLiveAging(&stub_shadow_test_sp);
+    stub_shadow_test_sp.sp_expire = wsshd_test_TodayDays() - 1;
+    return &stub_shadow_test_sp;
+}
+
+/* A correct password must still be denied once the aging fields expire the
+ * account. test_IsShadowExpired covers the individual aging rules. */
+static int test_CheckPasswordUnix_expired(void)
+{
+    int ret = WS_SUCCESS;
+#if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+    static const byte correctPw[] = "guessme";
+
+    if (wsshd_test_LoadShadowHash(correctPw) == 0) {
+        Log("    crypt() did not honor $6$ SHA-512, skipping.\n");
+        return WS_SUCCESS;
+    }
+
+    ret = wsshd_test_CheckPasswordUnixCase(stub_getspnam_expiredAccount,
+            correctPw, (word32)(sizeof(correctPw) - 1), WSSHD_AUTH_FAILURE,
+            "correct password on an expired account");
+#else
+    (void)stub_getspnam_expiredAccount;
+    Log("    Skipping test: password hash checking not compiled in.\n");
+#endif
+    return ret;
+}
+
+/* Aging rules, evaluated against a fixed day so the cases are stable.
+ * A negative "today" stands in for an unavailable system clock. */
+static const struct {
+    const char* scenario;
+    long lstchg;
+    long max;
+    long expire;
+    long today;
+    int expected;
+} shadowExpiryCases[] = {
+    { "no aging configured",              19000,    -1,    -1, 20000, 0 },
+    { "account expired yesterday",        19000,    -1, 19999, 20000, 1 },
+    { "account expires today",            19000,    -1, 20000, 20000, 1 },
+    { "account expires tomorrow",         19000,    -1, 20001, 20000, 0 },
+    { "account expires next year",        19000,    -1, 20365, 20000, 0 },
+    { "account expiry disabled",          19000,    -1,    -1, 20000, 0 },
+    { "change forced at next login",          0,    -1,    -1, 20000, 1 },
+    { "password aged out",                19900,    30,    -1, 20000, 1 },
+    { "password ages out today",          19970,    30,    -1, 20000, 1 },
+    { "password ages out tomorrow",       19971,    30,    -1, 20000, 0 },
+    { "password aging disabled",              1,    -1,    -1, 20000, 0 },
+    { "last change unset",                   -1,    30,    -1, 20000, 0 },
+    { "no clock, no aging configured",    19000,    -1,    -1,    -1, 0 },
+    { "no clock, account expiry set",     19000,    -1, 20365,    -1, 1 },
+    { "no clock, password aging set",     19000,    30,    -1,    -1, 1 }
+};
+
+/* Direct coverage of the shadow aging rules, independent of crypt(). */
+static int test_IsShadowExpired(void)
+{
+    int ret = WS_SUCCESS;
+    word32 i;
+    int rc;
+    struct spwd sp;
+
+    for (i = 0; i < sizeof(shadowExpiryCases)/sizeof(shadowExpiryCases[0]);
+            i++) {
+        WMEMSET(&sp, 0, sizeof(sp));
+        sp.sp_namp = (char*)"shadow_branch_test_user";
+        sp.sp_pwdp = (char*)"$6$wolfsshtestsalt$hash";
+        sp.sp_lstchg = shadowExpiryCases[i].lstchg;
+        sp.sp_min = -1;
+        sp.sp_max = shadowExpiryCases[i].max;
+        sp.sp_warn = -1;
+        sp.sp_inact = -1;
+        sp.sp_expire = shadowExpiryCases[i].expire;
+
+        Log("    Testing IsShadowExpired: %s.",
+                shadowExpiryCases[i].scenario);
+        rc = IsShadowExpired(&sp, shadowExpiryCases[i].today);
+        if (rc == shadowExpiryCases[i].expected) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED, expected %d got %d.\n",
+                    shadowExpiryCases[i].expected, rc);
+            ret = WS_FATAL_ERROR;
+        }
     }
 
     if (ret == WS_SUCCESS) {
-        Log("    Testing scenario: wrong password against copied shadow hash.");
-        rc = CheckPasswordUnix("shadow_branch_test_user", wrongPw,
-                (word32)(sizeof(wrongPw) - 1), NULL);
-        if (rc == WSSHD_AUTH_FAILURE) {
+        Log("    Testing IsShadowExpired: NULL entry.");
+        if (IsShadowExpired(NULL, 20000) == 0) {
             Log(" PASSED.\n");
         }
         else {
@@ -2223,11 +2322,6 @@ static int test_CheckPasswordUnix_shadowLookupSucceeds(void)
         }
     }
 
-    wsshd_getpwnam_cb = savedGetpwnam;
-    wsshd_getspnam_cb = savedGetspnam;
-#else
-    Log("    Skipping test: password hash checking not compiled in.\n");
-#endif
     return ret;
 }
 
@@ -6219,11 +6313,11 @@ const TEST_CASE testCases[] = {
 #ifdef WOLFSSHD_HAVE_SHADOW
     TEST_DECL(test_GetFakeHashFromTemplate),
     TEST_DECL(test_CachedFakeHashConsumption),
-    TEST_DECL(test_CheckPasswordUnix_shadowLookupFails),
-    TEST_DECL(test_CheckPasswordUnix_shadowHashTooLong),
-    TEST_DECL(test_CheckPasswordUnix_shadowNullPassword),
+    TEST_DECL(test_CheckPasswordUnix_failClosed),
     TEST_DECL(test_CheckPasswordUnix_shadowLookupSucceeds),
     TEST_DECL(test_CheckPasswordUnix_unknownUser),
+    TEST_DECL(test_IsShadowExpired),
+    TEST_DECL(test_CheckPasswordUnix_expired),
     TEST_DECL(test_DoFakePasswordCheck_pubkeyUnionSafety),
     TEST_DECL(test_AuthInit),
     TEST_DECL(test_AuthInit_degradedMode),
