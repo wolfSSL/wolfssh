@@ -508,6 +508,43 @@ static void ScanShadowFile(WFILE* f)
     }
 }
 
+#ifndef WOLFSSH_USE_PAM
+/* Shadow aging fields count days since the epoch. */
+#define WSSHD_SECS_PER_DAY (24L * 60L * 60L)
+
+/* Return 1 when the shadow aging fields make the account unusable for login.
+ * A negative today means the system clock is unavailable, which denies only
+ * the accounts that actually have aging configured. */
+#ifdef WOLFSSHD_UNIT_TEST
+int IsShadowExpired(const struct spwd* sp, long today)
+#else
+static int IsShadowExpired(const struct spwd* sp, long today)
+#endif
+{
+    int expired = 0;
+
+    if (sp != NULL) {
+        /* Account expiration date, effective on the date itself. */
+        if (sp->sp_expire >= 0 &&
+                (today < 0 || today >= (long)sp->sp_expire)) {
+            expired = 1;
+        }
+        /* Password change forced at next login. */
+        if (expired == 0 && sp->sp_lstchg == 0) {
+            expired = 1;
+        }
+        /* Password aged out. Subtraction avoids overflowing the sum. */
+        if (expired == 0 && sp->sp_lstchg > 0 && sp->sp_max >= 0 &&
+                (today < 0 || today - (long)sp->sp_lstchg >=
+                    (long)sp->sp_max)) {
+            expired = 1;
+        }
+    }
+
+    return expired;
+}
+#endif /* !WOLFSSH_USE_PAM */
+
 #ifdef WOLFSSHD_UNIT_TEST
 /* Test-only hook to seed cachedFakeHash without a real shadow file entry. */
 void wolfSSHD_SetCachedFakeHashForTest(const char* tmpl)
@@ -767,6 +804,8 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     struct passwd* pwInfo;
 #ifdef HAVE_SHADOW
     struct spwd* shadowInfo;
+    time_t now;
+    int expired = 0;
     /* getspnam() returns a static buffer; copy immediately before it can
      * be overwritten by any subsequent call. */
     char hashBuf[WSSHD_FAKE_HASH_SZ];
@@ -838,6 +877,10 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
                     XSTRNCPY(hashBuf, shadowInfo->sp_pwdp, sizeof(hashBuf));
                     hashBuf[sizeof(hashBuf) - 1] = '\0';
                     storedHash = hashBuf;
+                    now = WTIME(NULL);
+                    expired = IsShadowExpired(shadowInfo,
+                        (now == (time_t)-1) ? -1 :
+                            (long)(now / WSSHD_SECS_PER_DAY));
                 }
             }
             else
@@ -866,6 +909,16 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
         ret = WS_NOT_COMPILED;
     #endif
     }
+
+#ifdef HAVE_SHADOW
+    /* Deny after the hash compare so an expired account costs the same as a
+     * live one. */
+    if (expired && ret == WSSHD_AUTH_SUCCESS) {
+        wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Password or account expired for user %s", usr);
+        ret = WSSHD_AUTH_FAILURE;
+    }
+#endif
 
     if (pwStr != NULL) {
         WS_FORCEZERO(pwStr, pwSz + 1);
