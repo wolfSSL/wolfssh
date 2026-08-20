@@ -100,22 +100,33 @@ EOF
     printf "SSHD running on PID $PID\n"
 }
 
-# closes down the sshd session taking argument $1 as the PID of the session
+# closes down the sshd session started by start_wolfsshd, using $PID.
+# Idempotent and safe to call from an EXIT trap: with no daemon recorded there
+# is nothing to kill, and neither an already-exited daemon nor a missing temp
+# dir may become the caller's exit status under "set -e".
 stop_wolfsshd() {
-    printf "Stopping SSHD, killing pid $PID\n"
-    sudo kill $PID
+    if [ -n "$PID" ]; then
+        printf "Stopping SSHD, killing pid $PID\n"
+        sudo kill $PID || true
 
-    # Wait for the process to actually exit so a subsequent start_wolfsshd on
-    # the same port doesn't race the listening socket's release (EADDRINUSE).
-    for i in $(seq 1 50); do
-        sudo kill -0 $PID 2>/dev/null || break
-        sleep 0.1
-    done
+        # Wait for the process to actually exit so a subsequent start_wolfsshd on
+        # the same port doesn't race the listening socket's release (EADDRINUSE).
+        for i in $(seq 1 50); do
+            sudo kill -0 $PID 2>/dev/null || break
+            sleep 0.1
+        done
+
+        # Cleared so a second call -- an EXIT trap after an explicit stop -- is
+        # a no-op rather than a kill of whatever pid has since been recycled.
+        PID=""
+    fi
 
     # The temp dir is owned by the invoking user, so its root-owned key copies
-    # can be removed without sudo.
+    # can be removed without sudo. Done even when no daemon was recorded, so a
+    # daemon that failed to start does not leak it.
     if [ -n "$SSHD_KEYDIR" ]; then
         rm -rf "$SSHD_KEYDIR"
         SSHD_KEYDIR=""
     fi
+    return 0
 }
