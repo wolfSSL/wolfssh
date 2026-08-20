@@ -9798,8 +9798,7 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
 }
 #endif /* !WOLFSSH_NO_ED25519 */
 
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
-    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                       byte* buf, word32 len, word32* idx)
@@ -10342,7 +10341,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthRequestPublicKey(), ret = %d", ret);
     return ret;
 }
-#endif /* !WOLFSSH_NO_RSA/ECDSA/ED25519/MLDSA */
+#endif /* !WOLFSSH_NO_PUBKEY_AUTH */
 
 
 static int DoUserAuthRequest(WOLFSSH* ssh,
@@ -10437,8 +10436,7 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
             ret = SendUserAuthKeyboardRequest(ssh, &authData);
         }
 #endif
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
-    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
         else if (authNameId == ID_USERAUTH_PUBLICKEY) {
             authData.sf.publicKey.dataToSign = buf + *idx;
             ret = DoUserAuthRequestPublicKey(ssh, &authData, buf, len, &begin);
@@ -10515,8 +10513,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                             }
                             break;
 #endif
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) || \
-    defined(WOLFSSH_TPM)
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
                         case ID_USERAUTH_PUBLICKEY:
                             authType |= WOLFSSH_USERAUTH_PUBLICKEY;
                             break;
@@ -18816,8 +18813,7 @@ static int BuildUserAuthRequestMlDsa(WOLFSSH* ssh,
 #endif /* !WOLFSSH_NO_MLDSA */
 
 
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA) \
-    || !defined(WOLFSSH_NO_ED25519) || !defined(WOLFSSH_NO_MLDSA)
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
 static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -19181,7 +19177,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
 }
 
 
-#endif /* !WOLFSSH_NO_RSA/ECDSA/ED25519/MLDSA */
+#endif /* !WOLFSSH_NO_PUBKEY_AUTH */
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
@@ -19527,7 +19523,7 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     typeAllowed |= WOLFSSH_USERAUTH_KEYBOARD;
 #endif
-#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
     typeAllowed |= WOLFSSH_USERAUTH_PUBLICKEY;
 #endif
 
