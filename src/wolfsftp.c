@@ -10130,6 +10130,15 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         if (NoticeError(ssh)) {
                             return WS_FATAL_ERROR;
                         }
+                        WLOG(WS_LOG_SFTP, "Error writing packet");
+                        if (ssh->error == WS_SUCCESS) {
+                            ssh->error = (sz < 0) ? sz : WS_FATAL_ERROR;
+                        }
+                        ret = WS_FATAL_ERROR;
+                        /* no remote close, it would overwrite ret */
+                        state->handleSz = 0;
+                        state->state = STATE_PUT_CLOSE_LOCAL;
+                        break;
                     }
                     else {
                         AddAssign64(state->pOfst, sz);
@@ -10147,6 +10156,9 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 if (ssh->sftpInt) {
                     wolfSSH_SFTP_SaveOfst(ssh, from, to, state->pOfst);
                     ssh->sftpInt = 0;
+                }
+                if (ret != WS_SUCCESS) {
+                    continue;
                 }
                 FALL_THROUGH;
 
