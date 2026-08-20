@@ -141,6 +141,14 @@ run_test() {
 # separation is off and a high port is used, so no root is needed.
 run_strictmodes_negative_test() {
     printf "Host key trust-anchor negative test ... "
+    # WOLFSSH_NO_HOSTKEY_PERMS hands the mode to the platform, so the readable
+    # key loads and there is nothing to assert.
+    if wolfssh_has HOSTKEY_RELAX_PERMS; then
+        TOTAL=$((TOTAL+1))
+        SKIPPED=$((SKIPPED+1))
+        printf "SKIPPED (built with WOLFSSH_NO_HOSTKEY_PERMS)\n"
+        return
+    fi
     # A local copy of the host key, made group/world readable.
     cp ../../../keys/server-key.pem strictmodes_hostkey.pem
     chmod 644 strictmodes_hostkey.pem
@@ -339,6 +347,16 @@ EOF
     if mkfifo "$HK_WORK/fifo.pem" 2>/dev/null; then
         hk_cfg "$HK_WORK/fifo.pem"; hk_run
         grep -q "Refusing to load" "$HK_WORK/log.txt" || hk_fail "FIFO host key was not refused"
+    fi
+
+    # The mode and owner cases below are the ones WOLFSSH_NO_HOSTKEY_PERMS hands
+    # to the platform, so on such a build the key loads and the assertions would
+    # invert. Skip them there; the symlink and FIFO cases above still hold.
+    if wolfssh_has HOSTKEY_RELAX_PERMS; then
+        rm -rf "$HK_WORK"
+        printf "PASSED (mode and owner cases skipped, built with "
+        printf "WOLFSSH_NO_HOSTKEY_PERMS)\n"
+        return
     fi
 
     # group/world-writable file must be refused

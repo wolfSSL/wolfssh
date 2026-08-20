@@ -596,7 +596,8 @@ void wolfSSHD_AuthInit(void)
 #ifndef WOLFSSHD_UNIT_TEST
     /* /etc/shadow is commonly root:shadow 0640; don't reject group-readable. */
     if (wolfSSHD_OpenSecureFile(WSSHD_SHADOW_FILE, 0 /* ownerUid: root */,
-            0 /* rejectReadable */, NULL, &f) == WS_SUCCESS && f != NULL) {
+            0 /* rejectReadable */, 0 /* relaxPerms */, NULL, &f)
+            == WS_SUCCESS && f != NULL) {
         ScanShadowFile(f);
         WFCLOSE(NULL, f);
     }
@@ -1122,6 +1123,11 @@ WOLFSSHD_STATIC int ResolveAuthKeysPath(const char* homeDir,
  *                    service account's tree).
  *   rejectReadable - when set, also refuse a file that is group or world
  *                    readable. Used for secrets such as the host private key.
+ *   relaxPerms     - skip the ownership, mode and directory checks, ignoring
+ *                    ownerUid and rejectReadable. A symlinked leaf, non-regular
+ *                    file or swap during the open is still refused, but a
+ *                    writable ancestor can substitute the file. Host key only,
+ *                    see WOLFSSHD_HOSTKEY_RELAX_PERMS in wolfsshd.c.
  *   heap           - heap hint for the temporary path buffer.
  *   out            - set to the open stream on success, WBADFILE otherwise.
  *
@@ -1129,7 +1135,7 @@ WOLFSSHD_STATIC int ResolveAuthKeysPath(const char* homeDir,
  * failure. On platforms without POSIX ownership semantics (_WIN32) the checks
  * are skipped and the file is opened directly, relying on filesystem ACLs. */
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
-        int rejectReadable, void* heap, WFILE** out)
+        int rejectReadable, int relaxPerms, void* heap, WFILE** out)
 {
 #ifndef _WIN32
     int ret = WS_SUCCESS;
@@ -1202,18 +1208,19 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
                 "[SSHD] Refusing to load (not a regular file): %s", path);
             ret = WS_BAD_FILE_E;
         }
-        else if (st.st_uid != ownerUid && st.st_uid != 0) {
+        else if (!relaxPerms && st.st_uid != ownerUid && st.st_uid != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Refusing to load (not owned by the user or root): %s",
                 path);
             ret = WS_BAD_FILE_E;
         }
-        else if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        else if (!relaxPerms && (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Refusing to load (group or world writable): %s", path);
             ret = WS_BAD_FILE_E;
         }
-        else if (rejectReadable && (st.st_mode & (S_IRGRP | S_IROTH)) != 0) {
+        else if (!relaxPerms && rejectReadable &&
+                 (st.st_mode & (S_IRGRP | S_IROTH)) != 0) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Refusing to load (group or world readable): %s", path);
             ret = WS_BAD_FILE_E;
@@ -1233,8 +1240,8 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
      * owned by a third party from being loaded. Since realpath() resolved all
      * intermediate symlinks, this is the same chain open() traversed. The walk
      * trims components from 'resolved' in place, which is fine now that the file
-     * is already open. */
-    while (ret == WS_SUCCESS) {
+     * is already open. Skipped under relaxPerms. */
+    while (ret == WS_SUCCESS && !relaxPerms) {
         /* trim the last component to move up one directory */
         slash = NULL;
         for (i = 0; resolved[i] != '\0'; i++) {
@@ -1309,6 +1316,7 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #else
     WOLFSSH_UNUSED(ownerUid);
     WOLFSSH_UNUSED(rejectReadable);
+    WOLFSSH_UNUSED(relaxPerms);
     WOLFSSH_UNUSED(heap);
 
     if (path == NULL || out == NULL) {
@@ -1346,7 +1354,8 @@ static int SearchKeysFile(const char* keysFilePath, const byte* key,
      * Otherwise fall back to a plain open. */
     if (strictModes) {
         if (wolfSSHD_OpenSecureFile(keysFilePath, uid,
-                0 /* rejectReadable */, NULL, &f) != WS_SUCCESS) {
+                0 /* rejectReadable */, 0 /* relaxPerms */, NULL, &f)
+                != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Keys file failed StrictModes check: %s", keysFilePath);
             ret = WSSHD_AUTH_FAILURE;

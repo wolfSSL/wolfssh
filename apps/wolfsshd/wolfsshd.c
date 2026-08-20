@@ -232,6 +232,18 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 }
 
 
+/* QNX fixes the host key's owner and modes in the system image, so
+ * WOLFSSH_NO_HOSTKEY_PERMS hands that policy to the platform. Host key only, and
+ * only ownership, modes and directories. Kept outside the NO_FILESYSTEM guard
+ * below because SetupCTX() tests it and -Wundef is on. wolfssh-options.c repeats
+ * this guard so the tests can skip the negative cases; keep the two in step. */
+#if defined(WOLFSSH_NO_HOSTKEY_PERMS) && \
+    (defined(__QNX__) || defined(__QNXNTO__))
+    #define WOLFSSHD_HOSTKEY_RELAX_PERMS 1
+#else
+    #define WOLFSSHD_HOSTKEY_RELAX_PERMS 0
+#endif
+
 #ifndef NO_FILESYSTEM
 static void freeBufferFromFile(byte* buf, void* heap)
 {
@@ -260,10 +272,17 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
     byte* buf = NULL;
     long fileSz;
     word32 readSz;
+    int relaxPerms = 0;
 
     WOLFSSH_UNUSED(heap);
 
     if (fileName == NULL) return NULL;
+
+#if WOLFSSHD_HOSTKEY_RELAX_PERMS
+    if (loadClass == WOLFSSHD_LOAD_SECRET) {
+        relaxPerms = 1;
+    }
+#endif
 
     if (loadClass == WOLFSSHD_LOAD_NORMAL) {
         if (WFOPEN(NULL, &file, fileName, "rb") != 0)
@@ -273,7 +292,7 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
         /* Trust anchors always go through the secure gate, regardless of
          * StrictModes. The owner is the daemon's effective user (or root), and
          * the host private key (SECRET) is also refused if group/world
-         * readable. */
+         * readable, unless WOLFSSHD_HOSTKEY_RELAX_PERMS. */
         if (wolfSSHD_OpenSecureFile(fileName,
 #ifndef _WIN32
                 geteuid(),
@@ -281,7 +300,7 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
                 0,
 #endif
                 loadClass == WOLFSSHD_LOAD_SECRET /* rejectReadable */,
-                heap, &file) != WS_SUCCESS) {
+                relaxPerms, heap, &file) != WS_SUCCESS) {
             return NULL;
         }
     }
@@ -395,7 +414,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
             /* The host private key is a secret trust anchor: refuse a symlink,
              * an unsafe owner or path, or a group/world readable/writable
-             * file. */
+             * file. WOLFSSHD_HOSTKEY_RELAX_PERMS keeps only the symlink and
+             * regular-file checks. */
+        #if WOLFSSHD_HOSTKEY_RELAX_PERMS
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] Built with "
+                "WOLFSSH_NO_HOSTKEY_PERMS, host key ownership and permissions "
+                "are left to the platform");
+        #endif
             data = getBufferFromFile(hostKey, &dataSz, heap,
                 WOLFSSHD_LOAD_SECRET);
             if (data == NULL) {
