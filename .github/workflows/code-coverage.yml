@@ -1,0 +1,180 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout wolfSSL
+        uses: actions/checkout@v6
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+
+      # Match the sshd-test workflow so the cert and ML-DSA paths are built
+      # and measured rather than compiled out.
+      - name: Build wolfSSL
+        working-directory: ./wolfssl
+        run: |
+          ./autogen.sh
+          ./configure --enable-all --enable-mldsa
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: tar build-dir
+        run: tar -zcf wolfssl-install.tgz /usr/local/lib/libwolfssl* /usr/local/include/wolfssl
+
+      - name: Upload built lib
+        uses: actions/upload-artifact@v7
+        with:
+          name: wolfssl-coverage
+          path: wolfssl-install.tgz
+          retention-days: 5
+
+  # Use clang to report line, branch, function and MC/DC coverage in one run.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: build_wolfssl
+    steps:
+      - name: Checkout wolfSSH
+        uses: actions/checkout@v6
+
+      # clang 18 is the min: -fcoverage-mcdc does not exist before it.
+      - name: Install clang and LLVM coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18 libclang-rt-18-dev
+
+      - name: Download wolfSSL
+        uses: actions/download-artifact@v8
+        with:
+          name: wolfssl-coverage
+
+      - name: Install wolfSSL
+        run: |
+          sudo tar -xzf wolfssl-install.tgz -C /
+          sudo ldconfig
+
+      # -O0 keeps line and branch attribution honest; atomic counters are
+      # required because several tests drive client and server on separate
+      # threads, and the default non-atomic updates lose increments.
+      - name: Build wolfSSH
+        run: |
+          ./autogen.sh
+          ./configure --enable-all --enable-ossh-certs CC=clang-18 \
+            CPPFLAGS="-DMAX_PATH_SZ=120" \
+            CFLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc -fprofile-update=atomic -O0 -g" \
+            LDFLAGS="-fprofile-instr-generate"
+          make -j$(nproc)
+
+      # %p in the pattern keeps forked servers from overwriting the raw
+      # profile of the client that spawned them.
+      - name: Run tests
+        run: |
+          mkdir -p prof
+          LLVM_PROFILE_FILE="$PWD/prof/%p-%m.profraw" \
+            timeout -k 30 1200 make check
+
+      # 'make check' does not execute wolfsshd, so run it separately
+      - name: Run wolfSSHd tests
+        working-directory: ./apps/wolfsshd/test
+        run: |
+          prof="$GITHUB_WORKSPACE/prof/%p-%m.profraw"
+          sudo LLVM_PROFILE_FILE="$prof" SSHD_ENV="LLVM_PROFILE_FILE=$prof" \
+            ./run_all_sshd_tests.sh
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/prof"
+
+      - name: Report coverage
+        run: |
+          llvm-profdata-18 merge -sparse prof/*.profraw -o wolfssh.profdata
+          # llvm-cov takes one binary positionally and the rest via -object.
+          # Programs linking the shared library are libtool wrapper scripts, so
+          # take the real binary from .libs when one is there. The apps are
+          # optional, so skip whatever this configuration did not build.
+          first=""
+          args=()
+          for t in tests/*.test apps/wolfssh/wolfssh apps/wolfsshd/wolfsshd \
+                   apps/wolfsshd/test/test_configuration; do
+            [ -e "$t" ] || continue
+            real="$(dirname "$t")/.libs/$(basename "$t")"
+            [ -x "$real" ] || real="$t"
+            if [ -z "$first" ]; then
+              first="$real"
+            else
+              args+=(-object "$real")
+            fi
+          done
+          if [ -z "$first" ]; then
+            echo "no instrumented binaries found"
+            exit 1
+          fi
+          ignore='(tests|examples)/.*|apps/wolfsshd/test/.*'
+          ignore="$ignore"'|.*/include/wolfssl/.*|.*/wolfssh/.*\.h'
+          llvm-cov-18 report "$first" "${args[@]}" \
+            -instr-profile=wolfssh.profdata \
+            --show-mcdc-summary \
+            --ignore-filename-regex="$ignore" | tee coverage-report.txt
+          llvm-cov-18 show "$first" "${args[@]}" \
+            -instr-profile=wolfssh.profdata \
+            --show-mcdc --format=html --output-dir=coverage-html \
+            --ignore-filename-regex="$ignore"
+          # lcov text for any external dashboard that consumes it.
+          llvm-cov-18 export "$first" "${args[@]}" \
+            -instr-profile=wolfssh.profdata \
+            --format=lcov \
+            --ignore-filename-regex="$ignore" > coverage.lcov
+          {
+            echo '### Coverage'
+            echo '```'
+            cat coverage-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            coverage-report.txt
+            coverage.lcov
+            coverage-html/
+          retention-days: 30
+
+      - name: Show test logs on failure
+        if: failure()
+        run: |
+          echo "=== test-suite.log ==="
+          cat test-suite.log || true
+          for f in tests/*.log scripts/*.log; do
+            [ -f "$f" ] || continue
+            echo ""
+            echo "=== $f ==="
+            cat "$f"
+          done
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wolfssh-coverage-logs
+          path: |
+            test-suite.log
+            tests/*.log
+            scripts/*.log
+            config.log
+          retention-days: 5
