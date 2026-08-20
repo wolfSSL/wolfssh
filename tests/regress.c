@@ -107,11 +107,10 @@ static HandshakeInfo* AllocHandshake(WOLFSSH* ssh)
 }
 
 /* Build a minimal SSH binary packet carrying only a message ID.
- * Layout: uint32 packetLen, byte padLen, payload[msgId], pad[padLen].
- * Choose padLen so total is 8-byte aligned for the clear transport case. */
+ * Layout: uint32 packetLen, byte padLen, payload[msgId], pad[padLen]. */
 static word32 BuildPacket(byte msgId, byte* out, word32 outSz)
 {
-    byte padLen = 6; /* 1 (msgId) +1 (padLen) +6 = 8 */
+    byte padLen = 10; /* 4 (len) +1 (padLen) +1 (msgId) +10 = 16 */
     word32 packetLen = 1 + 1 + padLen; /* payload + padLen field + pad */
     word32 need = 4 + packetLen;
 
