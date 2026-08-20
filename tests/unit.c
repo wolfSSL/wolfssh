@@ -11167,6 +11167,7 @@ static int test_IdentifyAsn1Key_EccPrivOnlyDerFailure(int curveSz,
     byte* eccDer = NULL;
     int eccDerSz;
     int i;
+    int expected = WS_CRYPTO_FAILED;
 
     WMEMSET(&eccKey, 0, sizeof(eccKey));
     if (wc_ecc_init(&eccKey) != 0) {
@@ -11209,12 +11210,30 @@ static int test_IdentifyAsn1Key_EccPrivOnlyDerFailure(int curveSz,
         }
     }
 
+    /* Some wolfSSL builds reject the zeroed scalar while decoding the DER,
+     * so IdentifyAsn1Key never reaches the derivation and reports the key
+     * as unidentified. Ask this build which rejection to expect. */
+    {
+        ecc_key probeKey;
+        word32 probeIdx = 0;
+
+        if (wc_ecc_init(&probeKey) != 0) {
+            WFREE(eccDer, NULL, 0);
+            return -6939;
+        }
+        if (wc_EccPrivateKeyDecode(eccDer, &probeIdx, &probeKey,
+                (word32)eccDerSz) != 0) {
+            expected = WS_UNIMPLEMENTED_E;
+        }
+        wc_ecc_free(&probeKey);
+    }
+
     ret = IdentifyAsn1Key(eccDer, (word32)eccDerSz, 1, NULL, NULL);
     WFREE(eccDer, NULL, 0);
 
-    if (ret != WS_CRYPTO_FAILED) {
-        printf("IdentifyAsn1Key: private-only ECC %s DER fallback derivation "
-               "expected WS_CRYPTO_FAILED, got %d\n", curveName, ret);
+    if (ret != expected) {
+        printf("IdentifyAsn1Key: private-only ECC %s DER rejection expected "
+               "%d, got %d\n", curveName, expected, ret);
         return -6938;
     }
 
