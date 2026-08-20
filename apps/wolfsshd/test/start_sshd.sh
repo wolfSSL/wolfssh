@@ -93,10 +93,24 @@ EOF
     sudo env $SSHD_ENV "$SSHD_BIN" -d -E ./log.txt -f "$CONFIG"
 
     # The PID of the started sshd is the one present now that was not there
-    # before. The daemon can still die after sudo returns, so guard the same
-    # way and let the caller's empty-PID check report it.
-    NEW_PIDS=`pgrep -x wolfsshd | sort -n` || true
-    PID=`diff <(echo "$CURRENT_PIDS") <(echo "$NEW_PIDS") | sed -n 's/^> *//p' | head -n1`
+    # before. wolfSSHd forks twice while daemonizing, so for a moment its two
+    # short lived parents are listed as well; wait for the new pids to settle
+    # on the single survivor. Recording a parent instead would leave
+    # stop_wolfsshd killing a pid that is already gone while the real daemon
+    # keeps the port. The daemon can also die after sudo returns, so leave PID
+    # empty in that case and let the caller's empty-PID check report it.
+    PID=""
+    for i in $(seq 1 50); do
+        NEW_PIDS=`pgrep -x wolfsshd | sort -n` || true
+        NEW=`diff <(echo "$CURRENT_PIDS") <(echo "$NEW_PIDS") \
+            | sed -n 's/^> *//p'`
+        NEW_COUNT=`printf '%s\n' $NEW | grep -c .` || NEW_COUNT=0
+        if [ "$NEW_COUNT" -eq 1 ]; then
+            PID="$NEW"
+            break
+        fi
+        sleep 0.1
+    done
     printf "SSHD running on PID $PID\n"
 }
 

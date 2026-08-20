@@ -5,6 +5,15 @@
 # Not named PWD: the shell rewrites that variable on every cd, so a saved
 # copy would not survive the cd to the repository root below.
 TESTDIR=`pwd`
+. ./wolfssh_options.sh
+
+# No FPKI profiles exist in keys/, so skip this test which would fail.
+# Drop this skip once conforming certificates are added.
+if wolfssh_has FPKI_PROFILE; then
+    echo "wolfSSHd enforces FPKI profiles; test certs meet none, skipping"
+    exit 77
+fi
+
 cd ../../..
 
 if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then

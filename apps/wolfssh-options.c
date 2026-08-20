@@ -131,6 +131,12 @@ int main(void)
     printf("FPKI\n");
 #endif
 
+    /* certman.c's FPKI certificate profile enforcement. Separate from FPKI
+     * above. */
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_FPKI)
+    printf("FPKI_PROFILE\n");
+#endif
+
     /* PQC Options */
 #ifndef WOLFSSH_NO_MLDSA
     printf("MLDSA\n");
