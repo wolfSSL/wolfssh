@@ -40,7 +40,9 @@ echo "$TEST_CLIENT -X -c 'pwd' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT 
 $TEST_CLIENT -X -c 'pwd' -u "$3" -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2"
 RESULT=$?
 
-cd "$TESTDIR"
+# Back to the test dir: the log counted below is the one here, so a failed cd
+# would silently count matches in the repository root's log.txt instead.
+cd "$TESTDIR" || exit 1
 
 # Give the daemon child a moment to flush its rejection to the log.
 sleep 1

@@ -16,17 +16,12 @@ TEST_PORT="$2"
 TEST_HOST="$1"
 source ./start_sshd.sh
 
-# Stop the daemon on every exit path. From the "set -e" below onward an aborted
-# client run would otherwise leave a root daemon holding the shared test port,
-# and every later test in the suite would talk to this config.
-cleanup() {
-    if [ -n "$PID" ]; then
-        stop_wolfsshd
-        PID=""
-    fi
-    return 0
-}
-trap cleanup EXIT
+# Stop the daemon on every exit path: the shell-login check below exits
+# non-zero, and from the "set -e" onward an aborted client run would leave a
+# root daemon holding the shared test port, so every later test in the suite
+# would talk to this config. stop_wolfsshd clears PID, so this is a no-op after
+# each explicit stop below.
+trap stop_wolfsshd EXIT
 
 cat <<EOF > sshd_config_test_forcedcmd
 Port $TEST_PORT
@@ -66,7 +61,6 @@ echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p 
 
 cd "$TESTDIR"
 stop_wolfsshd
-PID=""
 
 # A configured ForceCommand that is not "internal-sftp" must still permit the
 # SFTP subsystem. Only a certificate force-command denies file transfer, so a
@@ -94,7 +88,6 @@ echo exit | $TEST_SFTP -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p 
 
 cd "$TESTDIR"
 stop_wolfsshd
-PID=""
 exit 0
 
 
