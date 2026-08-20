@@ -1288,11 +1288,12 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             ret = WS_BUFFER_E;
         else {
             WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, n);
+            inputBuffer->idx += n;
             ret = _UpdateChannelWindow(ssh->channelList);
-            if (ret == WS_SUCCESS) {
-                inputBuffer->idx += n;
-                ret = n;
+            if (ret != WS_SUCCESS) {
+                ssh->error = ret;
             }
+            ret = n;
         }
     }
 

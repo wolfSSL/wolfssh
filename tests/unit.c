@@ -6063,6 +6063,69 @@ done:
     return result;
 }
 
+/* wolfSSH_stream_read() counterpart of test_ChannelExtDataCreditWantWrite():
+ * a deferred credit must not cost the caller the bytes already consumed. */
+static int test_stream_read_deferredWindowAdjust(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             in[64];
+    byte             out[64];
+    word32           i;
+
+    for (i = 0; i < (word32)sizeof(in); i++) {
+        in[i] = (byte)i;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -6980;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -6981; goto done; }
+    /* Allow MSGID_CHANNEL_WINDOW_ADJUST on this bare session. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* A window the size of the payload, so draining it in one read leaves
+     * windowSz at zero and _UpdateChannelWindow() has to credit. */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    (word32)sizeof(in), DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -6982; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -6983;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    if (wolfSSH_TestChannelPutData(ch, in, (word32)sizeof(in)) != WS_SUCCESS) {
+        result = -6984; goto done;
+    }
+    if (ch->windowSz != 0) { result = -6985; goto done; }
+
+    /* Every byte is reported, and they are the bytes that were put. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -6990; goto done; }
+    if (WMEMCMP(out, in, sizeof(in)) != 0) { result = -6991; goto done; }
+
+    /* The deferral is observable, the window is credited locally, and the
+     * bytes are consumed rather than left for a re-read. */
+    if (ssh->error != WS_WANT_WRITE) { result = -6992; goto done; }
+    if (ch->windowSz != (word32)sizeof(in)) { result = -6993; goto done; }
+    if (ch->inputBuffer.length - ch->inputBuffer.idx != 0) {
+        result = -6994; goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 /* BuildNameList() returns a C string. On an empty id list it must still
  * terminate the buffer: SendKexInit() measures the result with WSTRLEN
  * through AlgoListSz() and copies that many bytes into the KEXINIT. */
@@ -16378,6 +16441,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_SendChannelData_zeroPeerMaxPacket();
     printf("SendChannelData_zeroPeerMaxPacket: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_stream_read_deferredWindowAdjust();
+    printf("stream_read_deferredWindowAdjust: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
