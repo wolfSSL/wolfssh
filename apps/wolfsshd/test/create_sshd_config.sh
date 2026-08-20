@@ -32,11 +32,12 @@ EOF
 
 # wolfSSHd refuses to start when AuthorizedUPNDomains is set on a build that
 # cannot enforce it (wolfSSL without FPKI), so only write the directive when
-# the daemon binary reports FPKI support. sshd_x509_upn_fail.sh skips itself
-# on such builds for the same reason.
+# the build reports FPKI support. sshd_x509_upn_fail.sh skips itself on such
+# builds using the same probe.
+. ./wolfssh_options.sh
 UPN_DOMAIN_GOOD=""
 UPN_DOMAIN_BAD=""
-if ../wolfsshd "-?" 2>&1 | grep -q "FPKI"; then
+if wolfssh_has FPKI; then
     UPN_DOMAIN_GOOD="AuthorizedUPNDomains example"
     UPN_DOMAIN_BAD="AuthorizedUPNDomains other.example"
 fi

@@ -1101,6 +1101,7 @@ struct WOLFSSH {
 #ifdef WOLFSSH_FWD
     byte fwdCbMissingWarned;  /* one-shot: missing fwdCb warned this session */
 #endif
+    byte chanOpenCbMissingWarned; /* one-shot: missing channelOpenCb warned */
 
     byte kexId;
     byte blockSz;
@@ -1606,6 +1607,9 @@ WOLFSSH_LOCAL int wcPrimeForId(byte id);
 WOLFSSH_LOCAL enum wc_HashType HashForId(byte id);
 #ifdef WOLFSSH_CERTS
 WOLFSSH_LOCAL byte CertTypeForId(byte id);
+#endif
+#if defined(WOLFSSH_WINDOWS_CERT_STORE) && defined(WOLFSSH_CERTS)
+WOLFSSH_LOCAL word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt);
 #endif
 
 

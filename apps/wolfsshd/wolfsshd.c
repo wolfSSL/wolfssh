@@ -311,6 +311,9 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
      * level messages. Warnings carry the security relevant notices, e.g. that
      * a certificate was bound to an account by subject CN alone, so they must
      * not depend on -d. */
+    if (logFile == NULL) {
+        return;
+    }
     if (lvl == WS_LOG_ERROR || lvl == WS_LOG_WARN || debugMode) {
 #ifdef _WIN32
         AcquireSRWLockExclusive(&logRepeatLock);
@@ -640,7 +643,7 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     if (providerStr != NULL &&
             WSTRCMP(providerStr, "CERT_STORE_PROV_SYSTEM") != 0) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] wolfSSH_WinUserStores='%s' is not supported; only "
+            "[SSHD] wolfSSH_WinUserStores='%.48s' is not supported; only "
             "CERT_STORE_PROV_SYSTEM is supported", providerStr);
         return WS_BAD_ARGUMENT;
     }
@@ -704,7 +707,7 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
             wStoreName);
     if (hStore == NULL) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] Unable to open user CA cert store '%s', error %lu",
+            "[SSHD] Unable to open user CA cert store '%.48s', error %lu",
             storeNameStr, (unsigned long)GetLastError());
         WFREE(wStoreName, heap, DYNTYPE_SSHD);
         return WS_FATAL_ERROR;
@@ -796,6 +799,32 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     return ret;
 }
 #endif /* WOLFSSH_CERTS && WOLFSSH_WINDOWS_CERT_STORE */
+
+#if defined(WOLFSSH_CERTS) && (defined(_WIN32) || defined(WOLFSSL_FPKI))
+/* Returns non-zero when any config node configures a certificate trust
+ * anchor. TrustedUserCAKeys may live inside a Match block, so the whole list
+ * must be walked; the two store flags are global-only and live on the head
+ * node. */
+static int AnyNodeHasCertTrustAnchor(const WOLFSSHD_CONFIG* conf)
+{
+    const WOLFSSHD_CONFIG* cur;
+    int found = 0;
+
+    if (wolfSSHD_ConfigGetUserCAStore(conf) ||
+            wolfSSHD_ConfigGetSystemCA(conf)) {
+        found = 1;
+    }
+    cur = conf;
+    while (!found && cur != NULL) {
+        if (wolfSSHD_ConfigGetUserCAKeysFile(cur) != NULL) {
+            found = 1;
+        }
+        cur = wolfSSHD_ConfigGetNext(cur);
+    }
+
+    return found;
+}
+#endif /* WOLFSSH_CERTS && (_WIN32 || WOLFSSL_FPKI) */
 
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
@@ -1239,10 +1268,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * fixed by the wolfSSL build, not by configuration, so this cannot be
      * derived from the config file. */
     #if defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)
-    if (ret == WS_SUCCESS &&
-            (wolfSSHD_ConfigGetUserCAKeysFile(conf) != NULL ||
-             wolfSSHD_ConfigGetUserCAStore(conf) ||
-             wolfSSHD_ConfigGetSystemCA(conf))) {
+    if (ret == WS_SUCCESS && AnyNodeHasCertTrustAnchor(conf)) {
         wolfSSH_Log(WS_LOG_WARN,
             "[SSHD] WARNING: client certificates are bound to an account by "
             "subject CN only.");
@@ -1344,10 +1370,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * callback writes WARN unconditionally, so a per-attempt WARN would let
      * a peer grow the log). Only emitted when a certificate trust anchor is
      * actually configured; with no CA there is no UPN check to relax. */
-    if (ret == WS_SUCCESS &&
-            (wolfSSHD_ConfigGetUserCAKeysFile(conf) != NULL ||
-             wolfSSHD_ConfigGetUserCAStore(conf) ||
-             wolfSSHD_ConfigGetSystemCA(conf))) {
+    if (ret == WS_SUCCESS && AnyNodeHasCertTrustAnchor(conf)) {
         const WOLFSSHD_CONFIG* cur;
         const char* domains;
 
@@ -1376,10 +1399,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * no CN check to skip. With FPKI the UPN identity check always runs, so
      * there is nothing to note. */
     #if defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)
-    if (ret == WS_SUCCESS &&
-            (wolfSSHD_ConfigGetUserCAKeysFile(conf) != NULL ||
-             wolfSSHD_ConfigGetUserCAStore(conf) ||
-             wolfSSHD_ConfigGetSystemCA(conf))) {
+    if (ret == WS_SUCCESS && AnyNodeHasCertTrustAnchor(conf)) {
         const WOLFSSHD_CONFIG* cur;
 
         cur = conf;
@@ -3229,6 +3249,9 @@ static void* HandleConnection(void* arg)
 {
     int ret = WS_SUCCESS;
     int error;
+#ifdef _WIN32
+    byte threaded = 0;
+#endif
 
     WOLFSSHD_CONNECTION* conn = NULL;
     WOLFSSH* ssh = NULL;
@@ -3572,8 +3595,24 @@ static void* HandleConnection(void* arg)
         WCLOSESOCKET(conn->fd);
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
+#ifdef _WIN32
+    if (conn != NULL) {
+        threaded = conn->isThreaded;
+    }
+#endif
     WFREE(conn, NULL, DYNTYPE_SSHD);
+
+    /* The repeat state is per connection only when each connection is its own
+     * process (POSIX fork) or the lone in-process connection. Windows daemon
+     * threads share it, so flushing here would clear a streak another live
+     * connection thread still owns; the shutdown flush covers that path. */
+#ifdef _WIN32
+    if (!threaded) {
+        wolfSSHDLoggingFlush();
+    }
+#else
     wolfSSHDLoggingFlush();
+#endif
 
 #ifdef _WIN32
     return 0;
@@ -3865,6 +3904,9 @@ static int StartSSHD(int argc, char** argv)
             ret = WFOPEN(NULL, &logFile, myoptarg, "ab");
             if (ret != 0 || logFile == WBADFILE) {
                 fprintf(stderr, "Unable to open log file %s\n", myoptarg);
+                /* option parsing continues and may log before the error is
+                 * acted on, so never leave the stream NULL */
+                logFile = stderr;
                 ret = WS_FATAL_ERROR;
             }
             break;

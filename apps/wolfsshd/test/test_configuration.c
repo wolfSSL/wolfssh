@@ -295,12 +295,17 @@ static int test_ParseConfigLine(void)
 
         /* The option matcher requires whitespace (or end of line) after the
          * matched name, so an unknown name that extends a real one must not
-         * prefix-match it. */
+         * prefix-match it. Ignore-unknown builds accept such lines with a
+         * warning, so only assert rejection where it is observable. */
+    #ifndef WOLFSSH_IGNORE_UNKNOWN_CONFIG
         {"Unknown extension of Port", "PortFoo 22", 1},
         {"Unknown extension of HostKey", "HostKeyFoo /tmp/x", 1},
         {"Unknown extension of HostKeyStore", "HostKeyStoreX MY", 1},
         {"Unknown extension of TrustedUserCAStore",
             "wolfSSH_TrustedUserCAStoreX yes", 1},
+    #endif
+        /* A known keyword in Keyword=value form is a hard error on every
+         * build; ignoring it would silently drop the directive. */
         {"Keyword=value form is rejected", "Port=22", 1},
 
         /* The two store-trust toggles follow the same yes/no/invalid

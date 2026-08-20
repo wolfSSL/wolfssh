@@ -855,7 +855,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
         /* Ignore trailing whitespace */
         ptr = value + WSTRLEN(value) - 1;
         while (ptr != value) {
-            if (WISSPACE(*ptr)) {
+            if (WISSPACE((unsigned char)*ptr)) {
                 ptr--;
             }
             else {
@@ -1412,14 +1412,32 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_HOST_KEY:
             /* TODO: Add logic to check if file exists? */
             ret = CheckNotInMatch(*conf, "HostKey");
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
+            }
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            else if (*conf != NULL) {
+                /* Earlier releases accepted (and never used) this placement,
+                 * so ignore-unknown builds keep a migration path. */
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] Ignoring HostKey inside a Match block");
+                ret = WS_SUCCESS;
+            }
+        #endif
             break;
         case OPT_HOST_CERT:
             /* TODO: Add logic to check if file exists? */
             ret = CheckNotInMatch(*conf, "HostCertificate");
-            if (ret == WS_SUCCESS)
+            if (ret == WS_SUCCESS) {
                 ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
+            }
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            else if (*conf != NULL) {
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] Ignoring HostCertificate inside a Match block");
+                ret = WS_SUCCESS;
+            }
+        #endif
             break;
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(*conf, value);
@@ -1626,16 +1644,33 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
         }
     }
     else {
-    #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
-        /* WARN, not DEBUG: a known option in the unsupported Keyword=value
-         * form also lands here, and silently dropping a directive such as
-         * PasswordAuthentication=no must stay visible without -d. */
-        wolfSSH_Log(WS_LOG_WARN, "[SSHD] ignoring config line %s.", l);
-        ret = WS_SUCCESS;
-    #else
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
-        ret = WS_FATAL_ERROR;
-    #endif
+        int isEqForm = 0;
+
+        /* A known keyword in the OpenSSH Keyword=value form must stay a
+         * fatal error even on builds that ignore unknown lines: dropping a
+         * directive such as PasswordAuthentication=no would fail open. */
+        for (idx = 0; idx < NUM_OPTIONS; ++idx) {
+            sz = (int)WSTRLEN(options[idx].name);
+            if (lSz > sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
+                    l[sz] == '=') {
+                isEqForm = 1;
+                break;
+            }
+        }
+        if (isEqForm) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Keyword=value form is not "
+                "supported, use \"Keyword value\" : %s.", l);
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN, "[SSHD] ignoring config line %s.", l);
+            ret = WS_SUCCESS;
+        #else
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
+            ret = WS_FATAL_ERROR;
+        #endif
+        }
     }
 
     return ret;

@@ -25,16 +25,25 @@
 
 
 /* CompareStringOrdinal() and friends need a Vista-or-later SDK profile;
- * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so pin the
- * floor before the first header that pulls in <windows.h> (wolfssh/ssh.h via
- * port.h does). Keyed on _WIN32 rather than WOLFSSH_WINDOWS_CERT_STORE:
- * this is the only macro guaranteed defined this early, since a
- * user_settings.h build defines WOLFSSH_WINDOWS_CERT_STORE only once
- * <wolfssh/ssh.h> pulls in settings.h below, after <windows.h> has already
- * been seen. Harmless for non-cert-store Windows builds. */
-#if defined(_WIN32) && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600)
+ * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so raise
+ * the floor before the first header that pulls in <windows.h> (wolfssh/ssh.h
+ * via port.h does). The undefined case is raised only under mingw: MSVC's
+ * SDK defaults an undefined _WIN32_WINNT to its newest profile, which a
+ * 0x0600 define here would silently lower. An explicit pre-Vista target is
+ * raised on any compiler since this file cannot build against it. WINVER is
+ * pinned alongside so the two profiles cannot disagree. Keyed on _WIN32
+ * rather than WOLFSSH_WINDOWS_CERT_STORE: this is the only macro guaranteed
+ * defined this early, since a user_settings.h build defines
+ * WOLFSSH_WINDOWS_CERT_STORE only once <wolfssh/ssh.h> pulls in settings.h
+ * below, after <windows.h> has already been seen. Harmless for
+ * non-cert-store Windows builds. */
+#if defined(_WIN32) && \
+    ((defined(__MINGW32__) && !defined(_WIN32_WINNT)) || \
+     (defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0600))
     #undef  _WIN32_WINNT
     #define _WIN32_WINNT 0x0600
+    #undef  WINVER
+    #define WINVER 0x0600
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -3374,6 +3383,17 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
         return WS_CERT_KEY_NONE;
     }
 
+    /* CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG means dwKeySpec is documented to
+     * always be CERT_NCRYPT_KEY_SPEC; verify before handing the union-typed
+     * handle to CNG. A legacy CSP key cannot sign through NCryptSignHash()
+     * later, so reject it here rather than misreport it as usable. */
+    if (dwKeySpec != CERT_NCRYPT_KEY_SPEC) {
+        if (fCallerFree) {
+            CryptReleaseContext(hKey, 0);
+        }
+        return WS_CERT_KEY_NONE;
+    }
+
     /* An acquirable key is not necessarily a signing key: an enterprise My
      * store commonly holds a keyEncipherment-only RSA certificate next to
      * the signing one with the same CN. Require NCRYPT_ALLOW_SIGNING_FLAG
@@ -3395,14 +3415,9 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
     }
 
     if (fCallerFree) {
-        /* Only NCRYPT keys are acquired above, so dwKeySpec is always
-         * CERT_NCRYPT_KEY_SPEC; the CSP release arm is defensive. */
-        if (dwKeySpec == CERT_NCRYPT_KEY_SPEC) {
-            NCryptFreeObject(hKey);
-        }
-        else {
-            CryptReleaseContext(hKey, 0);
-        }
+        /* Only NCRYPT keys reach this point; a CSP key was released and
+         * rejected right after acquisition. */
+        NCryptFreeObject(hKey);
     }
 
     return canSign;
@@ -3442,6 +3457,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     int hasKey;
     int timeValidity;
     int keyedEarly;
+    int keyedSigns;
     int keylessSeen;
     int nosignSeen;
     int better;
@@ -3450,6 +3466,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     *out = NULL;
     ret = WS_SUCCESS;
     keyedEarly = 0;
+    keyedSigns = 0;
     keylessSeen = 0;
     nosignSeen = 0;
     validUnknown = NULL;
@@ -3520,11 +3537,16 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
         }
         else if (hasKey == WS_CERT_KEY_SIGNS ||
                 hasKey == WS_CERT_KEY_UNKNOWN) {
-            /* Deterministic fallback ranking: expired beats not yet valid,
-             * and within the same class the latest NotAfter wins. */
+            /* Deterministic fallback ranking, matching the time-valid path:
+             * a key that definitely signs beats one whose usage is unknown,
+             * then expired beats not yet valid, and within the same class
+             * the latest NotAfter wins. */
             better = 0;
             if (keyedMatch == NULL) {
                 better = 1;
+            }
+            else if (keyedSigns != (hasKey == WS_CERT_KEY_SIGNS)) {
+                better = (hasKey == WS_CERT_KEY_SIGNS);
             }
             else if (keyedEarly && timeValidity > 0) {
                 better = 1;
@@ -3540,6 +3562,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
                 }
                 keyedMatch = CertDuplicateCertificateContext(pCertContext);
                 keyedEarly = (timeValidity < 0);
+                keyedSigns = (hasKey == WS_CERT_KEY_SIGNS);
                 if (keyedMatch == NULL) {
                     ret = WS_MEMORY_E;
                 }
@@ -3636,24 +3659,6 @@ typedef struct CertStoreSlot {
 } CertStoreSlot;
 
 
-/* Index of the slot holding keyId, WOLFSSH_MAX_PVT_KEYS when not found. */
-static word32 FindKeySlot(WOLFSSH_CTX* ctx, byte keyId)
-{
-    word32 i;
-    word32 keyIdx;
-
-    keyIdx = WOLFSSH_MAX_PVT_KEYS;
-    for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
-        if (ctx->privateKey[i].publicKeyFmt == keyId) {
-            keyIdx = i;
-            break;
-        }
-    }
-
-    return keyIdx;
-}
-
-
 /* Release resources of a slot that was prepared but never committed. */
 static void FreeCertStoreSlot(void* heap, CertStoreSlot* slot)
 {
@@ -3675,6 +3680,13 @@ static void FreeCertStoreSlot(void* heap, CertStoreSlot* slot)
 static int PrepCertStoreSlot(void* heap, byte keyId, word32 keyIdx,
         PCCERT_CONTEXT pCertContext, CertStoreSlot* slot)
 {
+    /* Validating the index here, before anything is mutated, is what lets
+     * CommitCertStoreSlot() be infallible. */
+    if (keyIdx >= WOLFSSH_MAX_PVT_KEYS) {
+        WLOG(WS_LOG_ERROR, "PrepCertStoreSlot: Slot index out of range");
+        return WS_BAD_ARGUMENT;
+    }
+
     /* A zero-length certificate would be committed to the slot and later
      * advertised as an x509v3 host key with an empty K_S. */
     if (pCertContext->pbCertEncoded == NULL
@@ -3703,21 +3715,16 @@ static int PrepCertStoreSlot(void* heap, byte keyId, word32 keyIdx,
 
 /* Move the prepared resources into the context. The slot may previously
  * have held either a cert-store key or a file-based key/cert, so clear
- * both kinds of resources. Infallible by design: the caller bounds-checks
- * every index before preparing a slot, which is what makes the two-slot
- * commit in wolfSSH_CTX_UsePrivateKey_fromStore() all-or-nothing. */
+ * both kinds of resources. Infallible by design: PrepCertStoreSlot()
+ * validates the slot index before anything is prepared, which is what
+ * makes the two-slot commit in wolfSSH_CTX_UsePrivateKey_fromStore()
+ * all-or-nothing. */
 static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
 {
     WOLFSSH_PVT_KEY* pvtKey;
     void* heap;
 
     heap = ctx->heap;
-    if (slot->keyIdx >= WOLFSSH_MAX_PVT_KEYS) {
-        /* Unreachable; free defensively so even this path cannot leak. */
-        WLOG(WS_LOG_ERROR, "CommitCertStoreSlot: Slot index out of range");
-        FreeCertStoreSlot(heap, slot);
-        return;
-    }
     pvtKey = &ctx->privateKey[slot->keyIdx];
 
     if (pvtKey->certStoreContext != NULL) {
@@ -3966,7 +3973,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     WMEMSET(&keySlot, 0, sizeof(keySlot));
     WMEMSET(&certSlot, 0, sizeof(certSlot));
     newCount = ctx->privateKeyCount;
-    keyIdx = FindKeySlot(ctx, keyId);
+    keyIdx = FindPvtKeyIdx(ctx, keyId);
     /* Mirror of SetHostPrivateKey()/SetHostCertificate(): a store key must
      * not silently replace file- or TPM-based credentials already loaded
      * for this algorithm, so the mixed configuration is rejected in both
@@ -3998,7 +4005,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
      * configuration outright rather than leaving a stale file key and
      * certificate advertised beside the store key. */
     if (certId == ID_X509V3_SSH_RSA) {
-        if (FindKeySlot(ctx, certId) != WOLFSSH_MAX_PVT_KEYS) {
+        if (FindPvtKeyIdx(ctx, certId) != WOLFSSH_MAX_PVT_KEYS) {
             WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: An "
                  "x509v3-ssh-rsa file host key/certificate is already "
                  "loaded; it cannot be paired with a store key");
@@ -4012,7 +4019,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     certIdx = 0;
     haveCertSlot = 0;
     if (certId != keyId) {
-        certIdx = FindKeySlot(ctx, certId);
+        certIdx = FindPvtKeyIdx(ctx, certId);
         /* Same mixed-configuration rejection for the x509v3 slot, so a
          * file HostCertificate is never silently destroyed either. */
         if (certIdx != WOLFSSH_MAX_PVT_KEYS &&

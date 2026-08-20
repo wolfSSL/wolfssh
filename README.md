@@ -595,7 +595,9 @@ rejected inside a `Match` block):
 Note that the pre-existing `HostKey` and `HostCertificate` directives are now
 also rejected when they appear after a `Match` block (matching OpenSSH); they
 were previously accepted there and silently ignored, so a config that relied
-on that will now stop the daemon at startup with a parse error.
+on that will now stop the daemon at startup with a parse error. Builds made
+with `WOLFSSH_IGNORE_UNKNOWN_CONFIG` instead log a warning and ignore the
+directive, preserving the old behavior as a migration path.
 
 Without FPKI, a client certificate is bound to the requested account by a
 case-insensitive subject CN match only; keep the trusted CA set narrow. Note

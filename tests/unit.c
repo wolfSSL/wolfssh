@@ -12359,11 +12359,14 @@ done:
  * WOLFSSH_TEST_INTERNAL section. Each carries its own feature guard;
  * WOLFSSH_TEST_CERTMAN_PROMOTE still implies WOLFSSH_TEST_INTERNAL. */
 
-/* Guard by the actual users -- the promote tests and the root-CA half of
- * test_SetCertManager() -- to avoid -Wunused-function. */
+/* Guard by the actual users -- the promote tests, the root-CA half of
+ * test_SetCertManager(), and test_ParseECCPubKeyCert() -- to avoid
+ * -Wunused-function. */
 #if defined(WOLFSSH_TEST_CERTMAN_PROMOTE) || \
     (defined(WOLFSSH_TEST_SET_CERTMAN) && \
-     defined(WOLFSSH_TEST_CERTMAN_ROOTCA))
+     defined(WOLFSSH_TEST_CERTMAN_ROOTCA)) || \
+    (defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS) && \
+     !defined(NO_FILESYSTEM) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
 
 /* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
 static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
@@ -12413,7 +12416,9 @@ static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
 }
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE ||
-        * (WOLFSSH_TEST_SET_CERTMAN && WOLFSSH_TEST_CERTMAN_ROOTCA) */
+        * (WOLFSSH_TEST_SET_CERTMAN && WOLFSSH_TEST_CERTMAN_ROOTCA) ||
+        * (WOLFSSH_TEST_INTERNAL && WOLFSSH_CERTS && !NO_FILESYSTEM &&
+        *  !WOLFSSH_NO_ECDSA_SHA2_NISTP256) */
 
 #ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
 
@@ -15008,42 +15013,6 @@ static int test_ParseECCPubKey(void)
 
 #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM)
 
-/* Read a whole file into a freshly malloc'd buffer. Caller frees *buf. */
-static int loadFileIntoBuffer(const char* fn, byte** buf, word32* bufSz)
-{
-    FILE* f;
-    long sz;
-    size_t rd;
-
-    *buf = NULL;
-    *bufSz = 0;
-
-    f = fopen(fn, "rb");
-    if (f == NULL)
-        return -1;
-    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) <= 0 ||
-            fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return -1;
-    }
-    *buf = (byte*)malloc((size_t)sz);
-    if (*buf == NULL) {
-        fclose(f);
-        return -1;
-    }
-    rd = fread(*buf, 1, (size_t)sz, f);
-    fclose(f);
-    if (rd != (size_t)sz) {
-        free(*buf);
-        *buf = NULL;
-        return -1;
-    }
-    *bufSz = (word32)sz;
-
-    return 0;
-}
-
-
 /* Big-endian word32 store; c32toa is WOLFSSH_LOCAL and not linkable here. */
 static void certChainPut32(word32 v, byte* c)
 {
@@ -15077,8 +15046,8 @@ static int test_ParseECCPubKeyCert(void)
     int ret;
     static const char algoName[] = "x509v3-ecdsa-sha2-nistp256";
 
-    if (loadFileIntoBuffer("./keys/ca-cert-ecc.der", &ca, &caSz) != 0 ||
-            loadFileIntoBuffer("./keys/server-cert.der", &cert, &certSz)
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &ca, &caSz) != 0 ||
+            certmanLoadFile("./keys/server-cert.der", &cert, &certSz)
                 != 0) {
         printf("ParseECCPubKeyCert: SKIP, ./keys certs not readable\n");
         free(ca);
@@ -15165,7 +15134,7 @@ static int test_ParseECCPubKeyCert(void)
     return result;
 }
 
-#endif /* WOLFSSH_CERTS && !WOLFSSL_FPKI && !NO_FILESYSTEM */
+#endif /* WOLFSSH_CERTS && !NO_FILESYSTEM */
 
 #endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 

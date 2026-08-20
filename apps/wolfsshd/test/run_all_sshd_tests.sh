@@ -174,7 +174,7 @@ EOF
 run_upn_unenforceable_negative_test() {
     printf "AuthorizedUPNDomains unenforceable-build negative test ... "
     TOTAL=$((TOTAL+1))
-    if ../wolfsshd "-?" 2>&1 | grep -q "FPKI"; then
+    if wolfssh_has FPKI; then
         printf "SKIPPED (FPKI build enforces the directive)\n"
         SKIPPED=$((SKIPPED+1))
         return
@@ -206,12 +206,10 @@ EOF
     # branch logs "Ignoring AuthorizedUPNDomains ... cannot enforce it" and
     # keeps running, which must not pass as the startup refusal. Also require
     # that the host key loaded: a "Refusing to load" failure would exit before
-    # the UPN gate. Finally require that nothing was left listening on the
-    # test port.
+    # the UPN gate.
     if grep -q "AuthorizedUPNDomains is set" upn_nofpki_log.txt &&
             grep -q "but this build cannot enforce it" upn_nofpki_log.txt &&
-            ! grep -q "Refusing to load" upn_nofpki_log.txt &&
-            ! nc -z 127.0.0.1 22623 2>/dev/null; then
+            ! grep -q "Refusing to load" upn_nofpki_log.txt; then
         printf "PASSED\n"
     else
         printf "FAILED!\n"

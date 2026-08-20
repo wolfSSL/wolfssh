@@ -25,6 +25,23 @@
  */
 
 
+/* SignWithCertStoreKey() uses Vista-only CNG/NCrypt declarations
+ * (HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, NCryptSignHash); mingw-w64 has
+ * historically defaulted _WIN32_WINNT to pre-Vista, so raise the floor
+ * before the first header that pulls in <windows.h> (wolfssh/ssh.h via
+ * port.h does). Same rules as the pin in src/ssh.c: the undefined case is
+ * raised only under mingw, since MSVC's SDK defaults an undefined
+ * _WIN32_WINNT to its newest profile, and WINVER is pinned alongside so
+ * the two cannot disagree. */
+#if defined(_WIN32) && \
+    ((defined(__MINGW32__) && !defined(_WIN32_WINNT)) || \
+     (defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0600))
+    #undef  _WIN32_WINNT
+    #define _WIN32_WINNT 0x0600
+    #undef  WINVER
+    #define WINVER 0x0600
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -84,21 +101,22 @@
     #include <windows.h>
     #include <wincrypt.h>
     #include <ncrypt.h>
-    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
-        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
-    #endif
-    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
-        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
-    #endif
+    /* Fallbacks for SDKs that predate these wincrypt.h/ncrypt.h
+     * definitions. The values must match the SDK headers exactly. */
     #ifndef CERT_NCRYPT_KEY_SPEC
         #define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
+    #endif
+    #ifndef CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
+        #define CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG 0x00040000
     #endif
     #ifndef BCRYPT_PAD_PKCS1
         #define BCRYPT_PAD_PKCS1 0x00000002
     #endif
 
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
         byte** outDer, word32* outDerSz, void* heap);
+#endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 #ifdef NO_INLINE
@@ -2777,8 +2795,10 @@ static int SetHostCertificate(WOLFSSH_CTX* ctx,
 
 
 #if defined(WOLFSSH_WINDOWS_CERT_STORE) && defined(WOLFSSH_CERTS)
-/* Index of the claimed slot holding fmt, or WOLFSSH_MAX_PVT_KEYS. */
-static word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt)
+/* Index of the claimed slot holding fmt, or WOLFSSH_MAX_PVT_KEYS. Shared
+ * with the cert-store slot bookkeeping in src/ssh.c so the two lookups
+ * cannot drift. */
+WOLFSSH_LOCAL word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt)
 {
     word32 i;
 
@@ -11392,16 +11412,27 @@ static int DoChannelOpen(WOLFSSH* ssh,
                             ssh->channelOpenCtx);
                 }
                 else {
-                    /* Fires per channel open, so DEBUG: at WARN an app that
-                     * logs warnings unconditionally (e.g. wolfsshd) would let
-                     * a peer grow the log with every open request. The
+                    /* Fires per channel open and announces a fail-open
+                     * policy, so WARN once per session (visible in release
+                     * builds) and DEBUG for the repeats, so a peer cannot
+                     * grow the log with every open request. The
                      * accept-by-default policy itself is documented at
                      * wolfSSH_CTX_SetChannelOpenCb() in ssh.h. */
-                    WLOG(WS_LOG_DEBUG, "No channel open callback set "
-                            "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
-                            "channel open by default; typeId=%u, "
-                            "peerChannelId=%u",
-                            (word32)typeId, peerChannelId);
+                    if (!ssh->chanOpenCbMissingWarned) {
+                        ssh->chanOpenCbMissingWarned = 1;
+                        WLOG(WS_LOG_WARN, "No channel open callback set "
+                                "(call wolfSSH_CTX_SetChannelOpenCb()), "
+                                "accepting channel open by default; "
+                                "typeId=%u, peerChannelId=%u",
+                                (word32)typeId, peerChannelId);
+                    }
+                    else {
+                        WLOG(WS_LOG_DEBUG, "No channel open callback set "
+                                "(call wolfSSH_CTX_SetChannelOpenCb()), "
+                                "accepting channel open by default; "
+                                "typeId=%u, peerChannelId=%u",
+                                (word32)typeId, peerChannelId);
+                    }
                 }
                 if (ssh->channelListSz == 0)
                     ssh->defaultPeerChannelId = peerChannelId;
@@ -14439,17 +14470,10 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
                     INVALID_DEVID);
             scratch = 0;
-        #ifdef WOLFSSH_TPM
-            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
-                /* No private key in RAM; take the public point from the TPM. */
-                ret = wolfTPM2_EccKey_TpmToWolf(ssh->ctx->tpmDev,
-                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.ecc.key);
-                if (ret != 0)
-                    ret = WS_ECC_E;
-            }
-            else
-        #endif /* WOLFSSH_TPM */
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+            /* A slot is never both cert-store and TPM backed; testing the
+             * cert store first matches the RSA case above and both SignH*
+             * helpers. */
             if (ret == 0 && IsCertStoreKey(&ssh->ctx->privateKey[keyIdx])) {
                 /* For cert store keys, extract the ECC public key from the
                  * DER certificate.  Signing uses the cert store handle via
@@ -14488,6 +14512,16 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             }
             else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+        #ifdef WOLFSSH_TPM
+            if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
+                /* No private key in RAM; take the public point from the TPM. */
+                ret = wolfTPM2_EccKey_TpmToWolf(ssh->ctx->tpmDev,
+                        ssh->ctx->tpmKey, &sigKeyBlock_ptr->sk.ecc.key);
+                if (ret != 0)
+                    ret = WS_ECC_E;
+            }
+            else
+        #endif /* WOLFSSH_TPM */
             if (ret == 0)
                 ret = wc_EccPrivateKeyDecode(ssh->ctx->privateKey[keyIdx].key,
                         &scratch, &sigKeyBlock_ptr->sk.ecc.key,
@@ -15689,6 +15723,10 @@ static int KeyAgreeEcdhMlKem_server(WOLFSSH* ssh, byte hashId,
 
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Every caller of these helpers sits in an RSA- or ECDSA-only region, so
+ * guard them the same way to avoid unused-static warnings on a build with
+ * both disabled (a degenerate combination the store loader rejects). */
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 /* Extract DER-encoded public key from a DER certificate.
  * Caller must WFREE(*outDer, heap, DYNTYPE_PUBKEY) on success.
  * Returns WS_SUCCESS on success, otherwise a WS_ error code. */
@@ -16076,6 +16114,7 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
     WLOG(WS_LOG_DEBUG, "Leaving SignWithCertStoreKey(), ret = %d", ret);
     return ret;
 }
+#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
 

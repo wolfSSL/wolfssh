@@ -1159,12 +1159,10 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
 #ifdef WOLFSSH_TEST_HEX2BIN
 
 /* Included unconditionally, and before the fallback below defines the
- * Base16_Decode macro: coding.h self-defines WOLFSSL_BASE16 for several
- * configurations, so this also makes the #if below see the real value, and
- * a later transitive include of coding.h (e.g. via wolfssl/ssl.h in
- * OPENSSL_EXTRA builds) is then an include-guard no-op instead of having
- * its Base16_Decode declaration rewritten by the macro into a conflicting
- * WS_Base16_Decode declaration. */
+ * Base16_Decode macro: a later transitive include of coding.h (e.g. via
+ * wolfssl/ssl.h in OPENSSL_EXTRA builds) is then an include-guard no-op
+ * instead of having its Base16_Decode declaration rewritten by the macro
+ * into a conflicting WS_Base16_Decode declaration. */
 #include <wolfssl/wolfcrypt/coding.h>
 
 /* Use the local fallback whenever wolfSSL will not supply Base16_Decode:

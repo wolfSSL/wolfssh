@@ -3104,8 +3104,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* cipherList = NULL;
     ES_HEAP_HINT* heap = NULL;
     #ifdef WOLFSSH_TPM
-        static char* tpmKeyPath = NULL;
-        static char* tpmHostKeyPath = NULL;
+        char* tpmKeyPath = NULL;
+        char* tpmHostKeyPath = NULL;
     #endif
     int multipleConnections = 1;
     int userEcc = 0;
@@ -3276,20 +3276,22 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
+#if defined(WOLFSSH_TPM) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+    /* Both register a host key on the same CTX; loading both would leave
+     * which key the server presents up to algorithm negotiation. The SFTP
+     * client and wolfsshd reject the equivalent mixes the same way.
+     * Checked before wc_InitMutex(&doneLock) so ES_ERROR's return path
+     * does not leak an initialized mutex. */
+    if (tpmHostKeyPath != NULL && certStoreSpec != NULL) {
+        ES_ERROR("-W cannot be combined with -G\n");
+    }
+#endif
+
     wc_InitMutex(&doneLock);
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
         ES_ERROR("Use -N when testing forced non-blocking\n");
-    }
-#endif
-
-#if defined(WOLFSSH_TPM) && defined(WOLFSSH_WINDOWS_CERT_STORE)
-    /* Both register a host key on the same CTX; loading both would leave
-     * which key the server presents up to algorithm negotiation. The SFTP
-     * client and wolfsshd reject the equivalent mixes the same way. */
-    if (tpmHostKeyPath != NULL && certStoreSpec != NULL) {
-        ES_ERROR("-W cannot be combined with -G\n");
     }
 #endif
 
