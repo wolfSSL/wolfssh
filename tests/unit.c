@@ -94,6 +94,18 @@
 #define WOLFSSH_TEST_PREAD_PWRITE
 #endif
 
+/* The SFTP put regression drives a client session over a scratch file, so it
+ * needs mkstemp() and a mounted filesystem. */
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(NO_FILESYSTEM) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(FREESCALE_MQX) && !defined(MICROCHIP_MPLAB_HARMONY) && \
+    !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_FATFS)
+#include <stdlib.h>
+#include <unistd.h>
+#define WOLFSSH_TEST_SFTP_PUT
+#endif
+
 /* A port whose seek type cannot reach 4 GiB rejects the offset instead of
  * truncating it. Needs a mounted filesystem for the scratch file. */
 #if defined(WOLFSSH_ZEPHYR) && !defined(NO_FILESYSTEM) && \
@@ -15468,6 +15480,132 @@ static int test_SftpClientRecvInitVersion(void)
 
     return 0;
 }
+
+
+#ifdef WOLFSSH_TEST_SFTP_PUT
+/* Builds an SFTP reply in "out": the 9 byte header carrying the request id
+ * where a VERSION message carries the version, then payloadSz trailing bytes
+ * for the caller to fill. Returns the size written, or 0 if it does not fit. */
+static word32 SftpBuildReply(byte* out, word32 outSz, byte type, word32 reqId,
+        word32 payloadSz)
+{
+    return SftpBuildVersion(out, outSz, MSG_ID_SZ + UINT32_SZ + payloadSz,
+            type, reqId, payloadSz);
+}
+
+
+/* Drives wolfSSH_SFTP_Put() over a staged handle reply and a write answered by
+ * an FXP_STATUS carrying the request id "openId + writeIdOfst". Returns 0, or
+ * a negative sentinel on a setup failure. */
+static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
+        int* stateFreed)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    char   tmpFile[] = "/tmp/wolfssh_sftp_putXXXXXX";
+    char   remote[] = "put_target";
+    byte   reply[WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3)];
+    word32 replySz;
+    word32 openId = 0;
+    int    result;
+    int    fd;
+
+    *putRet     = WS_SUCCESS;
+    *putErr     = WS_SUCCESS;
+    *stateFreed = 0;
+
+    fd = mkstemp(tmpFile);
+    if (fd == -1)
+        return -990;
+    if (write(fd, "0123456789", 10) != 10) {
+        close(fd);
+        unlink(tmpFile);
+        return -991;
+    }
+    close(fd);
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result == 0) {
+        ssh->sftpState = SFTP_DONE;
+        ssh->channelList->peerWindowSz = 4096;
+        ssh->channelList->peerMaxPacketSz = 1024;
+        openId = ssh->reqId;
+
+        /* answer the remote open with a one byte handle */
+        replySz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_HANDLE,
+                openId, UINT32_SZ + 1);
+        if (replySz > 0) {
+            /* the trailing bytes open with the handle string length */
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+        }
+        if (replySz == 0 || wolfSSH_TestChannelPutData(ssh->channelList,
+                    reply, replySz) != WS_SUCCESS) {
+            result = -992;
+        }
+    }
+    if (result == 0) {
+        /* reject the write; the message and language tags are empty */
+        replySz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_STATUS,
+                openId + writeIdOfst, UINT32_SZ * 3);
+        if (replySz > 0) {
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER, (word32)WOLFSSH_FTP_FAILURE);
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ, 0);
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER + (UINT32_SZ * 2), 0);
+        }
+        if (replySz == 0 || wolfSSH_TestChannelPutData(ssh->channelList,
+                    reply, replySz) != WS_SUCCESS) {
+            result = -993;
+        }
+    }
+    if (result == 0) {
+        *putRet     = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+        *putErr     = wolfSSH_get_error(ssh);
+        *stateFreed = (ssh->putState == NULL);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    unlink(tmpFile);
+
+    return result;
+}
+
+
+/* An upload whose write is rejected must report the failure. A status failure
+ * surfaces as WS_SFTP_STATUS_NOT_OK; a reply with the wrong request id keeps
+ * the more specific error the send path recorded. */
+static int test_SftpClientPutWriteStatusFail(void)
+{
+    int rc;
+    int putRet;
+    int putErr;
+    int stateFreed;
+
+    /* the server rejects the write */
+    rc = SftpClientDrivePutFail(1, &putRet, &putErr, &stateFreed);
+    if (rc != 0)
+        return rc;
+    if (putRet != WS_FATAL_ERROR)
+        return -994;
+    if (putErr != WS_SFTP_STATUS_NOT_OK)
+        return -995;
+    if (!stateFreed)
+        return -996;
+
+    /* the reply answers a request id the client never sent */
+    rc = SftpClientDrivePutFail(2, &putRet, &putErr, &stateFreed);
+    if (rc != 0)
+        return rc;
+    if (putRet != WS_FATAL_ERROR)
+        return -997;
+    if (putErr != WS_SFTP_BAD_REQ_ID)
+        return -998;
+    if (!stateFreed)
+        return -999;
+
+    return 0;
+}
+#endif /* WOLFSSH_TEST_SFTP_PUT */
 #endif /* NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_SFTP */
 
@@ -16586,6 +16724,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("SftpClientRecvInitVersion: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_SFTP_PUT
+    unitResult = test_SftpClientPutWriteStatusFail();
+    printf("SftpClientPutWriteStatusFail: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 #endif
 
