@@ -4640,16 +4640,23 @@ static int smChmod(const char* path, mode_t mode)
 
 /* open 'path' through the secure gate and immediately close it, returning the
  * gate's verdict so a scenario can assert acceptance or rejection */
-static int smOpen(const char* path, WUID_T ownerUid, int rejectReadable)
+static int smOpenEx(const char* path, WUID_T ownerUid, int rejectReadable,
+        int relaxPerms)
 {
     WFILE* f = WBADFILE;
-    int ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable, NULL, &f);
+    int ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable,
+            relaxPerms, NULL, &f);
 
     if (ret == WS_SUCCESS && f != WBADFILE) {
         /* read-only handle; a close failure has no bearing on the verdict */
         (void)WFCLOSE(NULL, f);
     }
     return ret;
+}
+
+static int smOpen(const char* path, WUID_T ownerUid, int rejectReadable)
+{
+    return smOpenEx(path, ownerUid, rejectReadable, 0 /* relaxPerms */);
 }
 
 static int test_OpenSecureFile(void)
@@ -4815,6 +4822,43 @@ static int test_OpenSecureFile(void)
     }
     if (ret == WS_SUCCESS) {
         ret = smExpect("NULL path rejected", smOpen(NULL, uid, 0), 0);
+    }
+
+    /* relaxPerms: ownership, modes and directories are the platform's, but the
+     * structural checks still hold. Only wolfsshd's host key load sets this,
+     * and only where WOLFSSHD_HOSTKEY_RELAX_PERMS is on. */
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0666);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: world-writable host key accepted",
+            smOpenEx(hostkey, uid, 1, 1), 1);
+    }
+    /* No uid != 0 guard: relaxPerms ignores ownerUid, so this holds as root. */
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: wrong owner accepted",
+            smOpenEx(hostkey, uid + 1, 1, 1), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(hostkey, 0600);
+    if (ret == WS_SUCCESS)
+        ret = smChmod(wopen, 0777);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: world-writable ancestor accepted",
+            smOpenEx(wopenKeys, uid, 1, 1), 1);
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(wopen, 0700);
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: symlinked leaf still rejected",
+            smOpenEx(linkKeys, uid, 1, 1), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: directory target still rejected",
+            smOpenEx(ssh, uid, 1, 1), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("relaxed: missing file still rejected",
+            smOpenEx("/tmp/wolfsshd_sm_dne_xyz", uid, 1, 1), 0);
     }
 
     /* cleanup */

@@ -106,7 +106,7 @@ int wolfSSHD_GetHomeDirectory(WOLFSSHD_AUTH* auth, WOLFSSH* ssh, WCHAR* out, int
  * and the trust-anchor loads in wolfsshd.c (host key, host cert, user CA keys).
  * See the definition in auth.c for the meaning of each argument. */
 int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
-    int rejectReadable, void* heap, WFILE** out);
+    int rejectReadable, int relaxPerms, void* heap, WFILE** out);
 
 /* classifies a loaded host private key buffer as OpenSSH or ASN1/DER.
  * *keyDer is a WMALLOC'd (heap, DYNTYPE_SSHD) buffer to WS_FORCEZERO +
