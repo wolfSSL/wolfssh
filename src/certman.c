@@ -45,6 +45,42 @@
 #include <wolfssh/internal.h>
 #include <wolfssh/certman.h>
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #include <stdlib.h>
+    #include <errno.h>
+    #include <windows.h>
+    #include <wincrypt.h>
+    #ifndef CERT_SYSTEM_STORE_LOCATION_MASK
+        #define CERT_SYSTEM_STORE_LOCATION_MASK 0x00FF0000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCATION_SHIFT
+        #define CERT_SYSTEM_STORE_LOCATION_SHIFT 16
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER
+        #define CERT_SYSTEM_STORE_CURRENT_USER 0x00010000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE 0x00020000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_USERS
+        #define CERT_SYSTEM_STORE_USERS 0x00060000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_SERVICE
+        #define CERT_SYSTEM_STORE_CURRENT_SERVICE 0x00040000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_SERVICES
+        #define CERT_SYSTEM_STORE_SERVICES 0x00050000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY 0x00070000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY 0x00080000
+    #endif
+    #ifndef CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE
+        #define CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE 0x00090000
+    #endif
+#endif
 
 #ifdef WOLFSSH_CERTS
 
@@ -83,6 +119,63 @@ struct WOLFSSH_CERTMAN {
     void* heap;
     WOLFSSL_CERT_MANAGER* cm;
 };
+
+
+/* used to import an external cert manager, frees and replaces existing manager
+ * returns WS_SUCCESS on success
+ */
+int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
+{
+#if LIBWOLFSSL_VERSION_HEX < WOLFSSL_V4_6_0
+    WOLFSSH_UNUSED(ctx);
+    WOLFSSH_UNUSED(cm);
+
+    WLOG(WS_LOG_CERTMAN, "Importing a cert manager needs wolfSSL 4.6.0");
+    return WS_NOT_COMPILED;
+#else
+    if (ctx == NULL || cm == NULL || ctx->certMan == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* importing the manager already in use is a no-op beyond the policy;
+     * the OCSP policy below is still (re)applied so the documented side
+     * effect holds even when the same manager is imported twice */
+    if (ctx->certMan->cm != cm) {
+        /* Take the reference before mutating the caller's manager so a
+         * WS_FATAL_ERROR return always means nothing changed: on an OCSP
+         * policy failure below the reference is released again and the
+         * caller's manager keeps its previous policy. */
+        if (wolfSSL_CertManager_up_ref(cm) != WOLFSSL_SUCCESS) {
+            WLOG(WS_LOG_CERTMAN, "Failed to increment cert manager reference");
+            return WS_FATAL_ERROR;
+        }
+    }
+
+#ifdef HAVE_OCSP
+    /* an imported manager gets the same policy _CertMan_init() applies, and
+     * is rejected if it can't, rather than silently skipping revocation */
+    if (wolfSSL_CertManagerEnableOCSP(cm, WOLFSSL_OCSP_CHECKALL)
+            != WOLFSSL_SUCCESS) {
+        WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP on imported cert manager");
+        if (ctx->certMan->cm != cm) {
+            /* drop the reference taken above */
+            wolfSSL_CertManagerFree(cm);
+        }
+        return WS_FATAL_ERROR;
+    }
+#endif
+
+    if (ctx->certMan->cm != cm) {
+        /* free up existing cm if present */
+        if (ctx->certMan->cm != NULL) {
+            wolfSSL_CertManagerFree(ctx->certMan->cm);
+        }
+        ctx->certMan->cm = cm;
+    }
+
+    return WS_SUCCESS;
+#endif
+}
 
 
 static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
@@ -643,5 +736,256 @@ static int CheckProfile(DecodedCert* cert, int profile)
     return valid;
 }
 #endif /* WOLFSSH_NO_FPKI */
+
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Returns 1 when dwFlags is exactly one assigned CERT_SYSTEM_STORE_*
+ * location with no control flags set, 0 otherwise. Location ids 1, 2 and
+ * 4..9 are assigned in wincrypt.h; 3 and 10..255 are not, and CertOpenStore
+ * fails opaquely on them. */
+int wolfSSH_CertStoreLocationValid(word32 dwFlags)
+{
+    word32 id;
+
+    if ((dwFlags & ~(word32)CERT_SYSTEM_STORE_LOCATION_MASK) != 0) {
+        return 0;
+    }
+    id = dwFlags >> CERT_SYSTEM_STORE_LOCATION_SHIFT;
+    return id == 1 || id == 2 || (id >= 4 && id <= 9);
+}
+
+
+/* The one name-to-value table for CERT_SYSTEM_STORE_* locations, shared by
+ * wolfSSH_ParseCertStoreSpec() and wolfsshd's HostKeyStoreFlags and
+ * wolfSSH_WinUserDwFlags parsing so the accepted spellings cannot drift. */
+static const struct {
+    const char* shortName;
+    const char* longName;
+    word32 value;
+} certStoreLocations[] = {
+    { "CURRENT_USER", "CERT_SYSTEM_STORE_CURRENT_USER",
+      (word32)CERT_SYSTEM_STORE_CURRENT_USER },
+    { "LOCAL_MACHINE", "CERT_SYSTEM_STORE_LOCAL_MACHINE",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE },
+    { "USERS", "CERT_SYSTEM_STORE_USERS",
+      (word32)CERT_SYSTEM_STORE_USERS },
+    { "CURRENT_SERVICE", "CERT_SYSTEM_STORE_CURRENT_SERVICE",
+      (word32)CERT_SYSTEM_STORE_CURRENT_SERVICE },
+    { "SERVICES", "CERT_SYSTEM_STORE_SERVICES",
+      (word32)CERT_SYSTEM_STORE_SERVICES },
+    { "CURRENT_USER_GROUP_POLICY",
+      "CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY",
+      (word32)CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY },
+    { "LOCAL_MACHINE_GROUP_POLICY",
+      "CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY },
+    { "LOCAL_MACHINE_ENTERPRISE",
+      "CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE",
+      (word32)CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE },
+};
+
+
+/* Parse a Windows system-store location, given as a CERT_SYSTEM_STORE_* name
+ * (long or short form) or as a number in strtoul() base 0 form, so both 65536
+ * and 0x00010000 work. The number must be consumed whole and start with a
+ * digit: strtoul()'s leading whitespace and sign handling is rejected so a
+ * config typo such as "-0xFFFF0000" cannot wrap to a valid location. Only
+ * location bits are accepted; anything else is either not a location or a
+ * control flag (e.g. CERT_STORE_DELETE_FLAG) that would make CertOpenStore
+ * destructive. Returns WS_SUCCESS on success. */
+int wolfSSH_CertStoreLocationFromName(const char* in, word32* out)
+{
+    int ret = WS_BAD_ARGUMENT;
+    word32 i;
+    unsigned long val;
+    char* end;
+
+    if (in == NULL || out == NULL || *in == '\0') {
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < (word32)(sizeof(certStoreLocations) /
+            sizeof(*certStoreLocations)); i++) {
+        if (WSTRCMP(in, certStoreLocations[i].shortName) == 0 ||
+                WSTRCMP(in, certStoreLocations[i].longName) == 0) {
+            *out = certStoreLocations[i].value;
+            ret = WS_SUCCESS;
+            break;
+        }
+    }
+
+    if (ret != WS_SUCCESS && *in >= '0' && *in <= '9') {
+        end = NULL;
+        errno = 0;
+        val = strtoul(in, &end, 0);
+        if (end != in && *end == '\0' && errno != ERANGE &&
+                wolfSSH_CertStoreLocationValid((word32)val) &&
+                val == (unsigned long)(word32)val) {
+            *out = (word32)val;
+            ret = WS_SUCCESS;
+        }
+    }
+
+    return ret;
+}
+
+
+/* Parse a cert store spec string "store:subject[:flags]" into wide-string
+ * components.  The spec is split at the first ':' for the store name and at
+ * the next one for the flags, so neither the store name nor the subject may
+ * contain a ':'; a spec with a third ':' is rejected.  "My:CN=host:65536" is
+ * therefore store "My", subject "CN=host", flags 65536, never a two-field
+ * spec with a ':' in the subject.  Allocates wStoreName and wSubjectName;
+ * caller releases them with wolfSSH_FreeCertStoreSpec().  On success dwFlags
+ * is set to the parsed flags value, on failure it is left alone.
+ * Returns WS_SUCCESS on success. */
+int wolfSSH_ParseCertStoreSpec(const char* spec,
+        wchar_t** wStoreName, wchar_t** wSubjectName,
+        word32* dwFlags, void* heap)
+{
+    char* specCopy = NULL;
+    char* storeName = NULL;
+    char* subjectName = NULL;
+    char* flagsStr = NULL;
+    word32 flags;
+    int wStoreNameLen, wSubjectNameLen;
+    size_t specLen;
+
+    /* NULL every supplied out-pointer before any failure return, including
+     * the argument rejections below, so the documented "out-pointers are
+     * NULL on failure" contract holds even when only one argument is bad. */
+    if (wStoreName != NULL) {
+        *wStoreName = NULL;
+    }
+    if (wSubjectName != NULL) {
+        *wSubjectName = NULL;
+    }
+    if (wStoreName == NULL || wSubjectName == NULL || dwFlags == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    if (spec == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    flags = CERT_SYSTEM_STORE_CURRENT_USER;
+
+    specLen = WSTRLEN(spec) + 1;
+    specCopy = (char*)WMALLOC(specLen, heap, DYNTYPE_TEMP);
+    if (specCopy == NULL)
+        return WS_MEMORY_E;
+    WSTRNCPY(specCopy, spec, specLen);
+
+    /* Parse "store:subject:flags" */
+    storeName = specCopy;
+    subjectName = WSTRCHR(storeName, ':');
+    if (subjectName != NULL) {
+        *subjectName++ = '\0';
+        flagsStr = WSTRCHR(subjectName, ':');
+        if (flagsStr != NULL) {
+            *flagsStr++ = '\0';
+            if (*flagsStr == '\0') {
+                WLOG(WS_LOG_CERTMAN,
+                        "Cert store spec has an empty flags field; expected "
+                        "store:subject[:flags]");
+                WFREE(specCopy, heap, DYNTYPE_TEMP);
+                return WS_BAD_ARGUMENT;
+            }
+            if (WSTRCHR(flagsStr, ':') != NULL) {
+                WLOG(WS_LOG_CERTMAN,
+                        "Cert store spec has too many ':'-separated fields; "
+                        "expected store:subject[:flags]");
+                WFREE(specCopy, heap, DYNTYPE_TEMP);
+                return WS_BAD_ARGUMENT;
+            }
+            /* Accept the same spellings as wolfsshd's HostKeyStoreFlags and
+             * wolfSSH_WinUserDwFlags so one name works everywhere; the
+             * shared parser also handles the numeric location forms and
+             * rejects control flags. */
+            if (wolfSSH_CertStoreLocationFromName(flagsStr, &flags)
+                    != WS_SUCCESS) {
+                WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value "
+                        "'%s'; expected store:subject[:flags] with a "
+                        "CERT_SYSTEM_STORE_* name or store location number",
+                        flagsStr);
+                WFREE(specCopy, heap, DYNTYPE_TEMP);
+                return WS_BAD_ARGUMENT;
+            }
+        }
+    }
+
+    if (subjectName == NULL || *storeName == '\0' ||
+            *subjectName == '\0') {
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* Convert to wide strings. MB_ERR_INVALID_CHARS makes a non-UTF-8 byte
+     * sequence fail here instead of being silently replaced with U+FFFD and
+     * then never matching any certificate CN. */
+    wStoreNameLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            storeName, -1, NULL, 0);
+    wSubjectNameLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            subjectName, -1, NULL, 0);
+
+    if (wStoreNameLen == 0 || wSubjectNameLen == 0) {
+        WLOG(WS_LOG_CERTMAN,
+                "Cert store spec is not valid UTF-8");
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_FATAL_ERROR;
+    }
+
+    *wStoreName = (wchar_t*)WMALLOC(wStoreNameLen * sizeof(wchar_t),
+            heap, DYNTYPE_TEMP);
+    *wSubjectName = (wchar_t*)WMALLOC(wSubjectNameLen * sizeof(wchar_t),
+            heap, DYNTYPE_TEMP);
+
+    if (*wStoreName == NULL || *wSubjectName == NULL) {
+        if (*wStoreName != NULL) {
+            WFREE(*wStoreName, heap, DYNTYPE_TEMP);
+            *wStoreName = NULL;
+        }
+        if (*wSubjectName != NULL) {
+            WFREE(*wSubjectName, heap, DYNTYPE_TEMP);
+            *wSubjectName = NULL;
+        }
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_MEMORY_E;
+    }
+
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, storeName, -1,
+                *wStoreName, wStoreNameLen) == 0 ||
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, subjectName, -1,
+                *wSubjectName, wSubjectNameLen) == 0) {
+        WLOG(WS_LOG_CERTMAN, "Cert store spec wide-string conversion failed");
+        WFREE(*wStoreName, heap, DYNTYPE_TEMP);
+        WFREE(*wSubjectName, heap, DYNTYPE_TEMP);
+        *wStoreName = NULL;
+        *wSubjectName = NULL;
+        WFREE(specCopy, heap, DYNTYPE_TEMP);
+        return WS_FATAL_ERROR;
+    }
+
+    *dwFlags = flags;
+
+    WFREE(specCopy, heap, DYNTYPE_TEMP);
+    return WS_SUCCESS;
+}
+
+
+/* Releases the wide strings allocated by wolfSSH_ParseCertStoreSpec().
+ * Either pointer may be NULL. The heap must match the parse call. */
+void wolfSSH_FreeCertStoreSpec(wchar_t* wStoreName, wchar_t* wSubjectName,
+        void* heap)
+{
+    if (wStoreName != NULL) {
+        WFREE(wStoreName, heap, DYNTYPE_TEMP);
+    }
+    if (wSubjectName != NULL) {
+        WFREE(wSubjectName, heap, DYNTYPE_TEMP);
+    }
+    WOLFSSH_UNUSED(heap);
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 
 #endif /* WOLFSSH_CERTS */

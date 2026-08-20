@@ -220,6 +220,12 @@ AC_ARG_ENABLE([ossh-certs],
     [AS_HELP_STRING([--enable-ossh-certs],[Enable OpenSSH certificate user auth (default: disabled)])],
     [ENABLED_OSSH_CERTS=$enableval],[ENABLED_OSSH_CERTS=no])
 
+# Windows certificate store (host/client keys)
+AC_ARG_ENABLE([windows-cert-store],
+    [AS_HELP_STRING([--enable-windows-cert-store],[Enable Windows certificate store integration for keys (default: disabled)])],
+    [ENABLED_WINDOWS_CERT_STORE=$enableval],
+    [ENABLED_WINDOWS_CERT_STORE=no])
+
 # TPM 2.0 Support
 AC_ARG_ENABLE([tpm],
     [AS_HELP_STRING([--enable-tpm],[Enable TPM 2.0 support (default: disabled)])],
@@ -288,6 +294,31 @@ AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
 AS_IF([test "x$ENABLED_OSSH_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_OSSH_CERTS"])
+dnl Initialize before the feature block so a stray WINCERT_LIBS value in the
+dnl environment is never silently appended to LIBS for an unrelated build.
+WINCERT_LIBS=
+AS_IF([test "x$ENABLED_WINDOWS_CERT_STORE" = "xyes"],
+    [AS_IF([test "x$ENABLED_CERTS" != "xyes"],
+        [AC_MSG_ERROR([--enable-windows-cert-store requires X.509 cert support (--enable-certs)])])
+     AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_WINDOWS_CERT_STORE"
+     dnl Only the mingw triplets define _WIN32, which wolfssh/internal.h
+     dnl requires. MSYS/Cygwin toolchains do not.
+     dnl Accumulate the libraries in WINCERT_LIBS; they are appended to LIBS
+     dnl after the remaining AC_CHECK_LIB/AX_HARDEN_CC_COMPILER_FLAGS probes
+     dnl so a missing libncrypt cannot make those probes fail with unrelated
+     dnl error messages.
+     AS_CASE([$host],
+         [*mingw*],[WINCERT_LIBS="-lcrypt32 -lncrypt"],
+         [AC_MSG_ERROR([--enable-windows-cert-store is only supported on _WIN32 Windows hosts (mingw)])])
+     dnl Fail at configure time, not first link, when the SDK headers are
+     dnl absent. The link libraries are stock mingw import libs, so probing
+     dnl the headers is enough and keeps working without a cross-built
+     dnl wolfSSL installed.
+     AC_CHECK_HEADERS([windows.h],,
+         [AC_MSG_ERROR([windows.h not found; --enable-windows-cert-store needs the Windows SDK headers])])
+     AC_CHECK_HEADERS([wincrypt.h ncrypt.h],,
+         [AC_MSG_ERROR([wincrypt.h/ncrypt.h not found; --enable-windows-cert-store needs the Windows SDK headers])],
+         [[#include <windows.h>]])])
 AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
 AS_IF([test "x$ENABLED_NONE_CIPHER" = "xyes"],
@@ -345,7 +376,12 @@ AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
                  keys/server-key-rsa.der:keys/server-key-rsa.der
                  keys/server-key-ecc.der:keys/server-key-ecc.der
                  keys/server-key-ecc-521.der:keys/server-key-ecc-521.der
-                 keys/server-key-ed25519.der:keys/server-key-ed25519.der])
+                 keys/server-key-ed25519.der:keys/server-key-ed25519.der
+                 keys/ca-cert-ecc.der:keys/ca-cert-ecc.der
+                 keys/ca-key-ecc.der:keys/ca-key-ecc.der
+                 keys/server-cert.der:keys/server-cert.der
+                 keys/fred-cert.der:keys/fred-cert.der
+                 keys/fred-key.der:keys/fred-key.der])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
@@ -365,6 +401,8 @@ AM_CONDITIONAL([BUILD_TPM],[test "x$ENABLED_TPM" = "xyes"])
 AM_CONDITIONAL([BUILD_KEYBOARD_INTERACTIVE],[test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"])
 
 AX_HARDEN_CC_COMPILER_FLAGS
+
+AS_IF([test -n "$WINCERT_LIBS"],[LIBS="$LIBS $WINCERT_LIBS"])
 
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
@@ -413,4 +451,5 @@ AS_ECHO(["   * TPM 2.0 support:           $ENABLED_TPM"])
 AS_ECHO(["   * TCP/IP Forwarding:         $ENABLED_FWD"])
 AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
 AS_ECHO(["   * OpenSSH Certs:             $ENABLED_OSSH_CERTS"])
+AS_ECHO(["   * Windows cert store:        $ENABLED_WINDOWS_CERT_STORE"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])

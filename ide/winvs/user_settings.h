@@ -58,6 +58,28 @@
     #define WOLFSSH_CERTS
 #endif
 
+/* Host and user keys held in the MS Certificate Store. Needs WOLFSSH_CERTS
+ * above, and the projects link crypt32.lib and ncrypt.lib for it. Left
+ * commented rather than behind a disabled preprocessor block so enabling
+ * the X.509 block above does not silently pull it in (and so CI's global
+ * block-enabling sed cannot flip it either).
+ *
+ * #undef  WOLFSSH_WINDOWS_CERT_STORE
+ * #define WOLFSSH_WINDOWS_CERT_STORE
+ *
+ * An RSA certificate store key is offered as "x509v3-ssh-rsa", which RFC 6187
+ * signs with SHA-1, so that combination also needs
+ *   #define WOLFSSH_NO_SHA1_SOFT_DISABLE
+ * here and, in wolfSSL's user_settings.h,
+ *   #define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA
+ * ECDSA certificate store keys need neither.
+ *
+ * The store lookup rejects a CN match whose certificate is expired or not
+ * yet valid when no time-valid one exists; define
+ *   #define WOLFSSH_CERT_STORE_ALLOW_EXPIRED
+ * to select such a certificate anyway (the fallback is logged).
+ */
+
 
 /* default SSHD options */
 #if 0

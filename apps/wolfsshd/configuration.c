@@ -87,6 +87,11 @@ struct WOLFSSHD_CONFIG {
     char* hostKeyFile;
     char* hostCertFile;
     char* userCAKeysFile;
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+    char* hostKeyStore;
+    char* hostKeyStoreSubject;
+    char* hostKeyStoreFlags;
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
     char* hostKeyAlgos;
     char* kekAlgos;
     char* listenAddress;
@@ -94,6 +99,11 @@ struct WOLFSSHD_CONFIG {
     char* forceCmd;
     char* pidFile;
     char* authorizedUPNDomains; /* allowlist of UPN realms for cert auth */
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+    char* winUserStores;
+    char* winUserDwFlags;
+    char* winUserPvPara;
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
     WOLFSSHD_CONFIG* next; /* next config in list */
     WOLFSSHD_CONFIG* head; /* global config the Match nodes branch from */
     long  loginTimer;
@@ -105,6 +115,8 @@ struct WOLFSSHD_CONFIG {
     byte permitEmptyPasswords:1;
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
     byte strictModes:1; /* enforce file permission/ownership checks */
+    byte useSystemCA:1;
+    byte useUserCAStore:1;
 };
 
 /* Maximum depth of nested Include directives. Bounds the recursion
@@ -181,7 +193,7 @@ static int CreateString(char** out, const char* in, int inSz, void* heap)
     }
 
     /* remove leading white spaces */
-    while (idx < inSz && in[idx] == ' ') idx++;
+    while (idx < inSz && (in[idx] == ' ' || in[idx] == '\t')) idx++;
 
     if (idx == inSz) {
         ret = WS_BAD_ARGUMENT;
@@ -189,7 +201,8 @@ static int CreateString(char** out, const char* in, int inSz, void* heap)
 
     if (ret == WS_SUCCESS) {
         for (tail = inSz - 1; tail > idx; tail--) {
-            if (in[tail] != '\n' && in[tail] != ' ' && in[tail] != '\r') {
+            if (in[tail] != '\n' && in[tail] != ' ' && in[tail] != '\r' &&
+                    in[tail] != '\t') {
                 break;
             }
         }
@@ -341,6 +354,46 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
                                         newConf->heap);
         }
 
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+        if (ret == WS_SUCCESS && conf->hostKeyStore) {
+            ret = CreateString(&newConf->hostKeyStore, conf->hostKeyStore,
+                                        (int)WSTRLEN(conf->hostKeyStore),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->hostKeyStoreSubject) {
+            ret = CreateString(&newConf->hostKeyStoreSubject,
+                                    conf->hostKeyStoreSubject,
+                                    (int)WSTRLEN(conf->hostKeyStoreSubject),
+                                    newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->hostKeyStoreFlags) {
+            ret = CreateString(&newConf->hostKeyStoreFlags,
+                                        conf->hostKeyStoreFlags,
+                                        (int)WSTRLEN(conf->hostKeyStoreFlags),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->winUserStores) {
+            ret = CreateString(&newConf->winUserStores, conf->winUserStores,
+                                        (int)WSTRLEN(conf->winUserStores),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->winUserDwFlags) {
+            ret = CreateString(&newConf->winUserDwFlags, conf->winUserDwFlags,
+                                        (int)WSTRLEN(conf->winUserDwFlags),
+                                        newConf->heap);
+        }
+
+        if (ret == WS_SUCCESS && conf->winUserPvPara) {
+            ret = CreateString(&newConf->winUserPvPara, conf->winUserPvPara,
+                                        (int)WSTRLEN(conf->winUserPvPara),
+                                        newConf->heap);
+        }
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
+
         if (ret == WS_SUCCESS) {
             newConf->loginTimer   = conf->loginTimer;
             newConf->port         = conf->port;
@@ -352,6 +405,8 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
             newConf->authKeysFileSet        = conf->authKeysFileSet;
             newConf->strictModes            = conf->strictModes;
             newConf->head                   = conf->head;
+            newConf->useSystemCA            = conf->useSystemCA;
+            newConf->useUserCAStore         = conf->useUserCAStore;
         }
         else {
             wolfSSHD_ConfigFree(newConf);
@@ -388,6 +443,14 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
         FreeString(&current->authorizedUPNDomains, heap);
         FreeString(&current->usrAppliesTo,    heap);
         FreeString(&current->groupAppliesTo,  heap);
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+        FreeString(&current->hostKeyStore,        heap);
+        FreeString(&current->hostKeyStoreSubject, heap);
+        FreeString(&current->hostKeyStoreFlags,   heap);
+        FreeString(&current->winUserStores,       heap);
+        FreeString(&current->winUserDwFlags,      heap);
+        FreeString(&current->winUserPvPara,       heap);
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
         WFREE(current, heap, DYNTYPE_SSHD);
         current = next;
@@ -428,13 +491,17 @@ enum {
     OPT_BANNER                  = 23,
     OPT_PUBKEY_AUTH             = 24,
     OPT_STRICT_MODES            = 25,
-    OPT_AUTHORIZED_UPN_DOMAINS  = 26,
+    OPT_TRUSTED_SYSTEM_CA_KEYS  = 26,
+    OPT_TRUSTED_USER_CA_STORE   = 27,
+    OPT_WIN_USER_STORES         = 28,
+    OPT_WIN_USER_DW_FLAGS       = 29,
+    OPT_WIN_USER_PV_PARA        = 30,
+    OPT_AUTHORIZED_UPN_DOMAINS  = 31,
+    OPT_HOST_KEY_STORE          = 32,
+    OPT_HOST_KEY_STORE_SUBJECT  = 33,
+    OPT_HOST_KEY_STORE_FLAGS    = 34
 };
-enum {
-    NUM_OPTIONS = 27
-};
-
-static const CONFIG_OPTION options[NUM_OPTIONS] = {
+static const CONFIG_OPTION options[] = {
     {OPT_AUTH_KEYS_FILE,          "AuthorizedKeysFile"},
     {OPT_PRIV_SEP,                "UsePrivilegeSeparation"},
     {OPT_PERMIT_EMPTY_PW,         "PermitEmptyPasswords"},
@@ -446,6 +513,16 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
+    /* The parser requires a whitespace delimiter after the option name, which
+     * is the primary defence against a shorter name prefix-matching a longer
+     * one.  As belt-and-braces, longer option names that share a common prefix
+     * MUST still appear before the shorter one:
+     * HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore, and all
+     * HostKeyStore* before HostKey.  Kept unconditional so "HostKeyStore"
+     * never matches "HostKey" on non-store builds. */
+    {OPT_HOST_KEY_STORE_SUBJECT,  "HostKeyStoreSubject"},
+    {OPT_HOST_KEY_STORE_FLAGS,    "HostKeyStoreFlags"},
+    {OPT_HOST_KEY_STORE,          "HostKeyStore"},
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PUBKEY_AUTH,             "PubkeyAuthentication"},
@@ -461,8 +538,45 @@ static const CONFIG_OPTION options[NUM_OPTIONS] = {
     {OPT_PIDFILE,                 "PidFile"},
     {OPT_BANNER,                  "Banner"},
     {OPT_STRICT_MODES,            "StrictModes"},
+    {OPT_TRUSTED_SYSTEM_CA_KEYS,  "wolfSSH_TrustedSystemCAKeys"},
+    {OPT_TRUSTED_USER_CA_STORE,   "wolfSSH_TrustedUserCAStore"},
+    {OPT_WIN_USER_STORES,         "wolfSSH_WinUserStores"},
+    {OPT_WIN_USER_DW_FLAGS,       "wolfSSH_WinUserDwFlags"},
+    {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"},
     {OPT_AUTHORIZED_UPN_DOMAINS,  "AuthorizedUPNDomains"},
 };
+#define NUM_OPTIONS ((int)(sizeof(options) / sizeof(*options)))
+
+#ifdef WOLFSSHD_UNIT_TEST
+/* Test hook for the option-table ordering invariant: the parser matches with
+ * WSTRNCMP over the table in order, so an earlier name that is a strict
+ * prefix of a later one would shadow it. Returns 1 and sets earlier/later on
+ * a violation, 0 when the table is well ordered. */
+int wolfSSHD_ConfigOptionPrefixShadow(const char** earlier, const char** later)
+{
+    int i;
+    int j;
+    int len;
+
+    for (i = 0; i < NUM_OPTIONS; i++) {
+        len = (int)WSTRLEN(options[i].name);
+        for (j = i + 1; j < NUM_OPTIONS; j++) {
+            if ((int)WSTRLEN(options[j].name) >= len &&
+                    WSTRNCMP(options[i].name, options[j].name, len) == 0) {
+                if (earlier != NULL) {
+                    *earlier = options[i].name;
+                }
+                if (later != NULL) {
+                    *later = options[j].name;
+                }
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+#endif /* WOLFSSHD_UNIT_TEST */
 
 /* returns WS_SUCCESS on success */
 static int HandlePrivSep(WOLFSSHD_CONFIG* conf, const char* value)
@@ -741,7 +855,7 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
         /* Ignore trailing whitespace */
         ptr = value + WSTRLEN(value) - 1;
         while (ptr != value) {
-            if (WISSPACE(*ptr)) {
+            if (WISSPACE((unsigned char)*ptr)) {
                 ptr--;
             }
             else {
@@ -1227,6 +1341,26 @@ static int SetListString(char** dst, const char* value, int valueSz,
     return ret;
 }
 
+/* CA trust sources are loaded once at startup from the global config; a
+ * Match-scoped setting would be silently ignored at authentication time.
+ * Reject such options at parse time instead of failing open. Returns
+ * WS_SUCCESS when conf is the global config. */
+static int CheckNotInMatch(const WOLFSSHD_CONFIG* conf, const char* option)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+    else if (conf->usrAppliesTo != NULL || conf->groupAppliesTo != NULL) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Option %s is not supported inside a Match block", option);
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    return ret;
+}
+
 /* returns WS_SUCCESS on success */
 /* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
 static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
@@ -1277,11 +1411,33 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_HOST_KEY:
             /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
+            ret = CheckNotInMatch(*conf, "HostKey");
+            if (ret == WS_SUCCESS) {
+                ret = wolfSSHD_ConfigSetHostKeyFile(*conf, value);
+            }
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            else if (*conf != NULL) {
+                /* Earlier releases accepted (and never used) this placement,
+                 * so ignore-unknown builds keep a migration path. */
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] Ignoring HostKey inside a Match block");
+                ret = WS_SUCCESS;
+            }
+        #endif
             break;
         case OPT_HOST_CERT:
             /* TODO: Add logic to check if file exists? */
-            ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
+            ret = CheckNotInMatch(*conf, "HostCertificate");
+            if (ret == WS_SUCCESS) {
+                ret = wolfSSHD_ConfigSetHostCertFile(*conf, value);
+            }
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            else if (*conf != NULL) {
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] Ignoring HostCertificate inside a Match block");
+                ret = WS_SUCCESS;
+            }
+        #endif
             break;
         case OPT_PASSWORD_AUTH:
             ret = HandlePwAuth(*conf, value);
@@ -1314,8 +1470,16 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
                     (*conf)->heap);
             break;
         case OPT_TRUSTED_USER_CA_KEYS:
-            /* TODO: Add logic to check if file exists? */
+            /* Deliberately allowed inside a Match block: the resolved per-user
+             * value is consumed live at authentication time for OpenSSH
+             * certificates (CheckPublicKeyUnix/SetupUserTokenWin), so
+             * Match-scoped CA scoping works and must keep working. */
             ret = wolfSSHD_ConfigSetUserCAKeysFile(*conf, value);
+            break;
+        case OPT_TRUSTED_SYSTEM_CA_KEYS:
+            ret = CheckNotInMatch(*conf, "wolfSSH_TrustedSystemCAKeys");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetSystemCA(*conf, value);
             break;
         case OPT_PIDFILE:
             ret = SetFileString(&(*conf)->pidFile, value, (*conf)->heap);
@@ -1326,10 +1490,86 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_STRICT_MODES:
             ret = HandleStrictModes(*conf, value);
             break;
+        case OPT_TRUSTED_USER_CA_STORE:
+            ret = CheckNotInMatch(*conf, "wolfSSH_TrustedUserCAStore");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetUserCAStore(*conf, value);
+            break;
+    #ifdef WOLFSSHD_WIN_STORE_CONFIG
+        case OPT_WIN_USER_STORES:
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserStores");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserStores(*conf, value);
+            break;
+        case OPT_WIN_USER_DW_FLAGS:
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserDwFlags");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserDwFlags(*conf, value);
+            break;
+        case OPT_WIN_USER_PV_PARA:
+            ret = CheckNotInMatch(*conf, "wolfSSH_WinUserPvPara");
+            if (ret == WS_SUCCESS)
+                ret = wolfSSHD_ConfigSetWinUserPvPara(*conf, value);
+            break;
+    #else
+        case OPT_WIN_USER_STORES:
+        case OPT_WIN_USER_DW_FLAGS:
+        case OPT_WIN_USER_PV_PARA:
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Ignoring wolfSSH_WinUser* option: requires a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_SUCCESS;
+        #else
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] wolfSSH_WinUser* options require a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_NOT_COMPILED;
+        #endif
+            break;
+    #endif /* WOLFSSHD_WIN_STORE_CONFIG */
         case OPT_AUTHORIZED_UPN_DOMAINS:
             ret = SetListString(&(*conf)->authorizedUPNDomains, full, fullSz,
                     (*conf)->heap);
             break;
+    #ifdef WOLFSSHD_WIN_STORE_CONFIG
+        case OPT_HOST_KEY_STORE:
+            ret = CheckNotInMatch(*conf, "HostKeyStore");
+            if (ret == WS_SUCCESS)
+                ret = SetFileString(&(*conf)->hostKeyStore, value,
+                    (*conf)->heap);
+            break;
+        case OPT_HOST_KEY_STORE_SUBJECT:
+            ret = CheckNotInMatch(*conf, "HostKeyStoreSubject");
+            /* use the full line remainder so a CN containing spaces is
+             * kept instead of being cut at the first token */
+            if (ret == WS_SUCCESS)
+                ret = SetListString(&(*conf)->hostKeyStoreSubject, full,
+                    fullSz, (*conf)->heap);
+            break;
+        case OPT_HOST_KEY_STORE_FLAGS:
+            ret = CheckNotInMatch(*conf, "HostKeyStoreFlags");
+            if (ret == WS_SUCCESS)
+                ret = SetFileString(&(*conf)->hostKeyStoreFlags, value,
+                    (*conf)->heap);
+            break;
+    #else
+        case OPT_HOST_KEY_STORE:
+        case OPT_HOST_KEY_STORE_SUBJECT:
+        case OPT_HOST_KEY_STORE_FLAGS:
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] Ignoring HostKeyStore* option: requires a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_SUCCESS;
+        #else
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] HostKeyStore* options require a "
+                "WOLFSSH_WINDOWS_CERT_STORE build");
+            ret = WS_NOT_COMPILED;
+        #endif
+            break;
+    #endif /* WOLFSSHD_WIN_STORE_CONFIG */
         default:
             break;
     }
@@ -1346,12 +1586,12 @@ static int CountWhitespace(const char* in, int inSz, byte inv)
     if (in != NULL) {
         for (; i < inSz; ++i) {
             if (inv) {
-                if (WISSPACE(in[i])) {
+                if (WISSPACE((unsigned char)in[i])) {
                     break;
                 }
             }
             else {
-                if (!WISSPACE(in[i])) {
+                if (!WISSPACE((unsigned char)in[i])) {
                     break;
                 }
             }
@@ -1377,7 +1617,8 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
 
     for (idx = 0; idx < NUM_OPTIONS; ++idx) {
         sz = (int)WSTRLEN(options[idx].name);
-        if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0) {
+        if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
+                (lSz == sz || WISSPACE((unsigned char)l[sz]))) {
             found = &options[idx];
             break;
         }
@@ -1403,13 +1644,33 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
         }
     }
     else {
-    #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
-        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] ignoring config line %s.", l);
-        ret = WS_SUCCESS;
-    #else
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
-        ret = WS_FATAL_ERROR;
-    #endif
+        int isEqForm = 0;
+
+        /* A known keyword in the OpenSSH Keyword=value form must stay a
+         * fatal error even on builds that ignore unknown lines: dropping a
+         * directive such as PasswordAuthentication=no would fail open. */
+        for (idx = 0; idx < NUM_OPTIONS; ++idx) {
+            sz = (int)WSTRLEN(options[idx].name);
+            if (lSz > sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
+                    l[sz] == '=') {
+                isEqForm = 1;
+                break;
+            }
+        }
+        if (isEqForm) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Keyword=value form is not "
+                "supported, use \"Keyword value\" : %s.", l);
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+        #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+            wolfSSH_Log(WS_LOG_WARN, "[SSHD] ignoring config line %s.", l);
+            ret = WS_SUCCESS;
+        #else
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");
+            ret = WS_FATAL_ERROR;
+        #endif
+        }
     }
 
     return ret;
@@ -1674,6 +1935,187 @@ char* wolfSSHD_ConfigGetHostCertFile(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
+
+/* getter function for if using system CAs
+ * return 1 if true and 0 if false */
+int wolfSSHD_ConfigGetSystemCA(const WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL) {
+        return conf->useSystemCA;
+    }
+    return 0;
+}
+
+
+/* setter function for if using system CAs
+ * 'yes' if true and 'no' if false
+ * returns WS_SUCCESS on success */
+int wolfSSHD_ConfigSetSystemCA(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "yes") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs enabled");
+            conf->useSystemCA = 1;
+        }
+        else if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] System CAs disabled");
+            conf->useSystemCA = 0;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] wolfSSH_TrustedSystemCAKeys: expected 'yes' or 'no', "
+                "got '%s'", value);
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+/* getter function for if using user CA store
+ * return 1 if true and 0 if false */
+int wolfSSHD_ConfigGetUserCAStore(const WOLFSSHD_CONFIG* conf)
+{
+    if (conf != NULL) {
+        return conf->useUserCAStore;
+    }
+    return 0;
+}
+
+
+/* setter function for if using user CA store
+ * 'yes' if true and 'no' if false
+ * returns WS_SUCCESS on success */
+int wolfSSHD_ConfigSetUserCAStore(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (WSTRCMP(value, "yes") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store enabled.  Note this "
+                                     "is currently only supported on Windows.");
+            conf->useUserCAStore = 1;
+        }
+        else if (WSTRCMP(value, "no") == 0) {
+            wolfSSH_Log(WS_LOG_INFO, "[SSHD] User CA store disabled");
+            conf->useUserCAStore = 0;
+        }
+        else {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] wolfSSH_TrustedUserCAStore: expected 'yes' or 'no', "
+                "got '%s'", value);
+            ret = WS_BAD_ARGUMENT;
+        }
+    }
+
+    return ret;
+}
+
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+/* Returns the configured store provider, or NULL when not configured. The
+ * caller decides what an unset value means. */
+char* wolfSSHD_ConfigGetWinUserStores(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->winUserStores;
+    }
+
+    return ret;
+}
+
+int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserStores, conf->heap);
+        ret = CreateString(&conf->winUserStores, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
+
+    return ret;
+}
+
+/* Returns the configured store location, or NULL when not configured. */
+char* wolfSSHD_ConfigGetWinUserDwFlags(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->winUserDwFlags;
+    }
+
+    return ret;
+}
+
+int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserDwFlags, conf->heap);
+        ret = CreateString(&conf->winUserDwFlags, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
+
+    return ret;
+}
+
+/* Returns the configured store name, or NULL when not configured. There is
+ * deliberately no default: this store is a trust anchor source for client
+ * certificate auth and must be picked by the administrator. */
+char* wolfSSHD_ConfigGetWinUserPvPara(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->winUserPvPara;
+    }
+
+    return ret;
+}
+
+int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value)
+{
+    int ret = WS_SUCCESS;
+
+    if (conf == NULL || value == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* free any previously set value before replacing it */
+        FreeString(&conf->winUserPvPara, conf->heap);
+        ret = CreateString(&conf->winUserPvPara, value,
+                (int)WSTRLEN(value), conf->heap);
+    }
+
+    return ret;
+}
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
+
 char* wolfSSHD_ConfigGetUserCAKeysFile(const WOLFSSHD_CONFIG* conf)
 {
     char* ret = NULL;
@@ -1691,6 +2133,19 @@ char* wolfSSHD_ConfigGetAuthorizedUPNDomains(const WOLFSSHD_CONFIG* conf)
 
     if (conf != NULL) {
         ret = conf->authorizedUPNDomains;
+    }
+
+    return ret;
+}
+
+/* returns the next config node in the list (the global config is the head,
+ * each Match block adds a node) or NULL at the end of the list */
+const WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf)
+{
+    const WOLFSSHD_CONFIG* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->next;
     }
 
     return ret;
@@ -1717,6 +2172,43 @@ static int SetFileString(char** dst, const char* src, void* heap)
 
     return ret;
 }
+
+#ifdef WOLFSSHD_WIN_STORE_CONFIG
+char* wolfSSHD_ConfigGetHostKeyStore(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStore;
+    }
+
+    return ret;
+}
+
+
+char* wolfSSHD_ConfigGetHostKeyStoreSubject(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStoreSubject;
+    }
+
+    return ret;
+}
+
+
+char* wolfSSHD_ConfigGetHostKeyStoreFlags(const WOLFSSHD_CONFIG* conf)
+{
+    char* ret = NULL;
+
+    if (conf != NULL) {
+        ret = conf->hostKeyStoreFlags;
+    }
+
+    return ret;
+}
+#endif /* WOLFSSHD_WIN_STORE_CONFIG */
 
 int wolfSSHD_ConfigSetHostKeyFile(WOLFSSHD_CONFIG* conf, const char* file)
 {

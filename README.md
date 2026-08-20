@@ -538,6 +538,72 @@ fred-cert.der would be:
 
     $ ./examples/client/client -u fred -J ./keys/fred-cert.der -i ./keys/fred-key.der
 
+WINDOWS CERTIFICATE STORE
+=========================
+
+On Windows, host and user keys can come from the MS Certificate Store instead
+of files. Requires certificate support (`--enable-certs` or `WOLFSSH_CERTS`);
+enable it with the `--enable-windows-cert-store` build option (mingw hosts
+only) or by defining `WOLFSSH_WINDOWS_CERT_STORE`. The build links against
+`crypt32` and `ncrypt`. For the Visual Studio build see the comment block in
+`ide/winvs/user_settings.h`, including the `WOLFSSH_NO_SHA1_SOFT_DISABLE` and
+`WC_SIG_MIN_HASH_TYPE` caveats an RSA store certificate needs (RFC 6187's only
+RSA algorithm, `x509v3-ssh-rsa`, signs with SHA-1); ECDSA store keys need
+neither.
+
+The echoserver and the SFTP client take a `-W store:subject[:flags]` option
+naming the store, the certificate's subject CN, and optionally the store
+location. Accepted location names are CURRENT_USER (the default),
+LOCAL_MACHINE, USERS, CURRENT_SERVICE, SERVICES, CURRENT_USER_GROUP_POLICY,
+LOCAL_MACHINE_GROUP_POLICY and LOCAL_MACHINE_ENTERPRISE, each also accepted
+with a `CERT_SYSTEM_STORE_` prefix or as a number. `-W` supplies both the
+certificate and its private key; in the SFTP client it therefore cannot be
+combined with `-i`, `-j`, or `-J` (the echoserver's options of those names are
+unrelated and remain usable). `-W` also skips the wolfssh home directory
+search so file arguments resolve against the current directory.
+
+    $ ./examples/echoserver/echoserver -W "My:wolfSSH-Server:LOCAL_MACHINE" -a ./keys/ca-cert-ecc.pem
+
+    $ ./examples/sftpclient/wolfsftp -u testuser -W "My:testuser:CURRENT_USER" -A ./keys/ca-cert-ecc.der -X
+
+wolfSSHd gains these configuration directives, all global only (they are
+rejected inside a `Match` block):
+
+* `HostKeyStore <store>`, `HostKeyStoreSubject <CN>`, and
+  `HostKeyStoreFlags <location>` select the host key from a certificate
+  store. All three must be set together, and they conflict with `HostKey`,
+  `HostCertificate`, and the `-h` command line option.
+* `wolfSSH_TrustedUserCAStore yes|no` loads the client-certificate trust
+  anchors from a Windows store named by `wolfSSH_WinUserPvPara <store>` at
+  the mandatory location `wolfSSH_WinUserDwFlags <location>`
+  (`wolfSSH_WinUserStores` optionally names the provider; only
+  `CERT_STORE_PROV_SYSTEM` is supported). Only certificates with
+  basicConstraints CA:TRUE are loaded, and the OS-managed public trust
+  stores (`Root`, `AuthRoot`, `CA`, ...) are refused: every CA in the named
+  store becomes an SSH login authority, so point it at a store created for
+  this purpose that holds nothing but your own CA.
+* `wolfSSH_TrustedSystemCAKeys yes|no` imports the OS trust store via
+  wolfSSL (`WOLFSSL_SYS_CA_CERTS`) as the client-certificate trust anchors.
+  On CN-binding builds (no FPKI) this additionally requires a per-user
+  `AuthorizedKeysFile` on every config node, so a subject CN match alone can
+  never log in. On FPKI builds every config node must set
+  `AuthorizedUPNDomains` or a per-user `AuthorizedKeysFile`; note
+  `AuthorizedUPNDomains` constrains only the certificate's UPN realm, not
+  which trusted CA issued it, so use it only when the OS trust store holds
+  solely your organization's CA.
+
+Note that the pre-existing `HostKey` and `HostCertificate` directives are now
+also rejected when they appear after a `Match` block (matching OpenSSH); they
+were previously accepted there and silently ignored, so a config that relied
+on that will now stop the daemon at startup with a parse error. Builds made
+with `WOLFSSH_IGNORE_UNKNOWN_CONFIG` instead log a warning and ignore the
+directive, preserving the old behavior as a migration path.
+
+Without FPKI, a client certificate is bound to the requested account by a
+case-insensitive subject CN match only; keep the trusted CA set narrow. Note
+also that the config parser requires whitespace between an option name and
+its value; the OpenSSH `Keyword=value` form is rejected.
+
 TPM PUBLIC KEY AUTHENTICATION
 =============================
 

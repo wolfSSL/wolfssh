@@ -60,6 +60,15 @@
     #include <wolfssh/certman.h>
 #endif /* WOLFSSH_CERTS */
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    #ifndef WOLFSSH_CERTS
+        #error "WOLFSSH_WINDOWS_CERT_STORE requires WOLFSSH_CERTS"
+    #endif
+    #if !defined(_WIN32) && !defined(USE_WINDOWS_API)
+        #error "WOLFSSH_WINDOWS_CERT_STORE requires a Windows target"
+    #endif
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
 #ifdef WOLFSSH_TPM
     #include <wolftpm/tpm2_wrap.h>
 #endif /* WOLFSSH_TPM */
@@ -109,6 +118,8 @@ extern "C" {
     #define WOLFSSH_NO_DH
 #endif
 
+/* wolfSSL_CertManager_up_ref() was added in wolfSSL 4.6.0 */
+#define WOLFSSL_V4_6_0 0x04006000
 #define WOLFSSL_V5_0_0 0x05000000
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
@@ -769,7 +780,20 @@ typedef struct WOLFSSH_PVT_KEY {
         /* When set, the host key material lives in the TPM and key/keySz are
          * unused; signing and the public K_S come from ctx->tpmKey. */
 #endif
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    byte useCertStore;
+        /* Flag indicating if this key is from MS Certificate Store. */
+    void* certStoreContext;
+        /* Windows certificate context (PCCERT_CONTEXT) for MS Certificate Store.
+         * Owned by CTX, must be freed with CertFreeCertificateContext. */
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
+
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* Returns 1 when the value is exactly one assigned CERT_SYSTEM_STORE_*
+ * location with no control flags set. Defined in certman.c. */
+WOLFSSH_LOCAL int wolfSSH_CertStoreLocationValid(word32 dwFlags);
+#endif
 
 
 /* our wolfSSH Context */
@@ -1074,6 +1098,10 @@ struct WOLFSSH {
     byte connReset;
     byte isClosed;
     byte clientOpenSSH;
+#ifdef WOLFSSH_FWD
+    byte fwdCbMissingWarned;  /* one-shot: missing fwdCb warned this session */
+#endif
+    byte chanOpenCbMissingWarned; /* one-shot: missing channelOpenCb warned */
 
     byte kexId;
     byte blockSz;
@@ -1295,6 +1323,7 @@ WOLFSSH_LOCAL int ChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz);
 WOLFSSH_LOCAL int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
         word32 amount);
+WOLFSSH_LOCAL void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx);
 WOLFSSH_LOCAL int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
                                         const byte* in, word32 inSz,
                                         int format, int type);
@@ -1576,6 +1605,12 @@ WOLFSSH_LOCAL int GenerateKey(byte hashId, byte keyId, byte* key,
 WOLFSSH_LOCAL int wcPrimeForId(byte id);
 #endif
 WOLFSSH_LOCAL enum wc_HashType HashForId(byte id);
+#ifdef WOLFSSH_CERTS
+WOLFSSH_LOCAL byte CertTypeForId(byte id);
+#endif
+#if defined(WOLFSSH_WINDOWS_CERT_STORE) && defined(WOLFSSH_CERTS)
+WOLFSSH_LOCAL word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt);
+#endif
 
 
 enum AcceptStates {
@@ -1877,6 +1912,10 @@ enum WS_MessageIdLimits {
 #ifndef WOLFSSH_NO_ECDSA
     WOLFSSH_API int wolfSSH_TestParseECCPubKey(WOLFSSH* ssh, byte* pubKey,
             word32 pubKeySz);
+#ifdef WOLFSSH_CERTS
+    WOLFSSH_API int wolfSSH_TestParseECCPubKeyCert(WOLFSSH* ssh, byte* pubKey,
+            word32 pubKeySz);
+#endif /* WOLFSSH_CERTS */
 #endif /* !WOLFSSH_NO_ECDSA */
 #ifndef WOLFSSH_NO_ED25519
     WOLFSSH_API int wolfSSH_TestParseEd25519PubKey(WOLFSSH* ssh, byte* pubKey,

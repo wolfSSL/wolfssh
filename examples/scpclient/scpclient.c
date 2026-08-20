@@ -334,6 +334,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     }
     WCLOSESOCKET(sockFd);
     wolfSSH_free(ssh);
+    /* release the example's own key buffers before CTX teardown */
+    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
             ret != WS_CHANNEL_CLOSED) {
@@ -341,7 +343,6 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         "Closing scp stream failed. Connection could have been closed by peer");
     }
 
-    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif

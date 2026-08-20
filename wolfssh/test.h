@@ -401,7 +401,7 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
 }
 
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable:4996)
     /* For Windows builds, disable compiler warnings for:
@@ -563,7 +563,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 }
 #endif /* WOLFSSH_NUCLEUS */
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && defined(_MSC_VER)
     #pragma warning(pop)
 #endif
 
@@ -1158,30 +1158,45 @@ static INLINE void build_addr_ipv6(struct sockaddr_in6* addr, const char* peer,
 
 #ifdef WOLFSSH_TEST_HEX2BIN
 
-/* Declares Base16_Decode when wolfSSL has it, and settles WOLFSSL_BASE16
- * for the guard below. Only --enable-base16 and the options that imply it
- * (openssh, sm2, all) build it, so the local copy is still needed. */
+/* Included unconditionally, and before the fallback below defines the
+ * Base16_Decode macro: a later transitive include of coding.h (e.g. via
+ * wolfssl/ssl.h in OPENSSL_EXTRA builds) is then an include-guard no-op
+ * instead of having its Base16_Decode declaration rewritten by the macro
+ * into a conflicting WS_Base16_Decode declaration. */
 #include <wolfssl/wolfcrypt/coding.h>
 
-#ifndef WOLFSSL_BASE16
+/* Use the local fallback whenever wolfSSL will not supply Base16_Decode:
+ * only --enable-base16 and the options that imply it (openssh, sm2, all)
+ * build it, and coding.c compiles to nothing under NO_CODING even with
+ * WOLFSSL_BASE16 set. The fallback has a private name mapped onto
+ * Base16_Decode so it can never collide with coding.h's declaration, which
+ * is present under WOLFSSL_BASE16 even when NO_CODING empties the
+ * implementation, or with its prefix map. */
+#if !defined(WOLFSSL_BASE16) || defined(NO_CODING)
 
-#define BAD 0xFF
+#define WS_HEX_BAD 0xFF
 
 static const byte hexDecode[] =
 {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD,
+    WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD,
     10, 11, 12, 13, 14, 15,  /* upper case A-F */
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD, BAD, BAD, BAD, BAD, BAD, BAD,
-    BAD, BAD,  /* G - ` */
+    WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD,
+    WS_HEX_BAD, WS_HEX_BAD,  /* G - ` */
     10, 11, 12, 13, 14, 15   /* lower case a-f */
 };  /* A starts at 0x41 not 0x3A */
 
+#undef Base16_Decode
+#define Base16_Decode WS_Base16_Decode
 
-static int Base16_Decode(const byte* in, word32 inLen,
-                         byte* out, word32* outLen)
+static int WS_Base16_Decode(const byte* in, word32 inLen,
+                            byte* out, word32* outLen)
 {
     word32 inIdx = 0;
     word32 outIdx = 0;
@@ -1198,7 +1213,7 @@ static int Base16_Decode(const byte* in, word32 inLen,
 
         b  = hexDecode[b];
 
-        if (b == BAD)
+        if (b == WS_HEX_BAD)
             return -1;
 
         out[outIdx++] = b;
@@ -1226,7 +1241,7 @@ static int Base16_Decode(const byte* in, word32 inLen,
         b  = hexDecode[b];
         b2 = hexDecode[b2];
 
-        if (b == BAD || b2 == BAD)
+        if (b == WS_HEX_BAD || b2 == WS_HEX_BAD)
             return -1;
 
         out[outIdx++] = (byte)((b << 4) | b2);
@@ -1237,8 +1252,9 @@ static int Base16_Decode(const byte* in, word32 inLen,
     return 0;
 }
 
-#endif /* !WOLFSSL_BASE16 */
+#undef WS_HEX_BAD
 
+#endif /* !WOLFSSL_BASE16 || NO_CODING */
 
 static void FreeBins(byte* b1, byte* b2, byte* b3, byte* b4)
 {

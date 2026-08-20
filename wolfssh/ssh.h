@@ -43,6 +43,11 @@
 #include <wolftpm/tpm2_wrap.h>
 #endif
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* The Windows certificate store API below uses wchar_t strings. */
+#include <wchar.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -303,6 +308,10 @@ WOLFSSH_API int wolfSSH_ChannelIsPty(const WOLFSSH_CHANNEL* channel);
 
 /* Channel callbacks */
 typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
+/* Policy callback for peer channel open requests. NOTE: when no callback
+ * is registered every channel open from the peer is ACCEPTED by default
+ * (except forwarding channel types, which fail closed without a forward
+ * callback); register one to enforce a channel policy. */
 WOLFSSH_API int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelOpen cb);
 WOLFSSH_API int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
@@ -550,6 +559,49 @@ WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_buffer(WOLFSSH_CTX* ctx,
             const char* name);
     WOLFSSH_API int wolfSSH_CTX_AddRootCert_file(WOLFSSH_CTX* ctx,
             const char* name);
+    #endif
+    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Use the certificate with Common Name subjectName, and its private
+     * key, from the storeName system certificate store as the host key.
+     * subjectName may carry a "CN=" prefix and matches in full, case
+     * insensitively. dwFlags selects the store location and must hold
+     * only CERT_SYSTEM_STORE_* location bits, e.g.
+     * CERT_SYSTEM_STORE_CURRENT_USER; control flags such as
+     * CERT_STORE_DELETE_FLAG are rejected with WS_BAD_ARGUMENT. The store
+     * is opened read-only. When no time-valid certificate with a usable
+     * private key matches, the call fails with WS_CERT_EXPIRED_E; define
+     * WOLFSSH_CERT_STORE_ALLOW_EXPIRED to instead select an expired or
+     * not-yet-valid certificate with a usable key, preferring expired over
+     * not yet valid and then the latest NotAfter (the fallback is logged,
+     * but only in builds with logging compiled in, DEBUG_WOLFSSH or
+     * WOLFSSH_SSHD). A mixed configuration -- a file- or TPM-based host
+     * key or host certificate already loaded for the same algorithm -- is
+     * rejected with WS_BAD_ARGUMENT in both load orders; replacing a
+     * previously loaded store key is allowed.
+     * Returns WS_SUCCESS on success, WS_BAD_ARGUMENT on a NULL argument,
+     * bad dwFlags, or an unsupported/mixed key configuration, WS_BAD_FILE_E
+     * when the store cannot be opened, WS_CRYPTO_FAILED when certificates
+     * match but none has a private key that is both accessible (check key
+     * permissions for the service account) and enrolled for signing
+     * (the log distinguishes the two), WS_CERT_EXPIRED_E when only certificates
+     * outside their validity period match (see above), WS_CTX_KEY_COUNT_E
+     * when two key slots are not free, WS_MEMORY_E on an allocation
+     * failure, and WS_FATAL_ERROR when no certificate matches; on any
+     * failure the context is left unchanged. */
+    WOLFSSH_API int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
+            const wchar_t* storeName, word32 dwFlags,
+            const wchar_t* subjectName);
+    /* Report the certificate a loaded cert-store host key is bound to, so
+     * an application can offer it for certificate user auth. cert/certSz
+     * point at DER owned by the CTX and algoName at the static x509v3
+     * algorithm name; each out pointer may be NULL. When several store
+     * credentials are loaded, the first x509v3 slot in load order is
+     * returned -- there is no per-algorithm selector, so only one store
+     * credential can be offered and the load order decides which. Returns
+     * WS_SUCCESS, WS_BAD_ARGUMENT on a NULL ctx, or WS_FATAL_ERROR when no
+     * cert-store-backed x509v3 slot exists. */
+    WOLFSSH_API int wolfSSH_CTX_GetCertStoreCert(WOLFSSH_CTX* ctx,
+            const byte** cert, word32* certSz, const char** algoName);
     #endif
 #endif /* WOLFSSH_CERTS */
 WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,

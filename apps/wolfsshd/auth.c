@@ -55,7 +55,9 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
 
-#ifdef WOLFSSL_FPKI
+#if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
+/* Used to bind a client certificate to the requested user name: by UPN
+ * with FPKI, by subject CN on Windows builds without FPKI. */
 #include <wolfssl/wolfcrypt/asn.h>
 #endif
 
@@ -996,6 +998,78 @@ static int IsAbsoluteAuthKeysPath(const char* path)
     return ret;
 }
 
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSHD_UNIT_TEST)
+/* True when the AuthorizedKeysFile pattern resolves to a different file for
+ * every account, which is what makes an entry in it an implicit
+ * user-to-credential binding. A relative pattern resolves under the account's
+ * home directory, and an absolute one qualifies only when it carries a %u or
+ * %h token. An absolute pattern with neither (e.g.
+ * "/etc/ssh/authorized_keys_all") is one shared file for every account and
+ * binds a credential to nothing. Caveat: accounts that share a home directory
+ * (or Windows profile path) also share the file a relative pattern resolves
+ * to, so the per-user property holds only when home directories are
+ * distinct. */
+static int IsPerUserAuthKeysPattern(const char* pattern)
+{
+    word32 i;
+    word32 patSz;
+    word32 seg;
+
+    if (pattern == NULL || *pattern == '\0') {
+        /* the built-in ~/.ssh/authorized_keys default */
+        return 1;
+    }
+
+    /* a ".." component can escape the home directory and collapse to one
+     * shared file for every account, so it is never per-user */
+    patSz = (word32)WSTRLEN(pattern);
+    seg = 0;
+    for (i = 0; i <= patSz; i++) {
+        if (i == patSz || pattern[i] == '/' || pattern[i] == '\\') {
+            if (i - seg == 2 && pattern[seg] == '.' &&
+                    pattern[seg + 1] == '.') {
+                return 0;
+            }
+            seg = i + 1;
+        }
+    }
+
+    if (!IsAbsoluteAuthKeysPath(pattern)) {
+        return 1;
+    }
+
+    for (i = 0; (i + 1) < patSz; i++) {
+        if (pattern[i] != '%') {
+            continue;
+        }
+        if (pattern[i + 1] == 'u' || pattern[i + 1] == 'h') {
+            return 1;
+        }
+        /* "%%" is a literal percent, step over both characters */
+        if (pattern[i + 1] == '%') {
+            i++;
+        }
+    }
+
+    return 0;
+}
+#endif /* WOLFSSH_CERTS || WOLFSSHD_UNIT_TEST */
+
+/* Exported predicate answering "does this AuthorizedKeysFile pattern resolve
+ * to a distinct file per account". Compiled for every certificate-capable
+ * build so config-time gates (e.g. the FPKI wolfSSH_TrustedSystemCAKeys
+ * check in SetupCTX) can rely on it; without certificate support it always
+ * returns 0. */
+int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern)
+{
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSHD_UNIT_TEST)
+    return IsPerUserAuthKeysPattern(pattern);
+#else
+    (void)pattern;
+    return 0;
+#endif
+}
+
 /* Resolve the authorized keys file path for a user. The pattern is passed in
  * explicitly so concurrent authentications cannot race on it, and its tokens
  * are expanded so each user resolves to a distinct path. */
@@ -1834,12 +1908,14 @@ static int CheckPublicKeyUnix(const char* name,
 
 #ifdef _WIN32
 
+/* lower-case header names so mingw cross-builds resolve them on
+ * case-sensitive filesystems */
 #include <ntstatus.h>
-#include <Ntsecapi.h>
-#include <Shlobj.h>
+#include <ntsecapi.h>
+#include <shlobj.h>
 
-#include <UserEnv.h>
-#include <KnownFolders.h>
+#include <userenv.h>
+#include <knownfolders.h>
 
 /* Pulled in from Advapi32.dll */
 extern BOOL WINAPI LogonUserExExW(LPTSTR usr,
@@ -1882,7 +1958,8 @@ static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, i
         pInfo.lpUserName = usrW;
         if (LoadUserProfileW(wolfSSHD_GetAuthToken(auth), &pInfo) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Error %d loading user %s", GetLastError(), usr);
+                "[SSHD] Error %lu loading user %s",
+                (unsigned long)GetLastError(), usr);
             ret = WS_FATAL_ERROR;
         }
 
@@ -1946,7 +2023,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
-        pwWSz = MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, NULL, 0);
+        pwWSz = MultiByteToWideChar(CP_UTF8, 0, (const char*)pw, pwSz, NULL,
+            0);
         if (pwWSz <= 0) {
             ret = WSSHD_AUTH_FAILURE;
         }
@@ -1960,7 +2038,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
     
     if (ret == WSSHD_AUTH_SUCCESS) {
-        if (MultiByteToWideChar(CP_UTF8, 0, pw, pwSz, pwW, pwWSz) != pwWSz) {
+        if (MultiByteToWideChar(CP_UTF8, 0, (const char*)pw, pwSz, pwW, pwWSz)
+                != pwWSz) {
             ret = WSSHD_AUTH_FAILURE;
         }
         else {
@@ -1971,8 +2050,8 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     if (ret == WSSHD_AUTH_SUCCESS) {
         if (LogonUserExExW(usrW, dmW, pwW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, NULL,
             &authCtx->token, NULL, NULL, NULL, NULL) != TRUE) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %d when login in as user %s, "
-                "bad username or password", GetLastError(), usr);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %lu when login in as user %s, "
+                "bad username or password", (unsigned long)GetLastError(), usr);
             wolfSSH_Log(WS_LOG_INFO, "[SSHD] Check user is allowed to 'Log on as batch job'");
             ret = WSSHD_AUTH_FAILURE;
         }
@@ -2049,7 +2128,8 @@ static int SetupUserTokenWin(const char* usr,
 
 
         if ((rc = LsaRegisterLogonProcess(&processName, &lsaHandle, &oMode)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Register Logon Process Error %d", LsaNtStatusToWinError(rc));
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Register Logon Process Error %lu",
+                (unsigned long)LsaNtStatusToWinError(rc));
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -2062,7 +2142,8 @@ static int SetupUserTokenWin(const char* usr,
         authName.Length = (USHORT)WSTRLEN(MSV1_0_PACKAGE_NAME);
         authName.MaximumLength = authName.Length + 1;
         if ((rc = LsaLookupAuthenticationPackage(lsaHandle, &authName, &authId)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Lookup Authentication Package Error %d", rc);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] LSA Lookup Authentication Package Error %lu",
+                (unsigned long)rc);
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -2109,7 +2190,7 @@ static int SetupUserTokenWin(const char* usr,
         NTSTATUS     subStatus;
         QUOTA_LIMITS quotas;
         DWORD        profileSz;
-        PKERB_INTERACTIVE_PROFILE profile = NULL;
+        PVOID        profile = NULL;
         LUID logonId = { 0, 0 };
 
         WMEMSET(&originName, 0, sizeof(LSA_STRING));
@@ -2118,8 +2199,8 @@ static int SetupUserTokenWin(const char* usr,
         originName.MaximumLength = originName.Length + 1;
 
         if ((rc = LsaLogonUser(lsaHandle, &originName, Network, authId, authInfo, authInfoSz, NULL, &sourceContext, &profile, &profileSz, &logonId, &authCtx->token, &quotas, &subStatus)) != STATUS_SUCCESS) {
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %X, SubStatus %d, when login in as user %s",
-                rc, subStatus, usr);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %lX, SubStatus %ld, when login in as user %s",
+                (unsigned long)rc, (long)subStatus, usr);
             ret = WSSHD_AUTH_FAILURE;
         }
 
@@ -2309,7 +2390,8 @@ static int CAKeysFileDiffers(const char* a, const char* b)
 /* Returns 1 when the certificate UPN <user>@<domain> in name[0..nameSz)
  * authorizes login as 'usr'. allowList is a whitespace/comma list of permitted
  * realms; NULL/empty matches the local part only, else domain must be listed. */
-#if defined(WOLFSSL_FPKI) || defined(WOLFSSHD_UNIT_TEST)
+#if (defined(WOLFSSL_FPKI) && defined(WOLFSSH_CERTS)) || \
+    defined(WOLFSSHD_UNIT_TEST)
 WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
                                    int nameSz, const char* allowList)
 {
@@ -2329,8 +2411,16 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
             }
         }
 
-        /* the local part must equal the requested user name exactly */
-        if ((int)XSTRLEN(usr) == idx && XSTRNCMP(usr, name, idx) == 0) {
+        /* The local part must equal the requested user name: exactly on
+         * Unix, case-insensitively on Windows where account names are
+         * case-insensitive. */
+        if ((int)XSTRLEN(usr) == idx &&
+#ifdef _WIN32
+                WSTRNCASECMP(usr, name, (size_t)idx) == 0
+#else
+                XSTRNCMP(usr, name, idx) == 0
+#endif
+                ) {
             if (allowList == NULL || *allowList == '\0') {
                 /* no allowlist configured: keep local-part-only matching */
                 ret = 1;
@@ -2367,7 +2457,7 @@ WOLFSSHD_STATIC int MatchUPNToUser(const char* usr, const char* name,
 
     return ret;
 }
-#endif /* WOLFSSL_FPKI || WOLFSSHD_UNIT_TEST */
+#endif /* (WOLFSSL_FPKI && WOLFSSH_CERTS) || WOLFSSHD_UNIT_TEST */
 
 
 #ifdef WOLFSSHD_UNIT_TEST
@@ -2510,9 +2600,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL, NULL, NULL,
                                            NULL);
         if (usrConf == NULL) {
+            /* bound the untrusted name so it cannot consume the whole
+             * fixed-width log message (control bytes are scrubbed by
+             * wolfSSH_Log itself) */
             wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Failure to get user configuration for auth (user=%s)",
-                    usr);
+                    "[SSHD] Failure to get user configuration for auth "
+                    "(user=%.32s)", usr);
             ret = WOLFSSH_USERAUTH_FAILURE;
             needFakeCheck = 1;
         }
@@ -2597,11 +2690,31 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         ret = WOLFSSH_USERAUTH_REJECTED;
     }
 
-    #ifdef WOLFSSL_FPKI
+    #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
-        /* compare user name to UPN in certificate */
+        /* Bind the certificate to the requested user name via UPN with FPKI
+         * or CN without FPKI. With FPKI the check always runs: it is cheap
+         * defense in depth on top of any authorized_keys lookup and is what
+         * enforces the AuthorizedUPNDomains realm allowlist. Without FPKI the
+         * CN name match is skipped when a per-user AuthorizedKeysFile is
+         * configured, because the exact certificate match against that file
+         * (checked below) is a stronger binding than a CN name match. A
+         * shared AuthorizedKeysFile (an absolute pattern with no %u or %h)
+         * resolves to one file for every account and binds the certificate to
+         * nothing, so the name match still has to run. Note the strength of
+         * the file binding rests on the file's integrity: on Windows,
+         * wolfSSHD_OpenSecureFile() performs no ownership or ACL checks, so
+         * the guarantee is only as good as the NTFS ACLs on the profile
+         * directory. */
+    #ifdef WOLFSSL_FPKI
         if (authData->sf.publicKey.isCert) {
+    #else
+        if (authData->sf.publicKey.isCert &&
+                !(wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
+                  IsPerUserAuthKeysPattern(
+                      wolfSSHD_ConfigGetAuthKeysFile(usrConf)))) {
+    #endif
         #ifdef WOLFSSH_SMALL_STACK
             DecodedCert* dCert;
 
@@ -2627,7 +2740,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 }
                 else {
                     int usrMatch = 0;
-                    int upnRealmUnchecked = 0;
+                #ifdef WOLFSSL_FPKI
                     DNS_entry* current = dCert->altNames;
                     const char* upnDomains =
                         wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf);
@@ -2637,28 +2750,44 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                                 current->oidSum == UPN_OID) {
                             /* bind the cert identity to the requested user;
                              * MatchUPNToUser also enforces the realm allowlist
-                             * when AuthorizedUPNDomains is set */
+                             * when AuthorizedUPNDomains is set. An unset
+                             * allowlist is noticed once at startup from
+                             * SetupCTX(), not here: this path is
+                             * peer-triggered and the log callback writes
+                             * WARN unconditionally. */
                             if (MatchUPNToUser(usr, current->name, current->len,
                                     upnDomains)) {
                                 usrMatch = 1;
-                                if (upnDomains == NULL || *upnDomains == '\0') {
-                                    upnRealmUnchecked = 1;
-                                }
                             }
                         }
                         current = current->next;
                     }
-
-                    /* a UPN matched but no realm policy is set; warn per auth
-                     * attempt so the opt-in gap is visible, no shared state */
-                    if (upnRealmUnchecked) {
-                        wolfSSH_Log(WS_LOG_WARN, "[SSHD] AuthorizedUPNDomains "
-                            "not set; certificate UPN domain is not checked");
+                #else
+                    /* Without FPKI compare subject CN with user name. Only
+                     * reachable on Windows, where account names are
+                     * case-insensitive, so match the CN the same way.
+                     *
+                     * This is a name match only. There is no analogue of
+                     * AuthorizedUPNDomains here, so any CA in the trust store
+                     * may assert any CN; the trusted user CA set is the whole
+                     * of the issuer policy. */
+                    if (dCert->subjectCN != NULL && dCert->subjectCNLen > 0 &&
+                            (int)XSTRLEN(usr) == dCert->subjectCNLen &&
+                            WSTRNCASECMP(usr, dCert->subjectCN,
+                                (size_t)dCert->subjectCNLen) == 0) {
+                        /* CN-only binding (no issuer constraint) is a fixed
+                         * build property, noticed once at startup from
+                         * SetupCTX(); a per-attempt WARN here would let a
+                         * peer grow the log with every attempt now that the
+                         * log callback writes WARN without -d */
+                        usrMatch = 1;
                     }
+                #endif
 
                     if (usrMatch == 0) {
                         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] incorrect user cert "
-                            "sent");
+                            "sent; certificate identity does not match the "
+                            "requested user (user=%.32s)", usr);
                         ret = WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
                     }
                 }
@@ -2687,12 +2816,16 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     wolfSSHD_ConfigGetUserCAKeysFile(usrConf))) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Per-user TrustedUserCAKeys override is not enforced "
-                    "for certificate authentication; rejecting (user=%s)", usr);
+                    "for certificate authentication; rejecting (user=%.32s)",
+                    usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             }
             else {
-            #ifdef _WIN32
-                /* Still need to get users token on Windows */
+            #if defined(WOLFSSH_CERTS) && defined(_WIN32)
+                /* Bound to the requested user above by certificate UPN with
+                 * FPKI, or by subject CN otherwise; which of the two is in
+                 * force is fixed by the wolfSSL build, not by configuration.
+                 * Still need to get the users token on Windows. */
                 wolfSSH_Log(WS_LOG_INFO,
                     "[SSHD] Relying on CA for public key check");
                 rc = SetupUserTokenWin(usr, &authData->sf.publicKey,
@@ -2706,7 +2839,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                         "[SSHD] Error getting users token.");
                     ret = WOLFSSH_USERAUTH_FAILURE;
                 }
-            #elif defined(WOLFSSL_FPKI)
+            #elif defined(WOLFSSH_CERTS) && defined(WOLFSSL_FPKI)
                 /* The UPN-vs-username check above already bound the certificate
                  * to the requested user, so the CA-verified chain is
                  * sufficient. */
@@ -2714,14 +2847,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Relying on CA for public key check");
                 ret = WOLFSSH_USERAUTH_SUCCESS;
             #else
-                /* Without FPKI the certificate UPN/principal cannot be read, so
-                 * the requested user cannot be bound to the certificate. Fail
-                 * closed: require AuthorizedKeysFile (per-user key/cert mapping)
-                 * or a wolfSSL build with FPKI. */
+                /* No binding ran above: either the certificate UPN/principal
+                 * cannot be read without FPKI, or this build has no
+                 * certificate support at all. Fail closed: require
+                 * AuthorizedKeysFile (per-user key/cert mapping) or a wolfSSL
+                 * build with FPKI. */
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Certificate authentication cannot bind the requested "
                     "user without FPKI or AuthorizedKeysFile; rejecting "
-                    "(user=%s)", usr);
+                    "(user=%.32s)", usr);
                 ret = WOLFSSH_USERAUTH_REJECTED;
             #endif
             }
@@ -3170,6 +3304,7 @@ int wolfSSHD_AuthReducePermissions(WOLFSSHD_AUTH* auth)
     }
 
     flag = wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf);
+    WOLFSSH_UNUSED(flag);
 #ifndef _WIN32
     if (flag == WOLFSSHD_PRIV_SEPARAT || flag == WOLFSSHD_PRIV_SANDBOX) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Lowering permissions level");
