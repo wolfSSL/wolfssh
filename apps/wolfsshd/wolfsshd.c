@@ -3063,10 +3063,9 @@ static int StartSSHD(int argc, char** argv)
     if (cmdArgs == NULL) {
         ret = WS_FATAL_ERROR;
     }
-    argc = cmdArgC;
 
     if (ret == WS_SUCCESS) {
-        for (i = 0; i < argc; i++) {
+        for (i = 0; i < (DWORD)cmdArgC; i++) {
             /* cmdArgs entries are wide strings (CommandLineToArgvW); compare
              * as such instead of reinterpreting as narrow char data. */
             if (wcscmp(cmdArgs[i], L"-D") == 0) {
@@ -3080,6 +3079,10 @@ static int StartSSHD(int argc, char** argv)
         wolfSSH_SetLoggingCb(ServiceDebugCb);
 
         if (ret == WS_SUCCESS) {
+            /* argv is being rebuilt from cmdArgs here, so argc must match
+             * cmdArgC, the count CommandLineToArgvW gave for that array. */
+            argc = (DWORD)cmdArgC;
+
             /* we want the arguments to be normal char strings not wchar_t */
             argv = (char**)WMALLOC(argc * sizeof(char*), NULL, DYNTYPE_SSHD);
             if (argv == NULL) {
@@ -3094,6 +3097,9 @@ static int StartSSHD(int argc, char** argv)
         }
     }
     else {
+        /* argc is left as the caller-supplied value here: it already
+         * matches wargv, which comes from the CRT's own command-line
+         * parser and is independent of CommandLineToArgvW's cmdArgC. */
         argv = (char**)wargv;
     }
 #endif

@@ -8759,6 +8759,7 @@ static void TestSftpWindowsOpenFlagMatrix(void)
     char path[64];
     word32 pathSz;
     const char content[] = "0123456789";
+    const char content2[] = "abcde";
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
@@ -8919,6 +8920,187 @@ static void TestSftpWindowsOpenFlagMatrix(void)
     WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
     idx += WOLFSSH_HANDLE_ID_SZ;
     AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, path);
+
+    /* WRITE|TRUNC, no CREAT, against a missing path: must fail
+     * (TRUNCATE_EXISTING requires the file to already exist). */
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_WRITE | WOLFSSH_FXF_TRUNC, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    reqId = rid++;
+    AssertTrue(wolfSSH_SFTP_RecvOpen(ssh, reqId, pkt, idx) != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_FAILURE);
+
+    /* seed an existing file with content, then WRITE|TRUNC, no CREAT: must
+     * truncate it immediately (TRUNCATE_EXISTING). */
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset hi */
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset lo */
+    SftpPutU32((word32)(sizeof(content) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, content, sizeof(content) - 1);
+    idx += (word32)(sizeof(content) - 1);
+    AssertIntEQ(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, (int)(sizeof(content) - 1));
+
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_WRITE | WOLFSSH_FXF_TRUNC, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 0);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, path);
+
+    /* seed an existing file with content, then READ|TRUNC, no WRITE, no
+     * CREAT: TRUNCATE_EXISTING requires GENERIC_WRITE in dwDesiredAccess,
+     * so this must still open (falling back to OPEN_EXISTING) rather than
+     * fail with ERROR_INVALID_PARAMETER, and must leave the content
+     * untouched since it cannot actually truncate. */
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset hi */
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset lo */
+    SftpPutU32((word32)(sizeof(content) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, content, sizeof(content) - 1);
+    idx += (word32)(sizeof(content) - 1);
+    AssertIntEQ(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, (int)(sizeof(content) - 1));
+
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_READ | WOLFSSH_FXF_TRUNC, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    reqId = rid++;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, reqId, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, (int)(sizeof(content) - 1));
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, path);
+
+    /* WRITE|APPEND|CREAT against a missing path: must create it, and every
+     * write must land at EOF regardless of the client-supplied offset. */
+    idx = 0;
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    SftpPutU32(WOLFSSH_FXF_WRITE | WOLFSSH_FXF_APPEND | WOLFSSH_FXF_CREAT,
+            pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    /* first write, offset 0: lands at EOF (0), file becomes "0123456789" */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset hi */
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset lo */
+    SftpPutU32((word32)(sizeof(content) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, content, sizeof(content) - 1);
+    idx += (word32)(sizeof(content) - 1);
+    AssertIntEQ(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    /* second write, offset stale at 0 again: must still append at EOF (10)
+     * rather than overwrite the start of the file. */
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset hi */
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;          /* offset lo */
+    SftpPutU32((word32)(sizeof(content2) - 1), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, content2, sizeof(content2) - 1);
+    idx += (word32)(sizeof(content2) - 1);
+    AssertIntEQ(wolfSSH_SFTP_RecvWrite(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size,
+            (int)(sizeof(content) - 1 + sizeof(content2) - 1));
 
     (void)WREMOVE(ssh->fs, path);
     wolfSSH_SFTP_TestRecvStateFree(ssh);
