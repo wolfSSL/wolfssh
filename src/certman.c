@@ -137,33 +137,41 @@ int wolfSSH_SetCertManager(WOLFSSH_CTX* ctx, WOLFSSL_CERT_MANAGER* cm)
         return WS_BAD_ARGUMENT;
     }
 
+    /* importing the manager already in use is a no-op beyond the policy;
+     * the OCSP policy below is still (re)applied so the documented side
+     * effect holds even when the same manager is imported twice */
+    if (ctx->certMan->cm != cm) {
+        /* Take the reference before mutating the caller's manager so a
+         * WS_FATAL_ERROR return always means nothing changed: on an OCSP
+         * policy failure below the reference is released again and the
+         * caller's manager keeps its previous policy. */
+        if (wolfSSL_CertManager_up_ref(cm) != WOLFSSL_SUCCESS) {
+            WLOG(WS_LOG_CERTMAN, "Failed to increment cert manager reference");
+            return WS_FATAL_ERROR;
+        }
+    }
+
 #ifdef HAVE_OCSP
     /* an imported manager gets the same policy _CertMan_init() applies, and
-     * is rejected if it can't, rather than silently skipping revocation.
-     * Applied before the re-import short circuit below so the documented
-     * side effect holds even when the same manager is imported twice. */
+     * is rejected if it can't, rather than silently skipping revocation */
     if (wolfSSL_CertManagerEnableOCSP(cm, WOLFSSL_OCSP_CHECKALL)
             != WOLFSSL_SUCCESS) {
         WLOG(WS_LOG_CERTMAN, "Couldn't enable OCSP on imported cert manager");
+        if (ctx->certMan->cm != cm) {
+            /* drop the reference taken above */
+            wolfSSL_CertManagerFree(cm);
+        }
         return WS_FATAL_ERROR;
     }
 #endif
 
-    /* importing the manager already in use is a no-op beyond the policy */
-    if (ctx->certMan->cm == cm) {
-        return WS_SUCCESS;
+    if (ctx->certMan->cm != cm) {
+        /* free up existing cm if present */
+        if (ctx->certMan->cm != NULL) {
+            wolfSSL_CertManagerFree(ctx->certMan->cm);
+        }
+        ctx->certMan->cm = cm;
     }
-
-    if (wolfSSL_CertManager_up_ref(cm) != WOLFSSL_SUCCESS) {
-        WLOG(WS_LOG_CERTMAN, "Failed to increment cert manager reference");
-        return WS_FATAL_ERROR;
-    }
-
-    /* free up existing cm if present */
-    if (ctx->certMan->cm != NULL) {
-        wolfSSL_CertManagerFree(ctx->certMan->cm);
-    }
-    ctx->certMan->cm = cm;
 
     return WS_SUCCESS;
 #endif

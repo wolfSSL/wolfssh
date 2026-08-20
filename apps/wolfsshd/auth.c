@@ -998,8 +998,7 @@ static int IsAbsoluteAuthKeysPath(const char* path)
     return ret;
 }
 
-#if (defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)) || \
-    defined(WOLFSSHD_UNIT_TEST)
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSHD_UNIT_TEST)
 /* True when the AuthorizedKeysFile pattern resolves to a different file for
  * every account, which is what makes an entry in it an implicit
  * user-to-credential binding. A relative pattern resolves under the account's
@@ -1054,15 +1053,16 @@ static int IsPerUserAuthKeysPattern(const char* pattern)
 
     return 0;
 }
-#endif /* (WOLFSSH_CERTS && !WOLFSSL_FPKI && _WIN32) || WOLFSSHD_UNIT_TEST */
+#endif /* WOLFSSH_CERTS || WOLFSSHD_UNIT_TEST */
 
-/* Exported predicate matching the runtime identity-check skip; on builds
- * without that check it always returns 0. Unit test builds always compile
- * the real predicate so its logic can be exercised anywhere. */
+/* Exported predicate answering "does this AuthorizedKeysFile pattern resolve
+ * to a distinct file per account". Compiled for every certificate-capable
+ * build so config-time gates (e.g. the FPKI wolfSSH_TrustedSystemCAKeys
+ * check in SetupCTX) can rely on it; without certificate support it always
+ * returns 0. */
 int wolfSSHD_AuthKeysPatternIsPerUser(const char* pattern)
 {
-#if (defined(WOLFSSH_CERTS) && !defined(WOLFSSL_FPKI) && defined(_WIN32)) || \
-    defined(WOLFSSHD_UNIT_TEST)
+#if defined(WOLFSSH_CERTS) || defined(WOLFSSHD_UNIT_TEST)
     return IsPerUserAuthKeysPattern(pattern);
 #else
     (void)pattern;
@@ -2741,7 +2741,6 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                 else {
                     int usrMatch = 0;
                 #ifdef WOLFSSL_FPKI
-                    int upnRealmUnchecked = 0;
                     DNS_entry* current = dCert->altNames;
                     const char* upnDomains =
                         wolfSSHD_ConfigGetAuthorizedUPNDomains(usrConf);
@@ -2751,32 +2750,17 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                                 current->oidSum == UPN_OID) {
                             /* bind the cert identity to the requested user;
                              * MatchUPNToUser also enforces the realm allowlist
-                             * when AuthorizedUPNDomains is set */
+                             * when AuthorizedUPNDomains is set. An unset
+                             * allowlist is noticed once at startup from
+                             * SetupCTX(), not here: this path is
+                             * peer-triggered and the log callback writes
+                             * WARN unconditionally. */
                             if (MatchUPNToUser(usr, current->name, current->len,
                                     upnDomains)) {
                                 usrMatch = 1;
-                                if (upnDomains == NULL || *upnDomains == '\0') {
-                                    upnRealmUnchecked = 1;
-                                }
                             }
                         }
                         current = current->next;
-                    }
-
-                    /* a UPN matched but no realm policy is set; this states a
-                     * fixed configuration property, so emit it once per
-                     * process rather than on every auth attempt (an attempt
-                     * is peer-triggered and the log callback writes WARN
-                     * unconditionally) */
-                    if (upnRealmUnchecked) {
-                        static int upnRealmWarned = 0;
-
-                        if (!upnRealmWarned) {
-                            upnRealmWarned = 1;
-                            wolfSSH_Log(WS_LOG_WARN,
-                                "[SSHD] AuthorizedUPNDomains not set; "
-                                "certificate UPN domain is not checked");
-                        }
                     }
                 #else
                     /* Without FPKI compare subject CN with user name. Only
@@ -2791,24 +2775,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                             (int)XSTRLEN(usr) == dCert->subjectCNLen &&
                             WSTRNCASECMP(usr, dCert->subjectCN,
                                 (size_t)dCert->subjectCNLen) == 0) {
+                        /* CN-only binding (no issuer constraint) is a fixed
+                         * build property, noticed once at startup from
+                         * SetupCTX(); a per-attempt WARN here would let a
+                         * peer grow the log with every attempt now that the
+                         * log callback writes WARN without -d */
                         usrMatch = 1;
-                        /* states a fixed build/configuration property, so
-                         * emit once per process; a per-attempt WARN would
-                         * let a peer grow the log with every attempt now
-                         * that the log callback writes WARN without -d */
-                        {
-                            static int cnBindWarned = 0;
-
-                            if (!cnBindWarned) {
-                                cnBindWarned = 1;
-                                wolfSSH_Log(WS_LOG_WARN,
-                                    "[SSHD] certificate bound to user by "
-                                    "subject CN only; no issuer constraint");
-                                wolfSSH_Log(WS_LOG_WARN,
-                                    "[SSHD] keep the trusted user CA set "
-                                    "narrow");
-                            }
-                        }
                     }
                 #endif
 

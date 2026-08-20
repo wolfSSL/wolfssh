@@ -557,9 +557,10 @@ location. Accepted location names are CURRENT_USER (the default),
 LOCAL_MACHINE, USERS, CURRENT_SERVICE, SERVICES, CURRENT_USER_GROUP_POLICY,
 LOCAL_MACHINE_GROUP_POLICY and LOCAL_MACHINE_ENTERPRISE, each also accepted
 with a `CERT_SYSTEM_STORE_` prefix or as a number. `-W` supplies both the
-certificate and its private key, so it cannot be combined with `-i`, `-j`, or
-`-J`, and it skips the wolfssh home directory search so file arguments resolve
-against the current directory.
+certificate and its private key; in the SFTP client it therefore cannot be
+combined with `-i`, `-j`, or `-J` (the echoserver's options of those names are
+unrelated and remain usable). `-W` also skips the wolfssh home directory
+search so file arguments resolve against the current directory.
 
     $ ./examples/echoserver/echoserver -W "My:wolfSSH-Server:LOCAL_MACHINE" -a ./keys/ca-cert-ecc.pem
 
@@ -585,7 +586,16 @@ rejected inside a `Match` block):
   wolfSSL (`WOLFSSL_SYS_CA_CERTS`) as the client-certificate trust anchors.
   On CN-binding builds (no FPKI) this additionally requires a per-user
   `AuthorizedKeysFile` on every config node, so a subject CN match alone can
-  never log in.
+  never log in. On FPKI builds every config node must set
+  `AuthorizedUPNDomains` or a per-user `AuthorizedKeysFile`; note
+  `AuthorizedUPNDomains` constrains only the certificate's UPN realm, not
+  which trusted CA issued it, so use it only when the OS trust store holds
+  solely your organization's CA.
+
+Note that the pre-existing `HostKey` and `HostCertificate` directives are now
+also rejected when they appear after a `Match` block (matching OpenSSH); they
+were previously accepted there and silently ignored, so a config that relied
+on that will now stop the daemon at startup with a parse error.
 
 Without FPKI, a client certificate is bound to the requested account by a
 case-insensitive subject CN match only; keep the trusted CA set narrow. Note

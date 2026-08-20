@@ -2793,6 +2793,35 @@ static word32 FindPvtKeyIdx(const WOLFSSH_CTX* ctx, byte fmt)
 #endif /* WOLFSSH_WINDOWS_CERT_STORE && WOLFSSH_CERTS */
 
 
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+/* True when loading a key for keyId over the slot at destIdx would clobber
+ * a cert-store-backed credential: either the slot itself or the x509v3
+ * certificate slot paired with keyId. Shared by SetHostPrivateKey() and
+ * wolfSSH_SetHostTpmKey() so the two rejections cannot drift. */
+static int CertStoreSlotConflict(const WOLFSSH_CTX* ctx, word32 destIdx,
+        byte keyId)
+{
+    int conflict;
+
+    conflict = IsCertStoreKey(ctx->privateKey + destIdx);
+#ifdef WOLFSSH_CERTS
+    if (!conflict) {
+        word32 certIdx;
+
+        certIdx = FindPvtKeyIdx(ctx, CertTypeForId(keyId));
+        if (certIdx < WOLFSSH_MAX_PVT_KEYS) {
+            conflict = IsCertStoreKey(ctx->privateKey + certIdx);
+        }
+    }
+#else
+    WOLFSSH_UNUSED(keyId);
+#endif
+
+    return conflict;
+}
+#endif /* WOLFSSH_WINDOWS_CERT_STORE */
+
+
 static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         byte keyId, byte* der, word32 derSz, int dynamicType)
 {
@@ -2820,14 +2849,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
      * store's x509v3 slot and its certificate while still reporting
      * WS_SUCCESS. Refuse the mixed configuration instead; clear the store
      * key first if replacing it is intended. */
-    else if (IsCertStoreKey(ctx->privateKey + destIdx)
-    #ifdef WOLFSSH_CERTS
-            || (FindPvtKeyIdx(ctx, CertTypeForId(keyId)) <
-                    WOLFSSH_MAX_PVT_KEYS &&
-                IsCertStoreKey(ctx->privateKey +
-                    FindPvtKeyIdx(ctx, CertTypeForId(keyId))))
-    #endif
-            ) {
+    else if (CertStoreSlotConflict(ctx, destIdx, keyId)) {
         WLOG(WS_LOG_ERROR, "SetHostPrivateKey: The host key for this "
              "algorithm comes from the certificate store; do not also load "
              "a host key file");
@@ -2893,6 +2915,19 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
     if (destIdx >= WOLFSSH_MAX_PVT_KEYS) {
         ret = WS_CTX_KEY_COUNT_E;
     }
+#ifdef WOLFSSH_WINDOWS_CERT_STORE
+    /* Mirror of SetHostPrivateKey()/SetHostCertificate()'s rejection: a TPM
+     * key over a cert-store slot would silently tear down the store's
+     * x509v3 slot and its certificate while still reporting WS_SUCCESS.
+     * Refuse the mixed configuration instead; clear the store key first if
+     * replacing it is intended. */
+    else if (CertStoreSlotConflict(ctx, destIdx, keyId)) {
+        WLOG(WS_LOG_ERROR, "wolfSSH_SetHostTpmKey: The host key for this "
+             "algorithm comes from the certificate store; do not also "
+             "register a TPM key for it");
+        ret = WS_BAD_ARGUMENT;
+    }
+#endif
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
@@ -2909,8 +2944,9 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
         pvtKey->keySz = 0;
         pvtKey->isTpm = 1;
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
-        /* The slot is now TPM backed; drop any cert-store state so signing
-         * and K_S do not use a stale certificate context. */
+        /* Defensive only: the else-if above already rejects a cert-store
+         * slot, so this can only clear a slot in a state no writer
+         * currently produces. */
         ClearCertStoreKey(ctx, pvtKey);
     #endif
 
@@ -6677,7 +6713,8 @@ static int ParseECCPubKeyCert(WOLFSSH *ssh,
      * sentinel can never compare equal in the binding check below. */
     expectedCurve = wcPrimeForId(ssh->handshake->pubKeyId);
     if (expectedCurve == ECC_CURVE_INVALID) {
-        return WS_INVALID_ALGO_ID;
+        /* Same code ParseECCPubKey() reports for an unmapped id. */
+        return WS_INVALID_PRIME_CURVE;
     }
 
     ret = ParsePubKeyCert(ssh, pubKey, pubKeySz, &der, &derSz);
@@ -9645,6 +9682,29 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = WS_CRYPTO_FAILED;
     }
 
+    /* Bind the certificate's key to the declared algorithm so one credential
+     * cannot authenticate under multiple x509v3-ecdsa-* names, matching the
+     * ParseECCPubKeyCert() binding on the host-key path. */
+    if (ret == WS_SUCCESS) {
+        int expectedCurve;
+        int actualCurve;
+
+        expectedCurve = wcPrimeForId(NameToId(
+                (const char*)pk->publicKeyType, pk->publicKeyTypeSz));
+        if (key_ptr->dp != NULL) {
+            actualCurve = key_ptr->dp->id;
+        }
+        else {
+            actualCurve = wc_ecc_get_curve_id(key_ptr->idx);
+        }
+        if (expectedCurve == ECC_CURVE_INVALID ||
+                actualCurve != expectedCurve) {
+            WLOG(WS_LOG_DEBUG, "DUAREC: certificate key curve does not "
+                    "match the declared algorithm");
+            ret = WS_INVALID_PRIME_CURVE;
+        }
+    }
+
     if (ret == WS_SUCCESS) {
         i = 0;
         /* First check that the signature's public key type matches the one
@@ -11038,8 +11098,19 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
             }
         }
         else {
-            WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting request. "
-                "Set one with wolfSSH_CTX_SetFwdCb().");
+            /* States a fixed property of the app's configuration but fires
+             * per peer request: WARN once per session so the operator error
+             * stays visible in release builds, DEBUG for the repeats so a
+             * peer cannot grow the log with every tcpip-forward request. */
+            if (!ssh->fwdCbMissingWarned) {
+                ssh->fwdCbMissingWarned = 1;
+                WLOG(WS_LOG_WARN, "No forwarding callback set, rejecting "
+                    "request. Set one with wolfSSH_CTX_SetFwdCb().");
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "No forwarding callback set, rejecting "
+                    "request. Set one with wolfSSH_CTX_SetFwdCb().");
+            }
             ret = WS_UNIMPLEMENTED_E;
         }
     }
@@ -11306,7 +11377,10 @@ static int DoChannelOpen(WOLFSSH* ssh,
              * forward. */
             if (typeId == ID_CHANTYPE_TCPIP_FORWARD &&
                     ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
-                WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
+                /* Fires per peer open request, so DEBUG: at WARN an app
+                 * that logs warnings unconditionally (e.g. wolfsshd) would
+                 * let a peer grow the log with every open. */
+                WLOG(WS_LOG_DEBUG, "Rejecting forwarded-tcpip channel open "
                         "received by a server (wrong direction)");
                 fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                 ret = WS_ERROR;
@@ -11320,7 +11394,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 else {
                     /* Fires per channel open, so DEBUG: at WARN an app that
                      * logs warnings unconditionally (e.g. wolfsshd) would let
-                     * a peer grow the log with every open request. */
+                     * a peer grow the log with every open request. The
+                     * accept-by-default policy itself is documented at
+                     * wolfSSH_CTX_SetChannelOpenCb() in ssh.h. */
                     WLOG(WS_LOG_DEBUG, "No channel open callback set "
                             "(call wolfSSH_CTX_SetChannelOpenCb()), accepting "
                             "channel open by default; typeId=%u, "
@@ -11348,9 +11424,20 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 else {
                     /* Both forwarding channel types require an explicit policy
                      * callback; without one, fail closed rather than letting
-                     * the default-accept channelOpenCb path admit them. */
-                    WLOG(WS_LOG_WARN, "No forward callback set for forwarding "
-                            "channel, failing channel open");
+                     * the default-accept channelOpenCb path admit them.
+                     * Fires per peer open request: WARN once per session so
+                     * the operator error stays visible in release builds,
+                     * DEBUG for the repeats so a peer cannot grow the log
+                     * with every open request. */
+                    if (!ssh->fwdCbMissingWarned) {
+                        ssh->fwdCbMissingWarned = 1;
+                        WLOG(WS_LOG_WARN, "No forward callback set for "
+                                "forwarding channel, failing channel open");
+                    }
+                    else {
+                        WLOG(WS_LOG_DEBUG, "No forward callback set for "
+                                "forwarding channel, failing channel open");
+                    }
                     fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                     ret = WS_ERROR;
                 }
@@ -15630,11 +15717,18 @@ static int ExtractPubKeyDerFromCert(const byte* certDer, word32 certDerSz,
     ret = wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL);
     if (ret == 0) {
         ret = wc_GetPubKeyDerFromCert(dCert, NULL, &pubKeyDerSz);
-        if (ret == WC_NO_ERR_TRACE(LENGTH_ONLY_E)) {
+        if (ret == WC_NO_ERR_TRACE(LENGTH_ONLY_E) && pubKeyDerSz > 0) {
             ret = 0;
             pubKeyDer = (byte*)WMALLOC(pubKeyDerSz, heap, DYNTYPE_PUBKEY);
             if (pubKeyDer == NULL)
                 ret = WS_MEMORY_E;
+        }
+        else {
+            /* The sizing call must report LENGTH_ONLY_E and a non-zero
+             * size; anything else is an error, so the copy call below can
+             * never run with a NULL destination. */
+            if (ret >= 0)
+                ret = WS_CRYPTO_FAILED;
         }
     }
     if (ret == 0)
@@ -15710,9 +15804,7 @@ static const WOLFSSH_PVT_KEY* FindCertStoreAuthKey(const WOLFSSH_CTX* ctx,
 
     /* Prefer the slot registered under the exact algorithm id: the store
      * loader registers the same certificate under both the plain and x509v3
-     * ids, so a base-id match alone cannot tell those two slots apart. The
-     * base-id pass only runs when no exact slot exists (e.g. an RSA
-     * signature variant id resolving to the ID_SSH_RSA slot). */
+     * ids, so a base-id match alone cannot tell those two slots apart. */
     for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
         pvtKey = &ctx->privateKey[i];
         if (IsCertStoreKey(pvtKey) && pvtKey->publicKeyFmt == keyId &&
@@ -15722,6 +15814,12 @@ static const WOLFSSH_PVT_KEY* FindCertStoreAuthKey(const WOLFSSH_CTX* ctx,
         }
     }
 
+    /* Base-id fallback pass. Currently unreachable: every caller passes a
+     * keyId from NameToId() of the declared x509v3 name, and the loader
+     * registers the certificate under that exact id too, so any slot this
+     * pass could match already matched above. Kept as future-proofing for
+     * signature-variant ids (e.g. ID_RSA_SHA2_256 resolving to the
+     * ID_SSH_RSA slot) if a caller ever passes one. */
     baseId = CertStoreBaseKeyId(keyId);
     for (i = 0; i < ctx->privateKeyCount && i < WOLFSSH_MAX_PVT_KEYS; i++) {
         pvtKey = &ctx->privateKey[i];
@@ -15797,6 +15895,60 @@ static int CertStoreEccSigToRs(const byte* sig, word32 sigSz, word32 curveSz,
         WMEMCPY(s, sig + halfSz + sOff, halfSz - sOff);
         *sSz = halfSz - sOff;
     }
+
+    return ret;
+}
+
+
+/* Self-verify a cert-store ECDSA signature (raw r and s) against the
+ * certificate's public key, shared by the KEX (SignHEcdsa) and user-auth
+ * (BuildUserAuthRequestEccCert) signing paths. Returns WS_SUCCESS when the
+ * signature verifies, WS_ECC_E when it does not, WS_MEMORY_E on allocation
+ * failure. */
+static int CertStoreEccSelfVerify(const byte* r, word32 rSz,
+        const byte* s, word32 sSz, const byte* digest, word32 digestSz,
+        ecc_key* key, void* heap)
+{
+    byte* derSig;
+    word32 derSigSz;
+    int verified;
+    int ret;
+#ifndef WOLFSSH_SMALL_STACK
+    byte derSig_s[ECC_MAX_SIG_SIZE];
+#endif
+
+    ret = WS_SUCCESS;
+    verified = 0;
+    WOLFSSH_UNUSED(heap);
+#ifdef WOLFSSH_SMALL_STACK
+    derSig = (byte*)WMALLOC(ECC_MAX_SIG_SIZE, heap, DYNTYPE_TEMP);
+    if (derSig == NULL) {
+        ret = WS_MEMORY_E;
+    }
+#else
+    derSig = derSig_s;
+#endif
+
+    if (ret == WS_SUCCESS) {
+        derSigSz = ECC_MAX_SIG_SIZE;
+        ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz, derSig, &derSigSz);
+        if (ret == 0) {
+            ret = wc_ecc_verify_hash(derSig, derSigSz, digest, digestSz,
+                    &verified, key);
+        }
+        if (ret != 0 || verified != 1) {
+            WLOG(WS_LOG_DEBUG, "CertStoreEccSelfVerify: Cert store "
+                 "signature failed self-verify");
+            ret = WS_ECC_E;
+        }
+        else {
+            ret = WS_SUCCESS;
+        }
+    }
+#ifdef WOLFSSH_SMALL_STACK
+    if (derSig != NULL)
+        WFREE(derSig, heap, DYNTYPE_TEMP);
+#endif
 
     return ret;
 }
@@ -15895,6 +16047,13 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
             if (nCryptRet != 0) {
                 WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: NCryptSignHash "
                         "failed, error: 0x%08lx", (unsigned long)nCryptRet);
+                ret = WS_CRYPTO_FAILED;
+            } else if (dwSigLen == 0 || dwSigLen > cbSignature) {
+                /* Do not trust a KSP-reported length past the caller's
+                 * capacity; downstream copies *sigSz bytes from sig. */
+                WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Bad signature "
+                        "length %lu (capacity %lu)", (unsigned long)dwSigLen,
+                        (unsigned long)cbSignature);
                 ret = WS_CRYPTO_FAILED;
             } else {
                 *sigSz = dwSigLen;
@@ -16186,44 +16345,8 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
                 /* Self-verify with the certificate public key decoded into
                  * sk.ecc.key by SendKexGetSigningKey(), matching the RSA
                  * path's wolfSSH_RsaVerify() check. */
-                byte* derSig;
-                word32 derSigSz;
-                int verified;
-            #ifdef WOLFSSH_SMALL_STACK
-                derSig = (byte*)WMALLOC(ECC_MAX_SIG_SIZE, ssh->ctx->heap,
-                        DYNTYPE_TEMP);
-                if (derSig == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-            #else
-                byte derSig_s[ECC_MAX_SIG_SIZE];
-
-                derSig = derSig_s;
-            #endif
-
-                if (ret == WS_SUCCESS) {
-                    derSigSz = ECC_MAX_SIG_SIZE;
-                    verified = 0;
-                    ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz,
-                            derSig, &derSigSz);
-                    if (ret == 0) {
-                        ret = wc_ecc_verify_hash(derSig, derSigSz,
-                                digest, digestSz, &verified,
-                                &sigKey->sk.ecc.key);
-                    }
-                    if (ret != 0 || verified != 1) {
-                        WLOG(WS_LOG_DEBUG, "SignHEcdsa: Cert store signature "
-                             "failed self-verify");
-                        ret = WS_ECC_E;
-                    }
-                    else {
-                        ret = WS_SUCCESS;
-                    }
-                }
-            #ifdef WOLFSSH_SMALL_STACK
-                if (derSig != NULL)
-                    WFREE(derSig, ssh->ctx->heap, DYNTYPE_TEMP);
-            #endif
+                ret = CertStoreEccSelfVerify(r, rSz, s, sSz, digest, digestSz,
+                        &sigKey->sk.ecc.key, ssh->ctx->heap);
             }
         }
         else
@@ -16347,6 +16470,12 @@ static int SignHMlDsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #endif
 
 
+/* Sign the session hash with the negotiated host key. sigSz is in/out: on
+ * input the capacity of the sig buffer, which the signing backends (e.g.
+ * wc_RsaSSL_Sign, NCryptSignHash) trust as the output buffer size; on
+ * output the produced signature length. Callers must set *sigSz before
+ * every call -- a prior call rewrites it to the produced length, which is
+ * smaller than the capacity. */
 static int SignH(WOLFSSH* ssh, byte* sig, word32* sigSz,
         struct wolfSSH_sigKeyBlockFull *sigKey)
 {
@@ -19300,25 +19429,8 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 /* Self-verify against the certificate public key decoded by
                  * PrepareUserAuthRequestEccCert(), matching every other
                  * cert-store signing path. */
-                byte derSig[ECC_MAX_SIG_SIZE];
-                word32 derSigSz;
-                int verified;
-
-                derSigSz = (word32)sizeof(derSig);
-                verified = 0;
-                ret = wc_ecc_rs_raw_to_sig(r, rSz, s, sSz, derSig, &derSigSz);
-                if (ret == 0) {
-                    ret = wc_ecc_verify_hash(derSig, derSigSz, digest,
-                            digestSz, &verified, &keySig->ks.ecc.key);
-                }
-                if (ret != 0 || verified != 1) {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Cert store ECC signature "
-                         "failed self-verify");
-                    ret = WS_ECC_E;
-                }
-                else {
-                    ret = WS_SUCCESS;
-                }
+                ret = CertStoreEccSelfVerify(r, rSz, s, sSz, digest, digestSz,
+                        &keySig->ks.ecc.key, ssh->ctx->heap);
             }
         }
         else

@@ -1179,6 +1179,10 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         userPublicKey = userPublicKeyBuf;
         userPublicKeySz = 0;
         userPublicKeyAlloc = 0;
+        /* The type points at a static name owned by the freed credential's
+         * loader; clear it with the key so nothing reads it stale. */
+        userPublicKeyType = NULL;
+        userPublicKeyTypeSz = 0;
     }
 
     if (privKeyName != NULL && userPrivateKey != NULL) {
@@ -1270,7 +1274,6 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
     if (userPrivateKeyAlloc && userPrivateKey != NULL) {
         wc_ForceZero(userPrivateKey, userPrivateKeySz);
         WFREE(userPrivateKey, heap, DYNTYPE_PRIVKEY);
-        userPrivateKeyAlloc = 0;
     }
 
     userPublicKey = certCopy;
@@ -1279,9 +1282,18 @@ int ClientSetupCertStoreAuth(WOLFSSH_CTX* ctx, void* heap)
     userPublicKeyType = (const byte*)keyType;
     userPublicKeyTypeSz = (word32)WSTRLEN(keyType);
 
-    /* No in-memory private key, signing goes through the cert store. */
+    /* No in-memory private key, signing goes through the cert store. Clear
+     * the alloc flag unconditionally alongside the pointer: a failed
+     * ClientSetPrivateKey() can leave the flag set with a NULL pointer, and
+     * the flag must never be set while the pointer targets the static
+     * buffer (ClientFreeBuffers would WFREE it). */
     userPrivateKey = userPrivateKeyBuf;
     userPrivateKeySz = 0;
+    userPrivateKeyAlloc = 0;
+    /* Clear the type a superseded ClientSetPrivateKey() left behind so it
+     * cannot be read against the now-absent in-memory key. */
+    userPrivateKeyType = NULL;
+    userPrivateKeyTypeSz = 0;
 
     pubKeyLoaded = 1;
     return WS_SUCCESS;

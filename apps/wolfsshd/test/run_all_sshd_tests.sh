@@ -192,16 +192,26 @@ Match User $USER
 AuthorizedUPNDomains example
 EOF
     rm -f upn_nofpki_log.txt
-    TIMEOUT=""
-    if command -v timeout >/dev/null 2>&1; then
-        TIMEOUT="timeout 30"
+    # Without a timeout wrapper a regression that lets the daemon start would
+    # hang the suite indefinitely, so skip rather than run unbounded.
+    if ! command -v timeout >/dev/null 2>&1; then
+        printf "SKIPPED (no timeout command)\n"
+        SKIPPED=$((SKIPPED+1))
+        rm -f upn_hostkey.pem sshd_config_test_upn_nofpki
+        return
     fi
-    $TIMEOUT ../wolfsshd -D -d -f sshd_config_test_upn_nofpki \
+    timeout 30 ../wolfsshd -D -d -f sshd_config_test_upn_nofpki \
         -E upn_nofpki_log.txt
-    # Also require that the host key loaded: a "Refusing to load" failure would
-    # exit before the UPN gate and must not pass off as the UPN rejection.
-    if grep -q "cannot enforce it" upn_nofpki_log.txt &&
-            ! grep -q "Refusing to load" upn_nofpki_log.txt; then
+    # Match the fail-closed wording only: the WOLFSSH_IGNORE_UNKNOWN_CONFIG
+    # branch logs "Ignoring AuthorizedUPNDomains ... cannot enforce it" and
+    # keeps running, which must not pass as the startup refusal. Also require
+    # that the host key loaded: a "Refusing to load" failure would exit before
+    # the UPN gate. Finally require that nothing was left listening on the
+    # test port.
+    if grep -q "AuthorizedUPNDomains is set" upn_nofpki_log.txt &&
+            grep -q "but this build cannot enforce it" upn_nofpki_log.txt &&
+            ! grep -q "Refusing to load" upn_nofpki_log.txt &&
+            ! nc -z 127.0.0.1 22623 2>/dev/null; then
         printf "PASSED\n"
     else
         printf "FAILED!\n"

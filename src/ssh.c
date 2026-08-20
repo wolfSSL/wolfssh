@@ -27,13 +27,14 @@
 /* CompareStringOrdinal() and friends need a Vista-or-later SDK profile;
  * mingw-w64 has historically defaulted _WIN32_WINNT to pre-Vista, so pin the
  * floor before the first header that pulls in <windows.h> (wolfssh/ssh.h via
- * port.h does). This only helps when WOLFSSH_WINDOWS_CERT_STORE is defined on
- * the command line (configure/mingw builds); user_settings.h builds see it
- * too late, but those use MSVC SDKs whose default is already >= Vista. */
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
-    #ifndef _WIN32_WINNT
-        #define _WIN32_WINNT 0x0600
-    #endif
+ * port.h does). Keyed on _WIN32 rather than WOLFSSH_WINDOWS_CERT_STORE:
+ * this is the only macro guaranteed defined this early, since a
+ * user_settings.h build defines WOLFSSH_WINDOWS_CERT_STORE only once
+ * <wolfssh/ssh.h> pulls in settings.h below, after <windows.h> has already
+ * been seen. Harmless for non-cert-store Windows builds. */
+#if defined(_WIN32) && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600)
+    #undef  _WIN32_WINNT
+    #define _WIN32_WINNT 0x0600
 #endif
 
 #ifdef HAVE_CONFIG_H
@@ -53,12 +54,24 @@
     #include <ncrypt.h>
     #include <string.h>
     #include <wchar.h>
-    /* Fallback for SDKs that predate this wincrypt.h definition. The value
-     * must match wincrypt.h exactly. The CERT_SYSTEM_STORE_* location
-     * constants are consumed only by src/certman.c, which carries its own
-     * fallbacks. */
+    /* Fallbacks for SDKs that predate these wincrypt.h/ncrypt.h
+     * definitions. The values must match the SDK headers exactly. The
+     * CERT_SYSTEM_STORE_* location constants are consumed only by
+     * src/certman.c, which carries its own fallbacks. */
     #ifndef CERT_NCRYPT_KEY_SPEC
         #define CERT_NCRYPT_KEY_SPEC 0xFFFFFFFF
+    #endif
+    #ifndef CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
+        #define CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG 0x00040000
+    #endif
+    #ifndef NCRYPT_KEY_USAGE_PROPERTY
+        #define NCRYPT_KEY_USAGE_PROPERTY L"Key Usage"
+    #endif
+    #ifndef NCRYPT_ALLOW_DECRYPT_FLAG
+        #define NCRYPT_ALLOW_DECRYPT_FLAG 0x00000001
+    #endif
+    #ifndef NCRYPT_ALLOW_SIGNING_FLAG
+        #define NCRYPT_ALLOW_SIGNING_FLAG 0x00000002
     #endif
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 
@@ -3327,11 +3340,24 @@ int wolfSSH_CTX_AddRootCert_file(WOLFSSH_CTX* ctx, const char* name)
 #endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM */
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
-/* Returns 1 when the certificate's private key can actually be used for
- * signing. CERT_KEY_PROV_INFO_PROP_ID is not enough: it is also set for
- * legacy CryptoAPI/CSP keys, which CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
- * rejects. Use the same acquisition the signing path performs so a
- * candidate that cannot sign is not chosen. */
+/* Result of CertKeyCanSign(): whether the certificate's private key can
+ * actually be used for signing. NONE and NOSIGN are both unusable, but are
+ * kept distinct so the final diagnostic can tell an inaccessible key (fix
+ * the ACL) from a key enrolled without signing usage (enroll a signing
+ * certificate). */
+#define WS_CERT_KEY_NONE    0 /* key not acquirable (missing, ACL, CSP) */
+#define WS_CERT_KEY_UNKNOWN 1 /* key acquired but usage is not reported */
+#define WS_CERT_KEY_SIGNS   2 /* key acquired and reports signing usage */
+#define WS_CERT_KEY_NOSIGN  3 /* key acquired, usage excludes signing */
+
+/* Classify the certificate's private key for signing use.
+ * CERT_KEY_PROV_INFO_PROP_ID is not enough: it is also set for legacy
+ * CryptoAPI/CSP keys, which CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG rejects.
+ * Use the same acquisition the signing path performs so a candidate that
+ * cannot sign is not chosen. Several smart-card / third-party KSPs do not
+ * implement NCRYPT_KEY_USAGE_PROPERTY; those keys are reported as
+ * usage-unknown so the caller can rank them below a key that definitely
+ * signs instead of failing open on the first one enumerated. */
 static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
 {
     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE hKey = 0;
@@ -3339,24 +3365,33 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
     BOOL fCallerFree = FALSE;
     DWORD keyUsage = 0;
     DWORD cbOut = 0;
-    int canSign = 1;
+    SECURITY_STATUS status;
+    int canSign = WS_CERT_KEY_SIGNS;
 
     if (!CryptAcquireCertificatePrivateKey(pCertContext,
             CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_SILENT_FLAG,
             NULL, &hKey, &dwKeySpec, &fCallerFree)) {
-        return 0;
+        return WS_CERT_KEY_NONE;
     }
 
     /* An acquirable key is not necessarily a signing key: an enterprise My
      * store commonly holds a keyEncipherment-only RSA certificate next to
      * the signing one with the same CN. Require NCRYPT_ALLOW_SIGNING_FLAG
-     * when the provider exposes the usage property; a provider that does
-     * not expose it is treated as usable rather than rejected. */
-    if (NCryptGetProperty(hKey, NCRYPT_KEY_USAGE_PROPERTY,
-            (PBYTE)&keyUsage, (DWORD)sizeof(keyUsage), &cbOut, 0) == 0 &&
-            cbOut == (DWORD)sizeof(keyUsage) &&
-            (keyUsage & NCRYPT_ALLOW_SIGNING_FLAG) == 0) {
-        canSign = 0;
+     * when the provider exposes the usage property. */
+    status = NCryptGetProperty(hKey, NCRYPT_KEY_USAGE_PROPERTY,
+            (PBYTE)&keyUsage, (DWORD)sizeof(keyUsage), &cbOut, 0);
+    if (status == 0 && cbOut == (DWORD)sizeof(keyUsage)) {
+        if ((keyUsage & NCRYPT_ALLOW_SIGNING_FLAG) == 0) {
+            WLOG(WS_LOG_DEBUG, "CertKeyCanSign: key usage 0x%lx does not "
+                    "allow signing", (unsigned long)keyUsage);
+            canSign = WS_CERT_KEY_NOSIGN;
+        }
+    }
+    else {
+        WLOG(WS_LOG_DEBUG, "CertKeyCanSign: NCRYPT_KEY_USAGE_PROPERTY not "
+                "readable (status 0x%lx), key usage unknown",
+                (unsigned long)status);
+        canSign = WS_CERT_KEY_UNKNOWN;
     }
 
     if (fCallerFree) {
@@ -3381,8 +3416,12 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
  * that a lookup for "server1" does not select "server1.example" or
  * "myserver1". The compare is ordinal and case insensitive, so it cannot
  * change with the thread locale. Candidates are ranked by how usable they
- * are: time-valid with a usable key first, then expired over not yet
- * valid, then the latest NotAfter. A candidate with no usable key is
+ * are: time-valid whose key definitely signs first, then time-valid whose
+ * provider does not report key usage, then (only when
+ * WOLFSSH_CERT_STORE_ALLOW_EXPIRED is defined) expired over not yet
+ * valid, then the latest NotAfter. Without that opt-in, a match that is
+ * not time-valid fails with WS_CERT_EXPIRED_E rather than silently
+ * presenting an expired credential. A candidate with no usable key is
  * never selected -- the caller repeats the same key acquisition and would
  * only fail with a misleading error -- so a public-only duplicate neither
  * ends the search nor is returned. The selected certificate is stored in
@@ -3395,6 +3434,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
 {
     PCCERT_CONTEXT pCertContext;
     PCCERT_CONTEXT keyedMatch;
+    PCCERT_CONTEXT validUnknown;
     const wchar_t* cn;
     wchar_t* certCn;
     DWORD certCnSz;
@@ -3403,6 +3443,7 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     int timeValidity;
     int keyedEarly;
     int keylessSeen;
+    int nosignSeen;
     int better;
     int ret;
 
@@ -3410,6 +3451,8 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     ret = WS_SUCCESS;
     keyedEarly = 0;
     keylessSeen = 0;
+    nosignSeen = 0;
+    validUnknown = NULL;
 
     /* Strip an optional "CN=" prefix from the requested name. */
     cn = subjectName;
@@ -3459,11 +3502,24 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
          * +1 after it. */
         hasKey = CertKeyCanSign(pCertContext);
         timeValidity = CertVerifyTimeValidity(NULL, pCertContext->pCertInfo);
-        if (hasKey && timeValidity == 0) {
+        if (hasKey == WS_CERT_KEY_SIGNS && timeValidity == 0) {
             break;
         }
 
-        if (hasKey) {
+        if (hasKey == WS_CERT_KEY_UNKNOWN && timeValidity == 0) {
+            /* Time-valid but the provider does not report key usage: keep
+             * the first one as a candidate and keep searching for a
+             * sibling that definitely signs, so an encryption-only key in
+             * a usage-silent KSP cannot shadow the signing one. */
+            if (validUnknown == NULL) {
+                validUnknown = CertDuplicateCertificateContext(pCertContext);
+                if (validUnknown == NULL) {
+                    ret = WS_MEMORY_E;
+                }
+            }
+        }
+        else if (hasKey == WS_CERT_KEY_SIGNS ||
+                hasKey == WS_CERT_KEY_UNKNOWN) {
             /* Deterministic fallback ranking: expired beats not yet valid,
              * and within the same class the latest NotAfter wins. */
             better = 0;
@@ -3489,6 +3545,9 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
                 }
             }
         }
+        else if (hasKey == WS_CERT_KEY_NOSIGN) {
+            nosignSeen = 1;
+        }
         else {
             keylessSeen = 1;
         }
@@ -3503,7 +3562,15 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
     /* An allocation failure is reported as such rather than falling back
      * to a candidate the enumeration had already rejected. */
     if (ret == WS_SUCCESS && pCertContext == NULL) {
-        if (keyedMatch != NULL) {
+        if (validUnknown != NULL) {
+            WLOG(WS_LOG_INFO, "FindCertByExactCN: No candidate reports "
+                    "signing usage; using a time-valid '%ls' whose key "
+                    "usage is unknown", subjectName);
+            pCertContext = validUnknown;
+            validUnknown = NULL;
+        }
+        else if (keyedMatch != NULL) {
+#ifdef WOLFSSH_CERT_STORE_ALLOW_EXPIRED
             /* WS_LOG_ERROR so the fallback is as visible as logging in
              * this build allows; still only compiled in when logging is. */
             WLOG(WS_LOG_ERROR, "FindCertByExactCN: No time-valid match, using "
@@ -3511,15 +3578,36 @@ static int FindCertByExactCN(void* heap, HCERTSTORE hStore,
                     keyedEarly ? "not yet valid" : "expired", subjectName);
             pCertContext = keyedMatch;
             keyedMatch = NULL;
+#else
+            /* Fail closed by default: in a non-logging build a silent
+             * fallback would present an expired host credential with
+             * WS_SUCCESS and no local indication of the cause. Define
+             * WOLFSSH_CERT_STORE_ALLOW_EXPIRED to opt into the old
+             * behavior. */
+            WLOG(WS_LOG_ERROR, "FindCertByExactCN: '%ls' matched only a %s "
+                    "certificate; rejecting (define "
+                    "WOLFSSH_CERT_STORE_ALLOW_EXPIRED to use it anyway)",
+                    subjectName, keyedEarly ? "not yet valid" : "expired");
+            ret = WS_CERT_EXPIRED_E;
+#endif
         }
         else if (keylessSeen) {
             WLOG(WS_LOG_ERROR, "FindCertByExactCN: '%ls' matched only "
                     "certificates with no usable private key", subjectName);
             ret = WS_CRYPTO_FAILED;
         }
+        else if (nosignSeen) {
+            WLOG(WS_LOG_ERROR, "FindCertByExactCN: '%ls' matched only "
+                    "certificates whose private key is not a signing key; "
+                    "enroll a signing certificate", subjectName);
+            ret = WS_CRYPTO_FAILED;
+        }
     }
     if (keyedMatch != NULL) {
         CertFreeCertificateContext(keyedMatch);
+    }
+    if (validUnknown != NULL) {
+        CertFreeCertificateContext(validUnknown);
     }
 
     if (ret != WS_SUCCESS) {
@@ -3637,8 +3725,9 @@ static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
                 (PCCERT_CONTEXT)pvtKey->certStoreContext);
     }
     if (pvtKey->key != NULL) {
-        /* The mirror-image order (a file key loaded after a store key) is
-         * reported the same way from SetHostPrivateKey(). */
+        /* Defensive only: wolfSSH_CTX_UsePrivateKey_fromStore() rejects a
+         * slot holding file-based credentials before preparing it, the
+         * same way SetHostPrivateKey() rejects the mirror-image order. */
         WLOG(WS_LOG_ERROR, "CommitCertStoreSlot: Replacing the file-based "
              "host key for this algorithm with the certificate store key");
         WS_FORCEZERO(pvtKey->key, pvtKey->keySz);
@@ -3759,8 +3848,10 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     if (ret == WS_CRYPTO_FAILED) {
         CertCloseStore(hStore, 0);
         WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: Certificate "
-             "matched but its private key is not accessible; check key "
-             "permissions for the service account");
+             "matched but its private key is not usable for signing; see "
+             "the FindCertByExactCN message above for whether the key is "
+             "inaccessible (check key permissions for the service account) "
+             "or enrolled without signing usage");
         return WS_CRYPTO_FAILED;
     }
     if (ret != WS_SUCCESS) {
@@ -3876,6 +3967,19 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     WMEMSET(&certSlot, 0, sizeof(certSlot));
     newCount = ctx->privateKeyCount;
     keyIdx = FindKeySlot(ctx, keyId);
+    /* Mirror of SetHostPrivateKey()/SetHostCertificate(): a store key must
+     * not silently replace file- or TPM-based credentials already loaded
+     * for this algorithm, so the mixed configuration is rejected in both
+     * load orders. Replacing a previous store key is still allowed. */
+    if (keyIdx != WOLFSSH_MAX_PVT_KEYS &&
+            !ctx->privateKey[keyIdx].useCertStore) {
+        WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: A host key "
+             "for this algorithm is already loaded from a file or TPM; it "
+             "cannot be paired with a store key");
+        CertFreeCertificateContext(pCertContext);
+        CertCloseStore(hStore, 0);
+        return WS_BAD_ARGUMENT;
+    }
     if (keyIdx == WOLFSSH_MAX_PVT_KEYS) {
         keyIdx = newCount++;
     }
@@ -3909,6 +4013,17 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
     haveCertSlot = 0;
     if (certId != keyId) {
         certIdx = FindKeySlot(ctx, certId);
+        /* Same mixed-configuration rejection for the x509v3 slot, so a
+         * file HostCertificate is never silently destroyed either. */
+        if (certIdx != WOLFSSH_MAX_PVT_KEYS &&
+                !ctx->privateKey[certIdx].useCertStore) {
+            WLOG(WS_LOG_ERROR, "wolfSSH_CTX_UsePrivateKey_fromStore: A host "
+                 "certificate for this algorithm is already loaded from a "
+                 "file; it cannot be paired with a store key");
+            CertFreeCertificateContext(pCertContext);
+            CertCloseStore(hStore, 0);
+            return WS_BAD_ARGUMENT;
+        }
         if (certIdx == WOLFSSH_MAX_PVT_KEYS) {
             certIdx = newCount++;
         }

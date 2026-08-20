@@ -1378,11 +1378,13 @@ jobs:
     # OPENSSL_ALL, which turns on WOLFSSL_ASN_ALL and with it WOLFSSL_FPKI in
     # wolfSSL's settings.h, so the binding evaluated here is the certificate
     # UPN (renewcerts.cnf gives the test certs an msUPN altname); the
-    # subject-CN branch only compiles on non-FPKI wolfSSL builds. Runs
+    # subject-CN branch only compiles on non-FPKI wolfSSL builds and so has
+    # no runtime coverage here -- exercising it needs a matrix entry whose
+    # wolfSSL user_settings.h omits OPENSSL_ALL. Runs
     # against the already-running service on the user_ca_source: store
     # entry, whose config sets no AuthorizedKeysFile so the identity binding
     # is what decides.
-    - name: Client certificate CN binding is enforced
+    - name: Client certificate UPN binding is enforced (FPKI build)
       if: matrix.user_ca_source == 'store'
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh
@@ -1515,6 +1517,12 @@ jobs:
             exit 1
         }
 
+        # Restore the original binPath and restart the service so any step
+        # added after this one gets a running, normally-configured daemon.
+        $origBinPath = "`"$sshdPathFull`" -f `"$configPathFull`" -p $testPort"
+        sc.exe config wolfsshd binPath= $origBinPath | Out-Null
+        Start-Service -Name wolfsshd
+
     # -W supplies both keys, so combining it with -i/-j/-J is a usage error
     # the client must refuse before connecting.
     - name: SFTP client rejects -W combined with -i
@@ -1579,8 +1587,20 @@ jobs:
         Get-ChildItem -Path "Cert:\LocalMachine\My" | Where-Object {
             $_.Subject -like "*wolfSSH-Test*"
         } | Remove-Item -Force -ErrorAction SilentlyContinue
-        foreach ($s in @("wolfSSHTestCA", "wolfSSHEmptyCA")) {
+        foreach ($s in @("wolfSSHTestCA", "wolfSSHEmptyCA", "wolfSSHLeafOnlyCA")) {
             Get-ChildItem -Path "Cert:\LocalMachine\$s" -ErrorAction SilentlyContinue |
                 Remove-Item -Force -ErrorAction SilentlyContinue
+            # Remove the store itself (a registry key), not just its
+            # contents, so nothing persists across runs on a self-hosted
+            # runner
+            Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\SystemCertificates\$s" `
+                -Recurse -Force -ErrorAction SilentlyContinue
         }
+
+        # Remove generated key material from the checkout (private keys for
+        # CA-signed identities must not persist on a self-hosted runner)
+        Remove-Item -Path "$env:GITHUB_WORKSPACE\wolfssh\keys\wronguser-*" `
+            -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:GITHUB_WORKSPACE\wolfssh\keys\testuser-key.*" `
+            -Force -ErrorAction SilentlyContinue
         Write-Host "Cleaned up test certificates"

@@ -73,6 +73,11 @@
  * here and, in wolfSSL's user_settings.h,
  *   #define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA
  * ECDSA certificate store keys need neither.
+ *
+ * The store lookup rejects a CN match whose certificate is expired or not
+ * yet valid when no time-valid one exists; define
+ *   #define WOLFSSH_CERT_STORE_ALLOW_EXPIRED
+ * to select such a certificate anyway (the fallback is logged).
  */
 
 

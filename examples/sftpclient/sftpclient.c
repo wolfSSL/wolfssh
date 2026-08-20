@@ -419,11 +419,12 @@ static void ShowUsage(void)
     printf("               CURRENT_USER_GROUP_POLICY,\n");
     printf("               LOCAL_MACHINE_GROUP_POLICY,\n");
     printf("               LOCAL_MACHINE_ENTERPRISE, each also with a\n");
-    printf("               CERT_SYSTEM_STORE_ prefix, or a number\n");
-    printf("               supplies both keys, can not be used with "
-           "-i, -j or -J\n");
-    printf("               skips the wolfssh home directory search, so\n");
-    printf("               -A/-d/-l resolve against the current directory\n");
+    printf("               CERT_SYSTEM_STORE_ prefix, or a number.\n");
+    printf("               -W supplies both keys; it can not be used with "
+           "-i, -j or -J.\n");
+    printf("               -W also skips the wolfssh home directory search,\n");
+    printf("               so -A/-d/-l resolve against the current "
+           "directory\n");
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 #ifdef WOLFSSH_CERTS
     printf(" -J <filename> filename for DER certificate to use\n");

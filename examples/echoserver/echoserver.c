@@ -3284,6 +3284,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     }
 #endif
 
+#if defined(WOLFSSH_TPM) && defined(WOLFSSH_WINDOWS_CERT_STORE)
+    /* Both register a host key on the same CTX; loading both would leave
+     * which key the server presents up to algorithm negotiation. The SFTP
+     * client and wolfsshd reject the equivalent mixes the same way. */
+    if (tpmHostKeyPath != NULL && certStoreSpec != NULL) {
+        ES_ERROR("-W cannot be combined with -G\n");
+    }
+#endif
+
 #ifdef WOLFSSH_NO_RSA
     /* If wolfCrypt isn't built with RSA, force ECC on. */
     userEcc = 1;
@@ -3487,6 +3496,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
                 #endif
+                #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+                if (kbAuthData.promptCount > 0) {
+                    WFREE(kbAuthData.promptLengths, NULL, 0);
+                    WFREE(kbAuthData.prompts, NULL, 0);
+                    WFREE(kbAuthData.promptEcho, NULL, 0);
+                }
+                #endif
                 wc_FreeMutex(&doneLock);
                 PwMapListDelete(&pwMapList);
                 wolfSSH_CTX_free(ctx);
@@ -3500,6 +3516,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 #ifdef WOLFSSH_SMALL_STACK
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
+                #endif
+                #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+                if (kbAuthData.promptCount > 0) {
+                    WFREE(kbAuthData.promptLengths, NULL, 0);
+                    WFREE(kbAuthData.prompts, NULL, 0);
+                    WFREE(kbAuthData.promptEcho, NULL, 0);
+                }
                 #endif
                 wc_FreeMutex(&doneLock);
                 PwMapListDelete(&pwMapList);

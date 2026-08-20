@@ -379,6 +379,7 @@ AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
                  keys/server-key-ed25519.der:keys/server-key-ed25519.der
                  keys/ca-cert-ecc.der:keys/ca-cert-ecc.der
                  keys/ca-key-ecc.der:keys/ca-key-ecc.der
+                 keys/server-cert.der:keys/server-cert.der
                  keys/fred-cert.der:keys/fred-cert.der
                  keys/fred-key.der:keys/fred-key.der])
 

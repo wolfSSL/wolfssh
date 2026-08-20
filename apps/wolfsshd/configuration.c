@@ -1627,7 +1627,10 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
     }
     else {
     #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
-        wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] ignoring config line %s.", l);
+        /* WARN, not DEBUG: a known option in the unsupported Keyword=value
+         * form also lands here, and silently dropping a directive such as
+         * PasswordAuthentication=no must stay visible without -d. */
+        wolfSSH_Log(WS_LOG_WARN, "[SSHD] ignoring config line %s.", l);
         ret = WS_SUCCESS;
     #else
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error parsing config line.");

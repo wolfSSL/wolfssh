@@ -1098,6 +1098,9 @@ struct WOLFSSH {
     byte connReset;
     byte isClosed;
     byte clientOpenSSH;
+#ifdef WOLFSSH_FWD
+    byte fwdCbMissingWarned;  /* one-shot: missing fwdCb warned this session */
+#endif
 
     byte kexId;
     byte blockSz;

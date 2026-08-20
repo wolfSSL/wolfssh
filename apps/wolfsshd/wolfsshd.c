@@ -271,6 +271,39 @@ static void interruptCatch(int in)
     #define WGETPID getpid
 #endif
 
+/* Syslog-style suppression of consecutively repeated lines, so no single
+ * repeating message can grow the log without bound (some library notices
+ * fire once per received packet, which a peer controls). A repeat is counted
+ * instead of written and the count is emitted when a different message
+ * arrives, when a connection ends, or at shutdown. The state is per process:
+ * each forked connection child (POSIX) suppresses its own stream; on Windows
+ * the connection threads share it under logRepeatLock. */
+static char lastLogMsg[256];
+static unsigned long logRepeats = 0;
+#ifdef _WIN32
+static SRWLOCK logRepeatLock = SRWLOCK_INIT;
+#endif
+
+/* Emit any pending "last message repeated N times" count. Called when a
+ * connection ends and at daemon shutdown so a trailing repeat streak is not
+ * lost when the process exits without a further distinct message. */
+static void wolfSSHDLoggingFlush(void)
+{
+#ifdef _WIN32
+    AcquireSRWLockExclusive(&logRepeatLock);
+#endif
+    if (logRepeats > 0 && logFile != NULL) {
+        fprintf(logFile, "[PID %lu]: last message repeated %lu times\n",
+            (unsigned long)WGETPID(), logRepeats);
+        fflush(logFile);
+    }
+    logRepeats = 0;
+    lastLogMsg[0] = '\0';
+#ifdef _WIN32
+    ReleaseSRWLockExclusive(&logRepeatLock);
+#endif
+}
+
 /* redirect logging to a specific file and add the PID value */
 static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
 {
@@ -279,10 +312,31 @@ static void wolfSSHDLoggingCb(enum wolfSSH_LogLevel lvl, const char *const str)
      * a certificate was bound to an account by subject CN alone, so they must
      * not depend on -d. */
     if (lvl == WS_LOG_ERROR || lvl == WS_LOG_WARN || debugMode) {
-        fprintf(logFile, "[PID %lu]: %s\n", (unsigned long)WGETPID(), str);
-        /* flush so each line is visible immediately, e.g. to a consumer
-         * reading the log file while the daemon is still running */
-        fflush(logFile);
+#ifdef _WIN32
+        AcquireSRWLockExclusive(&logRepeatLock);
+#endif
+        /* The comparison is capped at the buffer size, so lines identical
+         * through the cap count as repeats. */
+        if (lastLogMsg[0] != '\0' &&
+                WSTRNCMP(str, lastLogMsg, sizeof(lastLogMsg) - 1) == 0) {
+            logRepeats++;
+        }
+        else {
+            if (logRepeats > 0) {
+                fprintf(logFile,
+                    "[PID %lu]: last message repeated %lu times\n",
+                    (unsigned long)WGETPID(), logRepeats);
+                logRepeats = 0;
+            }
+            WSNPRINTF(lastLogMsg, sizeof(lastLogMsg), "%s", str);
+            fprintf(logFile, "[PID %lu]: %s\n", (unsigned long)WGETPID(), str);
+            /* flush so each line is visible immediately, e.g. to a consumer
+             * reading the log file while the daemon is still running */
+            fflush(logFile);
+        }
+#ifdef _WIN32
+        ReleaseSRWLockExclusive(&logRepeatLock);
+#endif
     }
 }
 
@@ -491,6 +545,12 @@ static int IsWinPublicTrustStoreName(const char* name)
     comp = name;
     for (;;) {
         sep = WSTRCHR(comp, '\\');
+        if (sep != NULL && (word32)(sep - name) >= nameLen) {
+            /* the separator sits in the trimmed-off tail; treat it as
+             * absent so len below is always bounded by nameLen and cannot
+             * underflow */
+            sep = NULL;
+        }
         if (sep != NULL) {
             len = (word32)(sep - comp);
         }
@@ -508,7 +568,7 @@ static int IsWinPublicTrustStoreName(const char* name)
                 return 1;
             }
         }
-        if (sep == NULL || (word32)(sep - name) >= nameLen) {
+        if (sep == NULL) {
             break;
         }
         comp = sep + 1;
@@ -701,18 +761,25 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     CertCloseStore(hStore, 0);
     WFREE(wStoreName, heap, DYNTYPE_SSHD);
 
+    /* Counts and location go on their own lines: wolfSSH_Log formats into
+     * a 120 byte buffer, and one line carrying the %.48s store name plus
+     * the counts would be cut short right where the numbers are. */
     if (loaded == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
-            "[SSHD] No usable CA certificates found in store '%.48s' "
-            "(%u not a CA, %u rejected, %u not X.509)", storeNameStr,
-            skipped, rejected, notX509);
+            "[SSHD] No usable CA certificates found in store '%.48s'",
+            storeNameStr);
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Store entries not loaded: %u not a CA, %u rejected, "
+            "%u not X.509", skipped, rejected, notX509);
         ret = WS_FATAL_ERROR;
     }
     else {
         wolfSSH_Log(WS_LOG_INFO,
-            "[SSHD] Trusting %u CA certificate(s) from store '%.48s' "
-            "(location 0x%08lx) for client authentication", loaded,
-            storeNameStr, (unsigned long)dwFlags);
+            "[SSHD] Trusting %u CA certificate(s) from store '%.48s'",
+            loaded, storeNameStr);
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] Store location 0x%08lx used for client authentication",
+            (unsigned long)dwFlags);
         if (skipped != 0 || rejected != 0 || notX509 != 0) {
             wolfSSH_Log(WS_LOG_INFO,
                 "[SSHD] Store entries not loaded: %u not a CA, %u rejected "
@@ -1236,8 +1303,13 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * allowlist is what constrains which CA-issued identities may log in.
      * When the whole OS trust store is a login authority, require every
      * config node to either set AuthorizedUPNDomains or carry its own
-     * per-user AuthorizedKeysFile, so a UPN local-part match against a cert
-     * from any commercial CA is never sufficient on its own. */
+     * per-user AuthorizedKeysFile (a shared file binds the certificate to
+     * nothing, so it does not qualify, matching the CN gate above). Note
+     * AuthorizedUPNDomains constrains the certificate's own UPN realm, not
+     * which trusted CA issued it: any CA in the OS store willing to emit a
+     * UPN in an allowed realm still satisfies it. The per-user
+     * AuthorizedKeysFile arm is the only one that adds an exact-certificate
+     * second factor. */
     if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
         const WOLFSSHD_CONFIG* cur;
         const char* domains;
@@ -1246,14 +1318,49 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         while (cur != NULL) {
             domains = wolfSSHD_ConfigGetAuthorizedUPNDomains(cur);
             if ((domains == NULL || *domains == '\0') &&
-                    !wolfSSHD_ConfigGetAuthKeysFileSet(cur)) {
+                    (!wolfSSHD_ConfigGetAuthKeysFileSet(cur) ||
+                     !wolfSSHD_AuthKeysPatternIsPerUser(
+                         wolfSSHD_ConfigGetAuthKeysFile(cur)))) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] wolfSSH_TrustedSystemCAKeys requires "
                     "AuthorizedUPNDomains or a per-user");
                 wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] AuthorizedKeysFile on every config node, so a "
-                    "UPN match alone cannot log in.");
+                    "[SSHD] AuthorizedKeysFile on every config node.");
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Note AuthorizedUPNDomains constrains the UPN "
+                    "realm only, not the issuing CA;");
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] use it only when the OS trust store holds "
+                    "solely your organization's CA.");
                 ret = WS_BAD_ARGUMENT;
+                break;
+            }
+            cur = wolfSSHD_ConfigGetNext(cur);
+        }
+    }
+
+    /* States a fixed configuration property, so notice it once here at
+     * startup rather than from the peer-triggered auth path (the log
+     * callback writes WARN unconditionally, so a per-attempt WARN would let
+     * a peer grow the log). Only emitted when a certificate trust anchor is
+     * actually configured; with no CA there is no UPN check to relax. */
+    if (ret == WS_SUCCESS &&
+            (wolfSSHD_ConfigGetUserCAKeysFile(conf) != NULL ||
+             wolfSSHD_ConfigGetUserCAStore(conf) ||
+             wolfSSHD_ConfigGetSystemCA(conf))) {
+        const WOLFSSHD_CONFIG* cur;
+        const char* domains;
+
+        cur = conf;
+        while (cur != NULL) {
+            domains = wolfSSHD_ConfigGetAuthorizedUPNDomains(cur);
+            if (domains == NULL || *domains == '\0') {
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] AuthorizedUPNDomains not set on at least one "
+                    "config node;");
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] the certificate UPN domain is not checked "
+                    "there.");
                 break;
             }
             cur = wolfSSHD_ConfigGetNext(cur);
@@ -1357,7 +1464,10 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
     /* AuthorizedUPNDomains is only enforced by the FPKI UPN check, which
      * also needs certificate support. Fail startup rather than silently
-     * ignore a configured realm policy. Check every config node since the
+     * ignore a configured realm policy, unless the build opts into
+     * WOLFSSH_IGNORE_UNKNOWN_CONFIG, which downgrades not-compiled-in
+     * directives to a warning the same way the HostKeyStore* and
+     * wolfSSH_WinUser* handlers do. Check every config node since the
      * directive may sit in a Match block. */
 #if !defined(WOLFSSL_FPKI) || !defined(WOLFSSH_CERTS)
     if (ret == WS_SUCCESS) {
@@ -1367,6 +1477,21 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         upnCur = conf;
         while (upnCur != NULL) {
             if (wolfSSHD_ConfigGetAuthorizedUPNDomains(upnCur) != NULL) {
+            #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+                if (upnNode == 0) {
+                    wolfSSH_Log(WS_LOG_WARN,
+                        "[SSHD] Ignoring AuthorizedUPNDomains (global "
+                        "config): this build cannot enforce it;");
+                }
+                else {
+                    wolfSSH_Log(WS_LOG_WARN,
+                        "[SSHD] Ignoring AuthorizedUPNDomains (Match block "
+                        "%u): this build cannot enforce it;", upnNode);
+                }
+                wolfSSH_Log(WS_LOG_WARN,
+                    "[SSHD] it requires wolfSSL with WOLFSSL_FPKI and "
+                    "wolfSSH with certificate support.");
+            #else
                 if (upnNode == 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] AuthorizedUPNDomains is set (global config) "
@@ -1381,6 +1506,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     "[SSHD] it requires wolfSSL with WOLFSSL_FPKI and "
                     "wolfSSH with certificate support.");
                 ret = WS_BAD_ARGUMENT;
+            #endif
                 break;
             }
             upnCur = wolfSSHD_ConfigGetNext(upnCur);
@@ -3447,6 +3573,7 @@ static void* HandleConnection(void* arg)
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
     WFREE(conn, NULL, DYNTYPE_SSHD);
+    wolfSSHDLoggingFlush();
 
 #ifdef _WIN32
     return 0;
@@ -4058,6 +4185,7 @@ static int StartSSHD(int argc, char** argv)
 #endif
         }
         if (quit && logFile) {
+            wolfSSHDLoggingFlush();
             fprintf(logFile, "Closing down wolfSSHD\n");
         }
     }

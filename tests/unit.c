@@ -15060,8 +15060,9 @@ static void certChainPut32(word32 v, byte* c)
  * checks the curve binding: the P-256 certificate must be accepted for
  * x509v3-ecdsa-sha2-nistp256 and rejected with WS_INVALID_PRIME_CURVE for a
  * negotiated x509v3-ecdsa-sha2-nistp384, and an id wcPrimeForId() cannot
- * map must be rejected up front with WS_INVALID_ALGO_ID (checked first: it
- * needs no chain verification). Skipped (returns 1) when the key files are
+ * map must be rejected up front with WS_INVALID_PRIME_CURVE, matching
+ * ParseECCPubKey() (checked first: it needs no chain verification).
+ * Skipped (returns 1) when the key files are
  * not readable or the chain does not verify in this build's profile (e.g.
  * WOLFSSL_FPKI, whose leaf checks these test certs do not meet). */
 static int test_ParseECCPubKeyCert(void)
@@ -15125,7 +15126,7 @@ static int test_ParseECCPubKeyCert(void)
     if (result == 0) {
         ssh->handshake->pubKeyId = ID_SSH_RSA;
         ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
-        if (ret != WS_INVALID_ALGO_ID) {
+        if (ret != WS_INVALID_PRIME_CURVE) {
             printf("ParseECCPubKeyCert: unmapped id ret %d\n", ret);
             result = -7;
         }
