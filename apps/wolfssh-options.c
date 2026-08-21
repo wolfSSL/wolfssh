@@ -110,6 +110,12 @@ int main(void)
 #ifdef WOLFSSH_ALLOW_NONE_CIPHER
     printf("NONE_CIPHER\n");
 #endif
+    /* Same guard as WOLFSSHD_HOSTKEY_RELAX_PERMS in wolfsshd.c; keep the two in
+     * step. The sshd tests use this to skip the host key negative cases. */
+#if defined(WOLFSSH_NO_HOSTKEY_PERMS) && \
+        (defined(__QNX__) || defined(__QNXNTO__))
+    printf("HOSTKEY_RELAX_PERMS\n");
+#endif
     /* Same guard as wIsSymlink in port.h. */
 #if defined(WOLFSSH_HAVE_SYMLINK) && \
         (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
