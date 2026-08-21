@@ -1103,6 +1103,21 @@ int wolfSSH_connect(WOLFSSH* ssh)
 #endif /* NO_WOLFSSH_CLIENT */
 
 
+/* A disconnect, sent or received, ends the session, so nothing further may
+ * go out. RFC 4253 section 11.1. Reads are deliberately not gated on this:
+ * channel data that arrived before the disconnect is still the caller's.
+ * Call only after ssh has been checked for NULL. */
+static int SendAfterDisconnect(WOLFSSH* ssh)
+{
+    if (ssh->disconnected) {
+        WLOG(WS_LOG_DEBUG, "Send attempted after a disconnect");
+        ssh->error = WS_DISCONNECT;
+        return 1;
+    }
+    return 0;
+}
+
+
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
@@ -1231,13 +1246,14 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || buf == NULL || bufSz == 0)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->disconnected) {
-        ssh->error = WS_DISCONNECT;
-        return WS_FATAL_ERROR;
-    }
-
-    if (ssh->channelList == NULL)
+    if (ssh->channelList == NULL) {
+        /* No channel left to drain, so the disconnect is all there is. */
+        if (ssh->disconnected) {
+            ssh->error = WS_DISCONNECT;
+            return WS_FATAL_ERROR;
+        }
         return WS_BAD_ARGUMENT;
+    }
 
     if (ssh->channelList->eofRxd) {
         ssh->error = WS_EOF;
@@ -1251,6 +1267,13 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
+
+    /* Hand back whatever arrived before the disconnect, then report it once
+     * the buffer runs dry rather than going back to a dead transport. */
+    if (ssh->disconnected && inputBuffer->length - inputBuffer->idx == 0) {
+        ssh->error = WS_DISCONNECT;
+        return WS_FATAL_ERROR;
+    }
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "    Stream read index of %u", inputBuffer->idx);
@@ -1318,10 +1341,8 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || buf == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->disconnected) {
-        ssh->error = WS_DISCONNECT;
+    if (SendAfterDisconnect(ssh))
         return WS_FATAL_ERROR;
-    }
 
     if (ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
@@ -1349,6 +1370,9 @@ int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
 
     if (ssh == NULL || buf == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
 
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
@@ -1386,6 +1410,9 @@ int wolfSSH_ChannelIdSendExt(WOLFSSH* ssh, word32 channelId,
     if (ssh == NULL || buf == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
+
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL) {
@@ -1419,6 +1446,9 @@ int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
     if (ssh == NULL || ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
+
     if (ret == WS_SUCCESS)
         ret = SendChannelExit(ssh, ssh->channelList->peerChannel, status);
 
@@ -1442,6 +1472,8 @@ int wolfSSH_global_request(WOLFSSH *ssh, const unsigned char* data, word32 dataS
         return WS_BAD_ARGUMENT;
     if (reply != 0 && reply != 1)
         return WS_BAD_ARGUMENT;
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
     return SendGlobalRequest(ssh, data, dataSz, reply);
 }
 
@@ -1452,7 +1484,13 @@ int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_extended_data_send()");
 
-    if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
+
+    if (ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
     if (ssh->isKeying) {

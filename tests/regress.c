@@ -2679,6 +2679,128 @@ static void TestDisconnectTerminalWithChannel(void)
 }
 
 
+/* The disconnect stops sends, not reads. Channel data that arrived before
+ * it is still the caller's, and only once that runs dry does the read
+ * report the disconnect. */
+static void TestDisconnectDrainsBufferedData(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[128];
+    byte data[16];
+    byte payload[] = { 'h', 'e', 'l', 'l', 'o' };
+    word32 inSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+
+    AssertIntEQ(ChannelPutData(ssh->channelList, payload, sizeof(payload)),
+            WS_SUCCESS);
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ret = DoReceive(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertTrue(ssh->disconnected);
+
+    WMEMSET(data, 0, sizeof(data));
+    ret = wolfSSH_stream_read(ssh, data, sizeof(data));
+    AssertIntEQ(ret, (int)sizeof(payload));
+    AssertIntEQ(WMEMCMP(data, payload, sizeof(payload)), 0);
+
+    /* Buffer is dry now, so the disconnect is what is left to report. */
+    ret = wolfSSH_stream_read(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* Every send entry point refuses after a disconnect, not just the stream
+ * calls. wolfsshd and echoserver drive their channels through the
+ * channel-id and extended-data calls and never touch wolfSSH_stream_send(). */
+static void TestDisconnectBlocksEverySend(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    byte data[8];
+    word32 quietSz;
+    word32 channelId;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channelId = ssh->channelList->channel;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(ssh->disconnected);
+    quietSz = io.outSz;
+
+    WMEMSET(data, 0, sizeof(data));
+
+    ret = wolfSSH_stream_send(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_ChannelIdSend(ssh, channelId, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_ChannelIdSendExt(ssh, channelId, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_extended_data_send(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_global_request(ssh, data, sizeof(data), 0);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_stream_exit(ssh, 0);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    /* Not one byte left the session after the disconnect. */
+    AssertIntEQ(io.outSz, quietSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* Sending SSH_MSG_DISCONNECT ends the session the same way receiving one
  * does: RFC 4253 section 11.1 says the connection is over once the message
  * goes out, so the stream calls must refuse afterwards. */
@@ -6454,6 +6576,8 @@ int main(int argc, char** argv)
 #endif
     TestDisconnectSetsDisconnectError();
     TestDisconnectTerminalWithChannel();
+    TestDisconnectDrainsBufferedData();
+    TestDisconnectBlocksEverySend();
     TestSendDisconnectIsTerminal();
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
