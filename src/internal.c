@@ -5936,6 +5936,12 @@ static int DoKexDhInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ret = SendKexDhReply(ssh);
     }
 
+    /* RFC 4253 7.1: both codes mean the peer's key exchange input was
+     * rejected: the e range check or the server key agreement. */
+    if (ret == WS_CRYPTO_FAILED || ret == WS_PUBKEY_REJECTED_E) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+    }
+
     return ret;
 }
 
@@ -7619,6 +7625,15 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
+    /* RFC 4253 11.1: WS_PUBKEY_REJECTED_E here is only the host key check,
+     * which is server authentication, so it gets its own reason. */
+    if (ret == WS_CRYPTO_FAILED) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+    }
+    else if (ret == WS_PUBKEY_REJECTED_E) {
+        (void)SendDisconnect(ssh,
+                WOLFSSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE);
+    }
     WLOG(WS_LOG_DEBUG, "Leaving DoKexDhReply(), ret = %d", ret);
     return ret;
 }
@@ -8017,6 +8032,12 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
 
         *idx = begin;
         ret = SendKexDhInit(ssh);
+    }
+
+    /* RFC 4253 7.1: WS_DH_SIZE_E is the GEX modulus range rejection,
+     * which only this handler raises. */
+    if (ret == WS_CRYPTO_FAILED || ret == WS_DH_SIZE_E) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
     }
 
     return ret;
