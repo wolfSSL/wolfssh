@@ -7635,8 +7635,9 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 /* Returns amount bytes of receive-window credit to the peer, folding in credit
  * already parked on the channel. Credit that cannot reach the transport is
  * parked, not dropped: no WINDOW_ADJUST may be sent mid-rekey (RFC 4253 section
- * 7.1), an unbundled packet queued nothing, and a socket error can discard what
- * was bundled. Credit that reached the output buffer counts as delivered. */
+ * 7.1) or after a disconnect (section 11.1), an unbundled packet queued
+ * nothing, and a socket error can discard what was bundled. Credit that reached
+ * the output buffer counts as delivered. */
 int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel, word32 amount)
 {
     word32 total;
@@ -7655,7 +7656,10 @@ int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel, word32 amount)
     if (total == 0)
         return WS_SUCCESS;
 
-    if (ssh->isKeying) {
+    /* The reads that drain what arrived before a disconnect still credit the
+     * window locally, but the session is over and nothing more may go out.
+     * Park the credit so the read reports its bytes, not a send failure. */
+    if (ssh->isKeying || ssh->disconnected) {
         channel->pendingWindowAdjust = total;
         return WS_SUCCESS;
     }
