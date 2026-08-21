@@ -558,6 +558,11 @@ WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
+/* A disconnect, sent or received, ends the session. Nothing more goes out:
+ * every send call below reports WS_DISCONNECT from then on. Reads are not
+ * gated, so channel data that arrived before the disconnect can still be
+ * drained; wolfSSH_stream_read() reports WS_DISCONNECT once its buffer
+ * runs dry. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
