@@ -88,7 +88,7 @@ jobs:
           CXX: ${{ matrix.cxx }}
         run: |
           ./autogen.sh
-          ./configure CFLAGS="-Wall -Wextra -Wpedantic"
+          ./configure --enable-sshclient CFLAGS="-Wall -Wextra -Wpedantic"
           make -j$(nproc)
 
       - name: Make dist

@@ -72,7 +72,7 @@ jobs:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
         mldsa: [ 'yes', 'no' ]
-    name: Build and test wolfsshd
+    name: Build and test the wolfsshd and wolfssh apps
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:

@@ -259,6 +259,28 @@ AS_IF([test "x$ENABLED_ALL" = "xyes"],
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
+# The client app runs every session's I/O on threads, so it needs a threaded
+# wolfSSL. Probe for the macro rather than trust the flags, it arrives through
+# wolfSSL's options.h. Asking for the client outright is an error; getting it
+# from --enable-all only drops it, so --enable-all still works here.
+AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],[
+  AC_MSG_CHECKING([whether wolfSSL is single threaded])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                       #include <wolfssl/wolfcrypt/settings.h>
+                       #else
+                       #include <wolfssl/options.h>
+                       #endif]],
+                     [[#ifndef SINGLE_THREADED
+                       #error "threaded"
+                       #endif]])],
+    [AC_MSG_RESULT([yes])
+     AS_IF([test "x$enable_sshclient" = "xyes"],
+           [AC_MSG_ERROR([--enable-sshclient requires a threaded wolfSSL.])],
+           [AC_MSG_NOTICE([single threaded wolfSSL, not building the ssh client app])
+            ENABLED_SSHCLIENT=no])],
+    [AC_MSG_RESULT([no])])])
+
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])

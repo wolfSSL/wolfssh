@@ -12,10 +12,18 @@ Phase 2 is going to bring reading the config files `/etc/ssh/ssh_config` and
 `$HOME/.ssh/config`. It will handle OpenSSH style modern keys. It will also
 have support for SSH-AGENT and forwarding.
 
+Every session, terminal or command, runs its I/O on threads, so the client
+needs a threaded wolfSSL. Configuring `--enable-sshclient` against a
+single-threaded wolfSSL is an error, and `--enable-all` leaves the client out
+rather than failing.
+
 Command Line Options
 --------------------
 
-    -E logfile    : Specify a different log file.
+    -E logfile    : Append the log to this file instead of stderr, and turn
+                    logging on. The log is empty unless the library has
+                    logging compiled in, with `--enable-debug` or
+                    `--enable-sshd`.
     -G            : Print out the configuration as used.
     -l login_name : Overrides the login name specified in the destination.
     -p port       : Overrides the destination port number.

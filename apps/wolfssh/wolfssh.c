@@ -31,6 +31,7 @@
 #endif
 
 #include <wolfssh/ssh.h>
+#include <wolfssh/log.h>
 #include <wolfssh/version.h>
 #include <wolfssl/version.h>
 #include <wolfssh/test.h>
@@ -73,13 +74,71 @@
     #include <sys/select.h>
 #endif
 
+#include <errno.h>
+#include <time.h>
+
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
+#endif
+
+/* Every session, terminal or command, runs its I/O on threads. configure
+ * catches this first; the check is here for the builds that don't use it. */
+#ifdef SINGLE_THREADED
+    #error "The wolfSSH client app requires a threaded wolfSSL."
 #endif
 
 
 int myoptind = 0;
 char* myoptarg = NULL;
+
+/* The file named by -E, when given. Named apart from struct config's
+ * logFile, which is the path this was opened from. */
+static WFILE* logFileStream = NULL;
+
+
+/* Same names DefaultLoggingCb() logs with. That function's GetLogStr() is
+ * private to the library, so the list is repeated here. */
+static const char* ClientLogLevelStr(enum wolfSSH_LogLevel level)
+{
+    switch (level) {
+        case WS_LOG_INFO:    return "INFO";
+        case WS_LOG_WARN:    return "WARNING";
+        case WS_LOG_ERROR:   return "ERROR";
+        case WS_LOG_DEBUG:   return "DEBUG";
+        case WS_LOG_USER:    return "USER";
+        case WS_LOG_SFTP:    return "SFTP";
+        case WS_LOG_SCP:     return "SCP";
+        case WS_LOG_AGENT:   return "AGENT";
+        case WS_LOG_CERTMAN: return "CERTMAN";
+        default:             return "UNKNOWN";
+    }
+}
+
+
+/* Write the log to the file named by -E instead of stderr. The format
+ * matches DefaultLoggingCb() so the two are comparable. The callback cannot
+ * be uninstalled, so fall back to stderr when the file isn't open. */
+static void ClientLoggingCb(enum wolfSSH_LogLevel level, const char *const str)
+{
+    WFILE* out = (logFileStream != NULL) ? logFileStream : stderr;
+    char timeStr[24];
+
+    timeStr[0] = '\0';
+#ifndef WOLFSSH_NO_TIMESTAMP
+    {
+        time_t current;
+        struct tm local;
+
+        current = WTIME(NULL);
+        if (WLOCALTIME(&current, &local)) {
+            strftime(timeStr, sizeof(timeStr), "%F %T ", &local);
+        }
+    }
+#endif
+    fprintf(out, "%s[%s] %s\r\n", timeStr, ClientLogLevelStr(level), str);
+    /* flush so the log is complete when the client is interrupted */
+    fflush(out);
+}
 
 
 static void ShowUsage(char* appPath)
@@ -202,7 +261,7 @@ static void modes_reset(void)
 #define MODES_RESET() do {} while(0)
 #endif /* HAVE_TERMIOS_H && WOLFSSH_TERM */
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#ifndef WOLFSSL_NUCLEUS
 
 #if defined(WOLFSSH_AGENT)
 static inline void ato32(const byte* c, word32* u32)
@@ -229,6 +288,62 @@ typedef struct thread_args {
     #define THREAD_RET int
     #define THREAD_RET_SUCCESS 0
 #endif
+
+
+/* Sleep long enough for the socket to drain, the socket is non-blocking and
+ * a busy retry loop would only starve the peer. */
+static void PauseForSocket(void)
+{
+#ifdef USE_WINDOWS_API
+    Sleep(1);
+#else
+    usleep(1000);
+#endif
+}
+
+
+/* Seconds to keep pushing a queued packet at a peer that isn't reading. A
+ * busy peer gets time to come back, a stalled one doesn't hang the client. */
+#define FLUSH_QUEUE_TIMEOUT 10
+
+
+/* A packet the socket wasn't ready for stays queued in the session, and the
+ * send that queued it still reports the data as taken. The peer can't answer
+ * a message it never received, so push the queue out here rather than go
+ * back to waiting on the peer. The lock is NULL when no other thread is
+ * using the session. Returns WS_WANT_WRITE with the packet still queued when
+ * the peer stops reading for the whole timeout. */
+static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
+{
+    int ret;
+    time_t deadline = WTIME(NULL) + FLUSH_QUEUE_TIMEOUT;
+
+    do {
+        PauseForSocket();
+
+        if (lock != NULL) {
+            wc_LockMutex(lock);
+        }
+        ret = wolfSSH_worker(ssh, NULL);
+        if (ret == WS_FATAL_ERROR) {
+            /* the session holds the detail behind a fatal error */
+            ret = wolfSSH_get_error(ssh);
+        }
+        if (lock != NULL) {
+            wc_UnLockMutex(lock);
+        }
+    } while (ret == WS_WANT_WRITE && WTIME(NULL) < deadline);
+
+    /* The queue is out. Whatever the worker made of the peer's end of the
+     * conversation is for the reader to sort out. A rekey started on the way
+     * through is the reader's as well, the send itself went out. */
+    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+            || ret == WS_REKEYING) {
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
 
 
 #ifdef WOLFSSH_TERM
@@ -261,6 +376,10 @@ static int sendCurrentWindowSize(thread_args* args)
 #endif
     ret = wolfSSH_ChangeTerminalSize(args->ssh, col, row, xpix, ypix);
     wc_UnLockMutex(&args->lock);
+
+    if (ret == WS_WANT_WRITE) {
+        ret = FlushQueuedSend(args->ssh, &args->lock);
+    }
 
     return ret;
 }
@@ -392,6 +511,7 @@ static THREAD_RET readInput(void* in)
     thread_args* args = (thread_args*)in;
     int ret = 0;
     int err = 0;
+    int queued = 0;
     word32 sz = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
@@ -418,18 +538,21 @@ static THREAD_RET readInput(void* in)
             ret = wolfSSH_stream_send(args->ssh, buf, sz);
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
+            /* A send the socket wasn't ready for still counts the data as
+             * taken, it is left queued in the session instead. */
+            queued = (wolfSSH_get_error(args->ssh) == WS_WANT_WRITE);
             wc_UnLockMutex(&args->lock);
             if (err == WS_REKEYING) {
                 /* give readPeer() the lock to finish the rekey, then
                  * send this buffer again */
-            #ifdef USE_WINDOWS_API
-                Sleep(1);
-            #else
-                usleep(1000);
-            #endif
+                PauseForSocket();
             }
         } while (err == WS_REKEYING);
         if (ret <= 0) {
+            fprintf(stderr, "Couldn't send data\n");
+            break;
+        }
+        if (queued && FlushQueuedSend(args->ssh, &args->lock) != WS_SUCCESS) {
             fprintf(stderr, "Couldn't send data\n");
             break;
         }
@@ -449,12 +572,13 @@ static THREAD_RET readPeer(void* in)
     int ret = 0;
     int stop = 0;
     int fd = wolfSSH_get_fd(args->ssh);
-    word32 bytes;
+    int bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 #endif
     fd_set readSet;
     fd_set errSet;
+    struct timeval timeout;
 
 #ifdef USE_WINDOWS_API
     if (args->rawMode == 0) {
@@ -492,7 +616,30 @@ static THREAD_RET readPeer(void* in)
         FD_SET(fd, &readSet);
         FD_SET(fd, &errSet);
 
-        bytes = select(fd + 1, &readSet, NULL, &errSet, NULL);
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        bytes = select(fd + 1, &readSet, NULL, &errSet, &timeout);
+        if (bytes < 0) {
+        #ifdef USE_WINDOWS_API
+            if (WSAGetLastError() == WSAEINTR)
+                continue;
+            fprintf(stderr, "select on peer socket failed, error %d\n",
+                    WSAGetLastError());
+        #else
+            /* the SIGWINCH handler interrupts this select */
+            if (errno == EINTR)
+                continue;
+            perror("select on peer socket failed ");
+        #endif
+            break;
+        }
+        if (bytes == 0) {
+            /* Nothing new on the socket, but a flush in the send thread may
+             * have already taken the peer's reply off it, so run the read
+             * path anyway. It only costs an empty read. */
+            bytes = 1;
+            FD_SET(fd, &readSet);
+        }
         wc_LockMutex(&args->lock);
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
             /* there is something to read off the wire */
@@ -599,7 +746,7 @@ static THREAD_RET readPeer(void* in)
 
     return THREAD_RET_SUCCESS;
 }
-#endif /* !SINGLE_THREADED && !WOLFSSL_NUCLEUS */
+#endif /* !WOLFSSL_NUCLEUS */
 
 
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
@@ -746,6 +893,11 @@ struct config {
     word32 useAgent:1;
     word16 port;
 };
+
+
+/* Parsed by main() before wolfSSH_Init() so the -E log file catches the
+ * library's start up messages. */
+static struct config clientConfig;
 
 
 static int config_init_default(struct config* config)
@@ -972,37 +1124,27 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     byte useAgent = 0;
     WS_AgentCbActionCtx agentCbCtx;
 #endif
-    struct config config;
 
     MODES_STORE();
 
     ((func_args*)args)->return_code = 0;
 
-    config_init_default(&config);
-    config_parse_command_line(&config,
-            ((func_args*)args)->argc, ((func_args*)args)->argv);
-    config_print(&config);
-
     /* Only ask for an interactive terminal session when no remote command
      * was given. Requesting both discards the command. */
-    keepOpen = (byte)(config.command == NULL);
+    keepOpen = (byte)(clientConfig.command == NULL);
 
 #ifdef WOLFSSH_AGENT
-    useAgent = (byte)config.useAgent;
+    useAgent = (byte)clientConfig.useAgent;
 #endif
 
-    if (config.user == NULL)
+    if (clientConfig.user == NULL)
         err_sys("client requires a username parameter.");
 
-    if (config.hostname == NULL)
+    if (clientConfig.hostname == NULL)
         err_sys("client requires a hostname parameter.");
 
-#ifdef SINGLE_THREADED
-    err_sys("Threading needed for terminal and command sessions\n");
-#endif
-
-    if (config.keyFile) {
-        ret = ClientSetPrivateKey(config.keyFile);
+    if (clientConfig.keyFile) {
+        ret = ClientSetPrivateKey(clientConfig.keyFile);
         if (ret == 0) {
         #ifdef WOLFSSH_CERTS
             /* passed in certificate to use */
@@ -1011,8 +1153,8 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             }
             else
         #endif
-            if (config.pubKeyFile) {
-                (void)ClientUsePubKey(config.pubKeyFile);
+            if (clientConfig.pubKeyFile) {
+                (void)ClientUsePubKey(clientConfig.pubKeyFile);
             }
         }
     }
@@ -1054,13 +1196,13 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     }
 #endif
 
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)config.hostname);
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)clientConfig.hostname);
 
-    ret = wolfSSH_SetUsername(ssh, config.user);
+    ret = wolfSSH_SetUsername(ssh, clientConfig.user);
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the username.");
 
-    build_addr(&clientAddr, config.hostname, config.port);
+    build_addr(&clientAddr, clientConfig.hostname, clientConfig.port);
     tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
 
     ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
@@ -1073,10 +1215,10 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret != WS_SUCCESS)
         err_sys("Couldn't set the session's socket.");
 
-    if (config.command != NULL) {
+    if (clientConfig.command != NULL) {
         ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
-                            (byte*)config.command,
-                            (word32)WSTRLEN((char*)config.command));
+                            (byte*)clientConfig.command,
+                            (word32)WSTRLEN((char*)clientConfig.command));
         if (ret != WS_SUCCESS)
             err_sys("Couldn't set the channel type.");
     }
@@ -1099,7 +1241,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         MODES_CLEAR();
     }
 
-#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+#ifndef WOLFSSL_NUCLEUS
 #if 0
     if (keepOpen) /* set up for pseudo-terminal */
         ClientSetEcho(2);
@@ -1107,7 +1249,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
     /* Every session, shell or command, runs its I/O on threads. */
     {
-    #if defined(_POSIX_THREADS)
+#if defined(_POSIX_THREADS)
         thread_args arg;
         pthread_t   thread[3];
 
@@ -1120,7 +1262,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
             err_sys("Couldn't initialize window semaphore.");
         }
 
-        if (config.command) {
+        if (clientConfig.command) {
             int err;
 
             /* exec command does not contain initial terminal size,
@@ -1151,7 +1293,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         wolfSSH_SEMAPHORE_Release(&windowSem);
 #endif /* WOLFSSH_TERM */
         ioErr = arg.readError;
-    #elif defined(_MSC_VER)
+#elif defined(_MSC_VER)
         thread_args arg;
         HANDLE thread[2];
 
@@ -1160,7 +1302,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         arg.readError = 0;
         wc_InitMutex(&arg.lock);
 
-        if (config.command) {
+        if (clientConfig.command) {
             int err;
 
             /* exec command does not contain initial terminal size,
@@ -1178,26 +1320,56 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         CloseHandle(thread[0]);
         CloseHandle(thread[1]);
         ioErr = arg.readError;
-    #else
+#else
         err_sys("No threading to use");
-    #endif
+#endif
         if (keepOpen)
             ClientSetEcho(1);
     }
 #endif
 
     ret = wolfSSH_shutdown(ssh);
+    /* WS_FATAL_ERROR only says to go look, the session has the detail. The
+     * drain inside the shutdown reports a want read that way. */
+    if (ret == WS_FATAL_ERROR) {
+        ret = wolfSSH_get_error(ssh);
+    }
+
     /* do not continue on with shutdown process if peer already disconnected */
     if (ret != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
-        if (ret != WS_SUCCESS) {
+#ifndef WOLFSSL_NUCLEUS
+        if (ret == WS_WANT_WRITE) {
+            /* The close messages are queued and the threads are done, no
+             * one else is going to send them. */
+            ret = FlushQueuedSend(ssh, NULL);
+            if (ret == WS_WANT_WRITE) {
+                /* The peer stopped reading. The socket closes next, there is
+                 * nothing left to push the messages out with. */
+                ret = WS_SUCCESS;
+            }
+        }
+#endif
+
+        if (ret == WS_SUCCESS) {
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret == WS_FATAL_ERROR) {
+                ret = wolfSSH_get_error(ssh);
+            }
+            if (ret == WS_WANT_WRITE) {
+                /* The close messages are already out, whatever the drain
+                 * still wants to send is a reply to the peer. */
+                ret = WS_SUCCESS;
+            }
+        }
+        else if (ret != WS_CHANNEL_CLOSED && ret != WS_WANT_READ) {
             WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
-        else {
-            ret = wolfSSH_worker(ssh, NULL);
-        }
-        if (ret == WS_CHANNEL_CLOSED) {
-            /* Shutting down, channel closing isn't a fail. */
+
+        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ) {
+            /* Shutting down. The channel closing isn't a fail, and neither
+             * is the peer having nothing ready on this non-blocking socket;
+             * either way there is nothing left to wait for. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
@@ -1230,7 +1402,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    config_cleanup(&config);
     MODES_RESET();
 
     return 0;
@@ -1248,6 +1419,23 @@ int main(int argc, char** argv)
 
     WSTARTTCP();
 
+    config_init_default(&clientConfig);
+    config_parse_command_line(&clientConfig, argc, argv);
+    config_print(&clientConfig);
+
+    /* Install the log callback before wolfSSH_Init() so the file named by
+     * -E gets the library's start up messages too. */
+    if (clientConfig.logFile != NULL) {
+        if (WFOPEN(NULL, &logFileStream, clientConfig.logFile, "ab") != 0
+                || logFileStream == WBADFILE) {
+            err_sys("Couldn't open the log file.");
+        }
+        wolfSSH_SetLoggingCb(ClientLoggingCb);
+        /* Asking for a log file is asking for logging. A no-op when the
+         * library has none compiled in, same as wolfsshd's -d. */
+        wolfSSH_Debugging_ON();
+    }
+
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
@@ -1257,6 +1445,22 @@ int main(int argc, char** argv)
     wolfSSH_Client(&args);
 
     wolfSSH_Cleanup();
+
+    /* Close the log last, wolfSSH_Cleanup() still logs and the callback
+     * cannot be uninstalled. */
+    if (logFileStream != NULL) {
+#ifdef _MSC_VER
+        /* The terminal session's input thread is left running, it blocks in
+         * a console read with nothing to cancel it. Flush the log and let
+         * process exit close it, rather than close the stream out from under
+         * a write that thread is making. */
+        WFFLUSH(logFileStream);
+#else
+        WFCLOSE(NULL, logFileStream);
+        logFileStream = NULL;
+#endif
+    }
+    config_cleanup(&clientConfig);
 
     return args.return_code;
 }

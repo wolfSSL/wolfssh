@@ -1,0 +1,291 @@
+#!/bin/sh
+
+# wolfssh client app test
+#
+# Runs the wolfssh client against the echoserver, covering the remote
+# command session, the terminal session, and the -E log file option.
+
+no_pid=-1
+server_pid=$no_pid
+client_pid=$no_pid
+input_pid=$no_pid
+killer_pid=$no_pid
+work_dir="`pwd`/wolfssh_client_test$$"
+ready_file="$work_dir/ready"
+input_file="$work_dir/input"
+client_out="$work_dir/client.out"
+port=0
+counter=0
+# Seconds to give the client before killing it. Nothing here takes more
+# than a moment, the limit is only so a stuck session fails this test
+# instead of hanging make check.
+client_limit=60
+
+[ ! -x ./apps/wolfssh/wolfssh ] \
+    && echo "wolfssh client app doesn't exist, skipping" && exit 77
+./apps/wolfssh/wolfssh -h 2>&1 | grep -q "usage: " \
+    || { echo "wolfssh client app doesn't run, skipping"; exit 77; }
+[ ! -x ./examples/echoserver/echoserver ] \
+    && echo "echoserver doesn't exist, skipping" && exit 77
+./examples/echoserver/echoserver '-?' 2>&1 | grep -q "^echoserver " \
+    || { echo "echoserver doesn't run, skipping"; exit 77; }
+
+# A WOLFSSH_TEST_BLOCK build fails writes at random. The echoserver leaves a
+# failed write queued and then waits on the peer for a reply to the message
+# it never sent, so a session stalls no matter what the client does. The
+# other echoserver scripts skip this build for the same reason.
+if [ -x ./examples/client/client ] \
+    && ./examples/client/client -h 2>&1 | grep -q "WOLFSSH_TEST_BLOCK"
+then
+    echo "macro WOLFSSH_TEST_BLOCK was used, skipping"
+    exit 77
+fi
+
+do_cleanup() {
+    echo "in cleanup"
+
+    if [ $killer_pid != $no_pid ]
+    then
+        kill $killer_pid 2>/dev/null
+        killer_pid=$no_pid
+    fi
+    if [ $input_pid != $no_pid ]
+    then
+        kill $input_pid 2>/dev/null
+        input_pid=$no_pid
+    fi
+    if [ $client_pid != $no_pid ]
+    then
+        echo "killing client"
+        kill -9 $client_pid 2>/dev/null
+        client_pid=$no_pid
+    fi
+    if [ $server_pid != $no_pid ]
+    then
+        echo "killing server"
+        kill -9 $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+    rm -rf -- "$work_dir"
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    exit 1
+}
+
+trap do_trap INT TERM
+
+# The echoserver is one shot, start a new one for each connection. It picks
+# an ephemeral port and writes it to the ready file.
+#
+# -f keeps the server in echo mode. Without it a build with shell support
+# tries to fork a login shell for the user, which fails since jill isn't a
+# real account, and the session ends before anything crosses the channel.
+start_server() {
+    # The -1 server exits after its connection, but a client run that failed
+    # before connecting leaves one listening. Reap it, server_pid is about
+    # to be overwritten.
+    if [ $server_pid != $no_pid ]
+    then
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+
+    rm -f "$ready_file"
+    ./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+        > "$work_dir/server.log" 2>&1 &
+    server_pid=$!
+
+    # A debug build starting up under a parallel make check needs more than
+    # the couple of seconds the other scripts allow.
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
+        echo "waiting for ready file..."
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+
+    if [ ! -s "$ready_file" ]; then
+        printf '\n\nNO ready file ending test...\n'
+        do_cleanup
+        exit 1
+    fi
+
+    port=`cat "$ready_file"`
+    echo "server listening on port $port"
+}
+
+fail() {
+    printf '\n\n%s\n' "$1"
+    do_cleanup
+    exit 1
+}
+
+# Wait for the client to write something to its output. The prompts are
+# flushed as they are printed, so this tells us the client is about to read
+# the answer.
+wait_for_output() {
+    count=0
+    while [ "$count" -lt 300 ]; do
+        grep -q "$1" "$client_out" 2>/dev/null && return 0
+        sleep 0.1
+        count=$((count + 1))
+    done
+    return 1
+}
+
+# Run the client with its stdin coming from a fifo.
+#
+# The client answers its prompts with stdio, which buffers everything that
+# is ready to be read, so anything written along with a prompt's answer is
+# swallowed with it and never reaches the session. Writing each piece only
+# once the client has asked for it keeps them in separate reads. The
+# echoserver only ends the session when it receives a 0x03, so every
+# session has to send one or both ends wait for the other forever.
+#
+# $1 - "confirm" when the client will ask about the unknown server key
+# rest - client arguments
+run_client() {
+    confirm=$1
+    shift
+
+    rm -f "$input_file" "$client_out"
+    touch "$client_out"
+    mkfifo "$input_file" || fail "couldn't create the input fifo"
+
+    (
+        # GetConfirmation() reads a single character. A newline here would
+        # be left behind for the password prompt to read as an empty
+        # password.
+        [ "$confirm" = "confirm" ] && printf 'Y'
+
+        wait_for_output "Password:" || exit 1
+        printf 'upthehill\n'
+
+        # Let the client consume the password before sending the session
+        # data. A single read that catches both loses the data.
+        sleep 2
+
+        printf 'hello\003'
+    ) > "$input_file" 2>/dev/null &
+    input_pid=$!
+
+    HOME="$work_dir" ./apps/wolfssh/wolfssh "$@" \
+        < "$input_file" > "$client_out" 2>&1 &
+    client_pid=$!
+
+    # Poll rather than sleep through the whole limit. Killing a subshell
+    # that is waiting on a sleep leaves the sleep running.
+    (
+        watched=0
+        while kill -0 $client_pid 2>/dev/null; do
+            if [ $watched -ge $client_limit ]; then
+                kill -9 $client_pid 2>/dev/null
+                break
+            fi
+            sleep 1
+            watched=$((watched + 1))
+        done
+    ) 2>/dev/null &
+    killer_pid=$!
+
+    wait $client_pid
+    client_status=$?
+    client_pid=$no_pid
+
+    kill $killer_pid 2>/dev/null
+    killer_pid=$no_pid
+    kill $input_pid 2>/dev/null
+    input_pid=$no_pid
+
+    cat "$client_out"
+    return $client_status
+}
+
+mkdir -p "$work_dir/.ssh"
+
+# The known hosts check rejects a missing or empty file without asking, so
+# seed the file with an entry for another host. The first connection then
+# gets the "server is unknown" prompt and answers it.
+echo "example.invalid ssh-rsa AAAA" > "$work_dir/.ssh/known_hosts"
+
+echo "Test learning the server's key"
+start_server
+run_client confirm -E "$work_dir/learn.log" -p $port jill@127.0.0.1 "echo one"
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+    [ $RESULT -gt 128 ] && fail "the client had to be killed, session stuck"
+    fail "failed to connect"
+fi
+
+grep -q "^127.0.0.1 " "$work_dir/.ssh/known_hosts" \
+    || fail "server key not added to the known hosts"
+grep -q "hello" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+# With the server's key known, the client only prompts for the password.
+# The log file is empty unless the library has logging compiled in.
+echo "Test a session given a command, with a log file"
+start_server
+run_client "" -E "$work_dir/command.log" -p $port jill@127.0.0.1 "echo two"
+[ $? -ne 0 ] && fail "failed to open the session"
+
+grep -q "hello" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+if [ -s "$work_dir/command.log" ]; then
+    echo "checking the log file"
+
+    # The log is redirected before wolfSSH_Init(), so the library's start up
+    # message is the first thing in the file.
+    head -n 1 "$work_dir/command.log" | grep -q "Entering wolfSSH_Init()" \
+        || fail "log file is missing the wolfSSH_Init() message"
+
+    # The log is closed after wolfSSH_Cleanup(), which logs as well.
+    grep -q "Leaving wolfSSH_Cleanup()" "$work_dir/command.log" \
+        || fail "log file is missing the wolfSSH_Cleanup() message"
+
+    # Given a command the client opens an exec channel to carry it, with no
+    # terminal request to discard it.
+    grep -q "type = exec" "$work_dir/command.log" \
+        || fail "the client didn't open an exec channel for the command"
+
+    # The command string itself is only logged by a debug build.
+    if grep -q "  command = " "$work_dir/command.log"; then
+        grep -q "command = echo two" "$work_dir/command.log" \
+            || fail "the client didn't send the command it was given"
+    fi
+else
+    echo "empty log file, library built without logging"
+fi
+
+echo "Test terminal session"
+start_server
+run_client "" -E "$work_dir/terminal.log" -p $port jill@127.0.0.1
+[ $? -ne 0 ] && fail "failed to open the terminal session"
+
+grep -q "hello" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+if [ -s "$work_dir/terminal.log" ]; then
+    grep -q "Leaving wolfSSH_Cleanup()" "$work_dir/terminal.log" \
+        || fail "log file is missing the wolfSSH_Cleanup() message"
+
+    # No command was given, the client asks for a terminal instead.
+    grep -q "type = exec" "$work_dir/terminal.log" \
+        && fail "the client opened an exec channel it wasn't asked for"
+    grep -q "  command = " "$work_dir/terminal.log" \
+        && fail "the client sent a command it wasn't given"
+fi
+
+echo "Test the usage message"
+./apps/wolfssh/wolfssh -Z 2>&1 | grep -q "usage:" \
+    || fail "no usage message for a bad option"
+
+do_cleanup
+echo "wolfssh client tests passed"
+exit 0
