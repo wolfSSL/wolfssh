@@ -15449,6 +15449,130 @@ static int test_SftpClientRecvInitVersion(void)
 
     return 0;
 }
+
+/* Builds an SFTP DATA reply in "out": the 9 byte header carrying the request
+ * id where a VERSION message carries the version, then the data string as the
+ * trailing bytes. Returns the size written, or 0 if it does not fit. */
+static word32 SftpBuildData(byte* out, word32 outSz, word32 reqId,
+        word32 dataSz)
+{
+    word32 msgSz;
+
+    msgSz = SftpBuildVersion(out, outSz,
+            MSG_ID_SZ + UINT32_SZ + UINT32_SZ + dataSz, WOLFSSH_FTP_DATA,
+            reqId, UINT32_SZ + dataSz);
+    if (msgSz > 0) {
+        /* the trailing bytes open with the data string length */
+        PutU32BE(out + WOLFSSH_SFTP_HEADER, dataSz);
+    }
+
+    return msgSz;
+}
+
+
+/* Drives wolfSSH_SFTP_SendReadPacket() over a DATA reply delivered in two
+ * pieces, split after "split" bytes, with RecvAlwaysWantRead standing in for a
+ * non-blocking socket. Returns 0, or a negative sentinel on a setup failure. */
+static int SftpClientDriveReadSplit(word32 dataSz, word32 split,
+        int* firstRet, int* firstErr, int* stateKept, int* secondRet,
+        byte* out, word32 outSz)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    byte   msg[WOLFSSH_SFTP_HEADER + UINT32_SZ + 32];
+    byte   handle[4];
+    word32 ofst[2];
+    word32 msgSz;
+    int    result;
+
+    *firstRet  = WS_SUCCESS;
+    *firstErr  = WS_SUCCESS;
+    *stateKept = 0;
+    *secondRet = WS_SUCCESS;
+
+    WMEMSET(handle, 'h', sizeof(handle));
+    WMEMSET(out, 0, outSz);
+    ofst[0] = 0;
+    ofst[1] = 0;
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result == 0) {
+        msgSz = SftpBuildData(msg, (word32)sizeof(msg), ssh->reqId, dataSz);
+        if (msgSz == 0 || split >= msgSz) {
+            result = -1019;
+        }
+    }
+    if (result == 0) {
+        /* ChannelNew leaves the peer window at zero, which would fail the
+         * READ request before any reply is read */
+        ssh->channelList->peerWindowSz = 1024;
+        ssh->channelList->peerMaxPacketSz = 1024;
+
+        if (wolfSSH_TestChannelPutData(ssh->channelList, msg, split)
+                != WS_SUCCESS) {
+            result = -1020;
+        }
+    }
+    if (result == 0) {
+        *firstRet  = wolfSSH_SFTP_SendReadPacket(ssh, handle,
+                (word32)sizeof(handle), ofst, out, outSz);
+        *firstErr  = wolfSSH_get_error(ssh);
+        *stateKept = (ssh->sendReadState != NULL);
+
+        if (wolfSSH_TestChannelPutData(ssh->channelList, msg + split,
+                    msgSz - split) != WS_SUCCESS) {
+            result = -1021;
+        }
+    }
+    if (result == 0) {
+        *secondRet = wolfSSH_SFTP_SendReadPacket(ssh, handle,
+                (word32)sizeof(handle), ofst, out, outSz);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Regression for the SFTP DATA reply losing bytes when its four byte string
+ * length arrives split: the read must report WS_WANT_READ, keep the send read
+ * state, then complete with the payload intact on the retry. */
+static int test_SftpSendReadPacketSplit(void)
+{
+    static const word32 splits[2] = { WOLFSSH_SFTP_HEADER + 1,
+                                      WOLFSSH_SFTP_HEADER + 2 };
+    byte   out[16];
+    word32 dataSz = 8;
+    word32 i;
+    word32 j;
+    int    rc;
+    int    firstRet;
+    int    firstErr;
+    int    stateKept;
+    int    secondRet;
+
+    for (i = 0; i < (word32)(sizeof(splits) / sizeof(splits[0])); i++) {
+        rc = SftpClientDriveReadSplit(dataSz, splits[i], &firstRet, &firstErr,
+                &stateKept, &secondRet, out, (word32)sizeof(out));
+        if (rc != 0)
+            return rc;
+        if (firstRet != WS_FATAL_ERROR)
+            return -981;
+        if (firstErr != WS_WANT_READ)
+            return -982;
+        if (!stateKept)
+            return -983;
+        if (secondRet != (int)dataSz)
+            return -984;
+        for (j = 0; j < dataSz; j++) {
+            if (out[j] != (byte)(UINT32_SZ + j))
+                return -985;
+        }
+    }
+
+    return 0;
+}
 #endif /* NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_SFTP */
 
@@ -16565,6 +16689,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_SftpClientRecvInitVersion();
     printf("SftpClientRecvInitVersion: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpSendReadPacketSplit();
+    printf("SftpSendReadPacketSplit: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

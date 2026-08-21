@@ -8418,7 +8418,6 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
         const word32* ofst, byte* out, word32 outSz)
 {
     WS_SFTP_SEND_READ_STATE* state = NULL;
-    byte szFlat[UINT32_SZ];
     int ret = WS_SUCCESS;
     word32 sz;
 
@@ -8553,8 +8552,16 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
             case STATE_SEND_READ_FTP_DATA:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: FTP_DATA");
+                /* The string length can arrive split over several reads */
+                ret = wolfSSH_SFTP_buffer_create(ssh, &state->buffer,
+                        UINT32_SZ);
+                if (ret != WS_SUCCESS) {
+                    state->state = STATE_SEND_READ_CLEANUP;
+                    continue;
+                }
+
                 /* get size of string and place it into out buffer */
-                ret = wolfSSH_stream_read(ssh, szFlat, UINT32_SZ);
+                ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer, UINT32_SZ);
                 if (ret < 0) {
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
@@ -8562,8 +8569,12 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     state->state = STATE_SEND_READ_CLEANUP;
                     continue;
                 }
-                ato32(szFlat, &sz);
-                wolfSSH_SFTP_buffer_create(ssh, &state->buffer, sz);
+                ato32(wolfSSH_SFTP_buffer_data(&state->buffer), &sz);
+                ret = wolfSSH_SFTP_buffer_create(ssh, &state->buffer, sz);
+                if (ret != WS_SUCCESS) {
+                    state->state = STATE_SEND_READ_CLEANUP;
+                    continue;
+                }
                 if (wolfSSH_SFTP_buffer_size(&state->buffer) > outSz) {
                     WLOG(WS_LOG_SFTP, "Server sent more data then expected");
                     ret = WS_FATAL_ERROR;
