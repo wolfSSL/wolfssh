@@ -365,6 +365,11 @@ extern "C" {
     #undef WOLFSSH_NO_ECDSA
     #define WOLFSSH_NO_ECDSA
 #endif
+#if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+    defined(WOLFSSH_NO_ED25519) && defined(WOLFSSH_NO_MLDSA)
+    #undef WOLFSSH_NO_PUBKEY_AUTH
+    #define WOLFSSH_NO_PUBKEY_AUTH
+#endif
 #if defined(WOLFSSH_NO_RSA) || \
     (defined(WOLFSSH_NO_RSA_SHA2_256) && defined(WOLFSSH_NO_RSA_SHA2_512))
     #undef WOLFSSH_NO_OSSH_CERT_RSA
