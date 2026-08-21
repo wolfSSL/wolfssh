@@ -2585,6 +2585,8 @@ static void* HandleConnection(void* arg)
                     ret = WS_NOT_COMPILED;
             }
         }
+
+        wolfSSHD_ConfigFree(usrConf);
     }
 
     error = wolfSSH_get_error(ssh);

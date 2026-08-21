@@ -406,6 +406,7 @@ else
     # these tests require setting up an sshd
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         run_test "sshd_forcedcmd_test.sh"
+        run_test "sshd_match_overlap_test.sh"
         run_test "sshd_window_full_test.sh"
         run_test "sshd_empty_password_test.sh"
         run_test "sshd_permitroot_test.sh"
