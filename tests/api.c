@@ -7433,6 +7433,173 @@ static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
+
+#if defined(WOLFSSH_TEST_ECHOSERVER) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(SINGLE_THREADED)
+
+/* Larger than the window, so the transfer cannot complete without the window
+ * being credited back mid-stream. */
+#define WINCREDIT_PAYLOAD_SZ 2000
+/* Small enough that one read drains the whole window. The max packet size is
+ * left alone: capping that bounds the sender's own writes too. */
+#define WINCREDIT_WINDOW_SZ 1024
+#define WINCREDIT_MAX_TRIES 30
+
+static byte winCreditPassword[32];
+
+static int winCreditUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    const char* password = (const char*)ctx;
+    word32 passwordSz;
+
+    if (authType != WOLFSSH_USERAUTH_PASSWORD || password == NULL) {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    }
+
+    passwordSz = (word32)WSTRLEN(password);
+    if (passwordSz > (word32)sizeof(winCreditPassword)) {
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+    }
+    WMEMCPY(winCreditPassword, password, passwordSz);
+    authData->sf.password.password = winCreditPassword;
+    authData->sf.password.passwordSz = passwordSz;
+
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static int winCreditAcceptKey(const byte* pubKey, word32 pubKeySz, void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
+/* A receive window smaller than the payload must still round-trip: the peer
+ * clamps each send to the window, and reading must credit the window back so
+ * the rest can follow. The echoserver is the peer. */
+static void test_wolfSSH_stream_read_WindowCredit(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    THREAD_TYPE serThread;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    const char* args[6];
+    const char* password = "upthehill";
+    byte payload[WINCREDIT_PAYLOAD_SZ];
+    byte rxBuf[WINCREDIT_PAYLOAD_SZ];
+    int argsCount;
+    int i;
+    int ret;
+    int err;
+    int idx;
+    int tries;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = "echoserver";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-f";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv = (char**)args;
+    ser.argc = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    AssertIntEQ(wolfSSH_CTX_SetWindowPacketSize(ctx, WINCREDIT_WINDOW_SZ, 0),
+            WS_SUCCESS);
+    wolfSSH_CTX_SetPublicKeyCheck(ctx, winCreditAcceptKey);
+    wolfSSH_SetUserAuth(ctx, winCreditUserAuth);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    wolfSSH_SetUserAuthCtx(ssh, (void*)password);
+    AssertIntEQ(wolfSSH_SetUsername(ssh, "jill"), WS_SUCCESS);
+
+    build_addr(&clientAddr, (char*)wolfSshIp, ready.port);
+    tcp_socket(&sockFd, ((struct sockaddr_in*)&clientAddr)->sin_family);
+    AssertIntEQ(connect(sockFd, (const struct sockaddr*)&clientAddr,
+                clientAddrSz), 0);
+    AssertIntEQ(wolfSSH_set_fd(ssh, (int)sockFd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_connect(ssh), WS_SUCCESS);
+
+    /* Handshake done, so switch to non-blocking: the loops below must fail on
+     * their try budget rather than park in recv() if a tail goes missing. The
+     * waits below are a full second so a single-core target is not starved. */
+    tcp_set_nonblocking(&sockFd);
+
+    /* Lower case only; the echo server treats 0x03, 0x05 and 0x06 as stop,
+     * stats and rekey triggers. */
+    for (i = 0; i < WINCREDIT_PAYLOAD_SZ; i++) {
+        payload[i] = (byte)('a' + (i % 26));
+    }
+
+    idx = 0;
+    for (tries = 0; tries < WINCREDIT_MAX_TRIES && idx < WINCREDIT_PAYLOAD_SZ;
+            tries++) {
+        ret = wolfSSH_stream_send(ssh, payload + idx,
+                (word32)(WINCREDIT_PAYLOAD_SZ - idx));
+        if (ret > 0) {
+            idx += ret;
+        }
+        else {
+            err = wolfSSH_get_error(ssh);
+            if (err != WS_WANT_READ && err != WS_WANT_WRITE &&
+                    err != WS_WINDOW_FULL && err != WS_REKEYING) {
+                break;
+            }
+            tcp_select(sockFd, 1);
+        }
+    }
+    AssertIntEQ(idx, WINCREDIT_PAYLOAD_SZ);
+
+    /* Fails instead of hanging if a regression drops the echoed tail. */
+    idx = 0;
+    for (tries = 0; tries < WINCREDIT_MAX_TRIES && idx < WINCREDIT_PAYLOAD_SZ;
+            tries++) {
+        ret = wolfSSH_stream_read(ssh, rxBuf + idx,
+                (word32)(WINCREDIT_PAYLOAD_SZ - idx));
+        if (ret > 0) {
+            idx += ret;
+        }
+        else {
+            err = wolfSSH_get_error(ssh);
+            if (err != WS_WANT_READ && err != WS_WANT_WRITE &&
+                    err != WS_CHAN_RXD && err != WS_REKEYING) {
+                break;
+            }
+            tcp_select(sockFd, 1);
+        }
+    }
+    AssertIntEQ(idx, WINCREDIT_PAYLOAD_SZ);
+    AssertIntEQ(WMEMCMP(rxBuf, payload, WINCREDIT_PAYLOAD_SZ), 0);
+
+    wolfSSH_shutdown(ssh);
+    WCLOSESOCKET(sockFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    /* Weird deadlock without this sleep */
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+}
+
+#else /* WOLFSSH_TEST_ECHOSERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+static void test_wolfSSH_stream_read_WindowCredit(void) { ; }
+#endif /* WOLFSSH_TEST_ECHOSERVER && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+
 #endif /* WOLFSSH_TEST_BLOCK */
 
 
@@ -7555,6 +7722,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SetConfinePath();
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
+
+    /* Channel data flow; needs the echoserver, so it is gated the same way */
+    test_wolfSSH_stream_read_WindowCredit();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
