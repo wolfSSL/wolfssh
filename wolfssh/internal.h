@@ -1074,10 +1074,10 @@ struct WOLFSSH {
     byte connReset;
     byte isClosed;
     /* Set when a DISCONNECT is sent or received. Gates every public send
-     * call, so
-     * nothing more goes out. The read calls are not gated: data that
-     * arrived before the disconnect can still be drained. wolfSSH_worker()
-     * is not gated either, since the shutdown paths still pump it. */
+     * call, so nothing more goes out. Reads still hand back what arrived
+     * before the disconnect; the head-of-list reads report it once their
+     * buffer runs dry. wolfSSH_worker() is not gated, the shutdown paths
+     * pump it. */
     byte disconnected;
     byte clientOpenSSH;
 
