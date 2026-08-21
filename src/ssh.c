@@ -1924,14 +1924,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
 #endif
             0) {
             byte* rawPub = NULL;
-            word32 rawPubSz =
-#ifndef WOLFSSH_NO_MLDSA87
-                WC_MLDSA_87_PUB_KEY_SIZE;
-#elif !defined(WOLFSSH_NO_MLDSA65)
-                WC_MLDSA_65_PUB_KEY_SIZE;
-#else
-                WC_MLDSA_44_PUB_KEY_SIZE;
-#endif
+            word32 rawPubSz = WOLFSSH_MLDSA_MAX_PUB_KEY_SZ;
             const char* name = (const char*)*outType;
             word32 nameLen = *outTypeSz;
             word32 localIdx = 0;

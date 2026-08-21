@@ -1380,6 +1380,24 @@ typedef struct WS_KeySignature {
 #define COMPOSITE_MAX_LABEL_SZ         33
 #define ECC_P256_COORD_SZ              32
 #define ECC_P384_COORD_SZ              48
+/* Largest enabled ML-DSA raw public key size. Centralized macro for
+ * worst-case-sized ML-DSA pubkey buffers. */
+#ifndef WOLFSSH_NO_MLDSA87
+#define WOLFSSH_MLDSA_MAX_PUB_KEY_SZ   WC_MLDSA_87_PUB_KEY_SIZE
+#elif !defined(WOLFSSH_NO_MLDSA65)
+#define WOLFSSH_MLDSA_MAX_PUB_KEY_SZ   WC_MLDSA_65_PUB_KEY_SIZE
+#else
+#define WOLFSSH_MLDSA_MAX_PUB_KEY_SZ   WC_MLDSA_44_PUB_KEY_SIZE
+#endif
+/* ML-DSA composite key IDs case-label list for switch fallthroughs. */
+#define WOLFSSH_MLDSA_COMPOSITE_ID_CASES \
+    case ID_MLDSA44_ES256: \
+    case ID_MLDSA65_ES256: \
+    case ID_MLDSA87_ES384: \
+    case ID_MLDSA44_ED25519: \
+    case ID_MLDSA65_ED25519: \
+    case ID_MLDSA87_ED448
+
 /* max trad pubkey size */
 #define COMPOSITE_MAX_TRAD_PUB_SZ      (1 + (2 * ECC_P384_COORD_SZ))
 /* max trad privkey size */
@@ -1417,6 +1435,7 @@ typedef struct CompositeParams {
 typedef struct CompositeTradOps {
     int  (*init)(void* key, void* heap);
     void (*free)(void* key);
+    int  (*makeKey)(void* key, WC_RNG* rng, const CompositeParams* params);
     int  (*importPub)(void* key, const byte* pub, word32 pubSz);
     int  (*importPriv)(void* key, const byte* priv, word32 privSz,
                         const byte* pub, word32 pubSz);

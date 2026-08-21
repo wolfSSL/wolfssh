@@ -982,6 +982,7 @@ static int test_MlDsaKeyGen(void)
 }
 
 /* Round-trip test for ML-DSA composite keys. */
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 static int test_MlDsaCompositeKeyGen(void)
 {
     /* NULL-terminated so the table is never empty if ECDSA and
@@ -1132,6 +1133,7 @@ static int test_MlDsaCompositeKeyGen(void)
 
     return result;
 }
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 
 #endif /* WOLFSSH_NO_MLDSA */
 
@@ -9726,6 +9728,7 @@ static int test_DoUserAuthRequestMlDsa(void)
  * 3 = claim a composite signature length shorter than the ML-DSA half
  * alone, 4 = claim a composite signature length far longer than what was
  * produced. All tamper modes must be rejected by verification. */
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
         byte keyId, int tamperSig)
 {
@@ -10467,9 +10470,11 @@ done:
     return 0;
 #endif
 }
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 
 /* Test client signer against server parser. */
 #ifdef WOLFSSH_KEYGEN
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 static int test_BuildUserAuthRequestMlDsaComposite_Params(
         const char* keyTypeName, word32 level, word32 tradType, byte keyId)
 {
@@ -10726,8 +10731,10 @@ static int test_BuildUserAuthRequestMlDsaComposite(void)
 #endif
     return 0;
 }
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 #endif /* WOLFSSH_KEYGEN */
 
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 static int test_DoUserAuthRequestMlDsaComposite(void)
 {
     int ret = 0;
@@ -10839,6 +10846,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
 #endif
     return 0;
 }
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 
 #ifdef WOLFSSH_KEYGEN
 static int test_PrepareUserAuthRequestMlDsa(void)
@@ -16443,6 +16451,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoUserAuthRequestMlDsa: %s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     unitResult = test_DoUserAuthRequestMlDsaComposite();
     printf("DoUserAuthRequestMlDsaComposite: %s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
@@ -16456,11 +16465,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
             "%s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifdef WOLFSSH_KEYGEN
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     unitResult = test_BuildUserAuthRequestMlDsaComposite();
     printf("BuildUserAuthRequestMlDsaComposite: %s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
     unitResult = test_PrepareUserAuthRequestMlDsa();
     printf("PrepareUserAuthRequestMlDsa: %s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
@@ -16715,10 +16727,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_MlDsaKeyGen();
     printf("MlDsaKeyGen: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     unitResult = test_MlDsaCompositeKeyGen();
     printf("MlDsaCompositeKeyGen: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 #endif
 #endif /* WOLFSSH_KEYGEN */
     unitResult = test_OpenSshPemNegative();
