@@ -3004,12 +3004,21 @@ static void TestDisconnectDrainsBufferedData(void)
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
     AssertTrue(ssh->disconnected);
 
+    /* Peek is the drain gate the shell loops use, so it has to tell a
+     * channel with data left from a session that is over. */
+    ret = wolfSSH_stream_peek(ssh, NULL, 1);
+    AssertIntEQ(ret, 1);
+
     WMEMSET(data, 0, sizeof(data));
     ret = wolfSSH_stream_read(ssh, data, sizeof(data));
     AssertIntEQ(ret, (int)sizeof(payload));
     AssertIntEQ(WMEMCMP(data, payload, sizeof(payload)), 0);
 
     /* Buffer is dry now, so the disconnect is what is left to report. */
+    ret = wolfSSH_stream_peek(ssh, NULL, 1);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
     ret = wolfSSH_stream_read(ssh, data, sizeof(data));
     AssertIntEQ(ret, WS_FATAL_ERROR);
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);

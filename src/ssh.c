@@ -1198,6 +1198,7 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     WOLFSSH_BUFFER* inputBuffer;
+    word32 avail;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_peek()");
 
@@ -1214,11 +1215,22 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
     }
 
     inputBuffer = &ssh->channelList->inputBuffer;
-    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    avail = inputBuffer->length - inputBuffer->idx;
+
+    /* Report the disconnect only once the buffered data is drained, the
+     * same way wolfSSH_stream_read() does. Callers use this to tell a
+     * drained channel from one with more to come, and a dead session is
+     * neither. */
+    if (avail == 0 && ssh->disconnected) {
+        ssh->error = WS_DISCONNECT;
+        return WS_FATAL_ERROR;
+    }
+
+    bufSz = min(bufSz, avail);
     if (buf != NULL) {
         WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     }
-    return bufSz;
+    return (int)bufSz;
 }
 
 
