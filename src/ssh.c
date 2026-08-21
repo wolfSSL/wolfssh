@@ -1113,9 +1113,9 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     if (ssh == NULL || ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    /* look up the channel if it still exists */
+    /* The session channel is the head of the list. */
     if (ret == WS_SUCCESS) {
-        channel = ChannelFind(ssh, ssh->channelList->peerChannel, WS_CHANNEL_ID_SELF);
+        channel = ssh->channelList;
     }
 
     /* if channel close was not already sent then send it */

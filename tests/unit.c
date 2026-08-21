@@ -16797,6 +16797,75 @@ static int test_ResolveOffset(void)
 #endif /* WOLFSSH_TEST_RESOLVE_OFFSET */
 
 
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_WOLFSSH_SERVER)
+
+/* IORecv mock reporting nothing to read yet, so the shutdown drain below
+ * completes without a live socket. */
+static int ShutdownIoRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+    return WS_CBIO_ERR_WANT_READ;
+}
+
+/* wolfSSH_shutdown() has to reach the session channel when the peer numbered
+ * it differently than this side did, which is the normal case: each side
+ * picks its own channel IDs. Looking the channel up by the peer's ID while
+ * matching against the local ID field found nothing, and the whole teardown
+ * was skipped. Only the EOF and close sends leave a flag behind to check;
+ * the exit-status request in between does not. */
+static int test_ShutdownPeerChannelId(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    word32           peerChannel;
+    int              result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1080;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, ShutdownIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1081; goto done; }
+
+    /* Let the channel messages past the message filter. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1082; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1083;
+        goto done;
+    }
+
+    peerChannel = ch->channel + 7;
+    ch->peerChannel = peerChannel;
+    ch->openConfirmed = 1;
+
+    /* The drain at the end of shutdown only sees a want-read, so the return
+     * is not the interesting part here; what got sent is. */
+    (void)wolfSSH_shutdown(ssh);
+
+    ch = ChannelFind(ssh, peerChannel, WS_CHANNEL_ID_PEER);
+    if (ch == NULL) { result = -1084; goto done; }
+    if (!ch->eofTxd) { result = -1085; goto done; }
+    if (!ch->closeTxd) { result = -1086; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL && !NO_WOLFSSH_SERVER */
+
+
 int wolfSSH_UnitTest(int argc, char** argv)
 {
     int testResult = 0, unitResult = 0;
@@ -17498,6 +17567,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     unitResult = test_OpenSshFormatNonCompositeRejected();
     printf("OpenSshFormatNonCompositeRejected: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_WOLFSSH_SERVER)
+    unitResult = test_ShutdownPeerChannelId();
+    printf("ShutdownPeerChannelId: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
