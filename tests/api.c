@@ -299,6 +299,7 @@ static void test_wolfSSH_SetChannelType(void)
     const byte sub1[] = "sftp";
     const byte sub2[] = "a-longer-subsystem-name";
     byte* prevName;
+    byte* maxName;
 
     AssertIntNE(WS_SUCCESS, wolfSSH_SetChannelType(NULL,
                 WOLFSSH_SESSION_SHELL, NULL, 0));
@@ -311,13 +312,25 @@ static void test_wolfSSH_SetChannelType(void)
     AssertNull(ssh->channelName);
     AssertIntEQ(0, ssh->channelNameSz);
 
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    /* subsystem carries a required name string, so with none stored and
+     * none given the request would go out without one */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, NULL, 0));
     AssertNull(ssh->channelName);
+    /* a refused call leaves the selected type alone, not just the name */
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
 
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    /* likewise for a size with no name behind it */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, NULL, 4));
+    AssertNull(ssh->channelName);
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
+
+    /* an oversized name is reported, not silently dropped */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertNull(ssh->channelName);
+    AssertIntEQ(WOLFSSH_SESSION_SHELL, ssh->connectChannelId);
 
     AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1,
@@ -335,9 +348,10 @@ static void test_wolfSSH_SetChannelType(void)
     AssertIntEQ(1, ssh->channelName == prevName);
 
     /* a rejected (oversize) name must leave the previous buffer intact */
-    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetChannelType(ssh,
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, WOLFSSH_MAX_CHN_NAMESZ));
     AssertIntEQ(1, ssh->channelName == prevName);
+    AssertIntEQ(WOLFSSH_SESSION_SUBSYSTEM, ssh->connectChannelId);
     AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
     AssertIntEQ(0, strcmp((const char*)ssh->channelName, (const char*)sub1));
 
@@ -346,6 +360,19 @@ static void test_wolfSSH_SetChannelType(void)
                 WOLFSSH_SESSION_SUBSYSTEM, (byte*)sub1, 0));
     AssertIntEQ(1, ssh->channelName == prevName);
     AssertIntEQ((int)(sizeof(sub1) - 1), (int)ssh->channelNameSz);
+
+    /* the largest name the limit still admits is stored, pinning the
+     * other side of the boundary the oversize checks above cover */
+    AssertNotNull(maxName = (byte*)malloc(WOLFSSH_MAX_CHN_NAMESZ - 1));
+    memset(maxName, 'a', WOLFSSH_MAX_CHN_NAMESZ - 1);
+    AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
+                WOLFSSH_SESSION_SUBSYSTEM, maxName,
+                WOLFSSH_MAX_CHN_NAMESZ - 1));
+    AssertIntEQ(WOLFSSH_MAX_CHN_NAMESZ - 1, (int)ssh->channelNameSz);
+    AssertIntEQ(0, memcmp(ssh->channelName, maxName,
+                WOLFSSH_MAX_CHN_NAMESZ - 1));
+    AssertIntEQ(0, ssh->channelName[ssh->channelNameSz]); /* NUL terminated */
+    free(maxName);
 
     /* repeated set frees the previous buffer before replacing it */
     AssertIntEQ(WS_SUCCESS, wolfSSH_SetChannelType(ssh,
@@ -1308,14 +1335,18 @@ static void test_wolfSSH_CTX_SetWindowPacketSize(void)
             wolfSSH_CTX_SetWindowPacketSize(ctx,
                     WINDOW_SZ_UPPER_BOUND + 1, 0));
 
-    /* maxPacketSz exactly at transport limit: must succeed and be stored. */
+    /* maxPacketSz exactly at the channel limit: must succeed and be stored. */
     AssertIntEQ(WS_SUCCESS,
-            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ));
-    AssertIntEQ(MAX_PACKET_SZ, (int)ctx->maxPacketSz);
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_CHANNEL_PACKET_SZ));
+    AssertIntEQ(MAX_CHANNEL_PACKET_SZ, (int)ctx->maxPacketSz);
 
-    /* maxPacketSz one above transport limit: must fail. */
+    /* maxPacketSz one above the channel limit: must fail. */
     AssertIntEQ(WS_BAD_ARGUMENT,
-            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ + 1));
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_CHANNEL_PACKET_SZ + 1));
+
+    /* The transport limit itself does not fit once framing is added. */
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_CTX_SetWindowPacketSize(ctx, 0, MAX_PACKET_SZ));
 
     /* Both valid non-zero values: must succeed and be stored. */
     AssertIntEQ(WS_SUCCESS,

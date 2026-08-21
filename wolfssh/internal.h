@@ -567,6 +567,7 @@ enum NameIdType {
 #define TERMINAL_MODES_MAX_SZ 4096
 #define TERMINAL_WIDTH_DEFAULT 80 /* used when there is no terminal */
 #define TERMINAL_HEIGHT_DEFAULT 24
+#define TERMINAL_DIMENSION_MAX 65535 /* what struct winsize can hold */
 #define AEAD_IMP_IV_SZ 4
 #define AEAD_EXP_IV_SZ 8
 #define AEAD_NONCE_SZ (AEAD_IMP_IV_SZ+AEAD_EXP_IV_SZ)
@@ -734,6 +735,29 @@ WOLFSSH_LOCAL int CheckAlgoList(const char* list, byte type);
 /* This is one AES block size. We always grab one
  * block size first to decrypt to find the size of
  * the rest of the data. */
+
+/* Channel data packet overhead: transport framing, the larger channel data
+ * header (CHANNEL_EXTENDED_DATA), worst-case BundlePacket() padding, and the
+ * largest MAC. Spelled twice because AES_BLOCK_SIZE and MAX_HMAC_SZ are enum
+ * constants that #if reads as zero. The literal is a ceiling: 101 with a
+ * 64-byte MAC, less with a smaller digest. */
+#define CHANNEL_PACKET_OVERHEAD_SZ \
+        (LENGTH_SZ + PAD_LENGTH_SZ \
+         + MSG_ID_SZ + (UINT32_SZ * 2) + LENGTH_SZ \
+         + (AES_BLOCK_SIZE + MIN_PAD_LENGTH - 1) \
+         + MAX_HMAC_SZ)
+#define CHANNEL_PACKET_OVERHEAD_MAX 101
+
+/* Largest channel payload that still fits MAX_PACKET_SZ on the wire, which
+ * bounds the whole binary packet. At most 35000 - 101 = 34899. Derived, not
+ * a tunable, so deliberately not overridable. */
+#define MAX_CHANNEL_PACKET_SZ (MAX_PACKET_SZ - CHANNEL_PACKET_OVERHEAD_SZ)
+
+/* Both sizes are overridable, and CtxInit() takes DEFAULT_MAX_PACKET_SZ
+ * unchecked, so assert the default frames too. */
+#if DEFAULT_MAX_PACKET_SZ > (MAX_PACKET_SZ - CHANNEL_PACKET_OVERHEAD_MAX)
+    #error "DEFAULT_MAX_PACKET_SZ too large to frame inside MAX_PACKET_SZ"
+#endif
 
 
 typedef struct WOLFSSH_BUFFER {
@@ -1776,6 +1800,8 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
     WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
+    WOLFSSH_API int wolfSSH_TestDoPacket(WOLFSSH* ssh,
+            byte* bufferConsumed);
     WOLFSSH_API int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestPassword(WOLFSSH* ssh,

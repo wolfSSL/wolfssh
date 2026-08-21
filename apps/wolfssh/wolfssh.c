@@ -728,8 +728,8 @@ static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
 
 
 /* Mirrors the library's channel name limit. wolfSSH_SetChannelType()
- * discards a longer command and still returns WS_SUCCESS, which would
- * send an exec request with no command string. */
+ * rejects a longer command with WS_BAD_ARGUMENT; checking it here reports
+ * it before a connection is attempted. */
 #ifndef WOLFSSH_MAX_CHN_NAMESZ
     #define WOLFSSH_MAX_CHN_NAMESZ 4096
 #endif

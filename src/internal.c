@@ -98,6 +98,14 @@
 
 #include <wolfssl/wolfcrypt/coding.h>
 
+
+/* The #error in internal.h can't compare the two: the expression's terms are
+ * enum constants that #if reads as zero. Here both are ordinary constant
+ * expressions, so a term added without bumping the literal fails the build. */
+typedef char wolfSSH_channel_overhead_check[
+        (CHANNEL_PACKET_OVERHEAD_SZ <= CHANNEL_PACKET_OVERHEAD_MAX) ? 1 : -1];
+
+
 /*
 Flags:
   HAVE_WC_ECC_SET_RNG
@@ -11611,6 +11619,23 @@ static int ChannelRequestIs(const char* type, word32 typeSz, const char* name)
 }
 
 
+#ifdef WOLFSSH_TERM
+/* Store the terminal size a pty-req or window-change carried. All four
+ * are taken as sent, zero included, as others do; a zero is how a peer
+ * reports a dimension it has no value for. The clamp is for the
+ * consumers, which copy these into the unsigned short fields of a
+ * struct winsize, and for termResizeCb, which sees them first. */
+static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
+        word32 widthPixels, word32 heightPixels)
+{
+    ssh->widthChar = min(widthChar, TERMINAL_DIMENSION_MAX);
+    ssh->heightRows = min(heightRows, TERMINAL_DIMENSION_MAX);
+    ssh->widthPixels = min(widthPixels, TERMINAL_DIMENSION_MAX);
+    ssh->heightPixels = min(heightPixels, TERMINAL_DIMENSION_MAX);
+}
+#endif /* WOLFSSH_TERM */
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -11698,23 +11723,26 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
             char term[32];
             word32 termSz;
+            word32 widthChar, heightRows, widthPixels, heightPixels;
 
-            channel->ptyReq = 1; /* received a pty request */
             termSz = (word32)sizeof(term);
             ret = GetString(term, &termSz, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->widthChar, buf, len, &begin);
+                ret = GetUint32(&widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->heightRows, buf, len, &begin);
+                ret = GetUint32(&heightRows, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->widthPixels, buf, len, &begin);
+                ret = GetUint32(&widthPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
-                ret = GetUint32(&ssh->heightPixels, buf, len, &begin);
+                ret = GetUint32(&heightPixels, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetStringAlloc(ssh->ctx->heap,
                         (char**)&ssh->modes, &ssh->modesSz,
                         buf, len, &begin);
             if (ret == WS_SUCCESS) {
+                channel->ptyReq = 1; /* only on a fully parsed request */
+                SetTerminalSize(ssh, widthChar, heightRows,
+                        widthPixels, heightPixels);
                 WLOG(WS_LOG_DEBUG, "  term = %s", term);
                 WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
                 WLOG(WS_LOG_DEBUG, "  heightRows = %u", ssh->heightRows);
@@ -11745,18 +11773,23 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightPixels, buf, len, &begin);
 
-            if (ret == WS_SUCCESS) {
-                WLOG(WS_LOG_DEBUG, "  widthChar = %u", widthChar);
-                WLOG(WS_LOG_DEBUG, "  heightRows = %u", heightRows);
-                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", widthPixels);
-                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", heightPixels);
-                ssh->widthChar = widthChar;
-                ssh->heightRows = heightRows;
-                ssh->widthPixels = widthPixels;
-                ssh->heightPixels = heightPixels;
+            if (ret == WS_SUCCESS && !channel->ptyReq) {
+                /* Nothing to resize without a pty on this channel. Dropbear
+                 * refuses the same request for the same reason. */
+                WLOG(WS_LOG_DEBUG, "  no pty on this channel, rejecting.");
+                rej = 1;
+            }
+            else if (ret == WS_SUCCESS) {
+                SetTerminalSize(ssh, widthChar, heightRows,
+                        widthPixels, heightPixels);
+                WLOG(WS_LOG_DEBUG, "  widthChar = %u", ssh->widthChar);
+                WLOG(WS_LOG_DEBUG, "  heightRows = %u", ssh->heightRows);
+                WLOG(WS_LOG_DEBUG, "  widthPixels = %u", ssh->widthPixels);
+                WLOG(WS_LOG_DEBUG, "  heightPixels = %u", ssh->heightPixels);
                 if (ssh->termResizeCb) {
-                    if (ssh->termResizeCb(ssh, widthChar, heightRows,
-                            widthPixels, heightPixels,
+                    if (ssh->termResizeCb(ssh,
+                            ssh->widthChar, ssh->heightRows,
+                            ssh->widthPixels, ssh->heightPixels,
                             ssh->termCtx) != WS_SUCCESS) {
                         ret = WS_FATAL_ERROR;
                     }
@@ -12109,7 +12142,9 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
 static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 {
     byte* buf = (byte*)ssh->inputBuffer.buffer;
-    word32 idx = ssh->inputBuffer.idx;
+    word32 pktStart = ssh->inputBuffer.idx;
+    word32 pktSz = ssh->curSz;
+    word32 idx = pktStart;
     word32 len = ssh->inputBuffer.length;
     word32 payloadSz;
     byte padSz;
@@ -12132,11 +12167,11 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     }
 
     /* check for underflow */
-    if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > ssh->curSz) {
+    if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > pktSz) {
         return WS_OVERFLOW_E;
     }
 
-    payloadSz = ssh->curSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
+    payloadSz = pktSz - PAD_LENGTH_SZ - padSz - MSG_ID_SZ;
 
     msg = buf[idx++];
     /* At this point, payload starts at "buf + idx". */
@@ -12365,15 +12400,17 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 
     /* if the auth is still pending, don't discard the packet data */
     if (ret != WS_AUTH_PENDING) {
-        if (payloadSz > 0) {
-            idx += payloadIdx;
-            if (idx + padSz > len) {
-                WLOG(WS_LOG_DEBUG, "Not enough data in buffer for pad.");
-                ret = WS_BUFFER_E;
-            }
+        /* Step over the packet using the length DoReceive already validated,
+         * not payloadIdx. A handler is free to read less than the payload it
+         * was handed -- the default case above reads none of it -- and that
+         * must not decide where the next packet begins. pktStart and pktSz
+         * are both from entry, so a handler cannot move the frame either. */
+        idx = pktStart + UINT32_SZ + pktSz;
+        if (idx > len) {
+            WLOG(WS_LOG_DEBUG, "Not enough data in buffer for packet.");
+            ret = WS_BUFFER_E;
+            idx = len;
         }
-
-        idx += padSz;
         ssh->inputBuffer.idx = idx;
         ssh->peerSeq++;
         ssh->rxMsgCount++;
@@ -22889,6 +22926,11 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 int wolfSSH_TestDoReceive(WOLFSSH* ssh)
 {
     return DoReceive(ssh);
+}
+
+int wolfSSH_TestDoPacket(WOLFSSH* ssh, byte* bufferConsumed)
+{
+    return DoPacket(ssh, bufferConsumed);
 }
 
 int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf, word32 len,

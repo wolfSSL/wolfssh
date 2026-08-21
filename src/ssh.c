@@ -1645,7 +1645,18 @@ int wolfSSH_SetExitStatus(WOLFSSH* ssh, word32 exitStatus)
  * name     name or command in the case of subsystem and exec channel types
  * nameSz   size of name buffer
  *
+ * Exec and subsystem carry a name string the peer requires, so one must be
+ * available. Passing none keeps the name an earlier call stored; with
+ * nothing stored the call is refused rather than sending a request the peer
+ * reads as malformed. Shell and terminal take no name and drop any stored
+ * one. A refused call changes nothing, the selected type included.
+ *
  * returns WS_SUCCESS on success
+ * returns WS_BAD_ARGUMENT for a NULL ssh or an unknown type, for exec on
+ *   the server side, for a name at or above WOLFSSH_MAX_CHN_NAMESZ, for a
+ *   nameSz with no name behind it, and for exec or subsystem with no name
+ *   given and none stored
+ * returns WS_MEMORY_E if the name cannot be allocated
  */
 int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
 {
@@ -1674,7 +1685,18 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
         case WOLFSSH_SESSION_SUBSYSTEM: {
             byte* newName;
 
-            if (name != NULL && nameSz > 0 && nameSz < WOLFSSH_MAX_CHN_NAMESZ) {
+            if (name == NULL && nameSz > 0) {
+                WLOG(WS_LOG_DEBUG, "Channel name size without a name");
+                return WS_BAD_ARGUMENT;
+            }
+            if (name != NULL && nameSz >= WOLFSSH_MAX_CHN_NAMESZ) {
+                /* Report it. Dropping the name sends a request with no name
+                 * string, which the peer rejects as malformed. */
+                WLOG(WS_LOG_DEBUG, "Channel name too large");
+                return WS_BAD_ARGUMENT;
+            }
+
+            if (name != NULL && nameSz > 0) {
                 /* only (re)allocate when the name changed; SFTP/SCP retry
                  * loops re-set the same name on every poll */
                 if (ssh->channelName == NULL || ssh->channelNameSz != nameSz ||
@@ -1693,9 +1715,18 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
                     ssh->channelNameSz = nameSz;
                 }
             }
+            else if (ssh->channelName == NULL) {
+                /* No name now and none from an earlier call. Same reason as
+                 * the oversize case: exec and subsystem both carry a
+                 * required name string, and SendChannelRequest() leaves the
+                 * field out entirely when it has nothing to put there. */
+                WLOG(WS_LOG_DEBUG, "No channel name to send");
+                return WS_BAD_ARGUMENT;
+            }
             else {
-                /* invalid name ignored; type set but WS_SUCCESS returned */
-                WLOG(WS_LOG_DEBUG, "No subsystem name or name was too large");
+                /* keep the name an earlier call stored; SFTP/SCP retry
+                 * loops re-enter with nothing to say */
+                WLOG(WS_LOG_DEBUG, "Keeping the stored channel name");
             }
             ssh->connectChannelId = type;
             break;
@@ -3314,7 +3345,7 @@ int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
         return WS_BAD_ARGUMENT;
     if (windowSz == 0)
         windowSz = DEFAULT_WINDOW_SZ;
-    if (maxPacketSz != 0 && maxPacketSz > MAX_PACKET_SZ)
+    if (maxPacketSz != 0 && maxPacketSz > MAX_CHANNEL_PACKET_SZ)
         return WS_BAD_ARGUMENT;
     if (maxPacketSz == 0)
         maxPacketSz = DEFAULT_MAX_PACKET_SZ;
