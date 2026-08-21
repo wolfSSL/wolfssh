@@ -558,9 +558,12 @@ WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
-/* A disconnect, sent or received, ends the session: wolfSSH_stream_read()
- * and wolfSSH_stream_send() report WS_DISCONNECT from then on, and channel
- * data that arrived before it but was never drained is dropped. */
+/* A disconnect, sent or received, ends the session. Nothing more goes out:
+ * every send call in this header, above this comment and below it,
+ * reports WS_DISCONNECT from then on. Reads are not
+ * gated, so channel data that arrived before the disconnect can still be
+ * drained; wolfSSH_stream_read() reports WS_DISCONNECT once its buffer
+ * runs dry. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
@@ -588,7 +591,8 @@ WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz
  * can be short: the byte count is still returned, but wolfSSH_get_error() is
  * left at WS_WANT_WRITE to show a flush is owed. An app that only reads must
  * then flush, with wolfSSH_worker(), or the peer's window is never replenished
- * and the channel stalls.
+ * and the channel stalls. After a disconnect there is nothing to flush: the
+ * credit is parked on the channel rather than sent.
  *
  * The buffer lives on the channel: anything unread when the channel is removed
  * (the peer's CHANNEL_CLOSE) is discarded with it. */
