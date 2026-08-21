@@ -8174,6 +8174,10 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     WOLFSSH_UNUSED(reasonStr);
 
+    /* RFC 4253 section 11.1, the peer is gone whether or not the rest of
+     * the message decodes. */
+    ssh->disconnected = 1;
+
     ret = GetUint32(&reason, buf, len, &begin);
     if (ret == WS_SUCCESS) {
         /* Skip the description text. */
@@ -16781,6 +16785,11 @@ int SendDisconnect(WOLFSSH* ssh, word32 reason)
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    /* Mark the session over before the send. A partial or failed send
+     * still ends it. */
+    if (ret == WS_SUCCESS)
+        ssh->disconnected = 1;
 
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ + (LENGTH_SZ * 2));

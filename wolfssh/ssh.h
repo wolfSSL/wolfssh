@@ -558,6 +558,9 @@ WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
+/* A disconnect, sent or received, ends the session: wolfSSH_stream_read()
+ * and wolfSSH_stream_send() report WS_DISCONNECT from then on, and channel
+ * data that arrived before it but was never drained is dropped. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
