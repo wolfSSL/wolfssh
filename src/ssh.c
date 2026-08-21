@@ -1228,7 +1228,15 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_read()");
 
-    if (ssh == NULL || buf == NULL || bufSz == 0 || ssh->channelList == NULL)
+    if (ssh == NULL || buf == NULL || bufSz == 0)
+        return WS_BAD_ARGUMENT;
+
+    if (ssh->disconnected) {
+        ssh->error = WS_DISCONNECT;
+        return WS_FATAL_ERROR;
+    }
+
+    if (ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
     if (ssh->channelList->eofRxd) {
@@ -1307,7 +1315,15 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_send()");
 
-    if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
+    if (ssh == NULL || buf == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (ssh->disconnected) {
+        ssh->error = WS_DISCONNECT;
+        return WS_FATAL_ERROR;
+    }
+
+    if (ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
     if (ssh->isKeying) {

@@ -1073,6 +1073,10 @@ struct WOLFSSH {
 #endif
     byte connReset;
     byte isClosed;
+    /* Set when a DISCONNECT is sent or received. Only wolfSSH_stream_read()
+     * and wolfSSH_stream_send() are gated on it; the channel-id calls and
+     * wolfSSH_worker() are not, since the shutdown paths still pump them. */
+    byte disconnected;
     byte clientOpenSSH;
 
     byte kexId;
