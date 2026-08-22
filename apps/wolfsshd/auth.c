@@ -1978,6 +1978,9 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
+        /* Close any prior token before acquiring a new one. */
+        wolfSSHD_AuthCloseToken(authCtx);
+
         if (LogonUserExExW(usrW, dmW, pwW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, NULL,
             &authCtx->token, NULL, NULL, NULL, NULL) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %d when login in as user %s, "
@@ -2125,6 +2128,9 @@ static int SetupUserTokenWin(const char* usr,
         originName.Buffer = "wolfsshd";
         originName.Length = (USHORT)WSTRLEN("wolfsshd");
         originName.MaximumLength = originName.Length + 1;
+
+        /* Close any prior token before acquiring a new one. */
+        wolfSSHD_AuthCloseToken(authCtx);
 
         if ((rc = LsaLogonUser(lsaHandle, &originName, Network, authId, authInfo, authInfoSz, NULL, &sourceContext, &profile, &profileSz, &logonId, &authCtx->token, &quotas, &subStatus)) != STATUS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %X, SubStatus %d, when login in as user %s",
