@@ -1917,6 +1917,16 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth)
     return auth->token;
 }
 
+/* Close and clear the impersonation token. Safe to call more than once. */
+void wolfSSHD_AuthCloseToken(WOLFSSHD_AUTH* auth)
+{
+    if (auth != NULL && auth->token != NULL &&
+            auth->token != INVALID_HANDLE_VALUE) {
+        CloseHandle(auth->token);
+        auth->token = NULL;
+    }
+}
+
 static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSSHD_AUTH* authCtx)
 {
     int ret;
@@ -1969,6 +1979,9 @@ static int CheckPasswordWIN(const char* usr, const byte* pw, word32 pwSz, WOLFSS
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
+        /* Close any prior token before acquiring a new one. */
+        wolfSSHD_AuthCloseToken(authCtx);
+
         if (LogonUserExExW(usrW, dmW, pwW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, NULL,
             &authCtx->token, NULL, NULL, NULL, NULL) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with error %d when login in as user %s, "
@@ -2116,6 +2129,9 @@ static int SetupUserTokenWin(const char* usr,
         originName.Buffer = "wolfsshd";
         originName.Length = (USHORT)WSTRLEN("wolfsshd");
         originName.MaximumLength = originName.Length + 1;
+
+        /* Close any prior token before acquiring a new one. */
+        wolfSSHD_AuthCloseToken(authCtx);
 
         if ((rc = LsaLogonUser(lsaHandle, &originName, Network, authId, authInfo, authInfoSz, NULL, &sourceContext, &profile, &profileSz, &logonId, &authCtx->token, &quotas, &subStatus)) != STATUS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Windows failed with status %X, SubStatus %d, when login in as user %s",
@@ -3011,6 +3027,9 @@ WOLFSSHD_AUTH* wolfSSHD_AuthCreateUser(void* heap, const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_AuthFreeUser(WOLFSSHD_AUTH* auth)
 {
     if (auth != NULL) {
+    #ifdef _WIN32
+        wolfSSHD_AuthCloseToken(auth);
+    #endif
     #ifdef WOLFSSH_OSSH_CERTS
         if (auth->certForcedCmd != NULL) {
             WFREE(auth->certForcedCmd, auth->heap, DYNTYPE_STRING);
