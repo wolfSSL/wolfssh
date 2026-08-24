@@ -283,6 +283,7 @@ typedef struct WS_SFTP_GET_STATE {
 enum WS_SFTP_PUT_STATE_ID {
     STATE_PUT_INIT,
     STATE_PUT_LOOKUP_OFFSET,
+    STATE_PUT_STAT_REMOTE,
     STATE_PUT_OPEN_REMOTE,
     STATE_PUT_OPEN_LOCAL,
     STATE_PUT_WRITE,
@@ -307,6 +308,7 @@ typedef struct WS_SFTP_PUT_STATE {
     int rSz;
     byte handle[WOLFSSH_MAX_HANDLE];
     byte r[WOLFSSH_MAX_SFTP_RW];
+    WS_SFTP_FILEATRB attrib;
 } WS_SFTP_PUT_STATE;
 
 
@@ -2654,11 +2656,13 @@ cleanup:
     }
     if (reason & WOLFSSH_FXF_WRITE) {
         desiredAccess |= GENERIC_WRITE;
-        if (reason & WOLFSSH_FXF_CREAT)
-            creationDisp |= CREATE_ALWAYS;
+        if (reason & WOLFSSH_FXF_CREAT) {
+            if (reason & WOLFSSH_FXF_TRUNC)
+                creationDisp = CREATE_ALWAYS;
+            else
+                creationDisp = OPEN_ALWAYS;
+        }
     #if 0
-        if (reason & WOLFSSH_FXF_TRUNC)
-            creationDisp |= TRUNCATE_EXISTING;
         if (reason & WOLFSSH_FXF_EXCL)
             creationDisp |= CREATE_NEW;
         if (reason & WOLFSSH_FXF_APPEND)
@@ -9988,6 +9992,7 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
         WS_STATUS_CB* statusCb)
 {
     WS_SFTP_PUT_STATE* state = NULL;
+    word32 openFlags;
     int ret = WS_SUCCESS;
     int sz;
 
@@ -10029,8 +10034,68 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 if (resume) {
                     /* check if offset was stored */
                     wolfSSH_SFTP_GetOfst(ssh, from, to, state->pOfst);
+
+                    /* a saved offset is only usable while the local file
+                     * still holds bytes past it */
+                    if (state->pOfst[0] > 0 || state->pOfst[1] > 0) {
+                        WMEMSET(&state->attrib, 0, sizeof(state->attrib));
+                        if (SFTP_GetAttributes(ssh->fs, from, &state->attrib,
+                                    1, ssh->ctx->heap) == WS_SUCCESS
+                                && (state->attrib.flags
+                                    & WOLFSSH_FILEATRB_SIZE)) {
+                            if (state->attrib.sz[1] < state->pOfst[1]
+                                    || (state->attrib.sz[1] == state->pOfst[1]
+                                        && state->attrib.sz[0]
+                                            <= state->pOfst[0])) {
+                                WLOG(WS_LOG_SFTP, "Local file too short");
+                                state->pOfst[0] = 0;
+                                state->pOfst[1] = 0;
+                            }
+                        }
+                    }
                 }
                 state->handleSz = WOLFSSH_MAX_HANDLE;
+                state->state = STATE_PUT_STAT_REMOTE;
+                FALL_THROUGH;
+
+            case STATE_PUT_STAT_REMOTE:
+                WLOG(WS_LOG_SFTP, "SFTP PUT STATE: STAT REMOTE");
+                /* a saved offset is only usable if the destination still
+                 * holds exactly that many bytes */
+                if (state->pOfst[0] > 0 || state->pOfst[1] > 0) {
+                    ret = wolfSSH_SFTP_STAT(ssh, to, &state->attrib);
+                    if (ret != WS_SUCCESS) {
+                        if (NoticeError(ssh)) {
+                            return WS_FATAL_ERROR;
+                        }
+                        if (ret != WS_SFTP_STATUS_NOT_OK &&
+                                ret != WS_PERMISSIONS) {
+                            WLOG(WS_LOG_SFTP, "Error checking remote file");
+                            /* put the offset back so a retry can resume */
+                            if (wolfSSH_SFTP_SaveOfst(ssh, from, to,
+                                        state->pOfst) != WS_SUCCESS) {
+                                WLOG(WS_LOG_SFTP, "Unable to store offset");
+                            }
+                            state->state = STATE_PUT_CLEANUP;
+                            continue;
+                        }
+                        /* NOT_OK collapses every status but a permission
+                         * failure, so both mean the destination could not be
+                         * verified and is safe to overwrite */
+                        WLOG(WS_LOG_SFTP, "Remote file unusable, restarting");
+                        state->pOfst[0] = 0;
+                        state->pOfst[1] = 0;
+                        ssh->error = WS_SUCCESS;
+                        ret = WS_SUCCESS;
+                    }
+                    else if ((state->attrib.flags & WOLFSSH_FILEATRB_SIZE) == 0
+                            || state->attrib.sz[0] != state->pOfst[0]
+                            || state->attrib.sz[1] != state->pOfst[1]) {
+                        WLOG(WS_LOG_SFTP, "Size does not match, starting over");
+                        state->pOfst[0] = 0;
+                        state->pOfst[1] = 0;
+                    }
+                }
                 state->state = STATE_PUT_OPEN_LOCAL;
                 FALL_THROUGH;
 
@@ -10104,9 +10169,14 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
 
             case STATE_PUT_OPEN_REMOTE:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: OPEN REMOTE");
+                /* only truncate when starting from the beginning of the file */
+                openFlags = WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT;
+                if (state->pOfst[0] == 0 && state->pOfst[1] == 0) {
+                    openFlags |= WOLFSSH_FXF_TRUNC;
+                }
+
                 /* open file and get handle */
-                ret = wolfSSH_SFTP_Open(ssh, to, (WOLFSSH_FXF_WRITE |
-                            WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC), NULL,
+                ret = wolfSSH_SFTP_Open(ssh, to, openFlags, NULL,
                             state->handle, &state->handleSz);
                 if (ret != WS_SUCCESS) {
                     if (ssh->error == WS_WANT_READ ||
