@@ -471,50 +471,55 @@ static int GetOpenSshPublicKeyRsa(RsaKey* key, const byte* buf, word32 len,
 int GetOpenSshPublicKey(WS_KeySignature *key,
         const byte* buf, word32 len, word32* idx)
 {
-    int ret = WS_SUCCESS;
-    const byte* publicKeyType;
+    int ret;
+    const byte* publicKeyType = NULL;
     word32 publicKeyTypeSz = 0;
-    byte keyId;
+    byte keyId = ID_UNKNOWN;
 
     ret = GetStringRef(&publicKeyTypeSz, &publicKeyType, buf, len, idx);
-    keyId = NameToId((const char*)publicKeyType, publicKeyTypeSz);
 
-    switch (keyId) {
-    #ifndef WOLFSSH_NO_RSA
-        case ID_SSH_RSA:
-            ret = GetOpenSshPublicKeyRsa(&key->ks.rsa.key, buf, len, idx);
-            break;
-    #endif
-    #ifndef WOLFSSH_NO_ECDSA
-        case ID_ECDSA_SHA2_NISTP256:
-        case ID_ECDSA_SHA2_NISTP384:
-        case ID_ECDSA_SHA2_NISTP521:
-            ret = GetOpenSshPublicKeyEcc(&key->ks.ecc.key, buf, len, idx);
-            break;
-    #endif
-    #ifndef WOLFSSH_NO_ED25519
-        case ID_ED25519:
-            ret = GetOpenSshKeyPublicEd25519(&key->ks.ed25519.key, buf, len, idx);
-            break;
-    #endif
-    #ifndef WOLFSSH_NO_MLDSA
-        case ID_MLDSA44:
-            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                           idx, WC_ML_DSA_44);
-            break;
-        case ID_MLDSA65:
-            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                           idx, WC_ML_DSA_65);
-            break;
-        case ID_MLDSA87:
-            ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                           idx, WC_ML_DSA_87);
-            break;
-    #endif
-        default:
-            ret = WS_UNIMPLEMENTED_E;
-            break;
+    if (ret == WS_SUCCESS) {
+        keyId = NameToId((const char*)publicKeyType, publicKeyTypeSz);
+
+        switch (keyId) {
+        #ifndef WOLFSSH_NO_RSA
+            case ID_SSH_RSA:
+                ret = GetOpenSshPublicKeyRsa(&key->ks.rsa.key, buf, len, idx);
+                break;
+        #endif
+        #ifndef WOLFSSH_NO_ECDSA
+            case ID_ECDSA_SHA2_NISTP256:
+            case ID_ECDSA_SHA2_NISTP384:
+            case ID_ECDSA_SHA2_NISTP521:
+                ret = GetOpenSshPublicKeyEcc(&key->ks.ecc.key, buf, len, idx);
+                break;
+        #endif
+        #ifndef WOLFSSH_NO_ED25519
+            case ID_ED25519:
+                ret = GetOpenSshKeyPublicEd25519(&key->ks.ed25519.key, buf, len,
+                                                 idx);
+                break;
+        #endif
+        #ifndef WOLFSSH_NO_MLDSA
+            case ID_MLDSA44:
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                               idx, WC_ML_DSA_44);
+                break;
+            case ID_MLDSA65:
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                               idx, WC_ML_DSA_65);
+                break;
+            case ID_MLDSA87:
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
+                                               idx, WC_ML_DSA_87);
+                break;
+        #endif
+            default:
+                ret = WS_UNIMPLEMENTED_E;
+                break;
+        }
     }
+
     return ret;
 }
 
