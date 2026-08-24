@@ -8914,7 +8914,7 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
             case STATE_CLOSE_SEND:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: SEND");
                 ret = SendPacketType(ssh, WOLFSSH_FTP_CLOSE, handle, handleSz);
-                if (NoticeError(ssh)) {
+                if (ret != WS_SUCCESS && NoticeError(ssh)) {
                     return WS_FATAL_ERROR;
                 }
 
