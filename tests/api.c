@@ -5680,6 +5680,270 @@ static void test_wolfSSH_SFTP_SaveOfst(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+
+#define SFTP_PUT_RESUME_SZ   1024
+#define SFTP_PUT_RESUME_OFST 256
+
+/* Fills buf with the source file's byte pattern. */
+static void sftpPutFillPattern(byte* buf, word32 sz)
+{
+    word32 i;
+
+    for (i = 0; i < sz; i++) {
+        buf[i] = (byte)(i * 7 + 1);
+    }
+}
+
+
+/* Writes sz bytes of buf to the local file name. Returns 0 on success. */
+static int sftpPutWriteFile(const char* name, const byte* buf, word32 sz)
+{
+    WFILE* fp = NULL;
+    int ret = 0;
+
+    if (WFOPEN(NULL, &fp, name, "wb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFWRITE(NULL, buf, 1, sz, fp) != sz)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+
+/* Returns 0 if name holds exactly sz bytes equal to expect. Asking for one
+ * byte more than expected also catches a file left too long. */
+static int sftpPutFileMatches(const char* name, const byte* expect, word32 sz)
+{
+    WFILE* fp = NULL;
+    byte got[SFTP_PUT_RESUME_SZ + 1];
+    int ret = 0;
+
+    if (sz >= sizeof(got))
+        return -1;
+
+    if (WFOPEN(NULL, &fp, name, "rb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFREAD(NULL, got, 1, sz + 1, fp) != sz)
+        ret = -1;
+
+    if (ret == 0 && WMEMCMP(got, expect, sz) != 0)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+
+/* Leaves sz bytes of buf in the remote file name, the way an interrupted
+ * upload would. Returns WS_SUCCESS on success. */
+static int sftpPutStageRemote(WOLFSSH* ssh, char* name, byte* buf, word32 sz)
+{
+    byte handle[WOLFSSH_MAX_HANDLE];
+    word32 handleSz;
+    word32 wrote = 0;
+    word32 ofst[2];
+    int ret = WS_FATAL_ERROR;
+    int tries;
+    int sent;
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES; tries++) {
+        handleSz = WOLFSSH_MAX_HANDLE;
+        ret = wolfSSH_SFTP_Open(ssh, name,
+                WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT | WOLFSSH_FXF_TRUNC,
+                NULL, handle, &handleSz);
+        if (ret == WS_SUCCESS ||
+                !sftp_error_keeps_state(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+    if (ret != WS_SUCCESS) {
+        return ret;
+    }
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES && wrote < sz; tries++) {
+        ofst[0] = wrote;
+        ofst[1] = 0;
+        sent = wolfSSH_SFTP_SendWritePacket(ssh, handle, handleSz, ofst,
+                buf + wrote, sz - wrote);
+        if (sent > 0) {
+            wrote += (word32)sent;
+            continue;
+        }
+        if (!sftp_error_keeps_state(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+
+    ret = sftp_retry_close(ssh, handle, handleSz);
+    if (ret == WS_SUCCESS && wrote != sz) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
+/* Drives one wolfSSH_SFTP_Put() to a terminal result. */
+static int sftpPutToCompletion(WOLFSSH* ssh, char* from, char* to, byte resume)
+{
+    int ret = WS_FATAL_ERROR;
+    int tries;
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES; tries++) {
+        ret = wolfSSH_SFTP_Put(ssh, from, to, resume, NULL);
+        if (ret == WS_SUCCESS ||
+                !sftp_error_is_notice(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+
+    return ret;
+}
+#endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM && !WOLFSSH_ZEPHYR */
+
+
+/* A resumed put must keep the bytes already at the destination, and must
+ * only resume onto a destination whose size matches the saved offset. The
+ * echoserver shares this process, so the "remote" file is read locally. */
+static void test_wolfSSH_SFTP_PutResume(void)
+{
+/* staging the local source file needs the hosted fopen()/getcwd() wrappers */
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    byte src[SFTP_PUT_RESUME_SZ];
+    byte stale[SFTP_PUT_RESUME_SZ + SFTP_PUT_RESUME_OFST];
+    byte expect[SFTP_PUT_RESUME_SZ];
+    word32 ofst[2];
+    char srcName[] = "wolfssh_11659_src.tmp";
+    char dstName[] = "wolfssh_11659_dst.tmp";
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    sftpPutFillPattern(src, (word32)sizeof(src));
+    WMEMSET(stale, 0xFF, sizeof(stale));
+    AssertIntEQ(sftpPutWriteFile(srcName, src, (word32)sizeof(src)), 0);
+
+    /* the saved offset matches the destination, so the upload picks up where
+     * it left off. Staging a prefix unlike the source, and expecting it back
+     * untouched, is what separates a resume from a full re-upload. */
+    (void)sftp_retry_remove(ssh, dstName); /* normally absent */
+    AssertIntEQ(sftpPutStageRemote(ssh, dstName, stale, SFTP_PUT_RESUME_OFST),
+            WS_SUCCESS);
+    WMEMCPY(expect, stale, SFTP_PUT_RESUME_OFST);
+    WMEMCPY(expect + SFTP_PUT_RESUME_OFST, src + SFTP_PUT_RESUME_OFST,
+            sizeof(expect) - SFTP_PUT_RESUME_OFST);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, expect, (word32)sizeof(expect)), 0);
+
+    /* the destination is gone, so the whole file is sent again */
+    AssertIntEQ(sftp_retry_remove(ssh, dstName), WS_SUCCESS);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* the destination is longer than the saved offset, so the whole file is
+     * sent again; staging bytes unlike the source makes a resume here show
+     * up in the result */
+    AssertIntEQ(sftp_retry_remove(ssh, dstName), WS_SUCCESS);
+    AssertIntEQ(sftpPutStageRemote(ssh, dstName, stale, SFTP_PUT_RESUME_OFST),
+            WS_SUCCESS);
+    ofst[0] = SFTP_PUT_RESUME_OFST / 2;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* a plain put still truncates a longer destination */
+    AssertIntEQ(sftp_retry_remove(ssh, dstName), WS_SUCCESS);
+    AssertIntEQ(sftpPutStageRemote(ssh, dstName, stale, (word32)sizeof(stale)),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutToCompletion(ssh, srcName, dstName, 0), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* the source has nothing left past the saved offset, so the whole file
+     * is sent again. This case shortens the source, so it runs last. */
+    AssertIntEQ(sftp_retry_remove(ssh, dstName), WS_SUCCESS);
+    AssertIntEQ(sftpPutStageRemote(ssh, dstName, stale, SFTP_PUT_RESUME_OFST),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutWriteFile(srcName, src, SFTP_PUT_RESUME_OFST / 2), 0);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpPutToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, SFTP_PUT_RESUME_OFST / 2), 0);
+
+    AssertIntEQ(sftp_retry_remove(ssh, dstName), WS_SUCCESS);
+    WREMOVE(NULL, srcName);
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = AbsorbBenignReset(ssh, wolfSSH_shutdown(ssh));
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+#endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM && !WOLFSSH_ZEPHYR */
+}
+
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
 static void test_wolfSSH_SFTP_PartialSend(void) { ; }
@@ -5690,6 +5954,7 @@ static void test_wolfSSH_SFTP_StartPathNotConfined(void) { ; }
 static void test_wolfSSH_SFTP_SetConfinePath(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
+static void test_wolfSSH_SFTP_PutResume(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
@@ -7555,6 +7820,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SetConfinePath();
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
+    test_wolfSSH_SFTP_PutResume();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
