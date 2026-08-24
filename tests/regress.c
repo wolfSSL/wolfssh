@@ -3355,6 +3355,456 @@ static void TestStreamExitReportsDisconnect(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
+/* wolfSSH_shutdown() is a send path too: no teardown on the wire, and no
+ * wait for a close that will not come. */
+static void TestShutdownQuietAfterDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte in[128];
+    byte out[256];
+    word32 inSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ret = DoReceive(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertTrue(ssh->disconnected);
+    io.outSz = 0;
+
+    /* Nothing left to tear down. */
+    ret = wolfSSH_shutdown(ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, 0);
+    AssertIntEQ(channel->eofTxd, 0);
+    AssertIntEQ(channel->closeTxd, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+/* A send callback that reports "would block" for its first ProbeWantWrite
+ * calls, the way a full socket does. */
+static int MemSendWantWriteCount;
+
+static int MemSendWantWrite(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    if (MemSendWantWriteCount > 0) {
+        MemSendWantWriteCount--;
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    return MemSend(ssh, buf, sz, ctx);
+}
+
+
+
+
+/* The mark firing on the disconnect packet must not fail a send that
+ * went out fine. */
+static void TestHighwaterQuietAfterDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Low enough that the disconnect packet trips it. */
+    AssertIntEQ(wolfSSH_SetHighwater(ssh, 1), WS_SUCCESS);
+
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertTrue(ssh->highwaterFlag);
+    AssertTrue(ssh->disconnected);
+
+    /* The mark fired, but no key exchange was started. */
+    AssertIntEQ(ssh->isKeying, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* A disconnect from the peer sets the same flag ours does, but leaves only
+ * unrelated traffic queued. That traffic belongs to a session that is over,
+ * so neither teardown call may push it out. */
+static void TestPeerDisconnectKeepsTrafficQueued(int useShutdown)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[512];
+    byte data[32];
+    word32 inSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Channel data the socket would not take. */
+    WMEMSET(data, 'x', sizeof(data));
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_stream_send(ssh, data, sizeof(data)),
+            (int)sizeof(data));
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+
+    /* The peer disconnects while those bytes are still queued. */
+    AssertIntEQ(DoReceive(ssh), WS_FATAL_ERROR);
+    AssertTrue(ssh->disconnected);
+    AssertFalse(ssh->disconnectTxd);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    if (useShutdown) {
+        /* The socket takes bytes now, so only the gate keeps them back. */
+        ret = wolfSSH_shutdown(ssh);
+        AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    }
+    else {
+        ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+        AssertIntEQ(ret, WS_FATAL_ERROR);
+        AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    }
+
+    /* Not one byte of the stale channel data reached the peer. */
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The queued-disconnect flush does not need a channel: the peer's close can
+ * retire the last one between the short send and the shutdown. */
+static void TestShutdownFlushesWithNoChannel(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertTrue(ssh->disconnectTxd);
+    AssertIntEQ(io.outSz, 0);
+
+    AssertIntEQ(ChannelRemove(ssh, ssh->channelList->channel,
+            WS_CHANNEL_ID_SELF), WS_SUCCESS);
+    AssertNull(ssh->channelList);
+
+    ret = wolfSSH_shutdown(ssh);
+    AssertIntEQ(ret, WS_CHANNEL_CLOSED);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The highwater callback is the application's, and its return propagates out
+ * of wolfSSH_SendPacket(). A mark firing on the disconnect packet must not
+ * fail a send that went out fine, whoever owns the callback. */
+static int RekeyingHighwaterCb(byte side, void* ctx)
+{
+    WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+    WOLFSSH_UNUSED(side);
+    return wolfSSH_TriggerKeyExchange(ssh);
+}
+
+static void TestAppHighwaterQuietAfterDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+    /* Low enough that the disconnect packet trips it. */
+    wolfSSH_SetHighwaterCb(ctx, 1, RekeyingHighwaterCb);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    wolfSSH_SetHighwaterCtx(ssh, ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ssh->isKeying, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* A disconnect left queued by a short send still has to reach the peer.
+ * The gate refuses new traffic, not a flush of what is already bundled. */
+static void TestQueuedDisconnectFlushes(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    word32 sentSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    MemSendWantWriteCount = 1;
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    AssertIntEQ(ret, WS_WANT_WRITE);
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    /* Calling again retries the queued packet rather than refusing it. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertTrue(io.outSz > 0);
+    /* Unencrypted framing: length, padding length, then the message ID. */
+    AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+    sentSz = io.outSz;
+
+    /* Nothing queued now, so a second disconnect is refused as before. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, sentSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* wolfSSH_shutdown() after a short disconnect send: no teardown on the wire,
+ * but the queued disconnect goes out. */
+static void TestShutdownFlushesQueuedDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[256];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertIntEQ(io.outSz, 0);
+
+    ret = wolfSSH_shutdown(ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+
+    /* The disconnect, and only the disconnect. */
+    AssertIntEQ(channel->eofTxd, 0);
+    AssertIntEQ(channel->closeTxd, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* A flush that is itself short owns ssh->error. Callers gate their retry on
+ * WS_WANT_WRITE, so the disconnect gate must not overwrite it. */
+static void TestShutdownKeepsFlushWantWrite(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[256];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* One short send for the disconnect, another for the flush below. */
+    MemSendWantWriteCount = 2;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertIntEQ(io.outSz, 0);
+
+    /* The channel is still listed, so the disconnect gate runs, but the
+     * unfinished flush is what the caller has to act on. */
+    AssertNotNull(ssh->channelList);
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+
+    /* Retrying gets it out, and only it. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SUCCESS);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+    AssertIntEQ(channel->eofTxd, 0);
+    AssertIntEQ(channel->closeTxd, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+/* A window-change request is a send like any other. */
+static void TestTerminalResizeBlockedAfterDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    word32 quietSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    quietSz = io.outSz;
+
+    ret = wolfSSH_ChangeTerminalSize(ssh, 80, 24, 0, 0);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, quietSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* WOLFSSH_TERM && !NO_FILESYSTEM */
+
 #ifdef WOLFSSH_SFTP
 static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
 {
@@ -7088,6 +7538,18 @@ int main(int argc, char** argv)
     TestDisconnectQuietWindowAdjust();
     TestDisconnectBlocksChannelAndFwdSends();
     TestStreamExitReportsDisconnect();
+    TestShutdownQuietAfterDisconnect();
+    TestHighwaterQuietAfterDisconnect();
+    TestAppHighwaterQuietAfterDisconnect();
+    TestPeerDisconnectKeepsTrafficQueued(0);
+    TestPeerDisconnectKeepsTrafficQueued(1);
+    TestShutdownFlushesWithNoChannel();
+    TestQueuedDisconnectFlushes();
+    TestShutdownFlushesQueuedDisconnect();
+    TestShutdownKeepsFlushWantWrite();
+#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+    TestTerminalResizeBlockedAfterDisconnect();
+#endif
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
 #endif
