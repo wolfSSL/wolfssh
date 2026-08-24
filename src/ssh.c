@@ -1118,14 +1118,38 @@ static int SendAfterDisconnect(WOLFSSH* ssh)
 }
 
 
+/* A disconnect of ours left queued by a short send still has to reach the
+ * peer, and flushing bytes that are already bundled is not the new traffic
+ * RFC 4253 section 11.1 forbids. Only our own disconnect qualifies: a
+ * disconnect from the peer leaves nothing queued but unrelated traffic,
+ * which the session is over for. Call only after a NULL check of ssh. */
+static int FlushQueuedDisconnect(WOLFSSH* ssh)
+{
+    if (!ssh->disconnectTxd || !wolfSSH_OutputPending(ssh))
+        return 0;
+
+    WLOG(WS_LOG_DEBUG, "Flushing a disconnect left queued by a short send");
+    return 1;
+}
+
+
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
+    int flushRet = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
 
-    if (ssh == NULL || ssh->channelList == NULL)
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /* This is a teardown call, so a disconnect of ours left queued by a
+     * short send goes out here, with or without a channel to tear down. */
+    if (ret == WS_SUCCESS && FlushQueuedDisconnect(ssh))
+        flushRet = wolfSSH_SendPacket(ssh);
+
+    if (ret == WS_SUCCESS && ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
 
     /* The session channel is the head of the list. */
@@ -1133,16 +1157,27 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
         channel = ssh->channelList;
     }
 
+    /* Session already over. Drop the channel to skip the teardown sends
+     * and the wait for a close that will not come. RFC 4253 section 11.1. */
+    if (channel != NULL && ssh->disconnected) {
+        WLOG(WS_LOG_DEBUG, "Session already disconnected, nothing to send");
+        /* An unfinished flush owns ssh->error. Callers gate their retry on
+         * WS_WANT_WRITE, so overwriting it strands the queued disconnect. */
+        if (flushRet == WS_SUCCESS)
+            ssh->error = WS_DISCONNECT;
+        channel = NULL;
+    }
+
     /* if channel close was not already sent then send it */
     if (channel != NULL && !channel->closeTxd) {
        if (ret == WS_SUCCESS) {
-           ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+           ret = SendChannelEof(ssh, channel->peerChannel);
        }
 
        /* continue on success and in case where queueing up send packets */
        if (ret == WS_SUCCESS ||
                (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE)) {
-           ret = SendChannelExit(ssh, ssh->channelList->peerChannel,
+           ret = SendChannelExit(ssh, channel->peerChannel,
            #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
                ssh->exitStatus);
            #else
@@ -1153,7 +1188,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
        /* continue on success and in case where queueing up send packets */
        if (ret == WS_SUCCESS ||
                (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
-           ret = SendChannelClose(ssh, ssh->channelList->peerChannel);
+           ret = SendChannelClose(ssh, channel->peerChannel);
     }
 
 
@@ -1171,6 +1206,11 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
         WLOG(WS_LOG_DEBUG, "channel list was already removed");
         ret = WS_CHANNEL_CLOSED;
     }
+
+    /* An unfinished flush outranks the channel status: the caller has to
+     * come back for the rest of the disconnect. */
+    if (flushRet != WS_SUCCESS)
+        ret = flushRet;
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
     return ret;
@@ -1571,9 +1611,13 @@ int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
         return WS_BAD_ARGUMENT;
 
     /* One disconnect ends the session; a second is more traffic on a
-     * connection that is already over. */
-    if (SendAfterDisconnect(ssh))
+     * connection that is already over. A short send leaves the first one
+     * queued, though, so that retry goes through. */
+    if (SendAfterDisconnect(ssh)) {
+        if (FlushQueuedDisconnect(ssh))
+            return wolfSSH_SendPacket(ssh);
         return WS_FATAL_ERROR;
+    }
 
     return SendDisconnect(ssh, reason);
 }
@@ -1675,6 +1719,9 @@ int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
 
     if (ret == WS_SUCCESS) {
         ret = SendChannelTerminalResize(ssh, columns, rows, widthPixels,

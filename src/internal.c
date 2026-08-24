@@ -612,6 +612,12 @@ static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
     }
 
 
+    /* A mark firing on a dead session must not fail the send that fired it:
+     * this return propagates out of wolfSSH_SendPacket(). Callbacks rekey,
+     * which is gated after a disconnect, so do not fire one at all. */
+    if (fire && ssh->disconnected)
+        fire = 0;
+
     if (fire && ssh->ctx->highwaterCb)
         ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
 
@@ -16763,6 +16769,11 @@ int SendDisconnect(WOLFSSH* ssh, word32 reason)
 
         ret = BundlePacket(ssh);
     }
+
+    /* The packet is in the output buffer now, so a short send below leaves
+     * something worth flushing. */
+    if (ret == WS_SUCCESS)
+        ssh->disconnectTxd = 1;
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);

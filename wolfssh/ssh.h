@@ -559,11 +559,11 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
- * every send call in this header, above this comment and below it,
- * reports WS_DISCONNECT from then on. Reads are not
- * gated, so channel data that arrived before the disconnect can still be
- * drained; wolfSSH_stream_read() and wolfSSH_stream_peek() report
- * WS_DISCONNECT once their buffer runs dry. RFC 4253 section 11.1. */
+ * every send call in this header, above this comment and below it, reports
+ * WS_DISCONNECT from then on. Reads are not gated, so channel data that
+ * arrived before the disconnect can still be drained; wolfSSH_stream_read()
+ * and wolfSSH_stream_peek() report WS_DISCONNECT once their buffer runs
+ * dry. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
@@ -600,6 +600,12 @@ WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
         word32 outSz);
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz);
+/* One disconnect ends the session, so a second call reports WS_DISCONNECT.
+ * The exception is a disconnect of this side's own, left short by a
+ * non-blocking socket: while it is still queued, calling again retries the
+ * flush, since bundled bytes are not new traffic. wolfSSH_shutdown() retries
+ * it too, with or without a channel. A disconnect from the peer is not that
+ * case: it leaves only unrelated traffic queued, and that stays put. */
 WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH* ssh, word32 reason);
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH* ssh, const unsigned char* data,
         word32 dataSz, int reply);

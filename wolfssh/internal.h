@@ -1079,6 +1079,11 @@ struct WOLFSSH {
      * buffer runs dry. wolfSSH_worker() is not gated, the shutdown paths
      * pump it. */
     byte disconnected;
+    /* Set once SendDisconnect() has bundled our own DISCONNECT into the
+     * output buffer, so a short send can still be flushed. The flag above
+     * cannot stand in for this: it does not say whose disconnect it was,
+     * and a peer's leaves only unrelated traffic queued. */
+    byte disconnectTxd;
     byte clientOpenSSH;
 
     byte kexId;
