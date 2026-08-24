@@ -2270,6 +2270,71 @@ static void test_LoadTpmSshKey_NoTrailingNewline(void)
 
 #endif /* WOLFSSH_TPM && FILESYSTEM && !USER_FILESYSTEM */
 
+#if defined(WOLFSSH_TPM) && defined(WOLFSSH_TEST_INTERNAL)
+
+/* The key type is read with GetStringRef(), which sets the length from the
+ * wire but leaves the pointer alone when the name runs past the buffer. */
+static void test_GetOpenSshPublicKey_type(void)
+{
+    /* "ssh" carrying a length of 7. */
+    static const byte truncType[] = {
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h'
+    };
+    /* Too short to hold the length prefix. */
+    static const byte truncLen[] = { 0x00, 0x00 };
+    /* Parses, but names no key. */
+    static const byte emptyType[] = { 0x00, 0x00, 0x00, 0x00 };
+    /* A known SSH key type that wolfSSH's NameIdMap does not carry. */
+    static const byte unsupportedType[] = {
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h', '-', 'd', 's', 's'
+    };
+#ifndef WOLFSSH_NO_RSA
+    /* string "ssh-rsa", mpint e, mpint n. */
+    static const byte rsaKey[] = {
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h', '-', 'r', 's', 'a',
+        0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x09,
+        0x00, 0xC5, 0x1A, 0x37, 0x8B, 0x42, 0x9D, 0xE0, 0x6F
+    };
+#endif
+    WS_KeySignature keySig;
+    word32 idx;
+
+    WMEMSET(&keySig, 0, sizeof(keySig));
+
+    /* On failure idx keeps whatever was consumed, as elsewhere in the tree. */
+    idx = 0;
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, truncType,
+                (word32)sizeof(truncType), &idx), WS_BUFFER_E);
+    AssertIntEQ(idx, UINT32_SZ);
+
+    idx = 0;
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, truncLen,
+                (word32)sizeof(truncLen), &idx), WS_BUFFER_E);
+    AssertIntEQ(idx, 0);
+
+    idx = 0;
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, emptyType,
+                (word32)sizeof(emptyType), &idx), WS_UNIMPLEMENTED_E);
+    AssertIntEQ(idx, (word32)sizeof(emptyType));
+
+    idx = 0;
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, unsupportedType,
+                (word32)sizeof(unsupportedType), &idx), WS_UNIMPLEMENTED_E);
+    AssertIntEQ(idx, (word32)sizeof(unsupportedType));
+
+#ifndef WOLFSSH_NO_RSA
+    idx = 0;
+    AssertIntEQ(wc_InitRsaKey(&keySig.ks.rsa.key, NULL), 0);
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, rsaKey,
+                (word32)sizeof(rsaKey), &idx), WS_SUCCESS);
+    AssertIntEQ(idx, (word32)sizeof(rsaKey));
+    AssertIntEQ(wc_FreeRsaKey(&keySig.ks.rsa.key), 0);
+#endif
+}
+
+#endif /* WOLFSSH_TPM && WOLFSSH_TEST_INTERNAL */
+
 
 static void test_wolfSSH_ReadKey_badPad(void)
 {
@@ -7749,6 +7814,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
     test_LoadTpmSshKey_NoTrailingNewline();
+#endif
+#if defined(WOLFSSH_TPM) && defined(WOLFSSH_TEST_INTERNAL)
+    test_GetOpenSshPublicKey_type();
 #endif
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
