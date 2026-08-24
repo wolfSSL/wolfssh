@@ -1300,9 +1300,9 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz);
  * the SSH connection. This function handles low level operations in addition to
  * the read, such as window adjustment and high water checking.
  *
- * In non blocking mode use the function wolfSSH_get_error(ssh) to check for
- * WS_WANT_READ / WS_WANT_WRITE after a fail case was hit with
- * wolfSSH_stream_read().
+ * In non blocking mode check wolfSSH_get_error(ssh) after the read: it holds
+ * WS_WANT_READ / WS_WANT_WRITE for a fail case, and for a success the status
+ * of a window adjust that could not be sent.
  *
  * Returns the number of bytes read on success, negative values on fail
  */
@@ -1394,11 +1394,17 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             ret = WS_BUFFER_E;
         else {
             WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, n);
+            inputBuffer->idx += n;
             ret = _UpdateChannelWindow(ssh->channelList);
-            if (ret == WS_SUCCESS) {
-                inputBuffer->idx += n;
-                ret = n;
+            if (ret != WS_SUCCESS) {
+                ssh->error = ret;
+                if (ret != WS_WANT_WRITE) {
+                    WLOG(WS_LOG_ERROR,
+                         "wolfSSH_stream_read: window adjust send failed "
+                         "(%d); read still succeeded", ret);
+                }
             }
+            ret = n;
         }
     }
 
@@ -4000,24 +4006,59 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 }
 
 
+/* Drains buffered channel data and credits the window for the bytes taken.
+ * Reports the bytes copied; an adjust that could not go out lands in
+ * ssh->error. */
 static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 {
     WOLFSSH_BUFFER* inputBuffer;
+    WOLFSSH* ssh;
+    word32 creditedSz;
     int updateResult = WS_SUCCESS;
+    int savedError;
 
     if (channel == NULL || buf == NULL || bufSz == 0)
         return WS_BAD_ARGUMENT;
 
+    ssh = channel->ssh;
     inputBuffer = &channel->inputBuffer;
+
+    if (inputBuffer->idx > inputBuffer->length) {
+        WLOG(WS_LOG_ERROR, "Bad internal state for buffer index");
+        return WS_INVALID_STATE_E;
+    }
+
     bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
     WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     inputBuffer->idx += bufSz;
 
+    /* Unguarded by bufSz: also compacts, and carries credit left behind. */
+    savedError = ssh->error;
+    creditedSz = inputBuffer->idx;
     updateResult = _UpdateChannelWindow(channel);
-    if (updateResult == WS_SUCCESS)
-        updateResult = bufSz;
+    if (updateResult == WS_SUCCESS) {
+        /* Clear the old WS_WANT_WRITE only if this read sent an adjust of
+         * its own and the output buffer is now empty. */
+        if (savedError == WS_WANT_WRITE && creditedSz != 0
+                && inputBuffer->idx == 0 && ssh->outputBuffer.length == 0) {
+            ssh->error = WS_SUCCESS;
+        }
+        else {
+            ssh->error = savedError;
+        }
+    }
+    else {
+        /* SendPacket() records only WS_WANT_WRITE, so a hard failure has to
+         * be recorded here; rewriting WS_WANT_WRITE is deliberate. */
+        ssh->error = updateResult;
+        if (updateResult != WS_WANT_WRITE) {
+            WLOG(WS_LOG_ERROR,
+                 "_ChannelRead: window adjust send failed (%d); read still "
+                 "succeeded", updateResult);
+        }
+    }
 
-    return updateResult;
+    return (int)bufSz;
 }
 
 

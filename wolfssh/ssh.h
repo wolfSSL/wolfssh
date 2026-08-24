@@ -280,6 +280,9 @@ WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFind(WOLFSSH* ssh, word32 id,
         byte peer);
 WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelNext(WOLFSSH* ssh,
         WOLFSSH_CHANNEL* channel);
+/* Drains buffered data from the named channel: returns 0 when empty, never
+ * receives, never reports EOF. Carries wolfSSH_stream_read()'s window-adjust
+ * contract but does not clear ssh->error on entry; check it after the call. */
 WOLFSSH_API int wolfSSH_ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf,
         word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelSend(WOLFSSH_CHANNEL* channel, const byte* buf,
@@ -568,6 +571,9 @@ WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
  * dry. A CHANNEL_EOF already received outranks that drain: both report
  * WS_EOF with data possibly still buffered. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Returns the bytes read; the next read clears the status. WS_WANT_WRITE
+ * from wolfSSH_get_error() means the adjust is queued; it goes out on the
+ * next send or a wolfSSH_worker() whose receive succeeded. Others failed. */
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
@@ -612,6 +618,9 @@ WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH* ssh, word32 reason);
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH* ssh, const unsigned char* data,
         word32 dataSz, int reply);
+/* Reads the channel named by channelId, with wolfSSH_ChannelRead()'s
+ * contract, except that wolfSSH_ChannelIdRead() reads during a rekey where
+ * wolfSSH_ChannelRead() returns WS_REKEYING. */
 WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
