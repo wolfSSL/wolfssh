@@ -3801,6 +3801,8 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 }
 
 
+/* Drains buffered channel data and credits the window for the bytes taken.
+ * Always reports the bytes copied */
 static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 {
     WOLFSSH_BUFFER* inputBuffer;
@@ -3815,10 +3817,18 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
     inputBuffer->idx += bufSz;
 
     updateResult = _UpdateChannelWindow(channel);
-    if (updateResult == WS_SUCCESS)
-        updateResult = bufSz;
+    if (updateResult != WS_SUCCESS) {
+        /* SendPacket() sets ssh->error only for WS_WANT_WRITE, so hard
+         * failures must be recorded here or they stay hidden. */
+        channel->ssh->error = updateResult;
+        if (updateResult != WS_WANT_WRITE) {
+            WLOG(WS_LOG_ERROR,
+                 "_ChannelRead: window adjust send failed (%d); read still "
+                 "succeeded", updateResult);
+        }
+    }
 
-    return updateResult;
+    return (int)bufSz;
 }
 
 
