@@ -1185,6 +1185,9 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
+
     if (ret == WS_SUCCESS)
         ret = ssh->error = SendKexInit(ssh);
 
@@ -1547,6 +1550,13 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 
     WOLFSSH_UNUSED(buf);
     WOLFSSH_UNUSED(bufSz);
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
+
     WMEMSET(scratch, 0, sizeof(scratch));
 
     return SendIgnore(ssh, scratch, sizeof(scratch));
@@ -1556,6 +1566,15 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SendDisconnect");
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* One disconnect ends the session; a second is more traffic on a
+     * connection that is already over. */
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
+
     return SendDisconnect(ssh, reason);
 }
 

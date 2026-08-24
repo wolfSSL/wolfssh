@@ -2809,6 +2809,19 @@ static void TestDisconnectBlocksEverySend(void)
     AssertIntEQ(ret, WS_FATAL_ERROR);
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
 
+    ret = wolfSSH_TriggerKeyExchange(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_SendIgnore(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    /* Including a second disconnect. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
     /* Not one byte left the session after the disconnect. */
     AssertIntEQ(io.outSz, quietSz);
 
