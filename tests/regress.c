@@ -3023,6 +3023,20 @@ static void TestDisconnectDrainsBufferedData(void)
     AssertIntEQ(ret, WS_FATAL_ERROR);
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
 
+    /* With the channel gone there is no buffer left to drain, so both
+     * report the disconnect rather than a bad argument. */
+    AssertIntEQ(ChannelRemove(ssh, ssh->channelList->channel,
+            WS_CHANNEL_ID_SELF), WS_SUCCESS);
+    AssertNull(ssh->channelList);
+
+    ret = wolfSSH_stream_peek(ssh, NULL, 1);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    ret = wolfSSH_stream_read(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
@@ -3052,6 +3066,9 @@ static void TestDisconnectBlocksEverySend(void)
     AssertNotNull(ssh);
     AddSessionChannel(ssh);
     channelId = ssh->channelList->channel;
+    /* Past userauth, or the message filter blocks the sends on its own and
+     * the wire check below proves nothing. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
 
     MemIoInit(&io, NULL, 0, out, sizeof(out));
     wolfSSH_SetIOReadCtx(ssh, &io);
@@ -3379,6 +3396,9 @@ static void TestShutdownQuietAfterDisconnect(void)
     AssertNotNull(ssh);
     AddSessionChannel(ssh);
     channel = ssh->channelList;
+    /* Past userauth, or the message filter blocks the teardown on its own
+     * and the wire check below proves nothing. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
 
     inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
             in, sizeof(in));
