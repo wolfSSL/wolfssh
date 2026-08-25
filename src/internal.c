@@ -18435,7 +18435,8 @@ static int PrepareUserAuthRequestEd25519(WOLFSSH* ssh, word32* payloadSz,
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled) {
-            /* XXX: Pending */
+            /* The agent holds the private key, and an Ed25519 signature is
+             * a fixed size, so no key is loaded here. */
         }
         else
         #endif
@@ -18474,7 +18475,7 @@ static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
 {
     word32 begin;
     int ret = WS_SUCCESS;
-    byte* sig;
+    byte* sig = NULL;
     word32 sigSz = ED25519_SIG_SIZE;
     byte* checkData = NULL;
     word32 checkDataSz = 0;
@@ -18488,14 +18489,6 @@ static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
         return ret;
     }
-
-#ifdef WOLFSSH_SMALL_STACK
-    sig = (byte*)WMALLOC(sigSz, keySig->heap, DYNTYPE_BUFFER);
-    if (sig == NULL)
-        ret = WS_MEMORY_E;
-#else
-    sig = sig_s;
-#endif
 
     begin = *idx;
 
@@ -18518,11 +18511,35 @@ static int BuildUserAuthRequestEd25519(WOLFSSH* ssh,
 
     #ifdef WOLFSSH_AGENT
     if (ssh->agentEnabled) {
-        /* XXX: Pending */
+        word32 agentSigSz = (LENGTH_SZ * 2) + sigSz +
+                authData->sf.publicKey.publicKeyTypeSz;
+
+        if (ret == WS_SUCCESS) {
+            WLOG(WS_LOG_INFO, "Signing with Ed25519 through the agent.");
+            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
+                    output + begin + LENGTH_SZ, &agentSigSz,
+                    authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, 0);
+        }
+
+        if (ret == WS_SUCCESS) {
+            c32toa(agentSigSz, output + begin);
+            begin += LENGTH_SZ + agentSigSz;
+        }
     }
     else
     #endif
     {
+        if (ret == WS_SUCCESS) {
+        #ifdef WOLFSSH_SMALL_STACK
+            sig = (byte*)WMALLOC(sigSz, keySig->heap, DYNTYPE_BUFFER);
+            if (sig == NULL)
+                ret = WS_MEMORY_E;
+        #else
+            sig = sig_s;
+        #endif
+        }
+
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_INFO, "Signing with Ed25519.");
             ret = wc_ed25519_sign_msg(checkData, checkDataSz,
