@@ -2787,7 +2787,7 @@ struct WS_FILE_LIST {
     char* fileName; /* cleaned full path of the open file */
     word32 id[2];  /* handle ID */
     struct WS_FILE_LIST* next;
-    unsigned int isAppend:1; /* WOLFSSH_FXF_APPEND was requested at open */
+    byte isAppend:1; /* WOLFSSH_FXF_APPEND was requested at open */
 };
 
 #ifndef NO_WOLFSSH_DIR

@@ -2895,31 +2895,27 @@ static int StartSSHD(int argc, char** argv)
     if (isDaemon) {
         /* Set the logging to go to OutputDebugString */
         wolfSSH_SetLoggingCb(ServiceDebugCb);
+    }
 
-        if (ret == WS_SUCCESS) {
-            /* argv is being rebuilt from cmdArgs here, so argc must match
-             * cmdArgC, the count CommandLineToArgvW gave for that array. */
-            argc = (DWORD)cmdArgC;
+    if (ret == WS_SUCCESS) {
+        /* Rebuild argv from cmdArgs, not the caller's wargv: wargv is
+         * narrow data when called from main(), so it may not be a real
+         * wide string. cmdArgs is always correct either way. */
+        argc = (DWORD)cmdArgC;
 
-            /* we want the arguments to be normal char strings not wchar_t */
-            argv = (char**)WMALLOC(argc * sizeof(char*), NULL, DYNTYPE_SSHD);
-            if (argv == NULL) {
-                ret = WS_MEMORY_E;
-            }
-            else {
-                unsigned int z;
-                for (z = 0; z < argc; z++) {
-                    argv[z] = _convertHelper(cmdArgs[z], NULL);
-                }
+        /* we want the arguments to be normal char strings not wchar_t */
+        argv = (char**)WMALLOC(argc * sizeof(char*), NULL, DYNTYPE_SSHD);
+        if (argv == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            unsigned int z;
+            for (z = 0; z < argc; z++) {
+                argv[z] = _convertHelper(cmdArgs[z], NULL);
             }
         }
     }
-    else {
-        /* argc is left as the caller-supplied value here: it already
-         * matches wargv, which comes from the CRT's own command-line
-         * parser and is independent of CommandLineToArgvW's cmdArgC. */
-        argv = (char**)wargv;
-    }
+    (void)wargv;
 #endif
 
     signal(SIGINT, interruptCatch);
@@ -2936,7 +2932,8 @@ static int StartSSHD(int argc, char** argv)
         }
     }
 
-    while ((ch = mygetopt(argc, argv, "?f:p:h:dDE:o:t")) != -1) {
+    while (ret == WS_SUCCESS &&
+            (ch = mygetopt(argc, argv, "?f:p:h:dDE:o:t")) != -1) {
         switch (ch) {
         case 'f':
             configFile = myoptarg;
