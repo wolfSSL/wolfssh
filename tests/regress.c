@@ -8279,6 +8279,274 @@ static void TestSftpCloseFailureRemovesHandle(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* Build the attribute block of a SETSTAT/FSETSTAT payload. Optional fields go
+ * in flag-bit order, matching SFTP_ParseAttributes_buffer. */
+static word32 SftpBuildAttrs(byte* out, const WS_SFTP_FILEATRB* atr)
+{
+    word32 idx = 0;
+
+    SftpPutU32(atr->flags, out + idx); idx += UINT32_SZ;
+    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
+        SftpPutU32(atr->sz[1], out + idx); idx += UINT32_SZ;
+        SftpPutU32(atr->sz[0], out + idx); idx += UINT32_SZ;
+    }
+    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
+        SftpPutU32(atr->uid, out + idx); idx += UINT32_SZ;
+        SftpPutU32(atr->gid, out + idx); idx += UINT32_SZ;
+    }
+    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+        SftpPutU32(atr->per, out + idx); idx += UINT32_SZ;
+    }
+    if (atr->flags & WOLFSSH_FILEATRB_TIME) {
+        SftpPutU32(atr->atime, out + idx); idx += UINT32_SZ;
+        SftpPutU32(atr->mtime, out + idx); idx += UINT32_SZ;
+    }
+    return idx;
+}
+
+
+/* Sends an FXP_SETSTAT for path and returns the handler's return code. */
+static int SftpSendSetSTAT(WOLFSSH* ssh, int reqId, const char* path,
+        const WS_SFTP_FILEATRB* atr)
+{
+    byte   pkt[UINT32_SZ + WOLFSSH_MAX_FILENAME + (UINT32_SZ * 8)];
+    word32 idx = 0;
+    word32 sz  = (word32)WSTRLEN(path);
+
+    SftpPutU32(sz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, sz); idx += sz;
+    idx += SftpBuildAttrs(pkt + idx, atr);
+
+    return wolfSSH_SFTP_RecvSetSTAT(ssh, reqId, pkt, idx);
+}
+
+
+/* Sends an FXP_FSETSTAT for an open handle and returns the handler's code. */
+static int SftpSendFSetSTAT(WOLFSSH* ssh, int reqId, const byte* handle,
+        const WS_SFTP_FILEATRB* atr)
+{
+    byte   pkt[UINT32_SZ + WOLFSSH_HANDLE_ID_SZ + (UINT32_SZ * 8)];
+    word32 idx = 0;
+
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    idx += SftpBuildAttrs(pkt + idx, atr);
+
+    return wolfSSH_SFTP_RecvFSetSTAT(ssh, reqId, pkt, idx);
+}
+
+
+/* SETSTAT and FSETSTAT must apply every attribute they acknowledge. Answering
+ * FTP_OK for a size, ownership or timestamp change that never reached the file
+ * leaves the client believing a truncate or a chown happened. */
+static void TestSftpSetStatAttributes(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WS_SFTP_FILEATRB atr;
+    WSTAT_T st;
+    const byte* reply;
+    const word32 hOff = WOLFSSH_SFTP_HEADER + UINT32_SZ; /* handle in reply */
+#if defined(WSETTIME) || defined(WFSETTIME)
+    const word32 when = 1000000000;
+#endif
+    const char body[] = "0123456789abcdef";
+    word32 ofst[2] = {0, 0};
+    word32 idx;
+    word32 replySz;
+    word32 origUid;
+    word32 origGid;
+    int rid = 500;
+    int fd;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    byte pkt[256];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char path[64];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    /* unique per-process fixture name (see TestSftpForgedHandleRejected) */
+    WSNPRINTF(path, sizeof(path), "wolfssh_setstat_%d.tmp", (int)getpid());
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+
+    /* fixture: a file of known length owned by this process */
+    fd = WOPEN(ssh->fs, path,
+            WOLFSSH_O_RDWR | WOLFSSH_O_CREAT | WOLFSSH_O_TRUNC, 0600);
+    AssertTrue(fd >= 0);
+    AssertIntEQ(WPWRITE(ssh->fs, fd, (byte*)body, (word32)(sizeof(body) - 1),
+            ofst), (int)(sizeof(body) - 1));
+    AssertIntEQ(WCLOSE(ssh->fs, fd), 0);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, (int)(sizeof(body) - 1));
+
+    /* a SETSTAT that shrinks the file has to truncate it */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_SIZE;
+    atr.sz[0] = 4;
+    AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 4);
+
+    /* and one that grows it has to extend the file */
+    atr.sz[0] = 32;
+    AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 32);
+
+    /* a size past the offset ceiling of the port is refused outright rather
+     * than wrapped through the cast, and the file is left alone */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_SIZE;
+    atr.sz[1] = 0x80000000;
+    AssertTrue(SftpSendSetSTAT(ssh, rid, path, &atr) != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 32);
+
+#ifdef WSETTIME
+    /* a requested timestamp has to reach the file */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_TIME;
+    atr.atime = when;
+    atr.mtime = when;
+    AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_mtime, (int)when);
+#endif
+
+    /* a chown to the file's existing owner is a no-op and stays accepted */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_UIDGID;
+    atr.uid = (word32)st.st_uid;
+    atr.gid = (word32)st.st_gid;
+    AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+
+    /* giving the file away is refused for an unprivileged server, and that
+     * refusal has to reach the client instead of an OK */
+    origUid = (word32)st.st_uid;
+    origGid = (word32)st.st_gid;
+    if (geteuid() != 0) {
+        atr.uid = origUid + 1;
+        AssertTrue(SftpSendSetSTAT(ssh, rid, path, &atr) != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)geteuid());
+    }
+    else {
+        /* root may give the file away, so prove the chown reached the file
+         * instead of relying on the no-op case above, then put it back */
+        atr.uid = origUid + 1;
+        AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)(origUid + 1));
+
+        atr.uid = origUid;
+        atr.gid = origGid;
+        AssertIntEQ(SftpSendSetSTAT(ssh, rid, path, &atr), WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)origUid);
+    }
+
+    /* the same contract holds for FSETSTAT against an open handle */
+    idx = 0;
+    SftpPutU32((word32)WSTRLEN(path), pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, WSTRLEN(path));
+    idx += (word32)WSTRLEN(path);
+    SftpPutU32(WOLFSSH_FXF_READ | WOLFSSH_FXF_WRITE, pkt + idx);
+    idx += UINT32_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpen(ssh, rid++, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= hOff + WOLFSSH_HANDLE_ID_SZ);
+    WMEMCPY(handle, reply + hOff, WOLFSSH_HANDLE_ID_SZ);
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_SIZE;
+    atr.sz[0] = 8;
+    AssertIntEQ(SftpSendFSetSTAT(ssh, rid, handle, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 8);
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_SIZE;
+    atr.sz[1] = 0x80000000;
+    AssertTrue(SftpSendFSetSTAT(ssh, rid, handle, &atr) != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_size, 8);
+
+    /* ownership over the handle, the same pair of cases as the path form */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_UIDGID;
+    atr.uid = (word32)st.st_uid;
+    atr.gid = (word32)st.st_gid;
+    AssertIntEQ(SftpSendFSetSTAT(ssh, rid, handle, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+
+    origUid = (word32)st.st_uid;
+    origGid = (word32)st.st_gid;
+    if (geteuid() != 0) {
+        atr.uid = origUid + 1;
+        AssertTrue(SftpSendFSetSTAT(ssh, rid, handle, &atr) != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)geteuid());
+    }
+    else {
+        atr.uid = origUid + 1;
+        AssertIntEQ(SftpSendFSetSTAT(ssh, rid, handle, &atr), WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)(origUid + 1));
+
+        atr.uid = origUid;
+        atr.gid = origGid;
+        AssertIntEQ(SftpSendFSetSTAT(ssh, rid, handle, &atr), WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+        AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+        AssertIntEQ((int)st.st_uid, (int)origUid);
+    }
+
+#ifdef WFSETTIME
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_TIME;
+    atr.atime = when + 100;
+    atr.mtime = when + 100;
+    AssertIntEQ(SftpSendFSetSTAT(ssh, rid, handle, &atr), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertIntEQ(WSTAT(ssh->fs, path, &st), 0);
+    AssertIntEQ((int)st.st_mtime, (int)(when + 100));
+#endif
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    AssertIntEQ(wolfSSH_SFTP_RecvClose(ssh, rid++, pkt, idx), WS_SUCCESS);
+
+    (void)WREMOVE(ssh->fs, path);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
 /* Sends an FXP_STAT for path and returns the handler's return code. */
 static int SftpStatPath(WOLFSSH* ssh, int reqId, const char* path)
 {
@@ -11256,6 +11524,8 @@ int main(int argc, char** argv)
     TestSftpCloseFailureRemovesHandle();
     /* confinement follows the confine root, not the start path */
     TestSftpStartPathInsideConfineRoot();
+    /* SETSTAT/FSETSTAT apply the attributes they acknowledge */
+    TestSftpSetStatAttributes();
     #endif
     #if defined(WOLFSSL_NUCLEUS) && !defined(NO_WOLFSSH_MKTIME)
     TestNucleusMonthConversion();

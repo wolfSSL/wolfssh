@@ -149,9 +149,9 @@ static int checkCdNonexistent(void)
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
     !defined(WOLFSSH_ZEPHYR)
-/* Captured once before any threads start; used to compute the expected
- * post-open file mode without changing process-wide umask state. */
-static mode_t sftpTestUmask = 0;
+/* The umask wolfSSH_SftpTest() installs before any threads start, so the
+ * modes the server creates files and directories with are known. */
+#define SFTP_TEST_UMASK 0022
 
 /* Verify SFTP_SetFileAttributes stripped setuid/setgid/sticky bits when
  * the client sent chmod 4777 (setuid + rwxrwxrwx). */
@@ -181,13 +181,13 @@ static int checkChmodStripsSpecialBits(void)
 
 /* Verify wolfSSH_SFTP_RecvOpen stripped setuid/setgid/sticky bits when the
  * client sent creat 04755 (setuid + rwxr-xr-x).  The expected base mode is
- * 0755 with the process umask applied, captured before any threads start. */
+ * 0755 with SFTP_TEST_UMASK applied. */
 static int checkCreatStripsSpecialBits(void)
 {
     WSTAT_T st;
     unsigned int expectedMode;
 
-    expectedMode = (unsigned int)(0755 & ~sftpTestUmask);
+    expectedMode = (unsigned int)(0755 & ~SFTP_TEST_UMASK);
     WMEMSET(&st, 0, sizeof(WSTAT_T));
     if (WSTAT(NULL, "test-creat-special", &st) != 0) {
         fprintf(stderr, "stat test-creat-special failed\n");
@@ -203,6 +203,25 @@ static int checkCreatStripsSpecialBits(void)
         fprintf(stderr,
             "WOLFSSH_SFTP_SAFE_MODE (RecvOpen): unexpected base mode=%06o, "
             "want %04o\n", (unsigned)(st.st_mode & 07777), expectedMode);
+        return 1;
+    }
+    return 0;
+}
+
+/* Verify the chmod of a directory landed: mkdir asks for 0777, which
+ * SFTP_TEST_UMASK leaves at 0755, so only the chmod can make it 0700. */
+static int checkChmodDirectory(void)
+{
+    WSTAT_T st;
+
+    WMEMSET(&st, 0, sizeof(WSTAT_T));
+    if (WSTAT(NULL, "test-chmod-dir", &st) != 0) {
+        fprintf(stderr, "stat test-chmod-dir failed\n");
+        return 1;
+    }
+    if ((st.st_mode & 0777) != 0700) {
+        fprintf(stderr, "chmod on directory: mode=%06o, want 0700\n",
+            (unsigned)(st.st_mode & 07777));
         return 1;
     }
     return 0;
@@ -274,6 +293,7 @@ static const SftpTestCmd cmds[] = {
     { "rm test-get",           NULL },
     { "rm test-get-2",         NULL },
     { "rm test-creat-special", NULL },
+    { "rmdir test-chmod-dir",  NULL },
 
     /* --- test sequence starts here --- */
     { "mkdir a",        NULL },
@@ -307,6 +327,11 @@ static const SftpTestCmd cmds[] = {
      * wolfSSH_SFTP_RecvOpen applied WOLFSSH_SFTP_SAFE_MODE. */
     { "creat 04755 test-creat-special", checkCreatStripsSpecialBits },
     { "rm test-creat-special",          NULL },
+    /* chmod of a directory; checkChmodDirectory verifies the mode landed
+     * and the directory survived. */
+    { "mkdir test-chmod-dir",           NULL },
+    { "chmod 700 test-chmod-dir",       checkChmodDirectory },
+    { "rmdir test-chmod-dir",           NULL },
 #endif
     { "chmod 600 test-get-2", NULL },
     { "rm test-get-2",  NULL },
@@ -393,6 +418,10 @@ int wolfSSH_SftpTest(int flag)
 #ifndef USE_WINDOWS_API
     char  portNumber[8];
 #endif
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    mode_t callerUmask;
+#endif
 
     THREAD_TYPE serThread;
 
@@ -406,9 +435,9 @@ int wolfSSH_SftpTest(int flag)
 
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
     !defined(WOLFSSH_ZEPHYR)
-    /* Read umask non-destructively before spawning threads. */
-    sftpTestUmask = umask(0);
-    umask(sftpTestUmask);
+    /* Fix the umask before spawning threads so the file and directory
+     * modes the checks expect do not depend on the caller's umask. */
+    callerUmask = umask(SFTP_TEST_UMASK);
 #endif
 
     argsCount = 0;
@@ -459,6 +488,11 @@ int wolfSSH_SftpTest(int flag)
     ThreadJoin(serThread);
     wolfSSH_Cleanup();
     FreeTcpReady(&ready);
+
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    umask(callerUmask);
+#endif
 
     return ret;
 }

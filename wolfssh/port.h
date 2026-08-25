@@ -438,8 +438,6 @@ extern "C" {
     #define WFPUTS(b,f)         SYS_FS_FileStringPut((f), (b))
     #define WOLFSSH_NO_UTIMES
     #define WUTIMES(a,b)        (0) /* Not ported yet */
-    #define WSETTIME(fs,f,a,m) (0)
-    #define WFSETTIME(fs,fd,a,m) (0)
     #define WCHDIR(fs,b)        SYS_FS_DirectryChange((b))
     #define WFSEEK_SUCCESS(r)   ((int)(r) >= 0)
 
@@ -464,8 +462,6 @@ extern "C" {
                                      clearerr((s)); } while (0)
     #define WSEEK_END           SEEK_END
     #define WBADFILE            NULL
-    #define WSETTIME(fs,f,a,m) (0)
-    #define WFSETTIME(fs,fd,a,m) (0)
     #ifdef WOLFSSL_VXWORKS
         #define WOLFSSH_NO_UTIMES
         #define WUTIMES(f,t)      (WS_SUCCESS)
@@ -516,11 +512,57 @@ extern "C" {
         #endif
     #endif
 
+    /* Set a file's access and modification times from seconds since the
+     * epoch. Ports with no way to set them leave these undefined. */
+    #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_NO_UTIMES)
+        #include <sys/time.h>
+        static inline int wSetTime(const char* f, unsigned int atime,
+                unsigned int mtime)
+        {
+            struct timeval t[2];
+
+            t[0].tv_sec  = (time_t)atime;
+            t[0].tv_usec = 0;
+            t[1].tv_sec  = (time_t)mtime;
+            t[1].tv_usec = 0;
+        #ifdef WUTIMES_NOFOLLOW
+            return WUTIMES_NOFOLLOW(f, t);
+        #else
+            return WUTIMES(f, t);
+        #endif
+        }
+        #define WSETTIME(fs,f,a,m)  wSetTime((f),(a),(m))
+
+        #ifdef WFUTIMES
+            static inline int wFSetTime(int fd, unsigned int atime,
+                    unsigned int mtime)
+            {
+                struct timeval t[2];
+
+                t[0].tv_sec  = (time_t)atime;
+                t[0].tv_usec = 0;
+                t[1].tv_sec  = (time_t)mtime;
+                t[1].tv_usec = 0;
+                return WFUTIMES(fd, t);
+            }
+            #define WFSETTIME(fs,fd,a,m)  wFSetTime((fd),(a),(m))
+        #endif
+    #endif
+
     #ifndef USE_WINDOWS_API
         #define WCHMOD(fs,f,m)   chmod((f),(m))
         #define WFCHMOD(fs,fd,m) fchmod((fd),(m))
     #else
-        #define WCHMOD(fs,f,m)   _chmod((f),(m))
+        #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
+            !defined(_WIN32_WCE)
+            /* _chmod() wants a Windows path, but SFTP names arrive with a
+             * leading root. WS_ChmodA() trims it as the other wrappers do. */
+            WOLFSSH_LOCAL int WS_ChmodA(const char* fileName, int mode,
+                    void* heap);
+            #define WCHMOD(fs,f,m)   WS_ChmodA((f),(m),NULL)
+        #else
+            #define WCHMOD(fs,f,m)   _chmod((f),(m))
+        #endif
         #define WFCHMOD(fs,fd,m)   _fchmod((fd),(m))
     #endif
 
@@ -1588,6 +1630,11 @@ extern "C" {
             const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
+
+    #define WTRUNCATE(fs,f,sz)   truncate((f),(off_t)(sz))
+    #define WFTRUNCATE(fs,fd,sz) ftruncate((fd),(off_t)(sz))
+    #define WCHOWN(fs,f,u,g)     chown((f),(uid_t)(u),(gid_t)(g))
+    #define WFCHOWN(fs,fd,u,g)   fchown((fd),(uid_t)(u),(gid_t)(g))
 
 #ifndef NO_WOLFSSH_DIR
     #include <dirent.h> /* used for opendir, readdir, and closedir */

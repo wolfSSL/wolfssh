@@ -542,6 +542,44 @@ int WS_DeleteFileA(const char* fileName, void* heap)
 }
 
 
+
+#ifndef _WIN32_WCE
+
+int WS_ChmodA(const char* fileName, int mode, void* heap)
+{
+    int ret = -1;
+    wchar_t* unicodeFileName;
+    size_t unicodeFileNameSz = 0;
+    size_t returnSz = 0;
+    size_t fileNameSz = 0;
+    errno_t error;
+
+    fileNameSz = WSTRLEN(fileName);
+    fileName = TrimFileName(fileName, &fileNameSz);
+
+    error = mbstowcs_s(&unicodeFileNameSz, NULL, 0, fileName, 0);
+    if (error != 0)
+        return -1;
+
+    unicodeFileName = (wchar_t*)WMALLOC((unicodeFileNameSz+1)*sizeof(wchar_t),
+            heap, PORT_DYNTYPE_STRING);
+    if (unicodeFileName == NULL)
+        return -1;
+
+    error = mbstowcs_s(&returnSz, unicodeFileName, unicodeFileNameSz,
+        fileName, fileNameSz);
+
+    if (error == 0) {
+        ret = _wchmod(unicodeFileName, mode);
+    }
+
+    WFREE(unicodeFileName, heap, PORT_DYNTYPE_STRING);
+
+    return ret;
+}
+
+#endif /* !_WIN32_WCE */
+
 #endif /* USE_WINDOWS_API WOLFSSH_SFTP WOLFSSH_SCP */
 
 #if !defined(NO_FILESYSTEM) && \
