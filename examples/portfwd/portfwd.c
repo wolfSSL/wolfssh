@@ -44,6 +44,7 @@
 #include <wolfssh/test.h>
 #include <wolfssh/port.h>
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 
 #ifndef NO_WOLFSSH_CLIENT
 #include "examples/portfwd/wolfssh_portfwd.h"
@@ -181,7 +182,7 @@ static int SetEcho(int on)
 }
 
 
-byte userPassword[256];
+static byte userPassword[256];
 
 
 static int wsUserAuth(byte authType,
@@ -535,10 +536,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     printf("portfwd options\n"
            " * ssh host: %s:%u\n"
            " * username: %s\n"
-           " * password: %s\n"
            " * forward from: %s:%u\n"
            " * forward to: %s:%u\n",
-           host, port, username, password ? password : "",
+           host, port, username,
            fwdFromHost, fwdFromPort,
            fwdToHost, fwdToPort);
 
@@ -622,6 +622,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         err_sys("Couldn't set the session's socket.");
 
     ret = wolfSSH_connect(ssh);
+    /* User authentication is done with the buffer either way. */
+    wc_ForceZero(userPassword, sizeof(userPassword));
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SFTP");
 
