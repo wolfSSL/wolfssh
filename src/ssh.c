@@ -1245,8 +1245,17 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_peek()");
 
-    if (ssh == NULL || ssh->channelList == NULL)
+    if (ssh == NULL)
         return WS_BAD_ARGUMENT;
+
+    if (ssh->channelList == NULL) {
+        /* No channel left to drain, so the disconnect is all there is. */
+        if (ssh->disconnected) {
+            ssh->error = WS_DISCONNECT;
+            return WS_FATAL_ERROR;
+        }
+        return WS_BAD_ARGUMENT;
+    }
 
     if (ssh->isKeying) {
         ssh->error = WS_REKEYING;
