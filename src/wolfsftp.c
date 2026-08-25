@@ -6061,7 +6061,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     return ret;
 }
 
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR) \
+#if !defined(_WIN32_WCE) && !defined(WOLFSSH_ZEPHYR) \
     && !defined(WOLFSSH_SFTP_SETMODE) && !defined(WOLFSSH_FATFS)
 /* Set the files mode
  * return WS_SUCCESS on success */
@@ -6097,29 +6097,47 @@ static int SFTP_SetFileAttributes(WOLFSSH* ssh,
         char* name, WS_SFTP_FILEATRB* atr)
 {
     int ret = WS_SUCCESS;
+#ifdef WTRUNCATE
+    word64 sz;
+#endif
 
     /* check if size attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
-        /* @TODO set file size */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_SIZE)) {
+#ifdef WTRUNCATE
+        if (wResolveOffset(atr->sz, WOLFSSH_MAX_FILE_OFFSET, &sz) != 0
+                || WTRUNCATE(ssh->fs, name, sz) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
     /* check if uid and gid attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
-        /* @TODO set group and user id */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_UIDGID)) {
+#ifdef WCHOWN
+        if (WCHOWN(ssh->fs, name, atr->uid, atr->gid) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
-#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
     /* check if permissions attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_PERM)) {
         ret = SFTP_SetMode(ssh->fs, name, WOLFSSH_SFTP_SAFE_MODE(atr->per));
     }
-#endif
 
     /* check if time attribute present */
     if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_TIME)) {
+#ifdef WSETTIME
         if (WSETTIME(ssh->fs, name, atr->atime, atr->mtime) != 0) {
             ret = WS_BAD_FILE_E;
         }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
     /* check if extended attributes are present */
@@ -6143,29 +6161,52 @@ static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh,
         WS_SFTP_FILEATRB* atr)
 {
     int ret = WS_SUCCESS;
+#ifdef WFTRUNCATE
+    word64 sz;
+#endif
 
     /* check if size attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_SIZE) {
-        /* @TODO set file size */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_SIZE)) {
+#ifdef WFTRUNCATE
+        if (wResolveOffset(atr->sz, WOLFSSH_MAX_FILE_OFFSET, &sz) != 0
+                || WFTRUNCATE(ssh->fs, handle, sz) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
     /* check if uid and gid attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_UIDGID) {
-        /* @TODO set group and user id */
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_UIDGID)) {
+#ifdef WFCHOWN
+        if (WFCHOWN(ssh->fs, handle, atr->uid, atr->gid) != 0) {
+            ret = WS_BAD_FILE_E;
+        }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
-#ifndef USE_WINDOWS_API
     /* check if permissions attribute present */
-    if (atr->flags & WOLFSSH_FILEATRB_PERM) {
-        ret = SFTP_SetModeHandle(ssh->fs, handle, WOLFSSH_SFTP_SAFE_MODE(atr->per));
-    }
+    if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_PERM)) {
+#ifndef USE_WINDOWS_API
+        ret = SFTP_SetModeHandle(ssh->fs, handle,
+                WOLFSSH_SFTP_SAFE_MODE(atr->per));
+#else
+        ret = WS_UNIMPLEMENTED_E;
 #endif
+    }
 
     /* check if time attribute present */
     if (ret == WS_SUCCESS && (atr->flags & WOLFSSH_FILEATRB_TIME)) {
+#ifdef WFSETTIME
         if (WFSETTIME(ssh->fs, handle, atr->atime, atr->mtime) != 0) {
             ret = WS_BAD_FILE_E;
         }
+#else
+        ret = WS_UNIMPLEMENTED_E;
+#endif
     }
 
     /* check if extended attributes are present */
@@ -6174,9 +6215,9 @@ static int SFTP_SetFileAttributesHandle(WOLFSSH* ssh,
     }
 
     (void)ssh;
-#ifdef USE_WINDOWS_API
-    /* On Windows the only consumers (SFTP_SetModeHandle / WFSETTIME) are
-     * compiled out or no-ops, so the handle goes unused here. */
+#if defined(USE_WINDOWS_API) && !defined(WFTRUNCATE) && !defined(WFCHOWN) \
+    && !defined(WFSETTIME)
+    /* no consumer of the handle is compiled in on this port */
     (void)handle;
 #endif
     return ret ;
@@ -6201,6 +6242,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  ser[] = "Unable to set attributes error";
     char  per[] = "Unable to parse attributes error";
     char  pdn[] = "Permission denied";
+    char  uns[] = "Attribute not supported";
     char* res   = suc;
     byte  type  = WOLFSSH_FTP_OK;
 
@@ -6239,8 +6281,14 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             != WS_SUCCESS) {
         /* tell peer that was not ok */
         WLOG(WS_LOG_SFTP, "Unable to get set attributes of file/directory");
-        type = WOLFSSH_FTP_FAILURE;
-        res  = ser;
+        if (ret == WS_UNIMPLEMENTED_E) {
+            type = WOLFSSH_FTP_UNSUPPORTED;
+            res  = uns;
+        }
+        else {
+            type = WOLFSSH_FTP_FAILURE;
+            res  = ser;
+        }
         ret  = WS_BAD_FILE_E;
     }
 
@@ -6276,6 +6324,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  suc[] = "Set Attributes";
     char  ser[] = "Unable to set attributes error";
     char  per[] = "Unable to parse attributes error";
+    char  uns[] = "Attribute not supported";
     char* res   = suc;
     byte  type  = WOLFSSH_FTP_OK;
 
@@ -6330,8 +6379,14 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             != WS_SUCCESS) {
         /* tell peer that was not ok */
         WLOG(WS_LOG_SFTP, "Unable to get set attributes of open file");
-        type = WOLFSSH_FTP_FAILURE;
-        res  = ser;
+        if (ret == WS_UNIMPLEMENTED_E) {
+            type = WOLFSSH_FTP_UNSUPPORTED;
+            res  = uns;
+        }
+        else {
+            type = WOLFSSH_FTP_FAILURE;
+            res  = ser;
+        }
         ret  = WS_BAD_FILE_E;
     }
 
@@ -7680,7 +7735,8 @@ int wolfSSH_SFTP_CHMOD(WOLFSSH* ssh, char* n, char* oct)
                 break;
             }
 
-            /* update permissions */
+            /* only the permissions change here */
+            state->atr.flags = WOLFSSH_FILEATRB_PERM;
             state->atr.per = mode;
             state->state = STATE_CHMOD_SEND;
             FALL_THROUGH;

@@ -4848,6 +4848,9 @@ static void test_wolfSSH_SFTP_PartialSend(void)
         wolfSSH_SFTP_Close(ssh, handle, handleSz);
 
         if (wolfSSH_SFTP_STAT(ssh, atrName, &atr) == WS_SUCCESS) {
+            /* Send only the permissions back. A port without WTRUNCATE
+             * answers a size request with SSH_FX_OP_UNSUPPORTED. */
+            atr.flags = WOLFSSH_FILEATRB_PERM;
             AssertIntEQ(wolfSSH_TestSftpSendCap(ssh, 1), WS_SUCCESS);
             ret = WS_FATAL_ERROR;
             sawPartial = 0;
