@@ -1161,12 +1161,15 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * and the wait for a close that will not come. RFC 4253 section 11.1. */
     if (channel != NULL && ssh->disconnected) {
         WLOG(WS_LOG_DEBUG, "Session already disconnected, nothing to send");
-        /* An unfinished flush owns ssh->error. Callers gate their retry on
-         * WS_WANT_WRITE, so overwriting it strands the queued disconnect. */
-        if (flushRet == WS_SUCCESS)
-            ssh->error = WS_DISCONNECT;
         channel = NULL;
     }
+
+    /* Report the dead session with or without a channel to drop: callers
+     * gate their retry on ssh->error, and the flush above may have just
+     * emptied the output buffer they would be retrying for. An unfinished
+     * flush owns the error instead, since that retry is still owed. */
+    if (ssh != NULL && ssh->disconnected && flushRet == WS_SUCCESS)
+        ssh->error = WS_DISCONNECT;
 
     /* if channel close was not already sent then send it */
     if (channel != NULL && !channel->closeTxd) {
