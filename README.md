@@ -714,8 +714,8 @@ make sbom WOLFSSL_DIR=/path/to/wolfssl
 ```
 
 Requires `python3` and `pyspdxtools` (`pip install spdx-tools`). `WOLFSSL_DIR`
-must point to a wolfssl source tree containing `scripts/gen-sbom` (branch
-`feat/sbom-embedded`, or `master` once wolfSSL/wolfssl#10343 merges).
+must point to a wolfssl source tree containing `scripts/gen-sbom` (on `master`
+since wolfSSL/wolfssl#10343). This is a source checkout, not an install prefix.
 
 Output: `wolfssh-<version>.cdx.json`, `wolfssh-<version>.spdx.json`, `wolfssh-<version>.spdx`
 
@@ -736,8 +736,9 @@ make uninstall-sbom
 ```
 
 Note: recording wolfSSL as a dependency and emitting wolfSSH-specific project
-URLs require the `gen-sbom` from wolfSSL/wolfssl#10343. Against an older
-`gen-sbom`, `make sbom` still succeeds and produces a valid SBOM, but omits the
-wolfSSL dependency entry and inherits wolfSSL's project URLs.
+URLs require the `gen-sbom` added in wolfSSL/wolfssl#10343 and present on
+wolfssl master. Against an older `gen-sbom`, `make sbom` still succeeds and
+produces a valid SBOM, but omits the wolfSSL dependency entry and inherits
+wolfSSL's project URLs.
 
 For further CRA guidance see [wolfssl/doc/CRA.md](https://github.com/wolfSSL/wolfssl/blob/master/doc/CRA.md).

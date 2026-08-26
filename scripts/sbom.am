@@ -120,8 +120,14 @@ sbom:
 	    echo "ERROR: 'pyspdxtools' not found (pip install spdx-tools)."; \
 	    exit 1; }
 	@test -f "$(SBOM_GEN)" || { \
-	    echo "ERROR: gen-sbom not found. Vendor scripts/gen-sbom, or re-run:"; \
-	    echo "       make sbom WOLFSSL_DIR=/path/to/wolfssl"; \
+	    if test -n "$(WOLFSSL_DIR)"; then \
+	        echo "ERROR: no gen-sbom at $(WOLFSSL_DIR)/scripts/gen-sbom"; \
+	        echo "       WOLFSSL_DIR must name a wolfSSL *source tree*, not an"; \
+	        echo "       install prefix such as /usr/local or /opt/wolfssl."; \
+	    else \
+	        echo "ERROR: gen-sbom not found. Vendor scripts/gen-sbom, or re-run:"; \
+	        echo "       make sbom WOLFSSL_DIR=/path/to/wolfssl"; \
+	    fi; \
 	    exit 1; }
 	@rm -rf $(abs_builddir)/_sbom_staging
 	@set -e; \
@@ -179,9 +185,9 @@ sbom:
 	    else \
 	        echo "NOTE: this gen-sbom has no --dep-wolfssl support, so the SBOM"; \
 	        echo "      will not list wolfssl as a dependency component. That"; \
-	        echo "      support is added by wolfSSL/wolfssl#10343; until it merges"; \
-	        echo "      to wolfssl master, point WOLFSSL_DIR at that PR's branch"; \
-	        echo "      to enable it. The generated SBOM is valid either way."; \
+	        echo "      support landed on wolfssl master in wolfSSL/wolfssl#10343;"; \
+	        echo "      point WOLFSSL_DIR at a wolfssl checkout that includes it."; \
+	        echo "      The generated SBOM is valid either way."; \
 	    fi; \
 	fi; \
 	if test "$(SBOM_DEP_OPENSSL)" = yes; then \
