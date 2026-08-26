@@ -559,11 +559,14 @@ WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
- * every send call in this header, above this comment and below it, reports
- * WS_DISCONNECT from then on. Reads are not gated, so channel data that
+ * wolfSSH_shutdown() above this comment, and every send call below it,
+ * report WS_DISCONNECT from then on. wolfSSH_accept() and
+ * wolfSSH_connect() are not gated; do not drive the handshake after a
+ * disconnect. Reads are not gated either, so channel data that
  * arrived before the disconnect can still be drained; wolfSSH_stream_read()
  * and wolfSSH_stream_peek() report WS_DISCONNECT once their buffer runs
- * dry. RFC 4253 section 11.1. */
+ * dry. A CHANNEL_EOF already received outranks that drain: both report
+ * WS_EOF with data possibly still buffered. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
