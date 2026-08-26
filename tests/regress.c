@@ -3583,6 +3583,9 @@ static void TestShutdownFlushesWithNoChannel(void)
     AssertIntEQ(ret, WS_CHANNEL_CLOSED);
     AssertFalse(wolfSSH_OutputPending(ssh));
     AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+    /* The flush finished, so the WS_WANT_WRITE that queued it is stale.
+     * Leaving it sends the caller back for a write that is already done. */
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
