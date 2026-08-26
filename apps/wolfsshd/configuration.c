@@ -1388,7 +1388,10 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         const char* value, const char* full, int fullSz, int depth)
 {
     int ret = WS_BAD_ARGUMENT;
+    int ignored;
     WOLFSSHD_CONFIG* target;
+
+    ignored = 0;
 
     if (conf == NULL || *conf == NULL) {
         return WS_BAD_ARGUMENT;
@@ -1451,6 +1454,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
                  * so ignore-unknown builds keep a migration path. */
                 wolfSSH_Log(WS_LOG_WARN,
                     "[SSHD] Ignoring HostKey inside a Match block");
+                ignored = 1;
                 ret = WS_SUCCESS;
             }
         #endif
@@ -1465,6 +1469,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             else if (*conf != NULL) {
                 wolfSSH_Log(WS_LOG_WARN,
                     "[SSHD] Ignoring HostCertificate inside a Match block");
+                ignored = 1;
                 ret = WS_SUCCESS;
             }
         #endif
@@ -1549,6 +1554,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             wolfSSH_Log(WS_LOG_WARN,
                 "[SSHD] Ignoring wolfSSH_WinUser* option: requires a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
+            ignored = 1;
             ret = WS_SUCCESS;
         #else
             wolfSSH_Log(WS_LOG_ERROR,
@@ -1591,6 +1597,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             wolfSSH_Log(WS_LOG_WARN,
                 "[SSHD] Ignoring HostKeyStore* option: requires a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
+            ignored = 1;
             ret = WS_SUCCESS;
         #else
             wolfSSH_Log(WS_LOG_ERROR,
@@ -1605,9 +1612,11 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
     }
 
     /* Match sets no keyword of its own, and Include's own lines were already
-     * recorded on whichever node they landed on. */
-    if (ret == WS_SUCCESS && opt != OPT_MATCH && opt != OPT_INCLUDE
-            && OPT_HAS_BIT(opt)) {
+     * recorded on whichever node they landed on. An ignored keyword stored no
+     * value, so recording it would let ConfigComposeFrom() compose that NULL
+     * over the inherited one. */
+    if (ret == WS_SUCCESS && !ignored && opt != OPT_MATCH
+            && opt != OPT_INCLUDE && OPT_HAS_BIT(opt)) {
         target->setMask |= OPT_BIT(opt);
     }
 
@@ -2188,21 +2197,13 @@ char* wolfSSHD_ConfigGetWinUserStores(const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_ConfigSetWinUserStores(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
-    char* newValue = NULL;
 
     if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    /* build the replacement before freeing the old value, in case value
-     * aliases the string currently stored in conf->winUserStores */
     if (ret == WS_SUCCESS) {
-        ret = CreateString(&newValue, value, (int)WSTRLEN(value), conf->heap);
-    }
-
-    if (ret == WS_SUCCESS) {
-        FreeString(&conf->winUserStores, conf->heap);
-        conf->winUserStores = newValue;
+        ret = SetFileString(&conf->winUserStores, value, conf->heap);
     }
 
     return ret;
@@ -2223,21 +2224,13 @@ char* wolfSSHD_ConfigGetWinUserDwFlags(const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_ConfigSetWinUserDwFlags(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
-    char* newValue = NULL;
 
     if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    /* build the replacement before freeing the old value, in case value
-     * aliases the string currently stored in conf->winUserDwFlags */
     if (ret == WS_SUCCESS) {
-        ret = CreateString(&newValue, value, (int)WSTRLEN(value), conf->heap);
-    }
-
-    if (ret == WS_SUCCESS) {
-        FreeString(&conf->winUserDwFlags, conf->heap);
-        conf->winUserDwFlags = newValue;
+        ret = SetFileString(&conf->winUserDwFlags, value, conf->heap);
     }
 
     return ret;
@@ -2260,21 +2253,13 @@ char* wolfSSHD_ConfigGetWinUserPvPara(const WOLFSSHD_CONFIG* conf)
 int wolfSSHD_ConfigSetWinUserPvPara(WOLFSSHD_CONFIG* conf, const char* value)
 {
     int ret = WS_SUCCESS;
-    char* newValue = NULL;
 
     if (conf == NULL || value == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    /* build the replacement before freeing the old value, in case value
-     * aliases the string currently stored in conf->winUserPvPara */
     if (ret == WS_SUCCESS) {
-        ret = CreateString(&newValue, value, (int)WSTRLEN(value), conf->heap);
-    }
-
-    if (ret == WS_SUCCESS) {
-        FreeString(&conf->winUserPvPara, conf->heap);
-        conf->winUserPvPara = newValue;
+        ret = SetFileString(&conf->winUserPvPara, value, conf->heap);
     }
 
     return ret;
@@ -2316,23 +2301,25 @@ const WOLFSSHD_CONFIG* wolfSSHD_ConfigGetNext(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
+/* Replaces *dst with a copy of src, or clears it when src is NULL. The
+ * replacement is built before the old value is released so src may alias
+ * *dst, and a failure leaves *dst untouched. */
 static int SetFileString(char** dst, const char* src, void* heap)
 {
     int ret = WS_SUCCESS;
+    char* newValue = NULL;
 
     if (dst == NULL) {
         ret = WS_BAD_ARGUMENT;
     }
 
-    if (ret == WS_SUCCESS) {
-        if (*dst != NULL) {
-            FreeString(dst, heap);
-            *dst = NULL;
-        }
+    if (ret == WS_SUCCESS && src != NULL) {
+        ret = CreateString(&newValue, src, (int)WSTRLEN(src), heap);
+    }
 
-        if (src != NULL) {
-            ret = CreateString(dst, src, (int)WSTRLEN(src), heap);
-        }
+    if (ret == WS_SUCCESS) {
+        FreeString(dst, heap);
+        *dst = newValue;
     }
 
     return ret;

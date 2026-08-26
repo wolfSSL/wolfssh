@@ -2295,6 +2295,9 @@ static int SetupUserTokenWin(const char* usr,
         PVOID        profile = NULL;
         LUID logonId = { 0, 0 };
 
+        /* LsaLogonUser only writes SubStatus for an account restriction, so
+         * seed it rather than log an indeterminate value. */
+        subStatus = 0;
         WMEMSET(&originName, 0, sizeof(LSA_STRING));
         originName.Buffer = "wolfsshd";
         originName.Length = (USHORT)WSTRLEN("wolfsshd");

@@ -15659,9 +15659,10 @@ done:
  * WOLFSSH_TEST_INTERNAL section. Each carries its own feature guard;
  * WOLFSSH_TEST_CERTMAN_PROMOTE still implies WOLFSSH_TEST_INTERNAL. */
 
-/* Guard by the actual users -- the promote tests, the root-CA half of
- * test_SetCertManager(), and test_ParseECCPubKeyCert() -- to avoid
- * -Wunused-function. */
+/* Guard by the actual users, to avoid -Wunused-function: the promote tests,
+ * the root CA half of test_SetCertManager(), and test_ParseECCPubKeyCert().
+ * That last one needs WOLFSSH_TEST_INTERNAL, which ide/winvs does not
+ * define, so it does not build there. */
 #if defined(WOLFSSH_TEST_CERTMAN_PROMOTE) || \
     (defined(WOLFSSH_TEST_SET_CERTMAN) && \
      defined(WOLFSSH_TEST_CERTMAN_ROOTCA)) || \
@@ -18371,7 +18372,7 @@ static int test_ParseECCPubKeyCert(void)
     if (result == 0) {
         blobSz = LENGTH_SZ + (word32)WSTRLEN(algoName)
                 + UINT32_SZ + LENGTH_SZ + certSz + UINT32_SZ;
-        blob = (byte*)malloc(blobSz);
+        blob = (byte*)WMALLOC(blobSz, NULL, DYNTYPE_BUFFER);
         if (blob == NULL)
             result = -4;
     }
@@ -18425,7 +18426,9 @@ static int test_ParseECCPubKeyCert(void)
     }
 #endif
 
-    free(blob);
+    if (blob != NULL)
+        WFREE(blob, NULL, DYNTYPE_BUFFER);
+    /* cert and ca come from certmanLoadFile()'s malloc */
     free(cert);
     free(ca);
     wolfSSH_free(ssh);

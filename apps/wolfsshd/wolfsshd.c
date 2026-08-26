@@ -702,7 +702,11 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
         "matching subject is accepted for login.");
 #endif
 
-    wStoreNameLen = MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, NULL, 0);
+    /* MB_ERR_INVALID_CHARS, as wolfSSH_ParseCertStoreSpec() uses, so a
+     * non-UTF-8 config value fails here instead of being silently replaced
+     * with U+FFFD and naming a store that does not exist. */
+    wStoreNameLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            storeNameStr, -1, NULL, 0);
     if (wStoreNameLen == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Failed to convert user CA store name to wide characters");
@@ -713,8 +717,8 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     if (wStoreName == NULL) {
         return WS_MEMORY_E;
     }
-    if (MultiByteToWideChar(CP_UTF8, 0, storeNameStr, -1, wStoreName,
-            wStoreNameLen) == 0) {
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, storeNameStr, -1,
+            wStoreName, wStoreNameLen) == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Failed to convert user CA store name to wide characters");
         WFREE(wStoreName, heap, DYNTYPE_SSHD);
@@ -967,12 +971,15 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                     "key.");
             }
 
-            /* Convert to wide strings */
+            /* Convert to wide strings. MB_ERR_INVALID_CHARS, as
+             * wolfSSH_ParseCertStoreSpec() uses, so a non-UTF-8 config value
+             * fails here instead of being silently replaced with U+FFFD and
+             * then never matching any certificate CN. */
             if (ret == WS_SUCCESS) {
-                storeNameLen = MultiByteToWideChar(CP_UTF8, 0, hostKeyStore,
-                    -1, NULL, 0);
-                subjectNameLen = MultiByteToWideChar(CP_UTF8, 0,
-                    hostKeyStoreSubject, -1, NULL, 0);
+                storeNameLen = MultiByteToWideChar(CP_UTF8,
+                    MB_ERR_INVALID_CHARS, hostKeyStore, -1, NULL, 0);
+                subjectNameLen = MultiByteToWideChar(CP_UTF8,
+                    MB_ERR_INVALID_CHARS, hostKeyStoreSubject, -1, NULL, 0);
 
                 if (storeNameLen == 0 || subjectNameLen == 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -992,10 +999,11 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                       "[SSHD] Memory allocation failed for cert store strings");
                     ret = WS_MEMORY_E;
                 }
-                else if (MultiByteToWideChar(CP_UTF8, 0, hostKeyStore, -1,
-                            wStoreName, storeNameLen) == 0 ||
-                         MultiByteToWideChar(CP_UTF8, 0, hostKeyStoreSubject,
-                            -1, wSubjectName, subjectNameLen) == 0) {
+                else if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            hostKeyStore, -1, wStoreName, storeNameLen) == 0 ||
+                         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            hostKeyStoreSubject, -1, wSubjectName,
+                            subjectNameLen) == 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Failed to convert cert store strings to wchar");
                     ret = WS_BAD_ARGUMENT;
@@ -3822,6 +3830,11 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
             /* child process */
             WCLOSESOCKET(conn->listenFd);
             signal(SIGINT, SIG_DFL);
+            /* fork copies the parent's log suppression state; reset it so the
+             * child neither drops its first message nor claims the parent's
+             * repeat count. */
+            logRepeats = 0;
+            lastLogMsg[0] = '\0';
             (void)HandleConnection((void*)conn);
             exit(0);
         }
@@ -4116,13 +4129,17 @@ static int StartSSHD(int argc, char** argv)
             break;
 
         case 'E':
-            ret = WFOPEN(NULL, &logFile, myoptarg, "ab");
-            if (ret != 0 || logFile == WBADFILE) {
-                fprintf(stderr, "Unable to open log file %s\n", myoptarg);
-                /* option parsing continues and may log before the error is
-                 * acted on, so never leave the stream NULL */
-                logFile = stderr;
-                ret = WS_FATAL_ERROR;
+            /* guarded like -p so a success here cannot overwrite an error an
+             * earlier option recorded */
+            if (ret == WS_SUCCESS) {
+                ret = WFOPEN(NULL, &logFile, myoptarg, "ab");
+                if (ret != 0 || logFile == WBADFILE) {
+                    fprintf(stderr, "Unable to open log file %s\n", myoptarg);
+                    /* option parsing continues and may log before the error
+                     * is acted on, so never leave the stream NULL */
+                    logFile = stderr;
+                    ret = WS_FATAL_ERROR;
+                }
             }
             break;
 
