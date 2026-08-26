@@ -146,6 +146,8 @@ jobs:
       - name: wolfssl recorded as a dependency + wolfssh identity
         if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
         working-directory: wolfssh
+        env:
+          WOLFSSL_DIR: ${{ github.workspace }}/wolfssl
         run: |
           python3 - <<'PY'
           import glob, json
@@ -160,7 +162,75 @@ jobs:
                    r['relatedSpdxElement']) for r in d['relationships']]
           assert ('SPDXRef-Package-wolfssh', 'DEPENDS_ON',
                   'SPDXRef-Package-wolfssl') in rels, rels
-          print('wolfssl dependency + wolfssh identity ok')
+          # The recorded version must be the one from WOLFSSL_DIR.  Presence
+          # alone passed while the version was silently taken from the
+          # installed wolfSSL instead of the source tree.
+          import os, re
+          wd = os.environ['WOLFSSL_DIR']
+          want = None
+          vh = os.path.join(wd, 'wolfssl', 'version.h')
+          if os.path.exists(vh):
+              m = re.search(r'LIBWOLFSSL_VERSION_STRING\s+"([^"]+)"',
+                            open(vh).read())
+              want = m and m.group(1)
+          if not want:
+              m = re.search(r'^AC_INIT\(\[[^]]*\],\[([^]]*)\]',
+                            open(os.path.join(wd, 'configure.ac')).read(), re.M)
+              want = m and m.group(1)
+          assert want, 'could not determine expected wolfSSL version'
+          got = pkgs['wolfssl'].get('versionInfo')
+          assert got == want, f'SBOM says wolfssl {got!r}, WOLFSSL_DIR says {want!r}'
+          print(f'wolfssl dependency + wolfssh identity ok (version {got})')
+          PY
+
+      # The runner installs wolfssl from the very tree it passes as
+      # WOLFSSL_DIR, so pkg-config and wolfssl/version.h always agree and a
+      # version taken from the wrong source is indistinguishable from the
+      # right one.  Force them apart: a stub pkg-config reports a sentinel,
+      # and a distclean'd copy of the tree has no generated version.h, so the
+      # configure.ac fallback is the only path to a correct answer.  This is
+      # the shape that reached a user -- `make sbom` reported the installed
+      # wolfSSL's version and exited 0.
+      - name: Version comes from WOLFSSL_DIR, not the installed wolfSSL
+        if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
+        env:
+          SENTINEL: 0.0.0-sentinel
+        run: |
+          set -euo pipefail
+          cp -a wolfssl wolfssl-distclean
+          ( cd wolfssl-distclean && make distclean >/dev/null 2>&1 || true )
+          if [ -f wolfssl-distclean/wolfssl/version.h ]; then
+            echo "::error::distclean left wolfssl/version.h in place; this test needs it gone to exercise the configure.ac fallback."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/stubbin"
+          REAL_PKGCONFIG="$(command -v pkg-config)"
+          cat > "$RUNNER_TEMP/stubbin/pkg-config" <<STUB
+          #!/bin/bash
+          if [ "\$1" = --modversion ] && [ "\$2" = wolfssl ]; then
+            echo "$SENTINEL"; exit 0
+          fi
+          exec "$REAL_PKGCONFIG" "\$@"
+          STUB
+          chmod +x "$RUNNER_TEMP/stubbin/pkg-config"
+          test "$(PATH="$RUNNER_TEMP/stubbin:$PATH" pkg-config --modversion wolfssl)" = "$SENTINEL"
+          cd wolfssh
+          PATH="$RUNNER_TEMP/stubbin:$PATH" \
+            make sbom WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl-distclean"
+          python3 - <<'PY'
+          import glob, json, os, re
+          d = json.load(open(glob.glob('wolfssh-*.spdx.json')[0]))
+          pkgs = {p['name']: p for p in d['packages']}
+          got = pkgs['wolfssl'].get('versionInfo')
+          sentinel = os.environ['SENTINEL']
+          assert got != sentinel, (
+              f'SBOM recorded {got!r}: the version came from pkg-config, i.e. '
+              'the installed wolfSSL, not WOLFSSL_DIR')
+          src = open(os.path.join(os.environ['GITHUB_WORKSPACE'],
+                                  'wolfssl-distclean', 'configure.ac')).read()
+          want = re.search(r'^AC_INIT\(\[[^]]*\],\[([^]]*)\]', src, re.M).group(1)
+          assert got == want, f'SBOM says {got!r}, configure.ac says {want!r}'
+          print(f'version resolved from WOLFSSL_DIR via configure.ac fallback: {got}')
           PY
 
       # ---- Embedded / IDE path (no autotools) ----------------------------
