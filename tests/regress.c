@@ -4718,6 +4718,123 @@ static void TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward(void)
 /* A peer that canonicalises the bind it echoes back has every open refused
  * under the default, so the port it was asked for can be made the whole
  * test. */
+static int CancelFirstSetupHighwaterCb(byte side, void* ctx)
+{
+    WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+    WOLFSSH_UNUSED(side);
+
+    if (ssh != NULL)
+        wolfSSH_FwdRemoteCancel(ssh, "127.0.0.1", 8080, 0);
+
+    return WS_SUCCESS;
+}
+
+/* The callback cancels the very forward the request in flight is establishing,
+ * and with no earlier registration to find it has nothing to work from but
+ * what this request left. The cancel went out behind the setup, so the peer
+ * holds no listener and neither may this side. */
+static void TestForwardedTcpipReentrantCancelOfFirstSetup(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    wolfSSH_SetHighwaterCb(harness.ctx, 1, CancelFirstSetupHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.ssh, harness.ssh);
+    /* Cross the mark on the request's own send. */
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->txCount = 1;
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static int SetupDuringCancelHighwaterCb(byte side, void* ctx)
+{
+    WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+    WOLFSSH_UNUSED(side);
+
+    if (ssh != NULL)
+        wolfSSH_FwdRemoteSetup(ssh, "127.0.0.1", 8080, 0);
+
+    return WS_SUCCESS;
+}
+
+/* The same window the other way around: the callback re-establishes the
+ * forward the cancel in flight is taking down. The setup went out behind the
+ * cancel, so the peer binds a listener and this side keeps matching for it. */
+static void TestForwardedTcpipReentrantSetupDuringCancel(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+
+    wolfSSH_SetHighwaterCb(harness.ctx, 1, SetupDuringCancelHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.ssh, harness.ssh);
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->txCount = 1;
+
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static int InboundOpenDuringSendHighwaterCb(byte side, void* ctx)
+{
+    ChannelOpenHarness* harness = (ChannelOpenHarness*)ctx;
+
+    WOLFSSH_UNUSED(side);
+
+    /* The request is on the wire, so matching has to be live already: this is
+     * the first setup, and until it registers nothing is tracked and every
+     * open goes unchecked. */
+    AssertIntEQ(harness->ssh->fwdRemoteTracked, 1);
+    AssertForwardedOpenRefused(harness, "10.0.0.1", 9999);
+
+    return WS_SUCCESS;
+}
+
+/* A callback that pumps the session sees the forwards the request in flight
+ * established, not the ones it found on the way in. */
+static void TestForwardedTcpipInboundOpenDuringSend(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    wolfSSH_SetHighwaterCb(harness.ctx, 1, InboundOpenDuringSendHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.ssh, &harness);
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->txCount = 1;
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestFwdRemoteMatchPortIgnoresBindAddr(void)
 {
     RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_STRICT, "localhost", 8080,
@@ -10499,6 +10616,9 @@ int main(int argc, char** argv)
     TestForwardedTcpipRequestAfterReplyDuringSend();
     TestForwardedTcpipCancelAnsweredDuringResetupKeepsForward();
     TestForwardedTcpipReentrantCancelDuringSend();
+    TestForwardedTcpipReentrantCancelOfFirstSetup();
+    TestForwardedTcpipReentrantSetupDuringCancel();
+    TestForwardedTcpipInboundOpenDuringSend();
     TestFwdRemoteMatchPortIgnoresBindAddr();
     TestFwdRemoteMatchOffAcceptsUnregistered();
     TestFwdRemoteMatchRejectsBadSetting();

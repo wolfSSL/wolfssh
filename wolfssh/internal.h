@@ -1637,9 +1637,13 @@ WOLFSSH_LOCAL int SendGlobalRequestFwdSuccess(WOLFSSH * ssh, int success,
 WOLFSSH_LOCAL int SendGlobalRequest(WOLFSSH * ssh,
         const unsigned char * data, word32 dataSz, int reply, int* sent);
 #ifdef WOLFSSH_FWD
+/* Sends the request and settles pend with it: committed once the request is on
+ * its way to the peer, discarded when it never left. Both happen before the
+ * post-send highwater callback runs, so a request that callback sends commits
+ * behind this one. */
 WOLFSSH_LOCAL int SendGlobalRequestFwd(WOLFSSH* ssh,
         const char* bindAddr, word32 bindPort, int isCancel, int wantReply,
-        int* sent);
+        WOLFSSH_FWD_PENDING* pend);
 /* On success pend holds what to commit once the request reaches the wire; on
  * error it is zeroed, so there is nothing to commit or give back. */
 WOLFSSH_LOCAL int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr,

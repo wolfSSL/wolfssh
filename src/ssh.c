@@ -3991,21 +3991,11 @@ int wolfSSH_FwdRemoteSetup(WOLFSSH* ssh, const char* bindAddr,
     if (ret == WS_SUCCESS)
         ret = FwdRemotePrepare(ssh, bindAddr, bindPort, wantReply, 0, &pend);
 
-    if (ret == WS_SUCCESS) {
-        int sent = 0;
-
+    /* The send settles pend: what reached the peer registers, even when the
+     * post-send highwater callback reports an error afterwards. */
+    if (ret == WS_SUCCESS)
         ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 0, wantReply,
-                &sent);
-
-        /* Whether the peer will bind the listener, not whether this call
-         * succeeded: a request still framed and waiting to flush reaches it,
-         * and so does one the post-send highwater callback reports an error
-         * for. Only what never left unwinds. */
-        if (sent)
-            FwdPendingCommit(ssh, &pend);
-        else
-            FwdPendingDiscard(ssh, &pend);
-    }
+                &pend);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteSetup(), ret = %d", ret);
     return ret;
@@ -4045,17 +4035,9 @@ int wolfSSH_FwdRemoteCancel(WOLFSSH* ssh, const char* bindAddr,
     if (ret == WS_SUCCESS)
         ret = FwdRemotePrepare(ssh, bindAddr, bindPort, wantReply, 1, &pend);
 
-    if (ret == WS_SUCCESS) {
-        int sent = 0;
-
+    if (ret == WS_SUCCESS)
         ret = SendGlobalRequestFwd(ssh, bindAddr, bindPort, 1, wantReply,
-                &sent);
-
-        if (sent)
-            FwdPendingCommit(ssh, &pend);
-        else
-            FwdPendingDiscard(ssh, &pend);
-    }
+                &pend);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_FwdRemoteCancel(), ret = %d", ret);
     return ret;

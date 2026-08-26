@@ -4919,10 +4919,15 @@ static int GetInputLine(WOLFSSH* ssh, byte** pEol)
 }
 
 
-/* returns WS_SUCCESS on success */
-int wolfSSH_SendPacket(WOLFSSH* ssh)
+/* Push everything framed at the peer, stopping short of the post-send
+ * highwater check. A sender with state to commit runs that check itself, after
+ * committing: the callback it fires can reenter the library and send a request
+ * of its own, which goes out behind this one and has to commit behind it too.
+ *
+ * returns WS_SUCCESS on success */
+static int SendPacketFlush(WOLFSSH* ssh)
 {
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SendPacket()");
+    WLOG(WS_LOG_DEBUG, "Entering SendPacketFlush()");
 
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
@@ -4999,7 +5004,23 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
-    return HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
+    return WS_SUCCESS;
+}
+
+
+/* returns WS_SUCCESS on success */
+int wolfSSH_SendPacket(WOLFSSH* ssh)
+{
+    int ret;
+
+    ret = SendPacketFlush(ssh);
+
+    /* Only a complete flush reaches the check, as the peer has the whole
+     * packet by then. */
+    if (ret == WS_SUCCESS)
+        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
+
+    return ret;
 }
 
 
@@ -17737,22 +17758,23 @@ int SendGlobalRequest(WOLFSSH* ssh,
 #ifdef WOLFSSH_FWD
 /* Send a "tcpip-forward" or "cancel-tcpip-forward" global request. The bind
  * address and port follow the want-reply boolean, an ordering the generic
- * SendGlobalRequest() framing cannot express. RFC 4254 7.1. */
+ * SendGlobalRequest() framing cannot express. RFC 4254 7.1.
+ *
+ * What FwdRemotePrepare() built for the request is settled here rather than by
+ * the caller, since it has to happen inside the send window. */
 int SendGlobalRequestFwd(WOLFSSH* ssh,
         const char* bindAddr, word32 bindPort, int isCancel, int wantReply,
-        int* sent)
+        WOLFSSH_FWD_PENDING* pend)
 {
     byte* output;
     word32 idx = 0;
     word32 reqNameSz;
     word32 bindAddrSz;
     const char* reqName;
+    int sent = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering SendGlobalRequestFwd()");
-
-    if (sent != NULL)
-        *sent = 0;
 
     if (ssh == NULL || bindAddr == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -17791,11 +17813,23 @@ int SendGlobalRequestFwd(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         word32 flushes = ssh->txFlushCount;
 
-        ret = wolfSSH_SendPacket(ssh);
-
-        if (sent != NULL)
-            *sent = SendPacketDelivered(ssh, flushes, ret);
+        ret = SendPacketFlush(ssh);
+        sent = SendPacketDelivered(ssh, flushes, ret);
     }
+
+    /* Whether the peer will bind the listener, not whether this call
+     * succeeded: a request still framed and waiting to flush reaches it. Only
+     * what never left unwinds. */
+    if (sent)
+        FwdPendingCommit(ssh, pend);
+    else
+        FwdPendingDiscard(ssh, pend);
+
+    /* Held back until the commit is done. The callback can reenter and send a
+     * request of its own, which goes out behind this one, and the last request
+     * sent is the one that governs. */
+    if (ret == WS_SUCCESS)
+        ret = HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
 
     WLOG(WS_LOG_DEBUG, "Leaving SendGlobalRequestFwd(), ret = %d", ret);
 

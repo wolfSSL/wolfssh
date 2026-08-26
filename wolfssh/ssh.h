@@ -319,7 +319,9 @@ DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(
  * Several requests can name one bind at once, and the last one sent governs.
  * Registering again while a cancel is outstanding brings the forward back as
  * the request goes out, and no answer to that older cancel takes it away
- * again, whatever order the peer answers in.
+ * again, whatever order the peer answers in. A request one of these calls
+ * makes from a callback it fires is no different: it goes out behind this
+ * one, so it is the one that governs.
  *
  * WS_WANT_WRITE means the request is framed and goes out on the next flush,
  * with the forward registered. So does an error reported after the request
