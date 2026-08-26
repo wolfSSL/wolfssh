@@ -726,9 +726,14 @@ Optional overrides:
   licensees).
 - `SBOM_LICENSE_TEXT` - path to the licence text for any `LicenseRef-*` used in
   `SBOM_LICENSE_OVERRIDE` (required by SPDX 2.3).
-- `SBOM_WOLFSSL_VERSION` - version recorded for the wolfSSL dependency;
-  auto-detected from `WOLFSSL_DIR/wolfssl/version.h` (or wolfSSL's `pkg-config`
-  entry) when unset.
+- `SBOM_WOLFSSL_VERSION` - version recorded for the wolfSSL dependency. When
+  unset it is read from `WOLFSSL_DIR/wolfssl/version.h`, falling back to
+  `AC_INIT` in `WOLFSSL_DIR/configure.ac`. Note `wolfssl/version.h` is generated
+  by configure, so `make distclean` in the wolfSSL tree removes it until you
+  re-run configure; the `configure.ac` fallback covers that case. If neither is
+  readable, `make sbom` fails rather than falling back to `pkg-config`, which
+  reports the *installed* wolfSSL and may describe a different build than
+  `WOLFSSL_DIR`.
 
 ```sh
 make install-sbom    # installs to $(datadir)/doc/wolfssh/
