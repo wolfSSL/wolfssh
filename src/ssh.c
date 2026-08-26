@@ -1257,7 +1257,10 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
     }
 
-    if (ssh->isKeying) {
+    /* A rekey the peer abandoned with a disconnect never completes, since
+     * only NEWKEYS clears the flag. Report the dead session instead, or the
+     * caller turns the crank forever. */
+    if (ssh->isKeying && !ssh->disconnected) {
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
@@ -1324,7 +1327,9 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_ERROR;
     }
 
-    if (ssh->isKeying) {
+    /* See wolfSSH_stream_peek(): a disconnect ends a rekey that can no
+     * longer finish, so it outranks it here too. */
+    if (ssh->isKeying && !ssh->disconnected) {
         ssh->error = WS_REKEYING;
         return WS_FATAL_ERROR;
     }
@@ -1374,8 +1379,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         }
     }
 
-    /* update internal input buffer based on data read */
-    if (ret == WS_SUCCESS && !ssh->isKeying) {
+    /* update internal input buffer based on data read. DoReceive() above may
+     * have started a rekey, which holds the copy back -- unless a disconnect
+     * came with it, since then the rekey never finishes and the buffered data
+     * would never be handed back. */
+    if (ret == WS_SUCCESS && (!ssh->isKeying || ssh->disconnected)) {
         int n;
 
         n = min(bufSz, inputBuffer->length - inputBuffer->idx);
