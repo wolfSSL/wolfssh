@@ -9,8 +9,7 @@ on:
     inputs:
       wolfssl_ref:
         description: 'wolfssl git ref that provides scripts/gen-sbom'
-        # TODO: switch back to 'master' once wolfSSL/wolfssl#10343 merges.
-        default: 'refs/pull/10343/head'
+        default: 'master'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,15 +33,12 @@ jobs:
       # wolfssl is checked out once and used for two things: built + installed
       # so wolfssh has a library to link, and its source tree (scripts/gen-sbom
       # + wolfssl/version.h) is passed to `make sbom` via WOLFSSL_DIR.  gen-sbom
-      # is not yet on wolfssl master, so default to the open PR head that carries
-      # it (wolfSSL/wolfssl#10343) so CI actually exercises `make sbom` instead of
-      # silently skipping.  TODO: switch the fallback back to 'master' once
-      # #10343 merges.
+      # landed on wolfssl master in wolfSSL/wolfssl#10343, so CI tracks master.
       - name: Checkout wolfssl (gen-sbom + library source)
         uses: actions/checkout@v4
         with:
           repository: wolfSSL/wolfssl
-          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
+          ref: ${{ github.event.inputs.wolfssl_ref || 'master' }}
           path: wolfssl
 
       - name: Install SBOM validator (pyspdxtools) and pcpp
@@ -60,17 +56,16 @@ jobs:
           make -j"$(nproc)"
           make install
 
-      # gen-sbom lives in wolfssl and may not be on the checked-out ref yet
-      # (the wolfSSL SBOM change can land separately).  Gate on its presence so
-      # this workflow is safe to merge before that: it stays green and simply
-      # skips SBOM generation until a ref that carries the script is used.
+      # gen-sbom is on wolfssl master (wolfSSL/wolfssl#10343), but an older
+      # wolfssl_ref may predate it.  Gate on its presence so a deliberately
+      # pinned older ref skips SBOM generation rather than failing.
       - name: Detect gen-sbom availability and capabilities
         id: gate
         run: |
           GS="$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom"
           if [ ! -f "$GS" ]; then
             echo "have=no" >> "$GITHUB_OUTPUT"
-            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping SBOM generation. Re-run via 'Run workflow' with wolfssl_ref set to a branch that has it until it merges to wolfssl master."
+            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping SBOM generation. It is on wolfssl master; re-run via 'Run workflow' with wolfssl_ref=master."
             exit 0
           fi
           echo "have=yes" >> "$GITHUB_OUTPUT"
@@ -78,7 +73,7 @@ jobs:
             echo "dep_wolfssl=yes" >> "$GITHUB_OUTPUT"
           else
             echo "dep_wolfssl=no" >> "$GITHUB_OUTPUT"
-            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped (wolfSSL SBOM change not merged yet)."
+            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped (ref predates wolfSSL/wolfssl#10343)."
           fi
 
       - name: Configure and build wolfssh
