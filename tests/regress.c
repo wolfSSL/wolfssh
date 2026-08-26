@@ -3455,6 +3455,80 @@ static void TestShutdownFlushesQueuedDisconnect(void)
 }
 
 
+/* A rekey that the peer abandons with a DISCONNECT never completes: only
+ * NEWKEYS clears isKeying, and nothing more arrives. The read calls test
+ * isKeying first, so they report WS_REKEYING forever and the caller's
+ * "keep turning the crank" branch spins for the life of the connection.
+ * A dead session outranks a rekey that can no longer finish. */
+static void TestDisconnectOutranksRekey(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte in[128];
+    byte out[256];
+    byte payload[32];
+    byte data[64];
+    word32 inSz;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* Channel data that arrived before the rekey started. */
+    WMEMSET(payload, 'a', sizeof(payload));
+    AssertIntEQ(ChannelPutData(channel, payload, sizeof(payload)), WS_SUCCESS);
+
+    /* The peer's KEXINIT, the way DoKexInit records it. */
+    ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+
+    /* DISCONNECT is a transport-generic message, so the rekey filter in
+     * IsMessageAllowed() lets it through. */
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(DoReceive(ssh), WS_FATAL_ERROR);
+    AssertTrue(ssh->disconnected);
+    /* The rekey is stuck: no NEWKEYS is ever coming. */
+    AssertTrue(ssh->isKeying != 0);
+    io.outSz = 0;
+
+    /* What arrived before the disconnect is still the caller's. */
+    ret = wolfSSH_stream_peek(ssh, data, sizeof(data));
+    AssertIntEQ(ret, (int)sizeof(payload));
+    ret = wolfSSH_stream_read(ssh, data, sizeof(data));
+    AssertIntEQ(ret, (int)sizeof(payload));
+
+    /* Drained, so both report the disconnect instead of a rekey that will
+     * never finish. */
+    ret = wolfSSH_stream_peek(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    ret = wolfSSH_stream_read(ssh, data, sizeof(data));
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    /* The drain stayed quiet, as it does outside a rekey. */
+    AssertIntEQ(io.outSz, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* A flush that is itself short owns ssh->error. Callers gate their retry on
  * WS_WANT_WRITE, so the disconnect gate must not overwrite it. */
 static void TestShutdownKeepsFlushWantWrite(void)
@@ -7292,6 +7366,7 @@ int main(int argc, char** argv)
     TestQueuedDisconnectFlushes();
     TestShutdownFlushesQueuedDisconnect();
     TestShutdownKeepsFlushWantWrite();
+    TestDisconnectOutranksRekey();
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
     TestTerminalResizeBlockedAfterDisconnect();
 #endif
