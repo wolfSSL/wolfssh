@@ -3730,6 +3730,7 @@ static int CertKeyCanSign(PCCERT_CONTEXT pCertContext)
      * later, so reject it here rather than misreport it as usable. */
     if (dwKeySpec != CERT_NCRYPT_KEY_SPEC) {
         if (fCallerFree) {
+            /* a CSP handle is not an NCRYPT object; release it as a CSP */
             CryptReleaseContext(hKey, 0);
         }
         return WS_CERT_KEY_NONE;
@@ -4223,7 +4224,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
      * host key type that cannot be used for signing. */
     if (pPubKeyInfo->Algorithm.pszObjId != NULL) {
         /* Compare OID strings (they are ASCII, not wide) */
-        if (strcmp(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
+        if (WSTRCMP(pPubKeyInfo->Algorithm.pszObjId, szOID_RSA_RSA) == 0) {
         /* An RSA slot is useless without an RSA signature algorithm to
          * negotiate, so require one the way wolfSSH_CTX_UseTpmHostKey does
          * rather than consuming a slot RefreshPublicKeyAlgo will not
@@ -4239,7 +4240,7 @@ int wolfSSH_CTX_UsePrivateKey_fromStore(WOLFSSH_CTX* ctx,
                 "No usable RSA signature algorithm is compiled in");
         #endif
         }
-        else if (strcmp(pPubKeyInfo->Algorithm.pszObjId,
+        else if (WSTRCMP(pPubKeyInfo->Algorithm.pszObjId,
                     szOID_ECC_PUBLIC_KEY) == 0) {
         #ifndef WOLFSSH_NO_ECDSA
             /* The algorithm parameters hold the DER-encoded named-curve

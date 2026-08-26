@@ -3195,9 +3195,8 @@ static void ShowUsage(void)
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
  * Windows certificate store, without doing the full option parse that
- * echoserver_test() does later. Used to decide, before any file-based
- * key lookup, whether the root directory search for PEM key files should
- * be skipped. */
+ * echoserver_test() does later. Used to decide whether the root directory
+ * search for PEM key files should be skipped. */
 static int EchoserverUsingCertStore(int argc, char** argv)
 {
     int i;
@@ -3468,11 +3467,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                     useCustomHighWaterCb = 1;
                     break;
 
-#ifdef WOLFSSH_WINDOWS_CERT_STORE
                 case 'W':
-                    certStoreSpec = myoptarg;
+                    #ifdef WOLFSSH_WINDOWS_CERT_STORE
+                        certStoreSpec = myoptarg;
+                    #else
+                        ES_ERROR("-W requires wolfSSH built with "
+                                 "WOLFSSH_WINDOWS_CERT_STORE "
+                                 "(--enable-windows-cert-store)\n");
+                    #endif
                     break;
-#endif
 
                 default:
                     ShowUsage();
@@ -3710,32 +3713,25 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             wchar_t* wStoreName = NULL;
             wchar_t* wSubjectName = NULL;
             word32 dwFlags = 0;
+            const char* storeErr = NULL;
             int ret;
 
             ret = wolfSSH_ParseCertStoreSpec(certStoreSpec, &wStoreName,
                     &wSubjectName, &dwFlags, heap);
             if (ret != WS_SUCCESS) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
-                #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-                if (kbAuthData.promptCount > 0) {
-                    WFREE(kbAuthData.promptLengths, NULL, 0);
-                    WFREE(kbAuthData.prompts, NULL, 0);
-                    WFREE(kbAuthData.promptEcho, NULL, 0);
-                }
-                #endif
-                wc_FreeMutex(&doneLock);
-                PwMapListDelete(&pwMapList);
-                wolfSSH_CTX_free(ctx);
-                ES_ERROR("Invalid cert store spec. Use: store:subject:flags\n");
+                storeErr =
+                    "Invalid cert store spec. Use: store:subject:flags\n";
             }
-
-            ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
-                    dwFlags, wSubjectName);
-            wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
-            if (ret != WS_SUCCESS) {
+            else {
+                ret = wolfSSH_CTX_UsePrivateKey_fromStore(ctx, wStoreName,
+                        dwFlags, wSubjectName);
+                wolfSSH_FreeCertStoreSpec(wStoreName, wSubjectName, heap);
+                if (ret != WS_SUCCESS) {
+                    storeErr =
+                        "Couldn't load host key from certificate store.\n";
+                }
+            }
+            if (storeErr != NULL) {
                 #ifdef WOLFSSH_SMALL_STACK
                 wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
                 WFREE(keyLoadBuf, NULL, 0);
@@ -3750,7 +3746,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 wc_FreeMutex(&doneLock);
                 PwMapListDelete(&pwMapList);
                 wolfSSH_CTX_free(ctx);
-                ES_ERROR("Couldn't load host key from certificate store.\n");
+                ES_ERROR("%s", storeErr);
             }
             loadDefaultHostKeys = 0;
         }
@@ -4180,18 +4176,18 @@ int wolfSSH_Echoserver(int argc, char** argv)
     #ifdef DEBUG_WOLFSSH
         wolfSSH_Debugging_ON();
     #endif
+
 #if !defined(WOLFSSL_NUCLEUS) && !defined(INTEGRITY) && !defined(__INTEGRITY)
-    #ifdef WOLFSSH_WINDOWS_CERT_STORE
-    /* When using the Windows certificate store for host keys, the
-     * echoserver does not need file-based keys, so skip the root
-     * directory search that looks for ./keys/server-key-rsa.pem. */
+    /* EchoserverUsingCertStore() lives in the NO_WOLFSSH_SERVER block above. */
+    #if defined(WOLFSSH_WINDOWS_CERT_STORE) && !defined(NO_WOLFSSH_SERVER)
+    /* With a Windows cert store host key no file based keys are needed, so
+     * skip the root directory search for ./keys/server-key-rsa.pem. */
     if (!EchoserverUsingCertStore(argc, argv))
     #endif
     {
         ChangeToWolfSshRoot();
     }
 #endif
-
 #ifndef NO_WOLFSSH_SERVER
     echoserver_test(&args);
 #else

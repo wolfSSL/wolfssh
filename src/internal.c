@@ -17270,8 +17270,21 @@ static int SignWithCertStoreKey(WOLFSSH* ssh,
         return WS_CRYPTO_FAILED;
     }
 
-    /* Sign using CNG (Next Generation Crypto API). Only NCRYPT keys are
-     * acquired above, so dwKeySpec is always CERT_NCRYPT_KEY_SPEC here. */
+    /* The key is acquired again here, long after CertKeyCanSign() classified
+     * it at load time, so make the same check it does before handing the
+     * union-typed handle to CNG: a certificate re-enrolled to a legacy CSP in
+     * between would otherwise reach NCryptSignHash() as an HCRYPTPROV. */
+    if (dwKeySpec != CERT_NCRYPT_KEY_SPEC) {
+        WLOG(WS_LOG_DEBUG, "SignWithCertStoreKey: Private key is not a CNG "
+                "key, it cannot sign");
+        if (fCallerFreeProv) {
+            CryptReleaseContext(hCryptProv, 0);
+        }
+        return WS_CRYPTO_FAILED;
+    }
+
+    /* Sign using CNG (Next Generation Crypto API). Only NCRYPT keys reach
+     * this point, so dwKeySpec is CERT_NCRYPT_KEY_SPEC here. */
     {
         DWORD cbSignature = *sigSz;
 
@@ -20737,8 +20750,12 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     byte* r;
     byte* s;
-    byte sig[139]; /* wc_ecc_sig_size() for a prime521 key. */
-    byte rs[139];  /* wc_ecc_sig_size() for a prime521 key. */
+    /* ECC_MAX_SIG_SIZE, as BuildUserAuthRequestEcc() uses: a P-521 DER
+     * signature reaches 141 bytes when both r and s need a pad byte, so the
+     * old literal 139 made wc_ecc_sign_hash() fail with BUFFER_E for most
+     * P-521 signatures. */
+    byte sig[ECC_MAX_SIG_SIZE];
+    byte rs[ECC_MAX_SIG_SIZE];
     word32 sigSz = (word32)sizeof(sig), rSz, sSz;
     byte* checkData = NULL;
     word32 checkDataSz = 0;
