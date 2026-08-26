@@ -3532,6 +3532,70 @@ static void TestDisconnectOutranksRekey(void)
 }
 
 
+/* disconnectTxd means "a flush is owed", not "a disconnect was sent". Once
+ * ours has gone out, a teardown call must not push whatever the internal
+ * senders queued behind it. */
+static void TestDisconnectTxdClearsOnFlush(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[512];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Our disconnect short-sends, so a flush is owed. */
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertTrue(ssh->disconnectTxd);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+
+    /* The caller's retry loop pumps it out in full, so nothing is owed. */
+    AssertIntEQ(wolfSSH_SendPacket(ssh), WS_SUCCESS);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertFalse(ssh->disconnectTxd);
+    AssertIntEQ(out[LENGTH_SZ + 1], MSGID_DISCONNECT);
+    io.outSz = 0;
+
+    /* An in-flight CHANNEL_EOF draws a reply out of DoChannelEof(); the
+     * internal senders are not behind the disconnect gate. It short-sends,
+     * so it sits in the output buffer. */
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(SendChannelEof(ssh, channel->peerChannel), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+
+    /* Teardown must leave it there: the disconnect is already gone, so this
+     * would be traffic after it. RFC 4253 section 11.1. */
+    ret = wolfSSH_shutdown(ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* A flush that is itself short owns ssh->error. Callers gate their retry on
  * WS_WANT_WRITE, so the disconnect gate must not overwrite it. */
 static void TestShutdownKeepsFlushWantWrite(void)
@@ -7369,6 +7433,7 @@ int main(int argc, char** argv)
     TestQueuedDisconnectFlushes();
     TestShutdownFlushesQueuedDisconnect();
     TestShutdownKeepsFlushWantWrite();
+    TestDisconnectTxdClearsOnFlush();
     TestDisconnectOutranksRekey();
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
     TestTerminalResizeBlockedAfterDisconnect();
