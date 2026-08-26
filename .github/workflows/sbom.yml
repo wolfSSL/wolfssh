@@ -56,24 +56,36 @@ jobs:
           make -j"$(nproc)"
           make install
 
-      # gen-sbom is on wolfssl master (wolfSSL/wolfssl#10343), but an older
-      # wolfssl_ref may predate it.  Gate on its presence so a deliberately
-      # pinned older ref skips SBOM generation rather than failing.
+      # gen-sbom is on wolfssl master (wolfSSL/wolfssl#10343).  On master its
+      # absence, or a gen-sbom too old to support --dep-wolfssl, is a real
+      # regression: fail rather than skip, so a green run always means
+      # `make sbom` was actually exercised.  Only a deliberately pinned older
+      # wolfssl_ref, which may predate the script, degrades to a skip.
       - name: Detect gen-sbom availability and capabilities
         id: gate
+        env:
+          WOLFSSL_REF: ${{ github.event.inputs.wolfssl_ref || 'master' }}
         run: |
           GS="$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom"
           if [ ! -f "$GS" ]; then
+            if [ "$WOLFSSL_REF" = master ]; then
+              echo "::error::wolfssl scripts/gen-sbom is missing on master; it landed in wolfSSL/wolfssl#10343, so its absence is a regression. Failing instead of skipping SBOM generation."
+              exit 1
+            fi
             echo "have=no" >> "$GITHUB_OUTPUT"
-            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping SBOM generation. It is on wolfssl master; re-run via 'Run workflow' with wolfssl_ref=master."
+            echo "::notice::wolfssl scripts/gen-sbom not present on pinned ref '$WOLFSSL_REF'; skipping SBOM generation. Re-run with wolfssl_ref=master to exercise it."
             exit 0
           fi
           echo "have=yes" >> "$GITHUB_OUTPUT"
           if python3 "$GS" --help 2>/dev/null | grep -q -- '--dep-wolfssl'; then
             echo "dep_wolfssl=yes" >> "$GITHUB_OUTPUT"
           else
+            if [ "$WOLFSSL_REF" = master ]; then
+              echo "::error::gen-sbom on master has no --dep-wolfssl support; that is part of wolfSSL/wolfssl#10343. Failing instead of passing with the wolfssl-dependency assertions skipped."
+              exit 1
+            fi
             echo "dep_wolfssl=no" >> "$GITHUB_OUTPUT"
-            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped (ref predates wolfSSL/wolfssl#10343)."
+            echo "::notice::gen-sbom on pinned ref '$WOLFSSL_REF' has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped (ref predates wolfSSL/wolfssl#10343)."
           fi
 
       - name: Configure and build wolfssh
