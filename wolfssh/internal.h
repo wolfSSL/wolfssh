@@ -1110,7 +1110,8 @@ struct WOLFSSH {
      * paths pump the worker. */
     byte disconnected;
     /* Set once SendDisconnect() has bundled our own DISCONNECT into the
-     * output buffer, so a short send can still be flushed. The flag above
+     * output buffer, and cleared once wolfSSH_SendPacket() drains it, so it
+     * means "a flush is owed" rather than "one was sent". The flag above
      * cannot stand in for this: it does not say whose disconnect it was,
      * and a peer's leaves only unrelated traffic queued. */
     byte disconnectTxd;

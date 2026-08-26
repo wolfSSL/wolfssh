@@ -4327,6 +4327,11 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 
     ssh->outputBuffer.plainSz = 0;
 
+    /* The buffer is empty, so our disconnect, if one was in it, has gone
+     * out and no flush is owed. Leaving this set hands the next teardown
+     * call a licence to push whatever gets queued next. */
+    ssh->disconnectTxd = 0;
+
     WLOG(WS_LOG_DEBUG, "SB: Shrinking output buffer");
     ShrinkBuffer(&ssh->outputBuffer, 0);
     return HighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT);
