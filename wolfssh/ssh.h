@@ -68,6 +68,34 @@ WOLFSSH_API void wolfSSH_CTX_free(WOLFSSH_CTX* ctx);
 WOLFSSH_API WOLFSSH* wolfSSH_new(WOLFSSH_CTX* ctx);
 WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
 
+/* Services the connection: reads what is pending and flushes what is queued.
+ * Returns WS_SUCCESS, or one of several non-fatal statuses that callers must
+ * not treat as errors:
+ *   WS_CHAN_RXD       channel data arrived; read it with wolfSSH_stream_read()
+ *                     or wolfSSH_ChannelIdRead()
+ *   WS_EXTDATA        extended (stderr) data arrived; drain it with
+ *                     wolfSSH_ChannelIdReadExt()
+ *   WS_EOF            the peer half-closed a channel; it sends no more data,
+ *                     but the channel is still open for sending. Raised once,
+ *                     on arrival, and a back-pressure status from the flush
+ *                     that follows can supersede it, so an application that
+ *                     must not miss one tests wolfSSH_ChannelGetEof() or takes
+ *                     the channel EOF callback. Reply, if the protocol wants
+ *                     one, with wolfSSH_ChannelSendEof(); the library does
+ *                     not.
+ *   WS_CHANNEL_CLOSED the peer closed a channel, which has been retired
+ *   WS_WANT_READ / WS_WANT_WRITE / WS_REKEYING / WS_WINDOW_FULL
+ *                     transient; call again
+ * Anything else is an error: WS_BAD_ARGUMENT, or WS_FATAL_ERROR with the
+ * cause in wolfSSH_get_error() -- WS_DISCONNECT for the peer's disconnect,
+ * which is how most sessions end.
+ *
+ * For WS_CHAN_RXD, WS_EXTDATA, WS_EOF and WS_SUCCESS, channelId (when not
+ * NULL) names the channel the event belongs to. It is left alone for every
+ * other status, WS_CHANNEL_CLOSED included; use wolfSSH_GetLastRxId() there.
+ *
+ * Note that after a peer half-close wolfSSH_stream_send() keeps working: the
+ * library latches only the EOF it sends, not the one it receives. */
 WOLFSSH_API int wolfSSH_worker(WOLFSSH* ssh, word32* channelId);
 WOLFSSH_API int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId);
 
