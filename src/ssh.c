@@ -1569,6 +1569,43 @@ int wolfSSH_ChannelIdSendExt(WOLFSSH* ssh, word32 channelId,
 }
 
 
+int wolfSSH_stream_send_eof(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_send_eof()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /* Ahead of the channel-list test, like the other stream calls, so a
+     * torn-down session reports the disconnect and not a bad argument. */
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
+        ret = WS_FATAL_ERROR;
+
+    if (ret == WS_SUCCESS && ssh->channelList == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    /* Only KEX traffic may go out mid-rekey, RFC 4253 section 7.1. */
+    if (ret == WS_SUCCESS && ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        ret = WS_REKEYING;
+    }
+
+    /* Same peer-id lookup as wolfSSH_ChannelSendEof(), so the same guard. */
+    if (ret == WS_SUCCESS && !ssh->channelList->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+        ret = WS_CHANNEL_NOT_CONF;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send_eof(), ret = %d", ret);
+    return ret;
+}
+
+
 int wolfSSH_stream_exit(WOLFSSH* ssh, int status)
 {
     int ret = WS_SUCCESS;
@@ -4376,6 +4413,40 @@ int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel)
                 channel->peerChannel, WS_CHANNEL_ID_PEER);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelExit(), ret = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_ChannelSendEof(WOLFSSH_CHANNEL* channel)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSendEof()");
+
+    /* Every gate below reaches through ssh, so take it up front. */
+    if (channel == NULL || channel->ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS && SendAfterDisconnect(channel->ssh))
+        ret = WS_FATAL_ERROR;
+
+    /* Only KEX traffic may go out mid-rekey, RFC 4253 section 7.1. */
+    if (ret == WS_SUCCESS && channel->ssh->isKeying) {
+        channel->ssh->error = WS_REKEYING;
+        ret = WS_REKEYING;
+    }
+
+    /* peerChannel is 0 until the open is confirmed, and SendChannelEof()
+     * resolves by peer id. */
+    if (ret == WS_SUCCESS && !channel->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+        ret = WS_CHANNEL_NOT_CONF;
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(channel->ssh, channel->peerChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelSendEof(), ret = %d", ret);
     return ret;
 }
 

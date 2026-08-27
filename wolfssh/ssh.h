@@ -324,6 +324,28 @@ WOLFSSH_API int wolfSSH_ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf,
 WOLFSSH_API int wolfSSH_ChannelSendExt(WOLFSSH_CHANNEL* channel,
         const byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel);
+/* Sends SSH_MSG_CHANNEL_EOF, closing the sending direction and leaving the
+ * receiving direction open (the half-close of RFC 4254 section 5.3). Data
+ * sends on the channel then fail with WS_EOF -- wolfSSH_ChannelSend(),
+ * wolfSSH_stream_send() and the extended-data variants; requests, the exit
+ * status and the teardown messages still go out. Reads work until the peer
+ * sends its own EOF or closes. Idempotent: a second call puts no second EOF
+ * on the wire.
+ *
+ * The library never answers a received EOF with one of its own. It reports it
+ * as WS_EOF and through the channel EOF callback, and the application decides
+ * whether to reply, with this call or wolfSSH_stream_send_eof(). A
+ * back-pressure status can supersede the WS_EOF from wolfSSH_worker();
+ * wolfSSH_ChannelGetEof() is the durable check.
+ * wolfSSH_ChannelExit() and wolfSSH_shutdown() send an EOF themselves while
+ * tearing the channel down.
+ *
+ * Returns WS_SUCCESS, WS_BAD_ARGUMENT on a NULL channel,
+ * WS_CHANNEL_NOT_CONF if the peer has not confirmed the channel open yet,
+ * WS_REKEYING during a key exchange, WS_FATAL_ERROR with WS_DISCONNECT
+ * latched once the session is over, or a send-path status such as
+ * WS_WANT_WRITE. */
+WOLFSSH_API int wolfSSH_ChannelSendEof(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel);
 WOLFSSH_API const char* wolfSSH_ChannelGetType(
         const WOLFSSH_CHANNEL* channel);
@@ -610,6 +632,11 @@ WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
  * next send or a wolfSSH_worker() whose receive succeeded. Others failed. */
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Half-closes the first channel in the list. See wolfSSH_ChannelSendEof().
+ * Unlike wolfSSH_stream_send(), which returns WS_FATAL_ERROR with the cause
+ * latched, this reports WS_REKEYING itself, the way wolfSSH_stream_peek()
+ * does. */
+WOLFSSH_API int wolfSSH_stream_send_eof(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
 WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Reads the buffered stderr of the first channel in the channel list into out;

@@ -4357,6 +4357,19 @@ static int DiscardIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     (void)ssh; (void)buf; (void)ctx;
     return (int)sz;
 }
+
+static int s_ioSendCalls = 0;
+
+/* Discards like DiscardIoSend, but counts the calls so a test can assert that
+ * nothing at all was handed to the transport. */
+static WS_MAYBE_UNUSED int CountingIoSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    s_ioSendCalls++;
+    return (int)sz;
+}
+
 /* Reports a short (would-block) write, so an adjust bundled into the output
  * buffer reaches the transport but does not fully flush: wolfSSH_SendPacket()
  * maps WS_CBIO_ERR_WANT_WRITE to WS_WANT_WRITE. */
@@ -6988,6 +7001,12 @@ static int test_WorkerReportsEofChannelKeying(void)
     ret = wolfSSH_stream_peek(ssh, NULL, 1);
     if (ret != WS_REKEYING) { result = -1607; goto done; }
 
+    /* The new send-EOF API refuses to put a packet between KEXINIT and
+     * NEWKEYS. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_REKEYING) { result = -1608; goto done; }
+    if (ch->eofTxd) { result = -1609; goto done; }
+
 done:
     s_recvPkt = NULL;
     s_recvPktSz = 0;
@@ -6998,6 +7017,219 @@ done:
 }
 
 #endif /* NO_WOLFSSH_SERVER */
+
+#ifndef NO_WOLFSSH_CLIENT
+/* wolfSSH_stream_send_eof() and wolfSSH_ChannelSendEof() close the
+ * application's own sending direction. Sends afterwards must fail, reads must
+ * not, and a second call must not put a second EOF on the wire. */
+static int test_SendEofApi(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             buf[4] = { 0x00, 0x01, 0x02, 0x03 };
+
+    if (wolfSSH_stream_send_eof(NULL) != WS_BAD_ARGUMENT)
+        return -1490;
+    if (wolfSSH_ChannelSendEof(NULL) != WS_BAD_ARGUMENT)
+        return -1491;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1492;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1493; goto done; }
+    /* Connection-protocol messages are only allowed once userauth is done. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* No channel yet: nothing to half-close. */
+    if (wolfSSH_stream_send_eof(ssh) != WS_BAD_ARGUMENT) {
+        result = -1494;
+        goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1495; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1496;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    ret = wolfSSH_stream_send(ssh, buf, (word32)sizeof(buf));
+    if (ret != (int)sizeof(buf)) { result = -1497; goto done; }
+
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_SUCCESS) { result = -1498; goto done; }
+    if (!ch->eofTxd) { result = -1499; goto done; }
+
+    /* Our direction is closed. */
+    ret = wolfSSH_stream_send(ssh, buf, (word32)sizeof(buf));
+    if (ret != WS_EOF) { result = -1500; goto done; }
+
+    /* Idempotent: the second call must not reach the transport at all.
+     * DiscardIoSend flushes everything, so outputBuffer.length is 0 either
+     * way and could not tell a second EOF from none. */
+    wolfSSH_SetIOSend(ctx, CountingIoSend);
+    s_ioSendCalls = 0;
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1501; goto done; }
+    if (s_ioSendCalls != 0) { result = -1502; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+/* A disconnect, sent or received, ends the session, so neither send-EOF
+ * entry point may put a CHANNEL_EOF on the wire afterwards. RFC 4253
+ * section 11.1. */
+static int test_SendEofAfterDisconnect(void)
+{
+    WOLFSSH_CTX*     ctx  = NULL;
+    WOLFSSH*         ssh  = NULL;
+    WOLFSSH_CHANNEL* ch   = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1660;
+    wolfSSH_SetIOSend(ctx, CountingIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1661; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1662; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1663;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* Our own disconnect is the last thing that may go out. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    if (ret != WS_SUCCESS) { result = -1664; goto done; }
+    if (!ssh->disconnected) { result = -1665; goto done; }
+
+    s_ioSendCalls = 0;
+
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_FATAL_ERROR) { result = -1666; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_DISCONNECT) { result = -1667; goto done; }
+
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_FATAL_ERROR) { result = -1668; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_DISCONNECT) { result = -1669; goto done; }
+
+    /* Nothing reached the transport and the channel is unmarked, so a
+     * later drain cannot mistake it for a half-close of ours. */
+    if (s_ioSendCalls != 0) { result = -1670; goto done; }
+    if (ch->eofTxd) { result = -1671; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+/* SendChannelEof() addresses the channel by peer id, and peerChannel is 0
+ * until the peer confirms the open. wolfSSH_ChannelSendEof() on a channel
+ * still awaiting its confirmation must refuse rather than let the lookup land
+ * on whichever channel already holds peer id 0. */
+static int test_SendEofUnconfirmedChannel(void)
+{
+    WOLFSSH_CTX*     ctx  = NULL;
+    WOLFSSH*         ssh  = NULL;
+    WOLFSSH_CHANNEL* sess = NULL;
+    WOLFSSH_CHANNEL* pend = NULL;
+    int              result = 0;
+    int              ret;
+    byte             buf[4] = { 0x00, 0x01, 0x02, 0x03 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1630;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1631; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* The live session channel, confirmed, holding peer id 0. */
+    sess = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (sess == NULL) { result = -1632; goto done; }
+    if (ChannelAppend(ssh, sess) != WS_SUCCESS) {
+        ChannelDelete(sess, ssh->ctx->heap);
+        result = -1633;
+        goto done;
+    }
+    sess->openConfirmed = 1;
+    sess->peerChannel = 0;
+    sess->peerWindowSz = 1024;
+    sess->peerMaxPacketSz = 1024;
+
+    /* A second channel whose open has only been sent, as
+     * wolfSSH_ChannelFwdNewLocal() hands back. */
+    pend = ChannelNew(ssh, ID_CHANTYPE_TCPIP_DIRECT, 1024, 1024);
+    if (pend == NULL) { result = -1634; goto done; }
+    if (ChannelAppend(ssh, pend) != WS_SUCCESS) {
+        ChannelDelete(pend, ssh->ctx->heap);
+        result = -1635;
+        goto done;
+    }
+    if (pend->openConfirmed || pend->peerChannel != 0) {
+        result = -1636;
+        goto done;
+    }
+
+    ret = wolfSSH_ChannelSendEof(pend);
+    if (ret != WS_CHANNEL_NOT_CONF) { result = -1637; goto done; }
+
+    /* Neither channel was half-closed, and the session can still send. */
+    if (sess->eofTxd || pend->eofTxd) { result = -1638; goto done; }
+    ret = wolfSSH_ChannelSend(sess, buf, (word32)sizeof(buf));
+    if (ret != (int)sizeof(buf)) { result = -1639; goto done; }
+
+    /* wolfSSH_stream_send_eof() runs the same lookup on the head, so it
+     * needs the same guard. An unconfirmed head resolves to whichever
+     * channel holds peer id 0, itself included, and latching eofTxd there
+     * would silence the real channel's send direction for good. */
+    sess->openConfirmed = 0;
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_CHANNEL_NOT_CONF) { result = -1650; goto done; }
+    if (sess->eofTxd || pend->eofTxd) { result = -1651; goto done; }
+
+    sess->openConfirmed = 1;
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_SUCCESS) { result = -1652; goto done; }
+    if (!sess->eofTxd) { result = -1653; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
 #ifndef NO_WOLFSSH_SERVER
 static int    s_eofCbCalls   = 0;
 static word32 s_eofCbChannel = 0;
@@ -7151,6 +7383,60 @@ done:
     return result;
 }
 #endif /* NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* Only KEX traffic may go out mid-rekey, RFC 4253 section 7.1, and the head
+ * variant needs the same gate as wolfSSH_ChannelSendEof(). It reports the
+ * rekey itself rather than latching it behind WS_FATAL_ERROR, which is what
+ * the header promises. */
+static int test_StreamSendEofRekeying(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1730;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1731; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1732; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1733;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    ssh->isKeying = 1;
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_REKEYING) { result = -1734; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_REKEYING) { result = -1735; goto done; }
+    if (ch->eofTxd) { result = -1736; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1737; goto done; }
+
+    /* And it goes out once the rekey is done. */
+    ssh->isKeying = 0;
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_SUCCESS) { result = -1738; goto done; }
+    if (!ch->eofTxd) { result = -1739; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -19019,6 +19305,26 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
 #endif /* NO_WOLFSSH_SERVER */
 
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendEofApi();
+    printf("SendEofApi: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendEofUnconfirmedChannel();
+    printf("SendEofUnconfirmedChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendEofAfterDisconnect();
+    printf("SendEofAfterDisconnect: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
 #ifndef NO_WOLFSSH_SERVER
     unitResult = test_ChannelEofCallback();
     printf("ChannelEofCallback: %s\n",
@@ -19032,6 +19338,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_SERVER */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_StreamSendEofRekeying();
+    printf("StreamSendEofRekeying: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
 
     unitResult = test_SendChannelData_eofTxd();
     printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
