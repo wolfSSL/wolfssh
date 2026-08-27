@@ -1033,6 +1033,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     size_t sz = 0;
     WCHAR h[MAX_PATH];
     char* forcedCmd;
+    WOLFSSH_CHANNEL* shellChannel;
+
+    /* Off the channel list, not DEFAULT_NEXT_CHANNEL, which a build can
+     * override. Same as the POSIX copy; this loop routes its reads and sends
+     * off the same id. */
+    shellChannel = wolfSSH_ChannelNext(ssh, NULL);
+    if (shellChannel == NULL || wolfSSH_ChannelGetId(shellChannel,
+            &shellChannelId, WS_CHANNEL_ID_SELF) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No session channel to service");
+        return WS_FATAL_ERROR;
+    }
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
@@ -1811,6 +1822,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     struct termios tios;
     word32 shellChannelId = 0;
+    WOLFSSH_CHANNEL* shellChannel;
+
+    /* Name the session channel off the channel list rather than trusting
+     * DEFAULT_NEXT_CHANNEL to be 0, which a build can override. It is the
+     * only channel open at this point; the agent channel comes later. The
+     * loop below closes the child's stdin off this channel, so a wrong id
+     * there drops the peer's input instead of handing it over. */
+    shellChannel = wolfSSH_ChannelNext(ssh, NULL);
+    if (shellChannel == NULL || wolfSSH_ChannelGetId(shellChannel,
+            &shellChannelId, WS_CHANNEL_ID_SELF) != WS_SUCCESS) {
+        /* The shell child is already forked, and nothing below can reach the
+         * peer without an id to address, so take it down with us. */
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No session channel to service");
+        kill(childPid, SIGKILL);
+        return WS_FATAL_ERROR;
+    }
+
     signal(SIGCHLD, ChildSig);
     signal(SIGINT, SIG_DFL);
 
@@ -1853,6 +1881,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         WS_SOCKET_T maxFd;
         int cnt_r;
         int cnt_w;
+        WOLFSSH_CHANNEL* current;
         int pending = 0;
 
         FD_ZERO(&readFds);
@@ -1864,7 +1893,17 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             FD_SET(sshFd, &writeFds);
         }
 
-        if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
+        /* Buffered shell input is a wake condition in its own right.
+         * wolfSSH_stream_peek() goes blind once the channel is at EOF, so
+         * leaning on it alone would park undrained bytes in a select() that
+         * nothing else can wake. */
+        current = wolfSSH_ChannelFind(ssh, shellChannelId, WS_CHANNEL_ID_SELF);
+        if (current != NULL
+                && current->inputBuffer.length > current->inputBuffer.idx) {
+            pending = 1;
+        }
+
+        if (!pending && wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
             /* select on stdout/stderr pipes with forced commands */
             if (!ptyReq || forcedCmd) {
                 FD_SET(stdoutPipe[0], &readFds);
@@ -1896,42 +1935,28 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
 
         if (wantWrite || windowFull || pending || FD_ISSET(sshFd, &readFds)) {
-            word32 lastChannel = 0;
+            word32 avail;
 
             wantWrite = 0;
-            /* The following tries to read from the first channel inside
-               the stream. If the pending data in the socket is for
-               another channel, this will return an error with id
-               WS_CHAN_RXD. That means the agent has pending data in its
-               channel. The additional channel is only used with the
-               agent. */
-            cnt_r = wolfSSH_worker(ssh, &lastChannel);
+            /* The worker services the transport. What lands on the shell
+               channel is handed to the child by the drain below, which names
+               the channel itself, so the id the worker would report here is
+               not needed. */
+            cnt_r = wolfSSH_worker(ssh, NULL);
             if (cnt_r < 0) {
                 rc = wolfSSH_get_error(ssh);
                 if (rc == WS_CHAN_RXD) {
-                    if (!windowFull) { /* don't rewrite channeldBuffer if full
-                                        * of windowFull left overs */
-                        if (lastChannel == shellChannelId) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
-                                channelBuffer,
-                                sizeof channelBuffer);
-                            if (cnt_r <= 0)
-                                break;
-
-                            if (!ptyReq || forcedCmd) {
-                                cnt_w = (int)write(stdinPipe[1], channelBuffer,
-                                    cnt_r);
-                            }
-                            else {
-                                cnt_w = (int)write(childFd, channelBuffer,
-                                    cnt_r);
-                            }
-                            if (cnt_w <= 0)
-                                break;
-                        }
-                    }
+                    /* Arrival only; the drain below owns the read. */
                 }
                 else if (rc == WS_CHANNEL_CLOSED) {
+                    /* The channel is retired, so nothing more can reach the
+                     * child and the drain below is skipped on this pass.
+                     * Close its stdin here or it blocks forever on input
+                     * that cannot come. */
+                    if (stdinPipe[1] != -1 && (!ptyReq || forcedCmd)) {
+                        close(stdinPipe[1]);
+                        stdinPipe[1] = -1;
+                    }
                     peerConnected = 0;
                     continue;
                 }
@@ -1950,15 +1975,72 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
             }
 
-            /* did the channel just receive an EOF? */
-            if (cnt_r == 0) {
-                int eof;
-                WOLFSSH_CHANNEL* current;
+            /* The shell channel's own buffer, looked up again because the
+             * worker above can retire it. */
+            current = wolfSSH_ChannelFind(ssh, shellChannelId,
+                WS_CHANNEL_ID_SELF);
+            avail = (current != NULL) ?
+                current->inputBuffer.length - current->inputBuffer.idx : 0;
 
-                current = wolfSSH_ChannelFind(ssh, lastChannel,
-                    WS_CHANNEL_ID_SELF);
-                eof = wolfSSH_ChannelGetEof(current);
-                if (eof && (!ptyReq || forcedCmd)) {
+            /* Hand over what the peer sent, this pass or left buffered
+             * while the window was full; this is the only copy. Gated on
+             * windowFull, and not because the buffers overlap -- shellBuffer
+             * and channelBuffer are disjoint. While the peer will not take
+             * the child's output, writing to the child's stdin deadlocks it:
+             * it blocks on a full stdout pipe, stops reading stdin, and this
+             * write never returns. The backlog clears as soon as the peer
+             * reads. One buffer per pass, since the write can block. */
+            if (avail > 0 && !windowFull) {
+                int off = 0;
+
+                cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
+                    channelBuffer, sizeof channelBuffer);
+                if (cnt_r <= 0)
+                    break;
+
+                /* Data behind the peer's EOF, RFC 4254 section 5.3. Stdin
+                 * is gone, so drop it rather than write to fd -1 and end the
+                 * session on an EBADF. */
+                if ((!ptyReq || forcedCmd) && stdinPipe[1] == -1)
+                    off = cnt_r;
+
+                /* The read took the bytes off the channel, so this is the
+                 * only copy: a short write has to be finished, not dropped.
+                 * A PTY master goes short whenever the line discipline fills,
+                 * and a signal can cut a transfer already under way. */
+                while (off < cnt_r) {
+                    if (!ptyReq || forcedCmd) {
+                        cnt_w = (int)write(stdinPipe[1], channelBuffer + off,
+                            cnt_r - off);
+                    }
+                    else {
+                        cnt_w = (int)write(childFd, channelBuffer + off,
+                            cnt_r - off);
+                    }
+                    if (cnt_w <= 0) {
+                        /* errno only speaks for a -1 return. */
+                        if (cnt_w < 0 && errno == EINTR)
+                            continue;
+                        break;
+                    }
+                    off += cnt_w;
+                }
+                if (off < cnt_r)
+                    break;
+
+                avail = current->inputBuffer.length - current->inputBuffer.idx;
+            }
+
+            /* Peer done sending: close the child's stdin, but only once what
+             * it already sent has been handed over. Closing early drops it
+             * and the next write lands on fd -1. A channel that is gone is
+             * the peer being done too -- DoChannelClose() retires it, and the
+             * id was validated at entry, so a miss here cannot mean a wrong
+             * id. Leaving the pipe open then would block the child forever on
+             * a stdin nothing will ever close. */
+            if (stdinPipe[1] != -1 && (!ptyReq || forcedCmd)) {
+                if (current == NULL
+                        || (wolfSSH_ChannelGetEof(current) && avail == 0)) {
                     /* SSH is done, close stdin pipe to child process */
                     close(stdinPipe[1]);
                     stdinPipe[1] = -1;
