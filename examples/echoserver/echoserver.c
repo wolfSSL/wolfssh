@@ -999,14 +999,25 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
-                    if (rc == WS_CHAN_RXD) {
+                    /* wolfSSH_worker() reports WS_REKEYING in place of
+                     * WS_CHAN_RXD while a rekey is in flight, and the data
+                     * report is never raised again, so drain on both or the
+                     * buffered bytes sit there and the peer waits forever.
+                     * wolfSSH_ChannelIdRead() has no isKeying gate; the window
+                     * credit it owes is parked until the rekey finishes. */
+                    if (rc == WS_CHAN_RXD || rc == WS_REKEYING) {
                         if (lastChannel == threadCtx->shellCtx.channelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
                                     threadCtx->shellCtx.channelId,
                                     threadCtx->channelBuffer,
                                     sizeof threadCtx->channelBuffer);
-                            if (cnt_r <= 0)
+                            if (cnt_r <= 0) {
+                                /* Nothing was buffered. Only an actual data
+                                 * report makes that a failure. */
+                                if (rc == WS_REKEYING)
+                                    continue;
                                 break;
+                            }
                             #ifdef SHELL_DEBUG
                                 buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
@@ -1044,8 +1055,13 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
                                     threadCtx->channelBuffer,
                                     sizeof threadCtx->channelBuffer);
-                            if (cnt_r <= 0)
+                            if (cnt_r <= 0) {
+                                /* Nothing was buffered. Only an actual data
+                                 * report makes that a failure. */
+                                if (rc == WS_REKEYING)
+                                    continue;
                                 break;
+                            }
                             #ifdef SHELL_DEBUG
                                 buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
@@ -1063,8 +1079,13 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                     threadCtx->fwdCtx.channelId,
                                     threadCtx->channelBuffer,
                                     sizeof threadCtx->channelBuffer);
-                            if (cnt_r <= 0)
+                            if (cnt_r <= 0) {
+                                /* Nothing was buffered. Only an actual data
+                                 * report makes that a failure. */
+                                if (rc == WS_REKEYING)
+                                    continue;
                                 break;
+                            }
                             #ifdef SHELL_DEBUG
                                 buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
@@ -1084,6 +1105,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             if (fwdFd != -1) {
                                 WCLOSESOCKET(fwdFd);
                                 fwdFd = -1;
+                                threadCtx->fwdCtx.appFd = -1;
                             }
                             if (threadCtx->fwdCbCtx.originName != NULL) {
                                 WFREE(threadCtx->fwdCbCtx.originName,
@@ -1151,6 +1173,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
+                        WCLOSESOCKET(agentFd);
+                        agentFd = -1;
+                        threadCtx->agentCtx.appFd = -1;
                         threadCtx->agentCtx.state = APP_STATE_LISTEN;
                         continue;
                     }
@@ -1164,6 +1189,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 err == SOCKET_ECONNABORTED) {
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
+                            WCLOSESOCKET(agentFd);
+                            agentFd = -1;
+                            threadCtx->agentCtx.appFd = -1;
                             threadCtx->agentCtx.state = APP_STATE_LISTEN;
                             continue;
                         }
@@ -1215,6 +1243,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                            to listening. */
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
+                        threadCtx->fwdCtx.appFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
                             WFREE(threadCtx->fwdCbCtx.hostName,
                                     NULL, 0);
@@ -1235,6 +1264,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
                             WCLOSESOCKET(fwdFd);
+                            fwdFd = -1;
+                            threadCtx->fwdCtx.appFd = -1;
                             threadCtx->fwdCtx.state = APP_STATE_LISTEN;
                             continue;
                         }
