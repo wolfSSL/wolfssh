@@ -967,6 +967,12 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 if (error == WS_EOF)
                     break;
             }
+            else {
+                /* Channel is live with nothing buffered. Let the next select
+                 * block instead of polling at its 100 us floor. */
+                timeout = TEST_SFTP_TIMEOUT;
+                continue;
+            }
 
             if (ret == WS_FATAL_ERROR && error == 0) {
                 WOLFSSH_CHANNEL* channel =
