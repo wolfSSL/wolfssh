@@ -8524,11 +8524,9 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARN: none rejected");
-                #ifndef NO_FAILURE_ON_REJECTED
                 /* Count before failing: a send that blocks returns
                  * WS_WANT_WRITE, which isn't fatal on its own. */
                 (void)SendUserAuthFailureCount(ssh, 0, countIt);
-                #endif
                 ret = WS_USER_AUTH_E;
             }
             else if (ret == WOLFSSH_USERAUTH_WOULD_BLOCK) {
@@ -8657,9 +8655,7 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                 WLOG(WS_LOG_DEBUG, "DUARKB: keyboard rejected");
-                #ifndef NO_FAILURE_ON_REJECTED
-                    authFailure = 1;
-                #endif
+                authFailure = 1;
                 authRejected = 1;
                 ret = WS_USER_AUTH_E;
             }
@@ -8772,9 +8768,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
                 }
                 else if (ret == WOLFSSH_USERAUTH_REJECTED) {
                     WLOG(WS_LOG_DEBUG, "DUARPW: password rejected");
-                    #ifndef NO_FAILURE_ON_REJECTED
-                        authFailure = 1;
-                    #endif
+                    authFailure = 1;
                     authRejected = 1;
                     ret = WS_USER_AUTH_E;
                 }
@@ -10204,9 +10198,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                 ret = WS_AUTH_PENDING;
             }
             else if (ret == WOLFSSH_USERAUTH_REJECTED) {
-                #ifndef NO_FAILURE_ON_REJECTED
-                    authFailure = 1;
-                #endif
+                authFailure = 1;
                 authRejected = 1;
                 ret = WS_USER_AUTH_E;
             }
@@ -17458,6 +17450,15 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
             WLOG(WS_LOG_DEBUG, "SUAKR: keyboard setup callback would block");
             ssh->kbSetupPending = 0;
             return WS_AUTH_PENDING;
+        }
+        else if (ret == WOLFSSH_USERAUTH_REJECTED) {
+            /* A hard rejection ends the session here as it does in the other
+             * methods. Count before failing: a send that blocks returns
+             * WS_WANT_WRITE, which isn't fatal on its own. */
+            WLOG(WS_LOG_DEBUG, "SUAKR: keyboard setup rejected");
+            ssh->kbSetupPending = 0;
+            (void)SendUserAuthFailureCount(ssh, 0, 1);
+            return WS_USER_AUTH_E;
         }
         else {
             WLOG(WS_LOG_DEBUG, "Issue with keyboard auth setup, try another "
