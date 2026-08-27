@@ -3159,13 +3159,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'p':
                     if (myoptarg == NULL) {
-                        ES_ERROR("NULL port value");
+                        ES_ERROR("NULL port value\n");
                     }
                     else {
                         port = (word16)atoi(myoptarg);
                         #if !defined(NO_MAIN_DRIVER)
                             if (port == 0) {
-                                ES_ERROR("port number cannot be 0");
+                                ES_ERROR("port number cannot be 0\n");
                             }
                         #endif
                     }
@@ -3397,12 +3397,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         kbAuthData.promptLanguageSz = 0;
         kbAuthData.prompts = (byte**)WMALLOC(sizeof(byte*), NULL, 0);
         if (kbAuthData.prompts == NULL) {
-            ES_ERROR("Error allocating prompts");
+            ES_ERROR("Error allocating prompts\n");
         }
         kbAuthData.promptLengths = (word32*)WMALLOC(sizeof(word32), NULL, 0);
         if (kbAuthData.promptLengths == NULL) {
             WFREE(kbAuthData.prompts, NULL, 0);
-            ES_ERROR("Error allocating promptLengths");
+            ES_ERROR("Error allocating promptLengths\n");
         }
         kbAuthData.prompts[0] = (byte*)"KB Auth Password: ";
         kbAuthData.promptLengths[0] = 18;
@@ -3410,7 +3410,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (kbAuthData.promptEcho == NULL) {
             WFREE(kbAuthData.prompts, NULL, 0);
             WFREE(kbAuthData.promptLengths, NULL, 0);
-            ES_ERROR("Error allocating promptEcho");
+            ES_ERROR("Error allocating promptEcho\n");
         }
         kbAuthData.promptEcho[0] = 0;
         LoadKeyboardList(keyboardList, &pwMapList, &kbAuthData);
@@ -3432,7 +3432,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             keyLoadBuf = (byte*)WMALLOC(EXAMPLE_KEYLOAD_BUFFER_SZ,
                     NULL, 0);
             if (keyLoadBuf == NULL) {
-                ES_ERROR("Error allocating keyLoadBuf");
+                ES_ERROR("Error allocating keyLoadBuf\n");
             }
         #else
             keyLoadBuf = buf;
@@ -3788,7 +3788,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                                                          &clientAddrSz);
     #endif
         if (clientFd == -1) {
-            ES_ERROR("tcp accept failed");
+            ES_ERROR("tcp accept failed\n");
         }
 
         if (nonBlock)
