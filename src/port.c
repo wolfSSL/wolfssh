@@ -250,7 +250,7 @@ void* WS_CreateFileA(const char* fileName, unsigned long desiredAccess,
         unsigned long shareMode, unsigned long creationDisposition,
         unsigned long flags, void* heap)
 {
-    HANDLE fileHandle;
+    HANDLE fileHandle = INVALID_HANDLE_VALUE;
     wchar_t* unicodeFileName;
     size_t unicodeFileNameSz = 0;
     size_t returnSz = 0;

@@ -404,7 +404,8 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         }
 #endif
 
-        if (ret == WS_SUCCESS) {
+        /* NULL only when the small-stack allocation above failed */
+        if (decoded != NULL) {
             wc_InitDecodedCert(decoded, certLoc[0], certLen[0], cm->heap);
             if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, cm->cm)
                     != 0) {

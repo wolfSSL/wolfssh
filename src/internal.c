@@ -21853,11 +21853,14 @@ static int CompositeEccSign(void* key, WC_RNG* rng, void* heap,
                 ret = WS_MEMORY_E;
         }
 #else
-        byte rBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-        byte sBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+        byte rStore[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+        byte sStore[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+        byte* rBuf = rStore;
+        byte* sBuf = sStore;
 #endif
 
-        if (ret == 0) {
+        /* NULL only when a small-stack allocation above failed */
+        if (rBuf != NULL && sBuf != NULL) {
             ret = wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf, &sSz);
         }
         if (ret == 0) {
