@@ -3151,6 +3151,9 @@ static int SFTP_CreateLongName(WS_SFTPNAME* name)
     mtime = (time_t)atr->mtime;
 
 #if defined(WLOCALTIME)
+    /* WLOCALTIME is a per-port macro; zero first so nothing reads a stale
+     * struct if a port leaves it untouched. */
+    WMEMSET(&localTime, 0, sizeof(localTime));
     if (!WLOCALTIME(&mtime, &localTime)) {
         return WS_MEMORY_E;
     }

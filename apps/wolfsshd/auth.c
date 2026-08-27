@@ -2695,8 +2695,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             DecodedCert* dCert = &sdCert;
         #endif
 
-            /* ret is still success unless the allocation above failed */
-            if (ret == WOLFSSH_USERAUTH_SUCCESS) {
+            /* NULL only when the small-stack allocation above failed */
+            if (dCert != NULL) {
                 wc_InitDecodedCert(dCert, authData->sf.publicKey.publicKey,
                         authData->sf.publicKey.publicKeySz, NULL);
                 if (wc_ParseCert(dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {

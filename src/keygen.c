@@ -312,7 +312,8 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
         }
 #endif
 
-        if (ret == WS_SUCCESS) {
+        /* NULL only when the small-stack allocation above failed */
+        if (key != NULL) {
             if (wc_MlDsaKey_Init(key, NULL, INVALID_DEVID) != 0)
                 ret = WS_CRYPTO_FAILED;
             else {
