@@ -1816,20 +1816,20 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
         promptData.prompts =
             (byte**)WMALLOC(sizeof(byte*) * kbResponseCount, NULL, 0);
         if (promptData.prompts == NULL) {
-            ES_ERROR("Could not allocate prompts");
+            ES_ERROR("Could not allocate prompts\n");
         }
         promptData.promptLengths =
             (word32*)WMALLOC(sizeof(word32) * kbResponseCount, NULL, 0);
         if (promptData.promptLengths == NULL) {
             WFREE(promptData.prompts, NULL, 0);
-            ES_ERROR("Could not allocate promptLengths");
+            ES_ERROR("Could not allocate promptLengths\n");
         }
         promptData.promptEcho =
             (byte*)WMALLOC(sizeof(byte) * kbResponseCount, NULL, 0);
         if (promptData.promptEcho == NULL) {
             WFREE(promptData.prompts, NULL, 0);
             WFREE(promptData.promptLengths, NULL, 0);
-            ES_ERROR("Could not allocate promptEcho");
+            ES_ERROR("Could not allocate promptEcho\n");
         }
         for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {
             promptData.prompts[prompt] = (byte*)"Password: ";
@@ -1874,13 +1874,13 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
 
     clientFd = accept(listenFd, (struct sockaddr*)&clientAddr, &clientAddrSz);
     if (clientFd == -1) {
-        ES_ERROR("tcp accept failed");
+        ES_ERROR("tcp accept failed\n");
     }
     wolfSSH_set_fd(ssh, (int)clientFd);
 
     ret = wolfSSH_accept(ssh);
     if (ret && !unbalanced) {
-        ES_ERROR("wolfSSH Accept Error");
+        ES_ERROR("wolfSSH Accept Error\n");
     }
 
     ret = wolfSSH_shutdown(ssh);
@@ -1904,7 +1904,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
     wolfSSH_CTX_free(ctx);
 
     if (ret) {
-        ES_ERROR("wolfSSH Shutdown Error");
+        ES_ERROR("wolfSSH Shutdown Error\n");
     }
 
     WOLFSSL_RETURN_FROM_THREAD(0);
