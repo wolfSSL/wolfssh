@@ -4412,6 +4412,13 @@ int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel)
             SendAfterDisconnect(channel->ssh))
         ret = WS_FATAL_ERROR;
 
+    /* Both sends address the peer id, 0 until the open is confirmed, so
+     * this would tear down whichever channel holds 0. */
+    if (ret == WS_SUCCESS && !channel->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "Channel not confirmed yet.");
+        ret = WS_CHANNEL_NOT_CONF;
+    }
+
     if (ret == WS_SUCCESS)
         ret = SendChannelEof(channel->ssh, channel->peerChannel);
 

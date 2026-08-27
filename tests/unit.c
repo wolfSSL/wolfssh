@@ -7489,6 +7489,12 @@ static int test_SendEofUnconfirmedChannel(void)
     ret = wolfSSH_ChannelSendEof(pend);
     if (ret != WS_CHANNEL_NOT_CONF) { result = -1637; goto done; }
 
+    /* wolfSSH_ChannelExit() sends an EOF through the same lookup, ahead of its
+     * close, so it needs the same guard. */
+    ret = wolfSSH_ChannelExit(pend);
+    if (ret != WS_CHANNEL_NOT_CONF) { result = -1654; goto done; }
+    if (sess->closeTxd || pend->closeTxd) { result = -1655; goto done; }
+
     /* Neither channel was half-closed, and the session can still send. */
     if (sess->eofTxd || pend->eofTxd) { result = -1638; goto done; }
     ret = wolfSSH_ChannelSend(sess, buf, (word32)sizeof(buf));
@@ -7508,13 +7514,114 @@ static int test_SendEofUnconfirmedChannel(void)
     if (ret != WS_SUCCESS) { result = -1652; goto done; }
     if (!sess->eofTxd) { result = -1653; goto done; }
 
-#ifndef NO_WOLFSSH_CLIENT
 done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
 }
 #endif /* NO_WOLFSSH_CLIENT */
+
+
+#ifndef NO_WOLFSSH_SERVER
+/* The mirror of the above on the receiving side. DoChannelClose() finds its
+ * channel by self id, so a peer can name a locally opened channel it never
+ * confirmed. Its reply addresses the peer id, which is still 0 there, so an
+ * unguarded reply would half-close and close the live session channel
+ * instead. Retire the named channel and answer nothing. */
+static int test_DoChannelCloseUnconfirmedChannel(void)
+{
+    WOLFSSH_CTX*     ctx  = NULL;
+    WOLFSSH*         ssh  = NULL;
+    WOLFSSH_CHANNEL* sess = NULL;
+    WOLFSSH_CHANNEL* pend = NULL;
+    int              result = 0;
+    int              ret;
+    word32           pendId;
+    byte             pkt[16];
+    byte             buf[4] = { 0x00, 0x01, 0x02, 0x03 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1672;
+    /* The socket takes nothing, so anything sent stays in the buffer where
+     * this can see it. */
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1673; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* The live session channel, confirmed, holding peer id 0. */
+    sess = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (sess == NULL) { result = -1674; goto done; }
+    if (ChannelAppend(ssh, sess) != WS_SUCCESS) {
+        ChannelDelete(sess, ssh->ctx->heap);
+        result = -1675;
+        goto done;
+    }
+    sess->openConfirmed = 1;
+    sess->peerChannel = 0;
+    sess->peerWindowSz = 1024;
+    sess->peerMaxPacketSz = 1024;
+
+    /* A second channel of ours whose open the peer has not answered. */
+    pend = ChannelNew(ssh, ID_CHANTYPE_TCPIP_DIRECT, 1024, 1024);
+    if (pend == NULL) { result = -1676; goto done; }
+    if (ChannelAppend(ssh, pend) != WS_SUCCESS) {
+        ChannelDelete(pend, ssh->ctx->heap);
+        result = -1677;
+        goto done;
+    }
+    if (pend->openConfirmed || pend->peerChannel != 0) {
+        result = -1678;
+        goto done;
+    }
+    pendId = pend->channel;
+
+    /* The peer closes the channel it never confirmed. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelClosePacket(pkt, pendId);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHANNEL_CLOSED) { result = -1679; goto done; }
+    if (ssh->lastRxId != pendId) { result = -1680; goto done; }
+
+    /* Only the named channel went away. */
+    if (ssh->channelListSz != 1) { result = -1681; goto done; }
+    if (ssh->channelList != sess) { result = -1682; goto done; }
+
+    /* Nothing was addressed to peer id 0 on the session channel's behalf. */
+    if (sess->eofTxd || sess->closeTxd) { result = -1683; goto done; }
+    if (PlainPacketsHaveMsg(ssh->outputBuffer.buffer, ssh->outputBuffer.idx,
+                ssh->outputBuffer.length, MSGID_CHANNEL_EOF)) {
+        result = -1684;
+        goto done;
+    }
+    if (PlainPacketsHaveMsg(ssh->outputBuffer.buffer, ssh->outputBuffer.idx,
+                ssh->outputBuffer.length, MSGID_CHANNEL_CLOSE)) {
+        result = -1685;
+        goto done;
+    }
+
+    /* And the session's send direction is still live. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_ChannelSend(sess, buf, (word32)sizeof(buf));
+    if (ret != (int)sizeof(buf)) { result = -1686; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
 /* A bundled but unflushed EOF is committed: the bytes are in the output
  * buffer and go out on the next flush. The WS_WANT_WRITE retry an application
  * makes must not queue a second EOF behind the first. */
@@ -19943,6 +20050,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_SERVER
+    unitResult = test_DoChannelCloseUnconfirmedChannel();
+    printf("DoChannelCloseUnconfirmedChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_SERVER */
 
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_SendEofAfterDisconnect();
