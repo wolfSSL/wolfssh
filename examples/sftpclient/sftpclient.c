@@ -1501,7 +1501,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
             /* wolfSSH_worker returns WS_FATAL_ERROR when the socket
              * would block (DoReceive -> GetInputData -> WS_WANT_READ),
              * so check ssh->error rather than ret for blocking conditions. */
-            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD &&
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD && ret != WS_EOF &&
                     wolfSSH_get_error(ssh) != WS_WANT_READ &&
                     wolfSSH_get_error(ssh) != WS_WANT_WRITE)
                 break;
@@ -1815,7 +1815,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         int err;
         ret = wolfSSH_shutdown(ssh);
 
-        /* peer hung up or channel already closed, stop trying */
+        /* peer hung up or channel already closed, stop trying.
+         * wolfSSH_shutdown() folds a peer EOF into WS_SUCCESS itself, so
+         * there is no WS_EOF to test for here. */
         if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR ||
                 ret == WS_CHANNEL_CLOSED) {
             ret = 0;
@@ -1832,7 +1834,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 err  = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }

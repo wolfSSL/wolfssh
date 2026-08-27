@@ -431,6 +431,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int ret;
     int ch;
     int appFdSet = 0;
+    int appFdHalfClosed = 0;
     int reverse = 0;
     int fwdFromPortSet = 0;
     PortfwdState fwdState;
@@ -641,7 +642,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             ret = wolfSSH_worker(ssh, NULL);
             if (ret != WS_SUCCESS && ret != WS_CHAN_RXD &&
                     ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
-                    ret != WS_WINDOW_FULL && ret != WS_REKEYING)
+                    ret != WS_WINDOW_FULL && ret != WS_REKEYING &&
+                    ret != WS_EOF)
                 err_sys("Couldn't get the remote forward reply.");
         }
         if (!fwdState.replied)
@@ -763,6 +765,44 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                  * touch the freed channel. */
                 fwdChannel = NULL;
                 break;
+            }
+
+            /* Relay the half-close so a local reader waiting on end-of-input
+             * returns; nothing else relays it. Driven off the latched channel
+             * state, not the WS_EOF status: the flush inside wolfSSH_worker()
+             * can supersede that, and it is raised only once. Only the channel
+             * appFd is wired to, since half-closing the wrong socket truncates
+             * a live transfer. */
+            if (appFdSet && fwdChannel != NULL && !appFdHalfClosed
+                    && wolfSSH_ChannelGetEof(fwdChannel)) {
+                int drained;
+
+                /* Hand over the backlog first, or the local reader sees a
+                 * clean end-of-input short of what the peer sent. A negative
+                 * read is a rekey or a stalled channel, not a drained one, so
+                 * only an empty read earns the half-close; the latch stays
+                 * clear and a later pass tries again. */
+                do {
+                    drained = wolfSSH_ChannelRead(fwdChannel, sshBuffer,
+                            sshBufferSz);
+                    if (drained > 0) {
+                        if ((int)send(appFd, sshBuffer, drained, 0) != drained)
+                            break;
+                    }
+                } while (drained > 0);
+
+                if (drained == 0) {
+                    appFdHalfClosed = 1;
+                #ifdef SHUT_WR
+                    shutdown(appFd, SHUT_WR);
+                #elif defined(SD_SEND)
+                    shutdown(appFd, SD_SEND);
+                #else
+                    printf("No way to half-close the local socket, "
+                            "the local reader may wait for input that is "
+                            "not coming.\n");
+                #endif
+                }
             }
 
             if (ret == WS_CHAN_RXD) {

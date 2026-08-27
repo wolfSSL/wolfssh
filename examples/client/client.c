@@ -1179,7 +1179,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
             if (ret <= 0) {
                 ret = wolfSSH_get_error(ssh);
                 if (ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
-                        ret != WS_CHAN_RXD) {
+                        ret != WS_CHAN_RXD && ret != WS_EOF) {
                     ClientFreeBuffers(pubKeyName, privKeyName, NULL);
                     wolfSSH_free(ssh);
                     wolfSSH_CTX_free(ctx);
@@ -1198,7 +1198,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
-    /* do not continue on with shutdown process if peer already disconnected */
+    /* do not continue on with shutdown process if peer already disconnected.
+     * A peer EOF is not a disconnect: the channel is still open and its close
+     * is still owed, so the drain below is exactly what is wanted. */
     if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
         if (ret != WS_SUCCESS) {
@@ -1209,7 +1211,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         }
         ret = wolfSSH_worker(ssh, NULL);
         if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF) {
             ClientFreeBuffers(pubKeyName, privKeyName, NULL);
             wolfSSH_free(ssh);
             wolfSSH_CTX_free(ctx);
@@ -1226,7 +1228,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF) {
         err_sys("Closing client stream failed");
     }
 

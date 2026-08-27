@@ -338,7 +338,7 @@ static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
      * conversation is for the reader to sort out. A rekey started on the way
      * through is the reader's as well, the send itself went out. */
     if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
-            || ret == WS_REKEYING) {
+            || ret == WS_REKEYING || ret == WS_EOF) {
         ret = WS_SUCCESS;
     }
 
@@ -1362,14 +1362,17 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
                 ret = WS_SUCCESS;
             }
         }
-        else if (ret != WS_CHANNEL_CLOSED && ret != WS_WANT_READ) {
+        else if (ret != WS_CHANNEL_CLOSED && ret != WS_WANT_READ
+                && ret != WS_EOF) {
             WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
 
-        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ) {
-            /* Shutting down. The channel closing isn't a fail, and neither
-             * is the peer having nothing ready on this non-blocking socket;
-             * either way there is nothing left to wait for. */
+        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ
+                || ret == WS_EOF) {
+            /* Shutting down. The channel closing or the peer's EOF isn't a
+             * fail, and neither is the peer having nothing ready on this
+             * non-blocking socket; either way there is nothing left to wait
+             * for. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
