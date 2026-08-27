@@ -1864,6 +1864,14 @@ static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 }
 
 #ifdef WOLFSSH_FWD
+static int AcceptChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+
+    return WS_SUCCESS;
+}
+
 static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
         const char* host, word32 port)
 {
@@ -1884,6 +1892,41 @@ static int AcceptFwdCb(WS_FwdCbAction action, void* ctx,
     (void)ctx;
     (void)host;
     (void)port;
+
+    return WS_SUCCESS;
+}
+
+/* Counts every action the library asks for. File scope rather than reached
+ * through the callback ctx, so a zero reading means the hook did not run and
+ * cannot instead mean the ctx stopped being delivered. */
+static word32 fwdCbCallCount;
+
+static int CountingFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)action;
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    fwdCbCallCount++;
+
+    return WS_SUCCESS;
+}
+
+/* Counts, and rejects the channel-id handoff that follows a successful
+ * LOCAL_SETUP -- the second of DoChannelOpen()'s two fwdCb consultations. */
+static int CountingRejectChannelIdFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    fwdCbCallCount++;
+
+    if (action == WOLFSSH_FWD_CHANNEL_ID)
+        return WS_FWD_NOT_AVAILABLE;
 
     return WS_SUCCESS;
 }
@@ -2786,6 +2829,112 @@ static void TestDirectTcpipNoFwdCbSendsOpenFail(void)
 
     ret = DoReceive(harness.ssh);
     AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Both a channelOpenCb and a fwdCb registered, open callback rejects. The
+ * rejection has to stand: the forwarding hook must not run, and must not
+ * overwrite the rejection with its own return. That clobber shipped in
+ * v1.5.0, where no test registered both callbacks at once. */
+static void TestDirectTcpipOpenCbRejectBeatsFwdCb(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    fwdCbCallCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx, RejectChannelOpenCb),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, CountingFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out, harness.io.outSz),
+            9); /* RFC 4254 5.1: the peer's channel ID comes back */
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(fwdCbCallCount, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The other half of the pair: the open callback accepts, so the fwdCb decides,
+ * and its rejection must reach the peer. */
+static void TestDirectTcpipFwdCbRejectAfterOpenCbAccept(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx, AcceptChannelOpenCb),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, RejectDirectTcpipSetup, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out, harness.io.outSz),
+            9);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* DoChannelOpen() consults the fwdCb twice. A rejection at the second
+ * consultation, the channel-id handoff, must fail the open the same way the
+ * setup rejection does. The count doubles as the positive control for the
+ * zero asserted above: the same counter reaches 2 here. */
+static void TestDirectTcpipFwdCbRejectsChannelId(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    fwdCbCallCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx,
+            CountingRejectChannelIdFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out, harness.io.outSz),
+            9);
+    /* This path leaves fail_reason at OPEN_OK and leans on the default,
+     * unlike the rejections that set the reason themselves. */
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(fwdCbCallCount, 2);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -8613,6 +8762,9 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
+    TestDirectTcpipOpenCbRejectBeatsFwdCb();
+    TestDirectTcpipFwdCbRejectAfterOpenCbAccept();
+    TestDirectTcpipFwdCbRejectsChannelId();
     TestForwardedTcpipOnServerSendsOpenFail();
     TestGlobalRequestFwdNoCbSendsFailure();
     TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
