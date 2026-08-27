@@ -550,6 +550,23 @@ int wolfSSH_CTX_UseTpmHostKey(WOLFSSH_CTX* ctx,
 #endif /* WOLFSSH_TPM */
 
 
+#if !defined(NO_WOLFSSH_SERVER) || !defined(NO_WOLFSSH_CLIENT)
+
+/* A peer's CHANNEL_EOF is legal once its channel is open, RFC 4254 section
+ * 5.3, not a handshake failure. */
+static int DoReceiveHandshake(WOLFSSH* ssh)
+{
+    int ret = DoReceive(ssh);
+
+    if (ret == WS_EOF)
+        ret = WS_SUCCESS;
+
+    return ret;
+}
+
+#endif /* !NO_WOLFSSH_SERVER || !NO_WOLFSSH_CLIENT */
+
+
 /* Defined below, ahead of both drivers; either can be the only one built. */
 static int SendAfterDisconnect(WOLFSSH* ssh);
 
@@ -720,7 +737,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
             case ACCEPT_SERVER_CHANNEL_ACCEPT_SENT:
                 while (ssh->clientState < CLIENT_DONE) {
-                    if (DoReceive(ssh) < 0) {
+                    if (DoReceiveHandshake(ssh) < 0) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_CHANNEL_ACCEPT_SENT", ssh->error);
                         return WS_FATAL_ERROR;
@@ -1042,7 +1059,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_CHANNEL_OPEN_SESSION_SENT:
             while (ssh->serverState < SERVER_CHANNEL_OPEN_DONE) {
-                if (DoReceive(ssh) < WS_SUCCESS) {
+                if (DoReceiveHandshake(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_CHANNEL_OPEN_SESSION_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -1099,7 +1116,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
         case CONNECT_CLIENT_CHANNEL_REQUEST_SENT:
             while (ssh->serverState < SERVER_DONE) {
-                if (DoReceive(ssh) < WS_SUCCESS) {
+                if (DoReceiveHandshake(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_CHANNEL_REQUEST_SENT", ssh->error);
                     return WS_FATAL_ERROR;
@@ -1213,7 +1230,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * response to SendChannelClose */
     if (channel != NULL && ret == WS_SUCCESS) {
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret == WS_CHAN_RXD) {
+        if (ret == WS_CHAN_RXD || ret == WS_EOF) {
             /* received response */
             ret = WS_SUCCESS;
         }
@@ -3631,17 +3648,20 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 
     /* If receive only wanted read or delivered channel data, still try to
      * flush any pending outbound packets. */
-    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD) {
+    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD
+            || ret == WS_EOF) {
         int sendRet = WS_SUCCESS;
 
         if (ssh->outputBuffer.length != 0)
             sendRet = wolfSSH_SendPacket(ssh);
 
         /* If send is back-pressured, immediately try another receive to pick
-         * up potential window-adjusts and then return the send status. */
+         * up potential window-adjusts and then return the send status. The
+         * send status wins; a peer EOF stays latched on the channel. */
         if (sendRet == WS_WANT_WRITE || sendRet == WS_WINDOW_FULL) {
             int recv2 = DoReceive(ssh);
-            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD)
+            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD
+                    || recv2 == WS_EOF)
                 ret = sendRet;
             else
                 ret = recv2;
@@ -3655,18 +3675,20 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 #endif /* WOLFSSH_TEST_BLOCK */
 
-    /* WS_EXTDATA reports the channel too, so a multi-channel caller can route
-     * the drain to wolfSSH_ChannelIdReadExt(). */
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
+    /* WS_EXTDATA and WS_EOF report the channel too, so a multi-channel caller
+     * can route the drain, or see which channel half-closed. */
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+            || ret == WS_EOF) {
         if (channelId != NULL) {
             *channelId = ssh->lastRxId;
         }
 
-        /* WS_EXTDATA is raised once, on arrival; masking it would strand the
-         * buffered stderr and its window credit. A disconnect cannot be seen
-         * here: the gate at the top returns before this, and the DISCONNECT
-         * that sets the flag mid-pass leaves ret fatal. */
-        if (ssh->isKeying && ret != WS_EXTDATA) {
+        /* WS_EXTDATA and WS_EOF are raised once, on arrival; masking either
+         * strands the event, and the stderr window credit with it. A
+         * disconnect cannot be seen here: the gate at the top returns before
+         * this, and the DISCONNECT that sets the flag mid-pass leaves ret
+         * fatal. */
+        if (ssh->isKeying && ret != WS_EXTDATA && ret != WS_EOF) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }

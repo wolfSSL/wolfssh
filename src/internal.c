@@ -11345,10 +11345,8 @@ static int DoChannelEof(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         channel->eofRxd = 1;
-        if (!channel->eofTxd) {
-            ret = SendChannelEof(ssh, channel->peerChannel);
-        }
         ssh->lastRxId = channelId;
+        ret = WS_EOF;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelEof(), ret = %d", ret);
@@ -13055,7 +13053,8 @@ int DoReceive(WOLFSSH* ssh)
             ssh->error = ret;
             if (ret < 0 && !(ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
                     ret == WS_CHANNEL_CLOSED || ret == WS_WANT_WRITE ||
-                    ret == WS_REKEYING || ret == WS_WANT_READ)) {
+                    ret == WS_REKEYING || ret == WS_WANT_READ ||
+                    ret == WS_EOF)) {
                 ret = WS_FATAL_ERROR;
             }
             break;
