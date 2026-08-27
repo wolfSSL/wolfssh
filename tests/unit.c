@@ -7654,6 +7654,10 @@ static int UnitAuthAlwaysFail(byte authType, WS_UserAuthData* authData,
 }
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Set when the callback sees a response, so a processed INFO_RESPONSE is
+ * visible even when rejected. */
+static int s_kbRespCbCalled = 0;
+
 /* Keyboard setup that accepts, sending an INFO_REQUEST with no prompts so the
  * exchange goes outstanding (kbSetupPending). Every other outcome fails. */
 static int UnitAuthKbSetupOk(byte authType, WS_UserAuthData* authData,
@@ -7664,25 +7668,31 @@ static int UnitAuthKbSetupOk(byte authType, WS_UserAuthData* authData,
         authData->sf.keyboard.promptCount = 0;
         return WOLFSSH_USERAUTH_SUCCESS;
     }
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        s_kbRespCbCalled = 1;
+    }
     return WOLFSSH_USERAUTH_INVALID_PASSWORD;
 }
 
-/* Build a USERAUTH_REQUEST payload for auth method `method` with no method-
- * specific fields, as DoUserAuthRequest() sees it with the message id already
- * consumed. The keyboard and none dispatch paths don't parse trailing fields,
- * so three strings (user, service, method) suffice. Returns the payload size,
- * 0 on overflow. */
+/* Build a USERAUTH_REQUEST payload for `service` and auth method `method`
+ * with no method-specific fields, as DoUserAuthRequest() sees it with the
+ * message id already consumed. The keyboard and none dispatch paths don't
+ * parse trailing fields, so three strings (user, service, method) suffice. A
+ * NULL method omits that field, which a bad service name never reaches.
+ * Returns the payload size, 0 on overflow. */
 static word32 BuildAuthMethodRequest(byte* buf, word32 bufSz,
-        const char* method)
+        const char* service, const char* method)
 {
     const char* fields[3];
-    word32 idx = 0, i, fieldSz;
+    word32 idx = 0, i, fieldCount;
+    word32 fieldSz;
 
     fields[0] = "jill";
-    fields[1] = "ssh-connection";
+    fields[1] = service;
     fields[2] = method;
+    fieldCount = (method == NULL) ? 2 : 3;
 
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < fieldCount; i++) {
         fieldSz = (word32)WSTRLEN(fields[i]);
         if (idx + UINT32_SZ + fieldSz > bufSz)
             return 0;
@@ -7857,7 +7867,7 @@ static int test_MaxAuthAttempts(void)
         WOLFSSH* ssh = NULL;
         byte kbReq[64];
         word32 kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
-                "keyboard-interactive");
+                "ssh-connection", "keyboard-interactive");
 
         if (kbReqSz == 0)
             result = -750;
@@ -7906,7 +7916,7 @@ static int test_MaxAuthAttempts(void)
         WOLFSSH* ssh = NULL;
         byte kbReq[64];
         word32 kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
-                "keyboard-interactive");
+                "ssh-connection", "keyboard-interactive");
         int attempt;
 
         if (kbReqSz == 0)
@@ -8122,6 +8132,114 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Counts KEYBOARD (response) callbacks, so a processed INFO_RESPONSE is
+ * visible even when rejected. */
+/* A USERAUTH_REQUEST naming a service other than "ssh-connection" must not
+ * leave a keyboard-interactive exchange outstanding.
+ *
+ * Asserts, in order: an accepted keyboard request leaves the exchange
+ * outstanding; a bad-service request clears authId and kbSetupPending; a
+ * following INFO_RESPONSE is rejected without reaching the callback. */
+static int test_DoUserAuthRequest_badServiceClearsKb(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte kbReq[64], badReq[64], infoRsp[UINT32_SZ];
+    word32 kbReqSz, badReqSz, idx;
+    int result = 0;
+    int ret;
+
+    kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
+            "ssh-connection", "keyboard-interactive");
+    badReqSz = BuildAuthMethodRequest(badReq, (word32)sizeof(badReq),
+            "ssh-userauth", NULL);
+    if (kbReqSz == 0 || badReqSz == 0)
+        return -800;
+
+    /* INFO_RESPONSE body: response count of 0, matching promptCount. */
+    PutU32BE(infoRsp, 0);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -801;
+    wolfSSH_SetUserAuth(ctx, UnitAuthKbSetupOk);
+    wolfSSH_SetIOSend(ctx, UnitIoSendSink);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -802;
+    }
+    s_kbRespCbCalled = 0;
+
+    idx = 0;
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, kbReq, kbReqSz, &idx);
+    if (ret != WS_SUCCESS) {
+        printf("badServiceClearsKb: kb request ret=%d expected %d\n",
+               ret, WS_SUCCESS);
+        result = -803;
+    }
+    if (result == 0 && (ssh->authId != ID_USERAUTH_KEYBOARD
+                        || !ssh->kbSetupPending)) {
+        printf("badServiceClearsKb: kb exchange not outstanding "
+               "(authId=%d pending=%d)\n", ssh->authId, ssh->kbSetupPending);
+        result = -804;
+    }
+
+    if (result == 0) {
+        idx = 0;
+        ret = wolfSSH_TestDoUserAuthRequest(ssh, badReq, badReqSz, &idx);
+        if (ret != WS_SUCCESS) {
+            printf("badServiceClearsKb: bad service ret=%d expected %d\n",
+                   ret, WS_SUCCESS);
+            result = -805;
+        }
+    }
+
+    if (result == 0 && ssh->authId == ID_USERAUTH_KEYBOARD) {
+        printf("badServiceClearsKb: authId still ID_USERAUTH_KEYBOARD after "
+               "bad service name\n");
+        result = -806;
+    }
+
+    if (result == 0 && ssh->kbSetupPending) {
+        printf("badServiceClearsKb: kbSetupPending still set after bad "
+               "service name\n");
+        result = -807;
+    }
+
+    /* One charge for the refusal, one for the exchange it abandoned. */
+    if (result == 0 && ssh->authFailures != 2) {
+        printf("badServiceClearsKb: authFailures=%u expected 2\n",
+               ssh->authFailures);
+        result = -810;
+    }
+
+    if (result == 0) {
+        idx = 0;
+        ret = wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp,
+                (word32)sizeof(infoRsp), &idx);
+        if (ret != WS_FATAL_ERROR) {
+            printf("badServiceClearsKb: stale INFO_RESPONSE ret=%d "
+                   "expected %d\n", ret, WS_FATAL_ERROR);
+            result = -808;
+        }
+    }
+
+    if (result == 0 && s_kbRespCbCalled) {
+        printf("badServiceClearsKb: userauth callback reached by stale "
+               "INFO_RESPONSE\n");
+        result = -809;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 
 /* userauth callback that records whether it was invoked. Returns SUCCESS so
@@ -17704,6 +17822,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoUserAuthRequest_serviceName: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    unitResult = test_DoUserAuthRequest_badServiceClearsKb();
+    printf("DoUserAuthRequest_badServiceClearsKb: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_DoUserAuthRequest_rejectsPasswordChange();
     printf("DoUserAuthRequest_rejectsPasswordChange: %s\n",

@@ -10427,7 +10427,22 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
                 != ID_SERVICE_CONNECTION) {
             WLOG(WS_LOG_DEBUG, "DUAR: Invalid service name");
             serviceValid = 0;
-            ret = SendUserAuthFailureCount(ssh, 0, 1);
+            /* Refused before method dispatch, which normally updates this
+             * state. Drop it here too, else a later INFO_RESPONSE runs
+             * against the outstanding exchange. */
+            ssh->authId = ID_NONE;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+            /* Charge the exchange this refusal abandons, as the dispatch
+             * path does; else a peer stretches the cap by alternating
+             * keyboard requests with bad service names. */
+            if (ssh->kbSetupPending) {
+                ssh->kbSetupPending = 0;
+                ret = CountUserAuthFailure(ssh);
+            }
+#endif
+            if (ret == WS_SUCCESS) {
+                ret = SendUserAuthFailureCount(ssh, 0, 1);
+            }
             /* Consume all remaining data */
             *idx = len;
         }
@@ -23120,6 +23135,14 @@ int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf, word32 len,
 {
     return DoUserAuthRequest(ssh, buf, len, idx);
 }
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+int wolfSSH_TestDoUserAuthInfoResponse(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthInfoResponse(ssh, buf, len, idx);
+}
+#endif
 
 int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh, byte partialSuccess)
 {
