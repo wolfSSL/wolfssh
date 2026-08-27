@@ -14676,6 +14676,21 @@ static INLINE byte SigTypeForId(byte id)
 
 
 #ifndef WOLFSSH_NO_RSA
+/* Big-endian magnitude compare. Not memcmp(): Zephyr's minimal libc walks it
+ * as signed char, which orders a modulus's high byte backwards. */
+static int BigEndianCompare(const byte* a, const byte* b, word32 sz)
+{
+    word32 idx;
+
+    for (idx = 0; idx < sz; idx++) {
+        if (a[idx] != b[idx]) {
+            return (a[idx] > b[idx]) ? 1 : -1;
+        }
+    }
+    return 0;
+}
+
+
 /*
  * wolfSSH_RsaVerify
  * sig - signature to verify
@@ -14686,43 +14701,54 @@ static INLINE byte SigTypeForId(byte id)
  * heap - allocation heap
  * loc - calling function for logging
  *
- * Takes the provided digest of type digestId and converts it to an
- * encoded digest. Then verifies the signature, comparing the output
- * digest and compares it.
+ * Rebuilds the expected EMSA-PKCS1-v1_5 block from encDigest, applies the
+ * public key to the signature, and compares the two blocks whole. Per RFC
+ * 8332 section 3, the recovered value is never parsed.
  */
 int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
         const byte* encDigest, word32 encDigestSz,
         RsaKey* key, void* heap, const char* loc)
 {
+    byte* scratch = NULL;
     byte* checkSig = NULL;
-    int checkDigestSz;
+    byte* checkBlock = NULL;
+    byte* encBlock = NULL;
+    byte* nBlock = NULL;
     word32 keySz;
+    int encryptSz;
     int ret = WS_SUCCESS;
-#ifdef WOLFSSH_SMALL_STACK
-    byte* checkDigest = NULL;
-#else
-    byte checkDigest[MAX_ENCODED_SIG_SZ];
-#endif
 
     if (sig == NULL) {
         WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Missing RSA signature");
         return WS_RSA_E;
     }
 
-    keySz = (word32)wc_RsaEncryptSize(key);
+    encryptSz = wc_RsaEncryptSize(key);
+    if (encryptSz <= 0) {
+        WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA key size");
+        return WS_RSA_E;
+    }
+    keySz = (word32)encryptSz;
 
-    if (ret == WS_SUCCESS) {
-        checkSig = (byte*)WMALLOC(keySz, heap, DYNTYPE_TEMP);
-        if (checkSig == NULL)
-            ret = WS_MEMORY_E;
+    /* Room for the header, the trailing zero, and eight pad bytes. */
+    if (keySz < encDigestSz + RSA_MIN_PAD_SZ) {
+        WLOG(WS_LOG_DEBUG, "%s: %s", loc, "RSA key too small for the digest");
+        return WS_RSA_E;
     }
-#ifdef WOLFSSH_SMALL_STACK
+
+    /* One block each: normalized signature, recovered value, expected
+     * encoding, modulus. */
     if (ret == WS_SUCCESS) {
-        checkDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ, heap, DYNTYPE_TEMP);
-        if (checkDigest == NULL)
+        scratch = (byte*)WMALLOC(keySz * 4, heap, DYNTYPE_TEMP);
+        if (scratch == NULL)
             ret = WS_MEMORY_E;
+        else {
+            checkSig = scratch;
+            checkBlock = scratch + keySz;
+            encBlock = scratch + (keySz * 2);
+            nBlock = scratch + (keySz * 3);
+        }
     }
-#endif
 
     /* Normalize the peer's signature. Some SSH implementations remove
      * leading zeros on the signatures they encode. We need to pad the
@@ -14742,28 +14768,55 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
         WMEMCPY(checkSig + offset, sig, sigSz);
     }
 
+    /* SP 800-56B wants 1 < s < n-1. wc_RsaFunction() only checks that for a
+     * decrypt, and the modexp would reduce s mod n, so s + n verifies as a
+     * second encoding of the same signature. Offload builds leave n empty and
+     * have nothing to compare against. */
+    if (ret == WS_SUCCESS && mp_count_bits(&key->n) != 0) {
+        word32 eSz = keySz, nSz = keySz;
+
+        /* checkBlock is scratch until the modexp below fills it. */
+        if (wc_RsaFlattenPublicKey(key, checkBlock, &eSz, nBlock, &nSz) != 0
+                || nSz != keySz) {
+            WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA public key");
+            ret = WS_RSA_E;
+        }
+        else if (BigEndianCompare(checkSig, nBlock, keySz) >= 0) {
+            WLOG(WS_LOG_DEBUG, "%s: %s", loc, "RSA signature out of range");
+            ret = WS_RSA_E;
+        }
+    }
+
+    /* Expected block: 0x00 0x01 || 0xFF pad || 0x00 || DigestInfo. */
     if (ret == WS_SUCCESS) {
-        volatile int sizeCompare;
-        volatile int compare;
+        word32 padSz = keySz - encDigestSz - 3;
+        word32 idx = 0;
 
-        checkDigestSz = wc_RsaSSL_Verify(checkSig, keySz,
-                checkDigest, MAX_ENCODED_SIG_SZ, key);
+        encBlock[idx++] = 0x00;
+        encBlock[idx++] = 0x01;
+        WMEMSET(encBlock + idx, 0xFF, padSz);
+        idx += padSz;
+        encBlock[idx++] = 0x00;
+        WMEMCPY(encBlock + idx, encDigest, encDigestSz);
+    }
 
-        sizeCompare = checkDigestSz > 0 && encDigestSz != (word32)checkDigestSz;
-        compare = ConstantCompare(encDigest, checkDigest, encDigestSz);
+    /* RFC 8332 section 3: compare whole blocks, don't parse. */
+    if (ret == WS_SUCCESS) {
+        word32 checkBlockSz = keySz;
+        int rsaRet;
 
-        if (checkDigestSz < 0 || sizeCompare || compare) {
+        rsaRet = wc_RsaFunction(checkSig, keySz, checkBlock, &checkBlockSz,
+                RSA_PUBLIC_ENCRYPT, key, NULL);
+
+        if (rsaRet != 0 || checkBlockSz != keySz
+                || ConstantCompare(checkBlock, encBlock, keySz) != 0) {
             WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Verify");
             ret = WS_RSA_E;
         }
     }
 
-#ifdef WOLFSSH_SMALL_STACK
-    if (checkDigest)
-        WFREE(checkDigest, heap, DYNTYPE_TEMP);
-#endif
-    if (checkSig)
-        WFREE(checkSig, heap, DYNTYPE_TEMP);
+    if (scratch)
+        WFREE(scratch, heap, DYNTYPE_TEMP);
     WOLFSSH_UNUSED(loc); /* Unused when WLOG is not defined */
     return ret;
 }
