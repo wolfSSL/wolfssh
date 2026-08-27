@@ -7673,13 +7673,17 @@ static int UnitAuthKbSetupOk(byte authType, WS_UserAuthData* authData,
     }
     return WOLFSSH_USERAUTH_INVALID_PASSWORD;
 }
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
+#if defined(WOLFSSH_KEYBOARD_INTERACTIVE) || \
+    defined(WOLFSSH_ALLOW_USERAUTH_NONE) || !defined(WOLFSSH_NO_PUBKEY_AUTH)
 /* Build a USERAUTH_REQUEST payload for `service` and auth method `method`
  * with no method-specific fields, as DoUserAuthRequest() sees it with the
  * message id already consumed. The keyboard and none dispatch paths don't
- * parse trailing fields, so three strings (user, service, method) suffice. A
- * NULL method omits that field, which a bad service name never reaches.
- * Returns the payload size, 0 on overflow. */
+ * parse trailing fields, so three strings (user, service, method) suffice,
+ * and the publickey path appends its own fields to this. A NULL method omits
+ * that field, which a bad service name never reaches. Returns the payload
+ * size, 0 on overflow. */
 static word32 BuildAuthMethodRequest(byte* buf, word32 bufSz,
         const char* service, const char* method)
 {
@@ -7703,7 +7707,54 @@ static word32 BuildAuthMethodRequest(byte* buf, word32 bufSz,
     }
     return idx;
 }
-#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+#ifndef WOLFSSH_NO_PUBKEY_AUTH
+/* A public key algorithm the server offers, so the request gets past the
+ * algorithm match and reaches the userauth callback. */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    #define UNIT_AUTH_PK_ALGO "ecdsa-sha2-nistp256"
+#elif !defined(WOLFSSH_NO_RSA_SHA2_256)
+    #define UNIT_AUTH_PK_ALGO "rsa-sha2-256"
+#elif !defined(WOLFSSH_NO_ED25519)
+    #define UNIT_AUTH_PK_ALGO "ssh-ed25519"
+#endif
+
+#ifdef UNIT_AUTH_PK_ALGO
+/* Build the no-signature "publickey" USERAUTH_REQUEST, the PK_OK probe. The
+ * handler reads the key blob only as far as its format string before calling
+ * the userauth callback, so the algorithm name stands in for the key. Returns
+ * the payload size, 0 on overflow. */
+static word32 BuildAuthPkRequest(byte* buf, word32 bufSz)
+{
+    word32 idx, algoSz = (word32)WSTRLEN(UNIT_AUTH_PK_ALGO);
+
+    idx = BuildAuthMethodRequest(buf, bufSz, "ssh-connection", "publickey");
+    if (idx == 0)
+        return 0;
+    if (idx + BOOLEAN_SZ + 3 * UINT32_SZ + 2 * algoSz > bufSz)
+        return 0;
+
+    buf[idx++] = 0; /* has signature FALSE */
+
+    PutU32BE(buf + idx, algoSz);
+    idx += UINT32_SZ;
+    WMEMCPY(buf + idx, UNIT_AUTH_PK_ALGO, algoSz);
+    idx += algoSz;
+
+    /* Key blob, itself a string holding the key format. */
+    PutU32BE(buf + idx, UINT32_SZ + algoSz);
+    idx += UINT32_SZ;
+    PutU32BE(buf + idx, algoSz);
+    idx += UINT32_SZ;
+    WMEMCPY(buf + idx, UNIT_AUTH_PK_ALGO, algoSz);
+    idx += algoSz;
+
+    return idx;
+}
+#endif /* UNIT_AUTH_PK_ALGO */
+#endif /* !WOLFSSH_NO_PUBKEY_AUTH */
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE || WOLFSSH_ALLOW_USERAUTH_NONE
+        * || !WOLFSSH_NO_PUBKEY_AUTH */
 
 /* Build a "password" USERAUTH_REQUEST payload, as DoUserAuthRequest() sees it
  * with the message id already consumed. Returns the payload size. */
@@ -7968,6 +8019,226 @@ static int CaptureIoSendAuthSvc(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     s_authSvcSendCount++;
     return (int)sz;
 }
+
+/* Userauth callback that rejects outright. */
+static int UnitAuthAlwaysReject(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authType;
+    (void)authData;
+    (void)ctx;
+    return WOLFSSH_USERAUTH_REJECTED;
+}
+
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* Accept the setup so the exchange gets past SendUserAuthKeyboardRequest(),
+ * then reject the response, which is the DoUserAuthInfoResponse() branch. */
+static int UnitAuthKbRespReject(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        authData->sf.keyboard.promptCount = 0;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_REJECTED;
+}
+
+
+/* Drive an accepted keyboard-interactive setup, then a rejected
+ * INFO_RESPONSE, and check the rejection drew a USERAUTH_FAILURE. Returns 0,
+ * or 1..5 naming what failed. */
+static int RunRejectedInfoResponse(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte request[64];
+    byte infoRsp[UINT32_SZ];
+    word32 requestSz, idx = 0;
+    int ret;
+    int result = 0;
+
+    requestSz = BuildAuthMethodRequest(request, (word32)sizeof(request),
+            "ssh-connection", "keyboard-interactive");
+    if (requestSz == 0)
+        return 1;
+
+    /* INFO_RESPONSE body: response count of 0, matching promptCount. */
+    PutU32BE(infoRsp, 0);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return 1;
+    wolfSSH_SetUserAuth(ctx, UnitAuthKbRespReject);
+    wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return 1;
+    }
+
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, request, requestSz, &idx);
+    if (ret != WS_SUCCESS) {
+        printf("UserAuthRejectedSendsFailure: kb setup ret=%d expected %d\n",
+               ret, WS_SUCCESS);
+        result = 2;
+    }
+
+    if (result == 0) {
+        /* Drop the INFO_REQUEST the setup sent; the assertion is on what the
+         * response draws. */
+        s_authSvcCaptureSz = 0;
+        s_authSvcSendCount = 0;
+        WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+        idx = 0;
+        ret = wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp,
+                (word32)sizeof(infoRsp), &idx);
+
+        if (ret != WS_USER_AUTH_E) {
+            printf("UserAuthRejectedSendsFailure: info response ret=%d "
+                   "expected %d\n", ret, WS_USER_AUTH_E);
+            result = 3;
+        }
+        else if (s_authSvcSendCount == 0) {
+            printf("UserAuthRejectedSendsFailure: info response sent nothing "
+                   "on rejection\n");
+            result = 4;
+        }
+        else if (CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz)
+                != MSGID_USERAUTH_FAILURE) {
+            printf("UserAuthRejectedSendsFailure: info response msgId=%d "
+                   "expected USERAUTH_FAILURE\n",
+                   CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz));
+            result = 5;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return result;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+
+/* Drive one rejected USERAUTH_REQUEST on a fresh session and check that a
+ * USERAUTH_FAILURE went out. Returns 0, or 1..3 naming what failed. */
+static int RunRejectedRequest(const byte* request, word32 requestSz,
+        const char* method)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    word32 idx = 0;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return 1;
+    wolfSSH_SetUserAuth(ctx, UnitAuthAlwaysReject);
+    wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return 1;
+    }
+
+    s_authSvcCaptureSz = 0;
+    s_authSvcSendCount = 0;
+    WMEMSET(s_authSvcCapture, 0, sizeof(s_authSvcCapture));
+
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, (byte*)request, requestSz, &idx);
+
+    if (ret != WS_USER_AUTH_E) {
+        printf("UserAuthRejectedSendsFailure: %s ret=%d expected %d\n",
+               method, ret, WS_USER_AUTH_E);
+        result = 1;
+    }
+    else if (s_authSvcSendCount == 0) {
+        printf("UserAuthRejectedSendsFailure: %s sent nothing on rejection\n",
+               method);
+        result = 2;
+    }
+    else if (CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz)
+            != MSGID_USERAUTH_FAILURE) {
+        printf("UserAuthRejectedSendsFailure: %s msgId=%d expected"
+               " USERAUTH_FAILURE\n", method,
+               CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz));
+        result = 3;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return result;
+}
+
+
+/* RFC 4252 section 5.1: a rejected request is answered with
+ * USERAUTH_FAILURE. The handler returns WS_USER_AUTH_E either way, so the
+ * assertion is on what went out on the wire. Every method the build dispatches
+ * has its own reject branch, so each is driven here.
+ *
+ * The keyboard method has two: the setup callback, which answers the request
+ * before any prompt goes out, and the response callback, driven separately
+ * through the INFO_RESPONSE shim. The publickey case needs one of the offered
+ * key algorithms compiled in. */
+static int test_UserAuthRejectedSendsFailure(void)
+{
+    byte request[128];
+    word32 requestSz;
+    int ret;
+
+    requestSz = BuildAuthPwRequest(request, (word32)sizeof(request));
+    if (requestSz == 0)
+        return -790;
+    ret = RunRejectedRequest(request, requestSz, "password");
+    if (ret != 0)
+        return -790 - ret;
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    requestSz = BuildAuthMethodRequest(request, (word32)sizeof(request),
+            "ssh-connection", "keyboard-interactive");
+    if (requestSz == 0)
+        return -800;
+    ret = RunRejectedRequest(request, requestSz, "keyboard-interactive");
+    if (ret != 0)
+        return -800 - ret;
+
+    ret = RunRejectedInfoResponse();
+    if (ret != 0)
+        return -810 - ret;
+#endif
+
+#ifdef WOLFSSH_ALLOW_USERAUTH_NONE
+    requestSz = BuildAuthMethodRequest(request, (word32)sizeof(request),
+            "ssh-connection", "none");
+    if (requestSz == 0)
+        return -795;
+    /* The opening probe is exempt from the failure count, not from the
+     * reply. */
+    ret = RunRejectedRequest(request, requestSz, "none");
+    if (ret != 0)
+        return -795 - ret;
+#endif
+
+#ifdef UNIT_AUTH_PK_ALGO
+    requestSz = BuildAuthPkRequest(request, (word32)sizeof(request));
+    if (requestSz == 0)
+        return -805;
+    /* No signature, so the callback answers the PK_OK probe. */
+    ret = RunRejectedRequest(request, requestSz, "publickey");
+    if (ret != 0)
+        return -805 - ret;
+#endif
+
+    return 0;
+}
+
 
 /* Verify DoUserAuthRequest rejects non-"ssh-connection" service names per
  * RFC 4252 Section 5.  For each case we assert:
@@ -17837,6 +18108,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_SendUserAuthFailure_emptyMethods();
     printf("SendUserAuthFailure_emptyMethods: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_UserAuthRejectedSendsFailure();
+    printf("UserAuthRejectedSendsFailure: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

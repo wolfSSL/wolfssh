@@ -466,8 +466,9 @@ typedef struct WS_UserAuthData {
  * a multi-method authentication passed, WOLFSSH_USERAUTH_SUCCESS_ANOTHER
  * reports that a keyboard-interactive round passed and asks for the next
  * round, WOLFSSH_USERAUTH_WOULD_BLOCK asks for the request to be
- * retried, and WOLFSSH_USERAUTH_REJECTED is a hard rejection that ends
- * the session; any other value is treated as an ordinary failure.
+ * retried, and WOLFSSH_USERAUTH_REJECTED is a hard rejection: the server
+ * answers with USERAUTH_FAILURE, then ends the session. Any other value
+ * is treated as an ordinary failure.
  *
  * WARNING: WOLFSSH_USERAUTH_SUCCESS has the value 0, the same as
  * WS_SUCCESS and the C "no error" idiom. A bare "return 0;", a forwarded
