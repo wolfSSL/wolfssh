@@ -793,6 +793,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
     WOLFSSH* ssh;
     WS_SOCKET_T sshFd;
     int rc = 0;
+    int eofAnswered = 0;
+    /* Without a shell there is no child to outlive the peer's EOF, and the
+     * read path echoes unconditionally. */
+    int echoOnly = 1;
 #ifdef WOLFSSH_SHELL
     const char *userName;
     struct passwd *p_passwd;
@@ -809,6 +813,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
     ssh = threadCtx->ssh;
     if (ssh == NULL)
         return WS_FATAL_ERROR;
+
+#ifdef WOLFSSH_SHELL
+    echoOnly = threadCtx->echo;
+#endif
 
     sshFd = wolfSSH_get_fd(ssh);
 
@@ -981,6 +989,57 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
+
+                /* The peer is done sending: hand back the backlog and answer
+                 * its EOF, or a client that half-closed waits on a server
+                 * that never finishes -- the library no longer answers for
+                 * us. Off the channel's own state, not the WS_EOF status: the
+                 * flush inside wolfSSH_worker() can supersede that, and it is
+                 * raised once. Echo mode only; a shell child on a pty is
+                 * still producing, so its EOF waits for the child to exit. */
+                if (!eofAnswered && echoOnly) {
+                    WOLFSSH_CHANNEL* eofChannel;
+
+                    eofChannel = wolfSSH_ChannelFind(ssh, shellChannelId,
+                            WS_CHANNEL_ID_SELF);
+                    if (eofChannel != NULL
+                            && wolfSSH_ChannelGetEof(eofChannel)) {
+                        int eofRead;
+                        int eofSent;
+                        int eofOff;
+
+                        do {
+                            eofRead = wolfSSH_ChannelIdRead(ssh,
+                                    shellChannelId,
+                                    threadCtx->channelBuffer,
+                                    sizeof threadCtx->channelBuffer);
+                            eofOff = 0;
+                            /* A send is bounded by the peer's window and
+                             * packet size, so a short one is normal and the
+                             * rest of the chunk is still owed. */
+                            while (eofOff < eofRead) {
+                                eofSent = wolfSSH_ChannelIdSend(ssh,
+                                        shellChannelId,
+                                        threadCtx->channelBuffer + eofOff,
+                                        eofRead - eofOff);
+                                if (eofSent <= 0)
+                                    break;
+                                eofOff += eofSent;
+                            }
+                            if (eofOff < eofRead)
+                                break;
+                        } while (eofRead > 0);
+
+                        /* Only an emptied channel earns the EOF; anything
+                         * else is retried on a later pass. */
+                        if (eofRead == 0) {
+                            wolfSSH_ChannelSendEof(eofChannel);
+                            eofAnswered = 1;
+                            ChildRunning = 0;
+                        }
+                    }
+                }
+
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
@@ -1080,6 +1139,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         }
                         #endif
+                        continue;
+                    }
+                    else if (rc == WS_EOF) {
+                        /* The half-close is answered by the durable check
+                         * above, which has already run this pass. */
                         continue;
                     }
                     else if (rc != WS_WANT_READ) {
@@ -1379,6 +1443,8 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                             * if there is still pending sends */
             }
             if (error == WS_EOF) {
+                /* An ordinary session end, not a failure. */
+                ret = 0;
                 break;
             }
         }
@@ -1405,10 +1471,18 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 ret = error;
             }
 
+            /* Drain what is buffered before leaving on the EOF. */
             if (error == WS_EOF) {
-                break;
+                /* A rekey is not a drained channel. */
+                int peekRet = wolfSSH_stream_peek(ssh, NULL, 1);
+
+                if (peekRet != WS_REKEYING && peekRet <= 0) {
+                    /* An ordinary session end, not a failure. */
+                    ret = 0;
+                    break;
+                }
             }
-            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD && ret != WS_EOF) {
                 if (ret == WS_WANT_WRITE) {
                     /* recall wolfSSH_worker here because is likely our custom
                      * highwater callback that returned up a WS_WANT_WRITE */
@@ -1431,8 +1505,10 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 error == WS_CHAN_RXD || error == WS_REKEYING ||
                 error == WS_WINDOW_FULL)
                 ret = error;
-            if (error == WS_EOF)
+            if (error == WS_EOF) {
+                ret = 0;
                 break;
+            }
             continue;
         }
         else if (ret == WS_REKEYING) {
@@ -1441,8 +1517,11 @@ static int sftp_worker(thread_ctx_t* threadCtx)
         }
         else if (ret < 0) {
             error = wolfSSH_get_error(ssh);
-            if (error == WS_EOF)
+            if (error == WS_EOF) {
+                /* shutdown is happening, clear peek error */
+                ret = 0;
                 break;
+            }
         }
 
         if (ret == WS_FATAL_ERROR && error == 0) {
@@ -1574,6 +1653,13 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             ret = 0;
         }
 
+        /* The peer's close already retired the channel: a completed
+         * shutdown, not a failure. Left non-zero it sets quit, taking the
+         * server down after one session. */
+        if (ret == WS_CHANNEL_CLOSED) {
+            ret = 0;
+        }
+
         error = wolfSSH_get_error(threadCtx->ssh);
         if (error != WS_SOCKET_ERROR_E &&
                 (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
@@ -1585,7 +1671,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                 error = wolfSSH_get_error(threadCtx->ssh);
 
                 /* peer succesfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }

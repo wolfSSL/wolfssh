@@ -841,8 +841,15 @@ void APP_Tasks ( void )
                 break;
             }
 
+            /* Drain what the peer sent before tearing down. A rekey is not
+             * a drained channel: peek reports it without looking. */
             if (error == WS_EOF) {
-                appData.state = APP_SSH_CLEANUP;
+                int peekRet = wolfSSH_stream_peek(ssh, peek_buf,
+                        sizeof(peek_buf));
+
+                if (peekRet != WS_REKEYING && peekRet <= 0) {
+                    appData.state = APP_SSH_CLEANUP;
+                }
                 break;
             }
   

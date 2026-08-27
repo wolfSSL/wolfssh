@@ -908,6 +908,8 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 * if there is still pending sends */
                 }
                 if (error == WS_EOF) {
+                    /* An ordinary session end, not a failure. */
+                    ret = 0;
                     break;
                 }
             }
@@ -934,10 +936,19 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     continue;
                 }
 
+                /* Drain what is buffered first. A rekey is not a drained
+                 * channel: peek reports it without looking. */
                 if (error == WS_EOF) {
-                    break;
+                    int peekRet = wolfSSH_stream_peek(ssh, NULL, 1);
+
+                    if (peekRet != WS_REKEYING && peekRet <= 0) {
+                        /* An ordinary session end, not a failure. */
+                        ret = 0;
+                        break;
+                    }
                 }
-                if (ret != WS_SUCCESS && ret != WS_CHAN_RXD) {
+                if (ret != WS_SUCCESS && ret != WS_CHAN_RXD
+                        && ret != WS_EOF) {
                     /* If not successful and no channel data, leave. */
                     break;
                 }
@@ -954,8 +965,11 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     error == WS_CHAN_RXD || error == WS_REKEYING ||
                     error == WS_WINDOW_FULL)
                     ret = error;
-                if (error == WS_EOF)
+                if (error == WS_EOF) {
+                    /* An ordinary session end, not a failure. */
+                    ret = 0;
                     break;
+                }
                 continue;
             }
             else if (ret == WS_REKEYING) {
@@ -964,8 +978,11 @@ static int SFTP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
             else if (ret < 0) {
                 error = wolfSSH_get_error(ssh);
-                if (error == WS_EOF)
+                if (error == WS_EOF) {
+                    /* An ordinary session end, not a failure. */
+                    ret = 0;
                     break;
+                }
             }
 
             if (ret == WS_FATAL_ERROR && error == 0) {
@@ -1325,6 +1342,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     else if (rc == WS_CHANNEL_CLOSED) {
                         continue;
                     }
+                    else if (rc == WS_EOF) {
+                        /* The peer is done sending. No EOF of ours here: it
+                         * latches eofTxd and the child's remaining console
+                         * output would then be refused, which both send sites
+                         * below treat as fatal. wolfSSH_shutdown() sends it at
+                         * teardown, as the POSIX copy relies on. Closing the
+                         * write end of the child's stdin is still owed on this
+                         * platform, and so is the per-pass drain: ptyIn is the
+                         * terminal-resize context, and this copy reads into
+                         * shellBuffer, which the windowFull resend owes the
+                         * peer. Both want fixing where they can be tested. */
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         break;
                     }
@@ -1518,8 +1548,10 @@ static int SHELL_FlushOut(WOLFSSH* ssh, WS_SOCKET_T sshFd, word32 channelId,
             if (wolfSSH_worker(ssh, NULL) < 0) {
                 int err = wolfSSH_get_error(ssh);
 
+                /* A peer EOF during the final flush is expected. */
                 if (err != WS_WANT_READ && err != WS_WANT_WRITE &&
-                        err != WS_CHAN_RXD && err != WS_REKEYING) {
+                        err != WS_CHAN_RXD && err != WS_REKEYING &&
+                        err != WS_EOF) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Issue draining connection on final flush");
                     return -1;
@@ -1824,11 +1856,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     word32 shellChannelId = 0;
     WOLFSSH_CHANNEL* shellChannel;
 
-    /* Name the session channel off the channel list rather than trusting
-     * DEFAULT_NEXT_CHANNEL to be 0, which a build can override. It is the
-     * only channel open at this point; the agent channel comes later. The
-     * loop below closes the child's stdin off this channel, so a wrong id
-     * there drops the peer's input instead of handing it over. */
+    /* Off the channel list, not DEFAULT_NEXT_CHANNEL, which a build can
+     * override. The session channel is the only one open here. lastRxId is
+     * no use: no request path sets it. A wrong id drops the peer's input. */
     shellChannel = wolfSSH_ChannelNext(ssh, NULL);
     if (shellChannel == NULL || wolfSSH_ChannelGetId(shellChannel,
             &shellChannelId, WS_CHANNEL_ID_SELF) != WS_SUCCESS) {
@@ -1959,6 +1989,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     }
                     peerConnected = 0;
                     continue;
+                }
+                else if (rc == WS_EOF) {
+                    /* Half-close, handled below. */
                 }
                 else if (rc == WS_WANT_WRITE) {
                     wantWrite = 1;
@@ -2716,7 +2749,7 @@ static void* HandleConnection(void* arg)
                 error = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }
