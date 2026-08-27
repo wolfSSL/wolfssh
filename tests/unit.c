@@ -9783,6 +9783,280 @@ done:
     return result;
 }
 
+
+/* wolfSSH_RsaVerify compares whole blocks, so a signature over malformed
+ * EMSA-PKCS1-v1_5 padding must be refused. The blocks are signed with a raw
+ * private-key operation, since normal signing would not produce them. The
+ * control case guards against a broken harness passing everything. */
+static int test_RsaVerify_BadPadding(void)
+{
+    int result = 0;
+    int ret;
+    RsaKey key;
+    WC_RNG rng;
+    word32 idx = 0;
+    word32 keySz;
+    word32 padSz;
+    byte data[32];
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    byte encDigest[MAX_ENCODED_SIG_SZ];
+    int  encDigestSz;
+    byte block[512];
+    byte sig[512];
+    word32 sigSz;
+    int  encryptSz;
+    int  keyInit = 0, rngInit = 0;
+
+    WMEMSET(data, 0x42, sizeof(data));
+
+    if (wc_InitRng(&rng) != 0) {
+        printf("RsaVerify_BadPadding: wc_InitRng failed\n");
+        return -520;
+    }
+    rngInit = 1;
+    if (wc_InitRsaKey(&key, NULL) != 0) {
+        printf("RsaVerify_BadPadding: wc_InitRsaKey failed\n");
+        result = -521;
+        goto done;
+    }
+    keyInit = 1;
+
+    ret = wc_RsaPrivateKeyDecode(unitTestRsaPrivKey, &idx, &key,
+            unitTestRsaPrivKeySz);
+    if (ret != 0) { result = -522; goto done; }
+
+    encryptSz = wc_RsaEncryptSize(&key);
+    if (encryptSz <= 0 || (word32)encryptSz > sizeof(block)) {
+        result = -523;
+        goto done;
+    }
+    keySz = (word32)encryptSz;
+
+    ret = wc_Hash(WC_HASH_TYPE_SHA256, data, sizeof(data),
+            digest, WC_SHA256_DIGEST_SIZE);
+    if (ret != 0) { result = -524; goto done; }
+
+    encDigestSz = wc_EncodeSignature(encDigest, digest,
+            WC_SHA256_DIGEST_SIZE, wc_HashGetOID(WC_HASH_TYPE_SHA256));
+    if (encDigestSz <= 0) { result = -525; goto done; }
+
+    /* The fixed test key has room; a smaller one would underflow padSz. */
+    if (keySz < (word32)encDigestSz + RSA_MIN_PAD_SZ) {
+        result = -532;
+        goto done;
+    }
+    padSz = keySz - (word32)encDigestSz - 3;
+
+    /* Control: a well-formed block must verify. */
+    block[0] = 0x00;
+    block[1] = 0x01;
+    WMEMSET(block + 2, 0xFF, padSz);
+    block[2 + padSz] = 0x00;
+    WMEMCPY(block + 3 + padSz, encDigest, (word32)encDigestSz);
+
+    sigSz = (word32)sizeof(sig);
+    ret = wc_RsaFunction(block, keySz, sig, &sigSz, RSA_PRIVATE_DECRYPT,
+            &key, &rng);
+    if (ret != 0) { result = -526; goto done; }
+
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, encDigest, (word32)encDigestSz,
+            &key, NULL);
+    if (ret != WS_SUCCESS) {
+        printf("RsaVerify_BadPadding: well-formed block ret=%d expected %d\n",
+               ret, WS_SUCCESS);
+        result = -527;
+        goto done;
+    }
+
+    /* A pad byte that is not 0xFF. */
+    block[2 + (padSz / 2)] = 0xFE;
+    sigSz = (word32)sizeof(sig);
+    ret = wc_RsaFunction(block, keySz, sig, &sigSz, RSA_PRIVATE_DECRYPT,
+            &key, &rng);
+    if (ret != 0) { result = -528; goto done; }
+
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, encDigest, (word32)encDigestSz,
+            &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_BadPadding: bad pad byte ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -529;
+        goto done;
+    }
+
+    /* A wrong block type. */
+    block[2 + (padSz / 2)] = 0xFF;
+    block[1] = 0x02;
+    sigSz = (word32)sizeof(sig);
+    ret = wc_RsaFunction(block, keySz, sig, &sigSz, RSA_PRIVATE_DECRYPT,
+            &key, &rng);
+    if (ret != 0) { result = -530; goto done; }
+
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, encDigest, (word32)encDigestSz,
+            &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_BadPadding: bad block type ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -531;
+    }
+
+done:
+    if (rngInit)
+        wc_FreeRng(&rng);
+    if (keyInit)
+        wc_FreeRsaKey(&key);
+    return result;
+}
+
+
+/* A signature is only valid in 0 <= s < n. The raw public operation reduces
+ * mod n on its own, so s + n recovers the same block and would verify without
+ * an explicit range check. Also covers the two key-size guards. */
+static int test_RsaVerify_SigRange(void)
+{
+    int result = 0;
+    int ret;
+    RsaKey key;
+    RsaKey emptyKey;
+    WC_RNG rng;
+    word32 idx = 0;
+    word32 keySz;
+    word32 eSz, nSz;
+    byte data[32];
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    byte encDigest[MAX_ENCODED_SIG_SZ];
+    int  encDigestSz = 0;
+    byte bigDigest[512];
+    byte nBuf[512];
+    byte eBuf[512];
+    byte sig[512];
+    byte sum[513];
+    word32 sigSz = 0;
+    int  encryptSz;
+    int  attempt;
+    int  carry = 1;
+    int  keyInit = 0, rngInit = 0, emptyInit = 0;
+
+    if (wc_InitRng(&rng) != 0) {
+        printf("RsaVerify_SigRange: wc_InitRng failed\n");
+        return -540;
+    }
+    rngInit = 1;
+    if (wc_InitRsaKey(&key, NULL) != 0) {
+        printf("RsaVerify_SigRange: wc_InitRsaKey failed\n");
+        result = -541;
+        goto done;
+    }
+    keyInit = 1;
+
+    ret = wc_RsaPrivateKeyDecode(unitTestRsaPrivKey, &idx, &key,
+            unitTestRsaPrivKeySz);
+    if (ret != 0) { result = -542; goto done; }
+
+    encryptSz = wc_RsaEncryptSize(&key);
+    if (encryptSz <= 0 || (word32)encryptSz > sizeof(sig)) {
+        result = -543;
+        goto done;
+    }
+    keySz = (word32)encryptSz;
+
+    eSz = (word32)sizeof(eBuf);
+    nSz = (word32)sizeof(nBuf);
+    ret = wc_RsaFlattenPublicKey(&key, eBuf, &eSz, nBuf, &nSz);
+    if (ret != 0 || nSz != keySz) { result = -544; goto done; }
+
+    /* s + n has to fit in keySz bytes to be a signature at all. s depends on
+     * the message, so sign a few until one does. */
+    for (attempt = 0; attempt < 16 && carry; attempt++) {
+        int i;
+        word32 acc = 0;
+
+        WMEMSET(data, (byte)(0x42 + attempt), sizeof(data));
+        ret = wc_Hash(WC_HASH_TYPE_SHA256, data, sizeof(data),
+                digest, WC_SHA256_DIGEST_SIZE);
+        if (ret != 0) { result = -545; goto done; }
+
+        encDigestSz = wc_EncodeSignature(encDigest, digest,
+                WC_SHA256_DIGEST_SIZE, wc_HashGetOID(WC_HASH_TYPE_SHA256));
+        if (encDigestSz <= 0) { result = -546; goto done; }
+
+        ret = wc_RsaSSL_Sign(encDigest, (word32)encDigestSz, sig, sizeof(sig),
+                &key, &rng);
+        if (ret <= 0 || (word32)ret != keySz) { result = -547; goto done; }
+        sigSz = (word32)ret;
+
+        for (i = (int)keySz - 1; i >= 0; i--) {
+            acc = (word32)sig[i] + (word32)nBuf[i] + (acc >> 8);
+            sum[i + 1] = (byte)(acc & 0xFF);
+        }
+        sum[0] = (byte)(acc >> 8);
+        carry = sum[0] != 0;
+    }
+    if (carry) { result = -548; goto done; }
+
+    /* The signature itself still verifies. */
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, encDigest, (word32)encDigestSz,
+            &key, NULL);
+    if (ret != WS_SUCCESS) {
+        printf("RsaVerify_SigRange: valid sig ret=%d expected %d\n",
+               ret, WS_SUCCESS);
+        result = -549;
+        goto done;
+    }
+
+    /* s + n must not. */
+    ret = wolfSSH_TestRsaVerify(sum + 1, keySz, encDigest, (word32)encDigestSz,
+            &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_SigRange: sig plus modulus ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -550;
+        goto done;
+    }
+
+    /* The smallest digest the key has no room to pad. */
+    WMEMSET(bigDigest, 0, sizeof(bigDigest));
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, bigDigest,
+            keySz - RSA_MIN_PAD_SZ + 1, &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_SigRange: oversized digest ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -551;
+        goto done;
+    }
+
+    /* Bigger than the block itself. Without the guard, padSz underflows and
+     * the pad WMEMSET runs off the scratch buffer, so only the guard can
+     * bring this back. */
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, bigDigest, keySz - 2, &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_SigRange: unpaddable digest ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -554;
+        goto done;
+    }
+
+    /* A key with no size to it is refused as well. */
+    if (wc_InitRsaKey(&emptyKey, NULL) != 0) { result = -552; goto done; }
+    emptyInit = 1;
+    ret = wolfSSH_TestRsaVerify(sig, sigSz, encDigest, (word32)encDigestSz,
+            &emptyKey, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_SigRange: empty key ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -553;
+    }
+
+done:
+    if (rngInit)
+        wc_FreeRng(&rng);
+    if (keyInit)
+        wc_FreeRsaKey(&key);
+    if (emptyInit)
+        wc_FreeRsaKey(&emptyKey);
+    return result;
+}
+
 #endif /* !WOLFSSH_NO_RSA */
 
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
@@ -17981,6 +18255,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if !defined(WOLFSSH_NO_RSA)
     unitResult = test_RsaVerify_BadDigest();
     printf("RsaVerify_BadDigest: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_RsaVerify_BadPadding();
+    printf("RsaVerify_BadPadding: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_RsaVerify_SigRange();
+    printf("RsaVerify_SigRange: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
