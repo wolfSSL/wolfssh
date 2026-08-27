@@ -17383,7 +17383,8 @@ static int BuildUserAuthRequestKeyboard(WOLFSSH* ssh, byte* output, word32* idx,
             WMEMCPY(output + begin, authData->sf.keyboard.prompts[entry],
                     authData->sf.keyboard.promptLengths[entry]);
             begin += authData->sf.keyboard.promptLengths[entry];
-            output[begin] = authData->sf.keyboard.promptEcho[entry];
+            /* RFC 4251 booleans are 0 or 1. */
+            output[begin] = (authData->sf.keyboard.promptEcho[entry] != 0);
             begin++;
         }
         *idx = begin;
@@ -17438,6 +17439,35 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
     if (ret == WS_SUCCESS) {
         if (authData->sf.keyboard.promptCount > WOLFSSH_MAX_PROMPTS) {
             ret = WS_BAD_USAGE;
+        }
+    }
+
+    if (ret == WS_SUCCESS && authData->sf.keyboard.promptCount > 0) {
+        /* RFC 4256 section 3.3 forbids an empty prompt. Check before
+         * sizing, so both passes see the same entries. */
+        word32 entry;
+
+        if (authData->sf.keyboard.promptLengths == NULL ||
+                authData->sf.keyboard.prompts == NULL ||
+                authData->sf.keyboard.promptEcho == NULL) {
+            WLOG(WS_LOG_DEBUG, "SUAKR: keyboard setup left a prompt array "
+                "unset");
+            ret = WS_BAD_USAGE;
+        }
+
+        for (entry = 0; ret == WS_SUCCESS &&
+                entry < authData->sf.keyboard.promptCount; entry++) {
+            if (authData->sf.keyboard.promptLengths[entry] == 0 ||
+                    authData->sf.keyboard.prompts[entry] == NULL) {
+                WLOG(WS_LOG_DEBUG, "SUAKR: prompt %u is empty", entry);
+                ret = WS_BAD_USAGE;
+            }
+            /* The sizing pass sums these into a word32. */
+            else if (authData->sf.keyboard.promptLengths[entry] >
+                    WOLFSSH_MAX_PROMPT_SZ) {
+                WLOG(WS_LOG_DEBUG, "SUAKR: prompt %u too long", entry);
+                ret = WS_BAD_USAGE;
+            }
         }
     }
 

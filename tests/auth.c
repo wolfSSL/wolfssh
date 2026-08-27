@@ -1736,6 +1736,8 @@ word32 kbResponseCount;
 byte kbMultiRound = 0;
 byte currentRound = 0;
 byte unbalanced = 0;
+/* What the client must see for each prompt's echo byte. */
+byte kbExpectedEcho = 1;
 
 WS_UserAuthData_Keyboard promptData;
 
@@ -1832,7 +1834,9 @@ static THREAD_RETURN WOLFSSH_THREAD server_thread(void* args)
         for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {
             promptData.prompts[prompt] = (byte*)"Password: ";
             promptData.promptLengths[prompt] = 10;
-            promptData.promptEcho[prompt] = 0;
+            /* Not 0 or 1, so the client sees whether the sender canonicalized
+             * the boolean. */
+            promptData.promptEcho[prompt] = 0x42;
         }
     }
     else {
@@ -1915,6 +1919,10 @@ static int keyboardUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
         AssertIntEQ(kbResponseCount, authData->sf.keyboard.promptCount);
         for (word32 prompt = 0; prompt < kbResponseCount; prompt++) {
             AssertStrEQ("Password: ", authData->sf.keyboard.prompts[prompt]);
+            /* RFC 4251 section 5: whatever the server stored, the wire
+             * carries the canonical 0 or 1. */
+            AssertIntEQ(authData->sf.keyboard.promptEcho[prompt],
+                    kbExpectedEcho);
         }
 
         authData->sf.keyboard.responseCount = kbResponseCount;
@@ -2235,6 +2243,8 @@ static void test_invalid_cb_keyboard(void)
     kbResponses[0]       = (byte*)testText1;
     kbResponseLengths[0] = 4;
     kbResponseCount      = 1;
+    /* This server stores 0, which must arrive as 0. */
+    kbExpectedEcho       = 0;
 
     serverArgs.signal          = &ready;
     serverArgs.pubkeyServerCtx = NULL;
@@ -2272,6 +2282,7 @@ static void test_invalid_cb_keyboard(void)
     ThreadJoin(serThread);
     AssertIntNE(serverArgs.return_code, WS_SUCCESS); /* auth must NOT be granted */
 
+    kbExpectedEcho = 1;
     FreeTcpReady(&ready);
 }
 

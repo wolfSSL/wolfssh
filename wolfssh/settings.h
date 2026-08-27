@@ -86,6 +86,14 @@ extern "C" {
     #define WOLFSSH_MAX_PROMPTS 64
 #endif
 
+/* Maximum length of one prompt string. Bounds the request payload, which is
+ * sized by summing the prompt lengths.
+ */
+
+#if defined(WOLFSSH_KEYBOARD_INTERACTIVE) && !defined(WOLFSSH_MAX_PROMPT_SZ)
+    #define WOLFSSH_MAX_PROMPT_SZ 1024
+#endif
+
 #ifdef __cplusplus
 }
 #endif
