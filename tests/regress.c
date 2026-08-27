@@ -2142,6 +2142,39 @@ static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
 }
 
 
+/* A service accept is allowed only when no key exchange is in flight.
+ * connectState does not see a rekey, so isKeying is checked too. */
+static void TestClientServiceAcceptBlockedDuringKeying(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_ACCEPT,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+
+    /* Same connectState, peer's rekey KEXINIT arrived first. */
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_ACCEPT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    /* Allowed when only this side has started a rekey: RFC 4253 section 7.1
+     * requires tolerating what the peer sent before it saw our KEXINIT. */
+    ResetSession(ssh);
+    ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_ACCEPT,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+}
+
+
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
  * connectState: no channel created, no reply emitted. The connectState
  * gate does the rejecting; isKeying below is scene-setting only. */
@@ -2297,6 +2330,64 @@ static void TestServerServiceRequestStateGated(WOLFSSH* ssh)
     /* Of the messages exercised here, only SERVICE_ACCEPT sets an error
      * on reject. */
     AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+}
+
+
+/* Drive the receive path with a SERVICE_REQUEST arriving mid-rekey.
+ * acceptState sits at ACCEPT_KEYED throughout, so only isKeying catches
+ * it. */
+static void TestServerServiceRequestRejectedDuringKeying(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte payload[64];
+    byte pkt[128];
+    byte out[128];
+    word32 pktSz;
+    word32 idx = 0;
+
+    idx = AppendString(payload, sizeof(payload), idx, "ssh-userauth");
+    pktSz = WrapPacket(MSGID_SERVICE_REQUEST, payload, idx, pkt, sizeof(pkt));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    MemIoInit(&io, pkt, pktSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ssh->acceptState = ACCEPT_KEYED;
+    /* The peer's rekey KEXINIT arrived, its NEWKEYS has not. */
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+
+    AssertIntEQ(wolfSSH_TestDoReceive(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    /* Not dispatched, so acceptState did not advance. */
+    AssertIntEQ(ssh->clientState, CLIENT_BEGIN);
+    AssertIntEQ(ssh->acceptState, ACCEPT_KEYED);
+    /* Nothing emitted in reply. */
+    AssertIntEQ(io.outSz, 0);
+
+    /* Allowed when only this side has started a rekey. */
+    ssh->error = 0;
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_REQUEST,
+            WS_MSG_RECV));
+
+    /* Allowed once the key exchange is done. */
+    ssh->error = 0;
+    ssh->isKeying = 0;
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_REQUEST,
+            WS_MSG_RECV));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 
@@ -8006,6 +8097,7 @@ int main(int argc, char** argv)
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelBlockedEveryPreAuthState(ssh);
     TestChannelAllowedAfterAuth(ssh);
+    TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
 #ifndef NO_WOLFSSH_SERVER
@@ -8014,6 +8106,7 @@ int main(int argc, char** argv)
     TestServerUserauthBlockedBeforeKeyed(serverSsh);
     TestServerOnlyUserauthMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
+    TestServerServiceRequestRejectedDuringKeying();
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
