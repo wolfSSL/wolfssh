@@ -4357,6 +4357,15 @@ static int DiscardIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     (void)ssh; (void)buf; (void)ctx;
     return (int)sz;
 }
+/* Reports a short (would-block) write, so an adjust bundled into the output
+ * buffer reaches the transport but does not fully flush: wolfSSH_SendPacket()
+ * maps WS_CBIO_ERR_WANT_WRITE to WS_WANT_WRITE. */
+static WS_MAYBE_UNUSED int WantWriteIoSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_WANT_WRITE;
+}
 
 static int test_DoChannelExtendedData_overflow(void)
 {
@@ -4617,6 +4626,77 @@ done:
 /* The tests below drive a server-side session that sends a window adjust.
  * With NO_WOLFSSH_SERVER the message filter has no server branch, so every
  * message on such a session is refused and the tests cannot run. */
+/* Shared test doubles. Endpoint-agnostic on purpose: a receive mock and a
+ * handful of plaintext packet builders belong to both halves of this file, so
+ * they sit ahead of every NO_WOLFSSH_SERVER / NO_WOLFSSH_CLIENT region rather
+ * than inside one of them. */
+
+/* A crafted transport packet staged for the receive path, and the running
+ * offset PacketIoRecv has delivered. */
+static const byte* s_recvPkt    = NULL;
+static word32      s_recvPktSz  = 0;
+static word32      s_recvPktOff = 0;
+
+/* IORecv mock that hands out the staged packet, then reports WS_WANT_READ once
+ * it is drained so a further DoReceive() does not block on a live socket. */
+static WS_MAYBE_UNUSED int PacketIoRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    word32 avail, n;
+
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(ctx);
+
+    avail = s_recvPktSz - s_recvPktOff;
+    if (avail == 0)
+        return WS_CBIO_ERR_WANT_READ;
+
+    n = (sz < avail) ? sz : avail;
+    WMEMCPY(buf, s_recvPkt + s_recvPktOff, n);
+    s_recvPktOff += n;
+    return (int)n;
+}
+
+/* Builds a plaintext CHANNEL_EXTENDED_DATA (stderr) SSH packet addressed to
+ * channelId, carrying 10 bytes of payload set to fill, into pkt (needs 32
+ * bytes) and returns its size. A bare session negotiates no cipher
+ * (peerEncryptId ID_NONE, so Decrypt() is a passthrough) and no MAC
+ * (peerMacSz 0), so the packet goes on the wire in the clear. The total size is
+ * a multiple of the 8-byte MIN_BLOCK_SZ and the padding meets MIN_PAD_LENGTH.
+ *
+ * Layout: [len=28][pad=4][msgid=95][chan][type=1][dataSz=10][data*10][pad*4]. */
+static WS_MAYBE_UNUSED word32 BuildExtDataStderrPacket(byte* pkt, word32 channelId, byte fill)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + type(4) + dataSz(4)
+     *               + data(10) + padding(4) = 28. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x1C;
+    pkt[i++] = 0x04;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_EXTENDED_DATA;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00;
+    pkt[i++] = (byte)CHANNEL_EXTENDED_DATA_STDERR;   /* data type = stderr (1) */
+
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0A; /* 10 */
+
+    WMEMSET(pkt + i, fill, 10); i += 10;
+    WMEMSET(pkt + i, 0x00, 4);  i += 4;       /* padding bytes */
+
+    return i;                                 /* 32 */
+}
+/* Fails every send, discarding whatever was bundled (WS_CBIO_ERR_GENERAL makes
+ * wolfSSH_SendPacket() shrink the output buffer), so an adjust sent through it
+ * never reaches the peer. */
+static WS_MAYBE_UNUSED int FailIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_GENERAL;
+}
 #ifndef NO_WOLFSSH_SERVER
 
 /* An unknown extended data type must be ignored (consumed and discarded) per
@@ -5469,14 +5549,6 @@ done:
 }
 
 
-/* Fails every send, discarding whatever was bundled (WS_CBIO_ERR_GENERAL makes
- * wolfSSH_SendPacket() shrink the output buffer), so an adjust sent through it
- * never reaches the peer. */
-static int FailIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
-{
-    (void)ssh; (void)buf; (void)sz; (void)ctx;
-    return WS_CBIO_ERR_GENERAL;
-}
 
 /* The peer's window only grows by the WINDOW_ADJUSTs it receives, so credit
  * counted locally but never sent stalls the channel for good. Covers the two
@@ -5623,15 +5695,6 @@ done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
-}
-
-/* Reports a short (would-block) write, so an adjust bundled into the output
- * buffer reaches the transport but does not fully flush: wolfSSH_SendPacket()
- * maps WS_CBIO_ERR_WANT_WRITE to WS_WANT_WRITE. */
-static int WantWriteIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
-{
-    (void)ssh; (void)buf; (void)sz; (void)ctx;
-    return WS_CBIO_ERR_WANT_WRITE;
 }
 
 /* A drain whose window-adjust send only partially completes (WS_WANT_WRITE)
@@ -5861,64 +5924,6 @@ done:
 
 #ifndef NO_WOLFSSH_SERVER
 
-/* A crafted transport packet staged for the receive path, and the running
- * offset PacketIoRecv has delivered. */
-static const byte* s_recvPkt    = NULL;
-static word32      s_recvPktSz  = 0;
-static word32      s_recvPktOff = 0;
-
-/* IORecv mock that hands out the staged packet, then reports WS_WANT_READ once
- * it is drained so a further DoReceive() does not block on a live socket. */
-static int PacketIoRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
-{
-    word32 avail, n;
-
-    WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(ctx);
-
-    avail = s_recvPktSz - s_recvPktOff;
-    if (avail == 0)
-        return WS_CBIO_ERR_WANT_READ;
-
-    n = (sz < avail) ? sz : avail;
-    WMEMCPY(buf, s_recvPkt + s_recvPktOff, n);
-    s_recvPktOff += n;
-    return (int)n;
-}
-
-/* Builds a plaintext CHANNEL_EXTENDED_DATA (stderr) SSH packet addressed to
- * channelId, carrying 10 bytes of payload set to fill, into pkt (needs 32
- * bytes) and returns its size. A bare session negotiates no cipher
- * (peerEncryptId ID_NONE, so Decrypt() is a passthrough) and no MAC
- * (peerMacSz 0), so the packet goes on the wire in the clear. The total size is
- * a multiple of the 8-byte MIN_BLOCK_SZ and the padding meets MIN_PAD_LENGTH.
- *
- * Layout: [len=28][pad=4][msgid=95][chan][type=1][dataSz=10][data*10][pad*4]. */
-static word32 BuildExtDataStderrPacket(byte* pkt, word32 channelId, byte fill)
-{
-    word32 i = 0;
-
-    /* packet_length = padLen(1) + msgid(1) + chan(4) + type(4) + dataSz(4)
-     *               + data(10) + padding(4) = 28. */
-    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x1C;
-    pkt[i++] = 0x04;                          /* padding length */
-    pkt[i++] = MSGID_CHANNEL_EXTENDED_DATA;
-
-    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
-    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
-    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
-    pkt[i++] = (byte)( channelId        & 0xFF);
-
-    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00;
-    pkt[i++] = (byte)CHANNEL_EXTENDED_DATA_STDERR;   /* data type = stderr (1) */
-
-    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0A; /* 10 */
-
-    WMEMSET(pkt + i, fill, 10); i += 10;
-    WMEMSET(pkt + i, 0x00, 4);  i += 4;       /* padding bytes */
-
-    return i;                                 /* 32 */
-}
 
 /* Integration (M-3): a peer sending stderr on a channel that is not the head of
  * the channel list must not surface as stream data. wolfSSH_stream_read() reads
@@ -6384,9 +6389,7 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
-
 #endif /* NO_WOLFSSH_SERVER */
-
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;

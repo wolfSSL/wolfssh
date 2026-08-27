@@ -785,9 +785,19 @@ void APP_Tasks ( void )
                     break; /* no need to spend time attempting to pull data  
                                 * if there is still pending sends */
                 }
+                /* Drain what the peer sent before tearing down, the same as
+                 * the worker site below. The two later WS_EOF checks need no
+                 * guard: one sits behind a peek that already found data and
+                 * breaks to re-peek next pass, the other behind a peek that
+                 * already reported the channel dry. */
                 if (error == WS_EOF) {
-                    appData.state = APP_SSH_CLEANUP;
-                    break;
+                    int peekRet = wolfSSH_stream_peek(ssh, peek_buf,
+                            sizeof(peek_buf));
+
+                    if (peekRet != WS_REKEYING && peekRet <= 0) {
+                        appData.state = APP_SSH_CLEANUP;
+                        break;
+                    }
                 }
             }
 
