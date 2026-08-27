@@ -151,9 +151,10 @@ static int ScpStreamSend(WOLFSSH* ssh, byte* data, word32 sz)
                 if (err == WS_WANT_READ || err == WS_WANT_WRITE)
                     return err;
                 /* Only a rekey/window/channel-data status means "keep driving".
-                 * Any other negative status is fatal and returned. */
+                 * Any other negative status is fatal and returned. A peer EOF
+                 * closes their direction only, and is raised once. */
                 if (ret < 0 && ret != WS_REKEYING && ret != WS_WINDOW_FULL
-                        && ret != WS_CHAN_RXD)
+                        && ret != WS_CHAN_RXD && ret != WS_EOF)
                     return ret;
                 /* otherwise loop and retry the send, which clears the status */
             }
@@ -944,15 +945,13 @@ int DoScpRequest(WOLFSSH* ssh)
         /* Peer MUST send back a SSH_MSG_CHANNEL_CLOSE unless already
             sent*/
         ret = ScpStreamRead(ssh, buf, 1);
-        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
+        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED
+                || ret == WS_EOF) {
             WLOG(WS_LOG_DEBUG, scpState, "Peer hung up, but SCP is done");
             ret = WS_SUCCESS;
         }
-        else if (ret != WS_EOF) {
-            WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
-        }
         else {
-            ret = WS_SUCCESS;
+            WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
         }
     }
 
@@ -1784,7 +1783,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             }
         }
 
-        /* check if wolfSSH_worker returns 0 from handling a channel eof */
+        /* Already at EOF, and the worker had nothing else to report. */
         if (err == 0) {
             WOLFSSH_CHANNEL* channel;
             channel = wolfSSH_ChannelFind(ssh, lastChannel, WS_CHANNEL_ID_SELF);
