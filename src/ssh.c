@@ -1298,18 +1298,20 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
-    if (ssh->channelList->eofRxd) {
-        ssh->error = WS_EOF;
-        return WS_ERROR;
-    }
 
     inputBuffer = &ssh->channelList->inputBuffer;
     avail = inputBuffer->length - inputBuffer->idx;
 
+    /* Report the EOF only once the buffered data is drained. */
+    if (avail == 0 && ssh->channelList->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
+    }
+
     /* Report the disconnect only once the buffered data is drained, the
      * same way wolfSSH_stream_read() does. Callers use this to tell a
      * drained channel from one with more to come, and a dead session is
-     * neither. */
+     * neither. The EOF above outranks it: it names the channel. */
     if (avail == 0 && ssh->disconnected) {
         ssh->error = WS_DISCONNECT;
         return WS_FATAL_ERROR;
@@ -1341,6 +1343,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     int ret = WS_SUCCESS;
     WOLFSSH_BUFFER* inputBuffer;
+    word32 headId;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_read()");
 
@@ -1356,7 +1359,13 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_BAD_ARGUMENT;
     }
 
-    if (ssh->channelList->eofRxd) {
+    inputBuffer = &ssh->channelList->inputBuffer;
+    /* inputBuffer belongs to this channel; DoReceive() can retire it. */
+    headId = ssh->channelList->channel;
+
+    /* Report the EOF only once the buffered data is drained. */
+    if (inputBuffer->length - inputBuffer->idx == 0
+            && ssh->channelList->eofRxd) {
         ssh->error = WS_EOF;
         return WS_ERROR;
     }
@@ -1368,7 +1377,6 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_FATAL_ERROR;
     }
 
-    inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
 
     /* Hand back whatever arrived before the disconnect, then report it once
@@ -1386,8 +1394,20 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
                     "Starting to receive data at current index of %u",
                     inputBuffer->idx);
             ret = DoReceive(ssh);
-            if (ssh->channelList == NULL || ssh->channelList->eofRxd)
+            /* Off the current head: DoReceive() may have retired the old. */
+            if (ssh->channelList == NULL
+                    || (ssh->channelList->eofRxd
+                        && ssh->channelList->inputBuffer.length
+                           - ssh->channelList->inputBuffer.idx == 0))
                 ret = WS_EOF;
+            if (ret == WS_EOF && ssh->channelList != NULL
+                    && ssh->channelList->channel == headId
+                    && ssh->lastRxId != headId) {
+                /* Another channel's EOF is not this read's; the head is
+                 * still open. Loop only while the head is unchanged, since
+                 * inputBuffer points into it. */
+                continue;
+            }
             if (ret == WS_EXTDATA &&
                     ssh->lastRxId != ssh->channelList->channel) {
                 /* Extended data for another channel. wolfSSH_extended_data_read()

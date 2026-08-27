@@ -4740,6 +4740,63 @@ static WS_MAYBE_UNUSED word32 BuildChannelEofPacket(byte* pkt, word32 channelId)
 
     return i;                                 /* 16 */
 }
+
+/* Builds a plaintext CHANNEL_CLOSE packet for channelId into pkt (needs 16
+ * bytes), returning its size.
+ *
+ * Layout: [len=12][pad=6][msgid=97][chan][pad*6]. */
+static WS_MAYBE_UNUSED word32 BuildChannelClosePacket(byte* pkt, word32 channelId)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + padding(6) = 12. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0C;
+    pkt[i++] = 0x06;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_CLOSE;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    WMEMSET(pkt + i, 0x00, 6); i += 6;        /* padding bytes */
+
+    return i;                                 /* 16 */
+}
+
+/* Builds a plaintext CHANNEL_OPEN_FAILURE for channelId into pkt (needs 32
+ * bytes), returning its size. Empty description and language strings.
+ *
+ * Layout: [len=28][pad=10][msgid=92][chan][reason][0][0][pad*10]. */
+static WS_MAYBE_UNUSED word32 BuildChannelOpenFailPacket(byte* pkt, word32 channelId,
+        word32 reason)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + reason(4)
+     * + description(4) + language(4) + padding(10) = 28. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x1C;
+    pkt[i++] = 0x0A;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_OPEN_FAIL;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    pkt[i++] = (byte)((reason >> 24) & 0xFF);
+    pkt[i++] = (byte)((reason >> 16) & 0xFF);
+    pkt[i++] = (byte)((reason >>  8) & 0xFF);
+    pkt[i++] = (byte)( reason        & 0xFF);
+
+    WMEMSET(pkt + i, 0x00, 4); i += 4;        /* description, empty */
+    WMEMSET(pkt + i, 0x00, 4); i += 4;        /* language, empty */
+
+    WMEMSET(pkt + i, 0x00, 10); i += 10;      /* padding bytes */
+
+    return i;                                 /* 32 */
+}
+
 /* Fails every send, discarding whatever was bundled (WS_CBIO_ERR_GENERAL makes
  * wolfSSH_SendPacket() shrink the output buffer), so an adjust sent through it
  * never reaches the peer. */
@@ -6454,9 +6511,11 @@ static int test_ChannelEofHalfClose(void)
     WOLFSSH_CHANNEL* ch  = NULL;
     int              result = 0;
     int              ret;
+    int              i;
     word32           reportedId = 0xFFFFFFFF;
     word32           pktSz;
     byte             pkt[48];
+    byte             out[32];
     byte             payload[4] = { 0x10, 0x11, 0x12, 0x13 };
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
@@ -6500,6 +6559,24 @@ static int test_ChannelEofHalfClose(void)
     /* No auto-echo: our sending direction is untouched. */
     if (ch->eofTxd) { result = -1479; goto done; }
 
+    /* The data that arrived ahead of the EOF is still deliverable. */
+    ret = wolfSSH_stream_peek(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1480; goto done; }
+
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1481; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x44) { result = -1482; goto done; }
+
+    /* Drained: the reader now sees the EOF. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -1483; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EOF) { result = -1484; goto done; }
+
+    ret = wolfSSH_stream_peek(ssh, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -1485; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EOF) { result = -1486; goto done; }
+
     /* Half-closed one way: we can still answer the peer. */
     ret = wolfSSH_stream_send(ssh, payload, (word32)sizeof(payload));
     if (ret != (int)sizeof(payload)) { result = -1487; goto done; }
@@ -6512,6 +6589,229 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+/* An EOF arriving on a channel that is not the head of the list is not the
+ * head's EOF. DoChannelEof() reports WS_EOF for whichever channel it lands on,
+ * so wolfSSH_stream_read() has to tell the two apart: the head is still open
+ * and still has nothing buffered, and WS_ERROR with WS_EOF latched is exactly
+ * what a real head EOF looks like. It keeps waiting instead. */
+static int test_StreamReadEofOtherChannel(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch0 = NULL;
+    WOLFSSH_CHANNEL* ch1 = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1550;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1551; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch0 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch0 == NULL) { result = -1552; goto done; }
+    if (ChannelAppend(ssh, ch0) != WS_SUCCESS) {
+        ChannelDelete(ch0, ssh->ctx->heap);
+        result = -1553;
+        goto done;
+    }
+
+    ch1 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch1 == NULL) { result = -1554; goto done; }
+    if (ChannelAppend(ssh, ch1) != WS_SUCCESS) {
+        ChannelDelete(ch1, ssh->ctx->heap);
+        result = -1555;
+        goto done;
+    }
+
+    /* The first channel appended is the head that stream_read() drains. */
+    if (ssh->channelList != ch0) { result = -1556; goto done; }
+
+    /* Stage an EOF for the non-head channel only. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelEofPacket(pkt, ch1->channel);
+    s_recvPktOff = 0;
+
+    /* The read consumes it, sees it is for another channel, and goes back for
+     * more. The mock has nothing left, so this ends as a want-read, not as
+     * the head channel's EOF. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret >= 0) { result = -1557; goto done; }
+    if (wolfSSH_get_error(ssh) == WS_EOF) { result = -1558; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_READ) { result = -1559; goto done; }
+
+    /* It landed where it belongs, and the head is untouched. */
+    if (!ch1->eofRxd) { result = -1560; goto done; }
+    if (ch0->eofRxd) { result = -1561; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* DoReceive() can retire the head channel mid-read: DoChannelClose() frees it
+ * while wolfSSH_stream_read() still holds its inputBuffer. If the next head
+ * already has its EOF latched and drained, the EOF override fires while
+ * lastRxId names the channel that just went away, so the "keep waiting" path
+ * must not loop -- doing so spins forever on freed memory, and both messages
+ * that get there are peer-controlled. */
+static int test_StreamReadHeadRemoved(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch0 = NULL;
+    WOLFSSH_CHANNEL* ch1 = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+    byte             out[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1590;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1591; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch0 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch0 == NULL) { result = -1592; goto done; }
+    if (ChannelAppend(ssh, ch0) != WS_SUCCESS) {
+        ChannelDelete(ch0, ssh->ctx->heap);
+        result = -1593;
+        goto done;
+    }
+    ch0->openConfirmed = 1;
+    ch0->peerWindowSz = 1024;
+    ch0->peerMaxPacketSz = 1024;
+
+    ch1 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch1 == NULL) { result = -1594; goto done; }
+    if (ChannelAppend(ssh, ch1) != WS_SUCCESS) {
+        ChannelDelete(ch1, ssh->ctx->heap);
+        result = -1595;
+        goto done;
+    }
+    /* The other channel is already half-closed, with nothing buffered. */
+    ch1->eofRxd = 1;
+
+    /* The peer closes the channel the read is draining. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelClosePacket(pkt, ch0->channel);
+    s_recvPktOff = 0;
+
+    /* Must return rather than spin. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret >= 0) { result = -1596; goto done; }
+
+    /* ch0 is retired; ch1 is untouched and still on the list. */
+    if (ssh->channelListSz != 1) { result = -1597; goto done; }
+    if (ssh->channelList != ch1) { result = -1598; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* The same retirement through DoChannelOpenFail(), which is the case that
+ * needs the head test: it removes the channel without touching lastRxId, so
+ * lastRxId still names another channel and the "keep waiting" path would fire
+ * on a head that has just been freed. The staged packets arrive in one read:
+ * the EOF for the other channel sets lastRxId away from the head, then the
+ * open failure takes the head out from under the read in progress. */
+static int test_StreamReadHeadOpenFailed(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch0 = NULL;
+    WOLFSSH_CHANNEL* ch1 = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[48];
+    byte             out[32];
+    word32           pktSz;
+    word32           headId = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1696;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1697; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* The head, a channel of ours whose open the peer has not answered. */
+    ch0 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch0 == NULL) { result = -1698; goto done; }
+    if (ChannelAppend(ssh, ch0) != WS_SUCCESS) {
+        ChannelDelete(ch0, ssh->ctx->heap);
+        result = -1699;
+        goto done;
+    }
+
+    ch1 = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch1 == NULL) { result = -1700; goto done; }
+    if (ChannelAppend(ssh, ch1) != WS_SUCCESS) {
+        ChannelDelete(ch1, ssh->ctx->heap);
+        result = -1701;
+        goto done;
+    }
+    ch1->openConfirmed = 1;
+    ch1->peerWindowSz = 1024;
+    ch1->peerMaxPacketSz = 1024;
+
+    /* ch0 is freed by the open failure, so keep what is needed from it. */
+    headId = ch0->channel;
+
+    pktSz = BuildChannelEofPacket(pkt, ch1->channel);
+    pktSz += BuildChannelOpenFailPacket(pkt + pktSz, headId,
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    s_recvPkt = pkt;
+    s_recvPktSz = pktSz;
+    s_recvPktOff = 0;
+
+    /* Must return rather than spin on the freed head. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret >= 0) { result = -1702; goto done; }
+
+    /* ch0 is gone; the other channel took the head and kept its EOF. */
+    if (ssh->channelListSz != 1) { result = -1703; goto done; }
+    if (ssh->channelList != ch1) { result = -1704; goto done; }
+    if (!ch1->eofRxd) { result = -1705; goto done; }
+    if (ssh->lastRxId == headId) { result = -1706; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
 /* A peer may half-close its channel before it makes its shell/exec/subsystem
  * request, RFC 4254 section 5.3. DoChannelEof() reports that as WS_EOF, and
  * DoReceive() passes it through, but the accept loop must not read a negative
@@ -18138,6 +18438,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_StreamReadEofOtherChannel();
+    printf("StreamReadEofOtherChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_AcceptSurvivesChannelEof();
     printf("AcceptSurvivesChannelEof: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -18154,6 +18459,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("WorkerReportsEofChannelKeying: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+    unitResult = test_StreamReadHeadRemoved();
+    printf("StreamReadHeadRemoved: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_StreamReadHeadOpenFailed();
+    printf("StreamReadHeadOpenFailed: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
 
 #endif /* NO_WOLFSSH_SERVER */
 
