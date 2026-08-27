@@ -593,9 +593,9 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         /* Only a rekey/window/channel-data status means "keep driving". Any
          * other negative status (fatal error, or WS_WANT_READ/WS_WANT_WRITE on
          * a non-blocking socket) is returned so a stalled or dead rekey cannot
-         * spin forever. */
+         * spin forever. A peer EOF ends their direction only, not ours. */
         if (ret < 0 && ret != WS_REKEYING && ret != WS_WINDOW_FULL
-                && ret != WS_CHAN_RXD) {
+                && ret != WS_CHAN_RXD && ret != WS_EOF) {
             return ret;
         }
         err = wolfSSH_get_error(ssh);
@@ -720,6 +720,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
 {
     int ret;
     int polled;
+    int peekRet;
     byte peekBuf[1];
 
     if (buffer == NULL || ssh == NULL) {
@@ -759,7 +760,18 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
             }
         }
 
-        if (!wolfSSH_stream_peek(ssh, peekBuf, 1)) {
+        peekRet = wolfSSH_stream_peek(ssh, peekBuf, 1);
+
+        /* Every negative peek but a rekey means no more data can arrive:
+         * drained and at EOF, session gone, or channel gone. Polling would
+         * only overwrite the cause with WS_WANT_READ or block on a dead
+         * peer. A rekey is not a drained channel, so it still polls. */
+        if (peekRet < 0 && peekRet != WS_REKEYING) {
+            return WS_FATAL_ERROR;
+        }
+
+        /* Nothing buffered. Poll for the real status. */
+        if (peekRet <= 0) {
             /* poll more data off the wire */
             ret = wolfSSH_worker(ssh, NULL);
             polled = 1;

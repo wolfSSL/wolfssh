@@ -6956,6 +6956,72 @@ done:
 }
 
 
+#ifdef WOLFSSH_SFTP
+static int s_recvCalls = 0;
+
+/* Counts the polls, so a test can prove the wire was never touched. */
+static int CountingIoRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+
+    s_recvCalls++;
+    return WS_CBIO_ERR_WANT_READ;
+}
+
+/* The SFTP read must not poll a channel that has latched its EOF and been
+ * drained. No further data can arrive, so the poll cannot finish the message
+ * and only overwrites the latched WS_EOF with WS_WANT_READ, which the SFTP
+ * loops read as "come back later" -- or blocks outright on a blocking
+ * socket. */
+static int test_SftpReadEofNoPoll(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1620;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, CountingIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1621; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1622; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1623;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The peer half-closed and everything it sent has been read. */
+    ch->eofRxd = 1;
+    s_recvCalls = 0;
+
+    ret = wolfSSH_SFTP_read(ssh);
+    if (ret != WS_FATAL_ERROR) { result = -1624; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EOF) { result = -1625; goto done; }
+    if (s_recvCalls != 0) { result = -1626; goto done; }
+
+done:
+    s_recvCalls = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_SFTP */
+
 
 /* DoReceive() can retire the head channel mid-read: DoChannelClose() frees it
  * while wolfSSH_stream_read() still holds its inputBuffer. If the next head
@@ -19456,6 +19522,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoChannelCloseFlushesReply: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_SFTP
+    unitResult = test_SftpReadEofNoPoll();
+    printf("SftpReadEofNoPoll: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_AcceptSurvivesChannelEof();
     printf("AcceptSurvivesChannelEof: %s\n",
