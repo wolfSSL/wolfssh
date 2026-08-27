@@ -246,6 +246,9 @@ typedef enum WS_FwdCbError {
  * even though the setup returned success. */
 typedef int (*WS_CallbackFwd)(WS_FwdCbAction action, void* fwdCbCtx,
         const char* address, word32 port);
+/* Reserved. wolfSSH_CTX_SetFwdCb() stores one of these, but nothing in the
+ * library calls it: forwarded data moves through the channel API. The
+ * parameter is kept so existing calls still compile. */
 typedef int (*WS_CallbackFwdIO)(WS_FwdIoCbAction action, void* buf,
         word32 bufSz, void* fwdCbCtx);
 
@@ -259,8 +262,6 @@ WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
 WOLFSSH_API int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX* ctx,
         WS_CallbackFwd fwdCb, WS_CallbackFwdIO fwdIoCb);
 WOLFSSH_API int wolfSSH_SetFwdCbCtx(WOLFSSH* ssh, void* ctx);
-WOLFSSH_API int wolfSSH_CTX_SetFwdEnable(WOLFSSH_CTX* ctx, byte enable);
-WOLFSSH_API int wolfSSH_SetFwdEnable(WOLFSSH* ssh, byte enable);
 DEPRECATED WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
         const char* host, word32 hostPort, const char* origin,
         word32 originPort);
