@@ -323,6 +323,15 @@ WOLFSSH_API int wolfSSH_ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf,
         word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelSendExt(WOLFSSH_CHANNEL* channel,
         const byte* buf, word32 bufSz);
+/* Sends EOF then SSH_MSG_CHANNEL_CLOSE. The channel stays on the list, and the
+ * pointer stays valid, until the peer's close arrives and wolfSSH_worker()
+ * reports WS_CHANNEL_CLOSED. A walk with wolfSSH_ChannelNext() has to step
+ * past a channel it has exited rather than re-read the head, which no longer
+ * moves.
+ *
+ * A WS_WANT_WRITE means the teardown is incomplete: the close is only built
+ * once the EOF is away, so call again until it reports something else. The
+ * retry costs nothing, a bundled EOF is not sent twice. */
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel);
 /* Sends SSH_MSG_CHANNEL_EOF, closing the sending direction and leaving the
  * receiving direction open (the half-close of RFC 4254 section 5.3). Data

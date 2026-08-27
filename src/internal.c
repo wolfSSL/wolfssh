@@ -11390,17 +11390,30 @@ static int DoChannelClose(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         if (!channel->closeTxd) {
+            /* EOF ahead of the close, RFC 4254 section 5.3. Both go
+             * unconditionally: DoPacket() consumes the peer's close whatever
+             * this returns, so nothing runs it again. */
+            int eofRet = SendChannelEof(ssh, channel->peerChannel);
+
             ret = SendChannelClose(ssh, channel->peerChannel);
+            if (ret == WS_SUCCESS)
+                ret = eofRet;
         }
     }
 
-    if (ret == WS_SUCCESS) {
-        ret = ChannelRemove(ssh, channelId, WS_CHANNEL_ID_SELF);
-    }
+    /* Retire it once the close is bundled: a blocked flush belongs to the
+     * output buffer, not the channel. */
+    if (ret == WS_SUCCESS || ret == WS_WANT_WRITE) {
+        int removeRet = ChannelRemove(ssh, channelId, WS_CHANNEL_ID_SELF);
 
-    if (ret == WS_SUCCESS) {
-        ret = WS_CHANNEL_CLOSED;
-        ssh->lastRxId = channelId;
+        if (removeRet != WS_SUCCESS)
+            ret = removeRet;
+        else {
+            /* Report the close even on a short flush; the caller needs the
+             * graceful-close signal. */
+            ret = WS_CHANNEL_CLOSED;
+            ssh->lastRxId = channelId;
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelClose(), ret = %d", ret);

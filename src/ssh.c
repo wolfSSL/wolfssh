@@ -3732,6 +3732,16 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 #endif /* WOLFSSH_TEST_BLOCK */
 
+    /* DoChannelClose() bundles the reply inside DoReceive(), and callers
+     * treat the close as terminal, so flush it here. The close stays the
+     * return value; a short flush leaves WS_WANT_WRITE latched. */
+    if (ret == WS_CHANNEL_CLOSED && ssh->outputBuffer.length != 0) {
+        int closeErr = ssh->error;
+
+        if (wolfSSH_SendPacket(ssh) == WS_SUCCESS)
+            ssh->error = closeErr;
+    }
+
     /* WS_EXTDATA and WS_EOF report the channel too, so a multi-channel caller
      * can route the drain, or see which channel half-closed. */
     if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA
@@ -4407,10 +4417,6 @@ int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel)
 
     if (ret == WS_SUCCESS)
         ret = SendChannelClose(channel->ssh, channel->peerChannel);
-
-    if (ret == WS_SUCCESS)
-        ret = ChannelRemove(channel->ssh,
-                channel->peerChannel, WS_CHANNEL_ID_PEER);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelExit(), ret = %d", ret);
     return ret;
