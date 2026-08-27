@@ -4194,6 +4194,222 @@ static void TestDisconnectOutranksRekey(void)
 }
 
 
+
+#ifndef NO_WOLFSSH_SERVER
+
+/* wolfSSH_accept() drives the handshake, so a session that is already over
+ * must stop it the way it stops every other sender. The short-send case is
+ * the sharp one: the pending-send block at the top would push out a
+ * disconnect left queued by a short send and then count it as the handshake
+ * message the state machine was waiting for. RFC 4253 section 11.1. */
+static void TestDisconnectGatesAccept(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[512];
+    word32 inSz;
+    word32 quietSz;
+    byte state;
+    int ret;
+
+    /* A local disconnect leaves ssh->error clear, so the "in error state"
+     * test in wolfSSH_accept() never sees it. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    /* Not one of the states wolfSSH_accept() holds back, so an unwanted
+     * advance shows up in the assertions below. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(wolfSSH_get_error(ssh), 0);
+    quietSz = io.outSz;
+    state = ssh->acceptState;
+
+    ret = wolfSSH_accept(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    /* No handshake packet, and the state machine did not move. */
+    AssertIntEQ(io.outSz, quietSz);
+    AssertIntEQ(ssh->acceptState, state);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* Our disconnect short-sends, so it is sitting in the output buffer
+     * with a flush owed. wolfSSH_shutdown() and wolfSSH_SendDisconnect()
+     * own that flush; wolfSSH_accept() must leave it alone. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    /* Not one of the states wolfSSH_accept() holds back, so an unwanted
+     * advance shows up in the assertions below. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertTrue(ssh->disconnected);
+    AssertTrue(ssh->disconnectTxd);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+    state = ssh->acceptState;
+
+    ret = wolfSSH_accept(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    /* Still queued, and not mistaken for the awaited handshake message. */
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(ssh->acceptState, state);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* The peer's disconnect latches WS_DISCONNECT, which the error-state
+     * test below the gate used to answer with WS_INVALID_STATE_E. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(DoReceive(ssh), WS_FATAL_ERROR);
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    quietSz = io.outSz;
+    state = ssh->acceptState;
+
+    ret = wolfSSH_accept(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, quietSz);
+    AssertIntEQ(ssh->acceptState, state);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* !NO_WOLFSSH_SERVER */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+
+/* The same gate on the client's driver, which has no error-state test of
+ * its own. Split from the accept test so a single-sided build keeps the
+ * coverage that applies to it. */
+static void TestDisconnectGatesConnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[512];
+    word32 inSz;
+    byte state;
+    int ret;
+
+    /* wolfSSH_connect() has no error-state test of its own, so it reaches
+     * the state machine after a disconnect from either side. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_WANT_WRITE);
+    AssertTrue(ssh->disconnected);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+    state = ssh->connectState;
+
+    ret = wolfSSH_connect(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(ssh->connectState, state);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    /* The peer's disconnect reaches the same gate. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    inSz = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(DoReceive(ssh), WS_FATAL_ERROR);
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    state = ssh->connectState;
+
+    ret = wolfSSH_connect(ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, 0);
+    AssertIntEQ(ssh->connectState, state);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* !NO_WOLFSSH_CLIENT */
+
+
 /* disconnectTxd means "a flush is owed", not "a disconnect was sent". Once
  * ours has gone out, a teardown call must not push whatever the internal
  * senders queued behind it. */
@@ -8079,6 +8295,12 @@ int main(int argc, char** argv)
     TestDisconnectDrainsBufferedData();
     TestDisconnectBlocksEverySend();
     TestSendDisconnectIsTerminal();
+#ifndef NO_WOLFSSH_SERVER
+    TestDisconnectGatesAccept();
+#endif
+#ifndef NO_WOLFSSH_CLIENT
+    TestDisconnectGatesConnect();
+#endif
     TestDisconnectQuietWindowAdjust();
     TestDisconnectBlocksChannelAndFwdSends();
     TestStreamExitReportsDisconnect();
