@@ -1858,6 +1858,10 @@ enum WS_MessageIdLimits {
             const byte* src, word32 srcSz);
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    WOLFSSH_API int wolfSSH_TestDoUserAuthInfoResponse(WOLFSSH* ssh, byte* buf,
+            word32 len, word32* idx);
+#endif
     WOLFSSH_API int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh,
             byte partialSuccess);
     WOLFSSH_API int wolfSSH_TestHighwaterCheck(WOLFSSH* ssh, byte side);
