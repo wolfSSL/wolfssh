@@ -4818,6 +4818,33 @@ static WS_MAYBE_UNUSED int FailIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* 
     (void)ssh; (void)buf; (void)sz; (void)ctx;
     return WS_CBIO_ERR_GENERAL;
 }
+
+/* Walks a run of plaintext SSH packets and reports whether any of them carries
+ * msgId. A bare session negotiates no cipher, so queued and sent packets are
+ * both in the clear. */
+static WS_MAYBE_UNUSED int PlainPacketsHaveMsg(const byte* buf, word32 begin, word32 end,
+        byte msgId)
+{
+    word32 i;
+
+    for (i = begin; i + LENGTH_SZ + PAD_LENGTH_SZ + MSG_ID_SZ <= end; ) {
+        word32 packetSz;
+
+        packetSz = ((word32)buf[i]     << 24)
+                 | ((word32)buf[i + 1] << 16)
+                 | ((word32)buf[i + 2] <<  8)
+                 |  (word32)buf[i + 3];
+        if (packetSz == 0 || i + LENGTH_SZ + packetSz > end)
+            break;
+        if (buf[i + LENGTH_SZ + 1] == msgId)
+            return 1;
+        i += LENGTH_SZ + packetSz;
+    }
+
+    return 0;
+}
+
+
 #ifndef NO_WOLFSSH_SERVER
 
 /* An unknown extended data type must be ignored (consumed and discarded) per
@@ -6602,6 +6629,74 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* wolfSSH_ChannelExit() sends EOF and close, then leaves the channel on the
+ * list for the peer's own close to retire. Removing it there would free the
+ * caller's channel pointer and leave the peer's CHANNEL_CLOSE matching nothing,
+ * which DoReceive() turns into a fatal error on an ordinary shutdown. */
+static int test_ChannelExitKeepsChannel(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           pktSz;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1530;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1531; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1532; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1533;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    ret = wolfSSH_ChannelExit(ch);
+    if (ret != WS_SUCCESS) { result = -1534; goto done; }
+    if (!ch->eofTxd) { result = -1535; goto done; }
+    if (!ch->closeTxd) { result = -1536; goto done; }
+
+    /* Still on the list, so the pointer the caller passed is still good. */
+    if (ssh->channelList != ch) { result = -1537; goto done; }
+    if (ssh->channelListSz != 1) { result = -1538; goto done; }
+
+    /* The peer answers with its own close. */
+    pktSz = BuildChannelClosePacket(pkt, ch->channel);
+    s_recvPkt = pkt;
+    s_recvPktSz = pktSz;
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHANNEL_CLOSED) { result = -1539; goto done; }
+
+    /* Retired now, and by the peer's close rather than by the exit. */
+    if (ssh->channelList != NULL) { result = -1540; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+
 /* An EOF arriving on a channel that is not the head of the list is not the
  * head's EOF. DoChannelEof() reports WS_EOF for whichever channel it lands on,
  * so wolfSSH_stream_read() has to tell the two apart: the head is still open
@@ -6672,6 +6767,195 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+
+
+static byte s_sentBuf[512];
+static word32 s_sentSz = 0;
+static int s_sendRefusals = 0;
+
+/* Refuses the first s_sendRefusals writes with a would-block, then takes
+ * everything and keeps a copy of what reached the transport. */
+static int RefuseThenCaptureIoSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(ctx);
+
+    if (s_sendRefusals > 0) {
+        s_sendRefusals--;
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    if (s_sentSz + sz > (word32)sizeof(s_sentBuf))
+        return WS_CBIO_ERR_GENERAL;
+    WMEMCPY(s_sentBuf + s_sentSz, buf, sz);
+    s_sentSz += sz;
+    return (int)sz;
+}
+
+
+/* DoPacket() consumes the peer's CHANNEL_CLOSE whatever DoChannelClose()
+ * returns, so the reply gets one chance to be built. A blocked socket must not
+ * cost it: the EOF and the close both have to be bundled, and the channel
+ * retired, with the flush left owed to the caller. */
+static int test_DoChannelCloseWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              sawEof = 0;
+    int              sawClose = 0;
+    word32           chanId;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1570;
+    /* The socket takes nothing, so everything bundled stays in the buffer. */
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1571; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1572; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1573;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+    chanId = ch->channel;
+
+    /* The peer closes first. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelClosePacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    /* The channel is closed and named even though the flush is owed: a
+     * back-pressured socket is not a reason to withhold the close signal. */
+    if (ret != WS_CHANNEL_CLOSED) { result = -1574; goto done; }
+    if (ssh->lastRxId != chanId) { result = -1575; goto done; }
+
+    /* The channel is retired, so ch is freed and must not be read again. */
+    if (ssh->channelList != NULL) { result = -1576; goto done; }
+    if (ssh->channelListSz != 0) { result = -1579; goto done; }
+
+    /* Both packets are committed, and nothing will revisit the peer's close
+     * to build them later. Walk the queue and confirm both are there. */
+    sawEof = PlainPacketsHaveMsg(ssh->outputBuffer.buffer,
+            ssh->outputBuffer.idx, ssh->outputBuffer.length,
+            MSGID_CHANNEL_EOF);
+    sawClose = PlainPacketsHaveMsg(ssh->outputBuffer.buffer,
+            ssh->outputBuffer.idx, ssh->outputBuffer.length,
+            MSGID_CHANNEL_CLOSE);
+    if (!sawEof) { result = -1577; goto done; }
+    if (!sawClose) { result = -1578; goto done; }
+
+    /* And the owed flush is visible: the close is the return value, so
+     * WS_WANT_WRITE has to reach the caller some other way or the reply sits
+     * in the buffer while the caller closes the socket. */
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1764; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1765; goto done; }
+
+    /* And they really do go out once the socket takes bytes again. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_SendPacket(ssh);
+    if (ret != WS_SUCCESS) { result = -1580; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1581; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* The reply to the peer's close still has to reach the wire when the socket
+ * was full while it was bundled. DoChannelClose() reports WS_CHANNEL_CLOSED
+ * whatever the flush does and retires the channel, and every caller treats
+ * that as terminal, so wolfSSH_worker() owes the flush itself. */
+static int test_DoChannelCloseFlushesReply(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1610;
+    /* The socket refuses both sends DoChannelClose() makes -- the EOF's and
+     * the close's -- and takes bytes again by the time the worker flushes. */
+    s_sendRefusals = 2;
+    s_sentSz = 0;
+    wolfSSH_SetIOSend(ctx, RefuseThenCaptureIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1611; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1612; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1613;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The peer closes first. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelClosePacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    /* The flush is a courtesy, not the caller's business: it neither replaces
+     * the close status nor disturbs the latched error. */
+    if (ret != WS_CHANNEL_CLOSED) { result = -1614; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
+        result = -1615;
+        goto done;
+    }
+
+    /* Nothing is left owed, and both packets really went out. */
+    if (ssh->outputBuffer.length != 0) { result = -1616; goto done; }
+    if (!PlainPacketsHaveMsg(s_sentBuf, 0, s_sentSz, MSGID_CHANNEL_EOF)) {
+        result = -1617;
+        goto done;
+    }
+    if (!PlainPacketsHaveMsg(s_sentBuf, 0, s_sentSz, MSGID_CHANNEL_CLOSE)) {
+        result = -1618;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    s_sendRefusals = 0;
+    s_sentSz = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
 
 /* DoReceive() can retire the head channel mid-read: DoChannelClose() frees it
  * while wolfSSH_stream_read() still holds its inputBuffer. If the next head
@@ -7615,6 +7899,155 @@ done:
     return result;
 }
 #endif /* NO_WOLFSSH_CLIENT */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* wolfSSH_shutdown() drains for the peer's answer to its close. A peer that
+ * half-closes first answers with an EOF, which is an ordinary part of the
+ * teardown and not a failure of it. */
+static int test_ShutdownAbsorbsEof(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1740;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1741; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1742; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1743;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* All the peer sends back is its own half-close. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelEofPacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SUCCESS) { result = -1744; goto done; }
+
+    /* The teardown went out and the channel is still there, waiting for the
+     * peer's close. */
+    if (!ch->eofTxd || !ch->closeTxd) { result = -1745; goto done; }
+    if (!ch->eofRxd) { result = -1746; goto done; }
+    if (ssh->channelList != ch) { result = -1747; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* wolfSSH_ChannelExit() chains its close on the EOF's send, so a socket that
+ * will not take the EOF leaves the close unbuilt and the teardown half done.
+ * The call has to be repeated, and the repeat must finish it rather than put
+ * a second EOF on the wire. */
+static int test_ChannelExitWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1748;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1749; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1750; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1751;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The EOF is bundled but not away, so the close was never built. */
+    ret = wolfSSH_ChannelExit(ch);
+    if (ret != WS_WANT_WRITE) { result = -1752; goto done; }
+    if (!ch->eofTxd) { result = -1753; goto done; }
+    if (ch->closeTxd) { result = -1754; goto done; }
+    queued = ssh->outputBuffer.length;
+    if (queued == 0) { result = -1755; goto done; }
+    if (!PlainPacketsHaveMsg(ssh->outputBuffer.buffer, ssh->outputBuffer.idx,
+                ssh->outputBuffer.length, MSGID_CHANNEL_EOF)) {
+        result = -1756;
+        goto done;
+    }
+    if (PlainPacketsHaveMsg(ssh->outputBuffer.buffer, ssh->outputBuffer.idx,
+                ssh->outputBuffer.length, MSGID_CHANNEL_CLOSE)) {
+        result = -1757;
+        goto done;
+    }
+
+    /* The repeat builds the close, still against a blocked socket. */
+    ret = wolfSSH_ChannelExit(ch);
+    if (ret != WS_WANT_WRITE) { result = -1766; goto done; }
+    if (!ch->closeTxd) { result = -1767; goto done; }
+
+    /* A third call has nothing left to build, so it reports success -- with
+     * both messages still sitting in the buffer. WS_SUCCESS from this call
+     * means bundled, not delivered, which is why the header tells callers to
+     * keep driving wolfSSH_worker() before dropping the socket. */
+    ret = wolfSSH_ChannelExit(ch);
+    if (ret != WS_SUCCESS) { result = -1768; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1769; goto done; }
+
+    /* With both flags latched the call builds nothing and sends nothing --
+     * it does not even reach the transport, so a working socket does not
+     * drain what is queued. The caller owns that. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_ChannelExit(ch);
+    if (ret != WS_SUCCESS) { result = -1758; goto done; }
+    if (!ch->closeTxd) { result = -1759; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1778; goto done; }
+
+    /* Driven by hand, both messages go out and no duplicate follows. */
+    if (wolfSSH_SendPacket(ssh) != WS_SUCCESS) { result = -1779; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1760; goto done; }
+
+    /* And the channel is still there for the peer's close to name. */
+    if (ssh->channelList != ch) { result = -1761; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
 static int test_SendChannelData_eofTxd(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -19452,6 +19885,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_DoChannelCloseWantWrite();
+    printf("DoChannelCloseWantWrite: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelCloseFlushesReply();
+    printf("DoChannelCloseFlushesReply: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
     unitResult = test_AcceptSurvivesChannelEof();
     printf("AcceptSurvivesChannelEof: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -19480,6 +19923,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_CLIENT */
+
+    unitResult = test_ChannelExitKeepsChannel();
+    printf("ChannelExitKeepsChannel: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 
 #endif /* NO_WOLFSSH_SERVER */
 
@@ -19541,6 +19989,20 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_StreamSendEofRekeying();
     printf("StreamSendEofRekeying: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_ShutdownAbsorbsEof();
+    printf("ShutdownAbsorbsEof: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_ChannelExitWantWrite();
+    printf("ChannelExitWantWrite: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_CLIENT */
