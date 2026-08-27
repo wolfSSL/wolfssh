@@ -601,9 +601,9 @@ WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
  * data is discarded and the channel callbacks stop firing. Reads are not
  * gated, so channel data that arrived before the disconnect can still be
  * drained; wolfSSH_stream_read() and wolfSSH_stream_peek() report
- * WS_DISCONNECT once their buffer runs dry. A CHANNEL_EOF already received
- * outranks that drain: both report WS_EOF with data possibly still
- * buffered. RFC 4253 section 11.1. */
+ * WS_DISCONNECT once their buffer runs dry. A CHANNEL_EOF received on that
+ * channel is drained the same way, and is the one reported when both are
+ * pending. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Returns the bytes read; the next read clears the status. WS_WANT_WRITE
  * from wolfSSH_get_error() means the adjust is queued; it goes out on the

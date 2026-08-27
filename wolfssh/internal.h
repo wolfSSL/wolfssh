@@ -1105,12 +1105,11 @@ struct WOLFSSH {
     /* Set when a DISCONNECT is sent or received. Gates the public send
      * calls, so nothing more goes out. Reads still hand back what arrived
      * before the disconnect; the head-of-list reads report it once their
-     * buffer runs dry, unless a CHANNEL_EOF arrived first.
-     * wolfSSH_worker() reports it as well, so a drive loop stops turning;
-     * wolfSSH_shutdown() drops the channel first and so never pumps it.
-     * DoPacket() skips the inbound dispatch too, for every message but a
-     * DISCONNECT, so nothing arriving afterward is buffered, answered or
-     * reported through the channel callbacks. */
+     * buffer runs dry. wolfSSH_worker() reports it as well, so a drive loop
+     * stops turning; wolfSSH_shutdown() drops the channel first and so never
+     * pumps it. DoPacket() skips the inbound dispatch too, for every message
+     * but a DISCONNECT, so nothing arriving afterward is buffered, answered
+     * or reported through the channel callbacks. */
     byte disconnected;
     /* Set once SendDisconnect() has bundled our own DISCONNECT into the
      * output buffer, and cleared once wolfSSH_SendPacket() drains it, so it
