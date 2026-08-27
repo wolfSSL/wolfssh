@@ -550,6 +550,10 @@ int wolfSSH_CTX_UseTpmHostKey(WOLFSSH_CTX* ctx,
 #endif /* WOLFSSH_TPM */
 
 
+/* Defined below, ahead of both drivers; either can be the only one built. */
+static int SendAfterDisconnect(WOLFSSH* ssh);
+
+
 #ifndef NO_WOLFSSH_SERVER
 
 const char acceptError[] = "accept error: %s, %d";
@@ -562,6 +566,11 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
+
+    /* No handshake on a session that is over. The pending-send block below
+     * would flush a queued disconnect as the next handshake message. */
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
 
     /* clear want read/writes for retry */
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE || ssh->error == WS_AUTH_PENDING)
@@ -825,6 +834,11 @@ int wolfSSH_connect(WOLFSSH* ssh)
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
+
+    /* See wolfSSH_accept(). No error-state test here, so the peer's
+     * disconnect reaches the state machine like a local one. */
+    if (SendAfterDisconnect(ssh))
+        return WS_FATAL_ERROR;
 
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&

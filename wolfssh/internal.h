@@ -1105,9 +1105,8 @@ struct WOLFSSH {
     /* Set when a DISCONNECT is sent or received. Gates the public send
      * calls, so nothing more goes out. Reads still hand back what arrived
      * before the disconnect; the head-of-list reads report it once their
-     * buffer runs dry, unless a CHANNEL_EOF arrived first. wolfSSH_worker(),
-     * wolfSSH_accept() and wolfSSH_connect() are not gated; the shutdown
-     * paths pump the worker. */
+     * buffer runs dry, unless a CHANNEL_EOF arrived first.
+     * wolfSSH_worker() is not gated; the shutdown paths pump the worker. */
     byte disconnected;
     /* Set once SendDisconnect() has bundled our own DISCONNECT into the
      * output buffer, and cleared once wolfSSH_SendPacket() drains it, so it
