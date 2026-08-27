@@ -20325,11 +20325,16 @@ int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
         ret = BundlePacket(ssh);
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
-
-    if (ret == WS_SUCCESS)
-        channel->eofTxd = 1;
+        /* Committed once bundled, so a retry queues no second EOF. Unless
+         * the send discarded the buffer and took the EOF with it, which only
+         * an emptied buffer tells us apart -- and that reading is knowingly
+         * imprecise: a flush that sent the EOF and then failed on a later
+         * packet empties the buffer too, and leaves this clear. */
+        if (ret != WS_SOCKET_ERROR_E || wolfSSH_OutputPending(ssh))
+            channel->eofTxd = 1;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelEof(), ret = %d", ret);
     return ret;

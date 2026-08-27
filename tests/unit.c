@@ -7224,12 +7224,184 @@ static int test_SendEofUnconfirmedChannel(void)
     if (ret != WS_SUCCESS) { result = -1652; goto done; }
     if (!sess->eofTxd) { result = -1653; goto done; }
 
+#ifndef NO_WOLFSSH_CLIENT
 done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
 }
 #endif /* NO_WOLFSSH_CLIENT */
+/* A bundled but unflushed EOF is committed: the bytes are in the output
+ * buffer and go out on the next flush. The WS_WANT_WRITE retry an application
+ * makes must not queue a second EOF behind the first. */
+static int test_SendChannelEofWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1510;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1511; goto done; }
+    /* Connection-protocol messages are only allowed once userauth is done. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1512; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1513;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    /* The socket will not take it, but the packet is built and buffered. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_WANT_WRITE) { result = -1514; goto done; }
+    if (!ch->eofTxd) { result = -1515; goto done; }
+    queued = ssh->outputBuffer.length;
+    if (queued == 0) { result = -1516; goto done; }
+
+    /* The retry an application makes on WS_WANT_WRITE. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1517; goto done; }
+    if (ssh->outputBuffer.length != queued) { result = -1518; goto done; }
+
+    /* One EOF goes out, and the buffer empties. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_SendPacket(ssh);
+    if (ret != WS_SUCCESS) { result = -1519; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1520; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* A hard send failure is the other side of that latch. WS_CBIO_ERR_GENERAL
+ * makes wolfSSH_SendPacket() discard the output buffer, so the bundled EOF is
+ * gone; latching eofTxd there would leave the channel refusing every later
+ * send for an EOF that never went anywhere. */
+static int test_SendChannelEofSendFails(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1687;
+    wolfSSH_SetIOSend(ctx, FailIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1688; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1689; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1690;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    /* The send fails and takes the bundled EOF with it. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SOCKET_ERROR_E) { result = -1691; goto done; }
+    if (ch->eofTxd) { result = -1692; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1693; goto done; }
+
+    /* So the channel is not half-closed, and an EOF can still be built and
+     * sent once the socket takes bytes again. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1694; goto done; }
+    if (!ch->eofTxd) { result = -1695; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* A connection reset fails the send without discarding the buffer, so the EOF
+ * is still queued and eofTxd has to latch: the retry flushes those bytes and
+ * must not build a second EOF behind them. The other arm of the same test. */
+static int ConnResetIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_CONN_RST;
+}
+
+static int test_SendChannelEofConnReset(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1750;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1751; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1752; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1753;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SOCKET_ERROR_E) { result = -1754; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1755; goto done; }
+    if (!ch->eofTxd) { result = -1756; goto done; }
+
+    /* The queued bytes are the EOF; a second call adds nothing to them. */
+    queued = ssh->outputBuffer.length - ssh->outputBuffer.idx;
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1757; goto done; }
+    if (ssh->outputBuffer.length - ssh->outputBuffer.idx != queued) {
+        result = -1758;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
 #ifndef NO_WOLFSSH_SERVER
 static int    s_eofCbCalls   = 0;
 static word32 s_eofCbChannel = 0;
@@ -19321,6 +19493,27 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_SendEofAfterDisconnect();
     printf("SendEofAfterDisconnect: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendChannelEofWantWrite();
+    printf("SendChannelEofWantWrite: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendChannelEofSendFails();
+    printf("SendChannelEofSendFails: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_CLIENT */
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_SendChannelEofConnReset();
+    printf("SendChannelEofConnReset: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_CLIENT */
