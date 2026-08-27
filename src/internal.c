@@ -20492,7 +20492,10 @@ int SendChannelClose(WOLFSSH* ssh, word32 peerChannelId)
 
     if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
-        channel->closeTxd = 1;
+        /* Same terms as SendChannelEof(). A closeTxd for a close that never
+         * left makes wolfSSH_shutdown() skip the teardown. */
+        if (ret != WS_SOCKET_ERROR_E || wolfSSH_OutputPending(ssh))
+            channel->closeTxd = 1;
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelClose(), ret = %d", ret);
