@@ -7792,6 +7792,84 @@ static void test_wolfSSH_KeyboardInteractive(void)
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
+
+#ifndef NO_WOLFSSH_SERVER
+
+/* Supplies the prompt set the test installed as the userAuth context. */
+static int emptyPromptUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        WMEMCPY(&authData->sf.keyboard, (WS_UserAuthData_Keyboard*)ctx,
+                sizeof(WS_UserAuthData_Keyboard));
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+
+/* The sender must refuse a setup callback that supplies an empty prompt.
+ * Refused before sizing, so no keyed session is needed. */
+static void test_wolfSSH_KeyboardInteractive_emptyPrompt(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_UserAuthData authData;
+    WS_UserAuthData_Keyboard prompts;
+    byte* promptText[1];
+    word32 promptLengths[1];
+    byte promptEcho[1];
+
+    promptText[0]    = (byte*)"Password: ";
+    promptLengths[0] = 10;
+    promptEcho[0]    = 0;
+    WMEMSET(&prompts, 0, sizeof(prompts));
+    prompts.promptCount   = 1;
+    prompts.prompts       = promptText;
+    prompts.promptLengths = promptLengths;
+    prompts.promptEcho    = promptEcho;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    wolfSSH_SetUserAuth(ctx, emptyPromptUserAuth);
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    wolfSSH_SetUserAuthCtx(ssh, &prompts);
+
+    /* Control: the intact prompt set clears validation. It fails later, on
+     * an unkeyed session, but not as bad usage. */
+    WMEMSET(&authData, 0, sizeof(authData));
+    AssertIntNE(SendUserAuthKeyboardRequest(ssh, &authData), WS_BAD_USAGE);
+
+    /* Zero-length prompt. */
+    promptLengths[0] = 0;
+    WMEMSET(&authData, 0, sizeof(authData));
+    AssertIntEQ(SendUserAuthKeyboardRequest(ssh, &authData), WS_BAD_USAGE);
+
+    /* Non-zero length, no buffer. */
+    promptLengths[0] = 10;
+    promptText[0] = NULL;
+    WMEMSET(&authData, 0, sizeof(authData));
+    AssertIntEQ(SendUserAuthKeyboardRequest(ssh, &authData), WS_BAD_USAGE);
+
+    /* A prompt longer than the payload bound. */
+    promptLengths[0] = WOLFSSH_MAX_PROMPT_SZ + 1;
+    promptText[0] = (byte*)"Password: ";
+    WMEMSET(&authData, 0, sizeof(authData));
+    AssertIntEQ(SendUserAuthKeyboardRequest(ssh, &authData), WS_BAD_USAGE);
+
+    /* Prompt count with the arrays unset. */
+    prompts.prompts = NULL;
+    prompts.promptLengths = NULL;
+    prompts.promptEcho = NULL;
+    WMEMSET(&authData, 0, sizeof(authData));
+    AssertIntEQ(SendUserAuthKeyboardRequest(ssh, &authData), WS_BAD_USAGE);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#else /* NO_WOLFSSH_SERVER */
+static void test_wolfSSH_KeyboardInteractive_emptyPrompt(void) { ; }
+#endif /* NO_WOLFSSH_SERVER */
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 #endif /* WOLFSSH_TEST_BLOCK */
@@ -7897,6 +7975,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
 #endif
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     test_wolfSSH_KeyboardInteractive();
+    test_wolfSSH_KeyboardInteractive_emptyPrompt();
 #endif
 
     /* SCP tests */
