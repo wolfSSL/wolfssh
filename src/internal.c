@@ -710,6 +710,15 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
     }
 
     if (msg == MSGID_SERVICE_REQUEST) {
+        /* RFC 4253 section 7.1: no service request once the peer's KEXINIT
+         * lands. acceptState doesn't track a rekey. */
+        if (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "when keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+            return 0;
+        }
+
         if (ssh->acceptState == ACCEPT_KEYED) {
             return 1;
         }
@@ -732,7 +741,7 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
             if (msg == MSGID_KEXINIT) {
                 WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                         msg, "server", "when keying");
-                ssh->error = WS_REKEYING;
+                ssh->error = WS_MSGID_NOT_ALLOWED_E;
                 return 0;
             }
 
@@ -744,7 +753,7 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
                     WLOG(WS_LOG_DEBUG,
                             "Message ID %u not the expected message %u",
                             msg, ssh->handshake->expectMsgId);
-                    ssh->error = WS_REKEYING;
+                    ssh->error = WS_MSGID_NOT_ALLOWED_E;
                     return 0;
                 }
                 else {
@@ -823,6 +832,15 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
     }
 
     if (msg == MSGID_SERVICE_ACCEPT) {
+        /* RFC 4253 section 7.1: no service accept once the peer's KEXINIT
+         * lands. connectState doesn't track a rekey. */
+        if (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "when keying");
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+            return 0;
+        }
+
         if (ssh->connectState == CONNECT_CLIENT_USERAUTH_REQUEST_SENT) {
             return 1;
         }
@@ -845,7 +863,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
             if (msg == MSGID_KEXINIT) {
                 WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                         msg, "client", "when keying");
-                ssh->error = WS_REKEYING;
+                ssh->error = WS_MSGID_NOT_ALLOWED_E;
                 return 0;
             }
 
@@ -857,7 +875,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
                     WLOG(WS_LOG_DEBUG,
                             "Message ID %u not the expected message %u",
                             msg, ssh->handshake->expectMsgId);
-                    ssh->error = WS_REKEYING;
+                    ssh->error = WS_MSGID_NOT_ALLOWED_E;
                     return 0;
                 }
                 else {
