@@ -331,7 +331,14 @@ WOLFSSH_API int wolfSSH_ChannelSendExt(WOLFSSH_CHANNEL* channel,
  *
  * A WS_WANT_WRITE means the teardown is incomplete: the close is only built
  * once the EOF is away, so call again until it reports something else. The
- * retry costs nothing, a bundled EOF is not sent twice. */
+ * retry costs nothing, a bundled EOF is not sent twice. WS_SUCCESS means both
+ * messages are bundled, not that they reached the peer: keep driving
+ * wolfSSH_worker() until it stops reporting WS_WANT_WRITE before dropping the
+ * socket. A channel whose open the peer has not confirmed has no peer id to
+ * address and reports WS_CHANNEL_NOT_CONF.
+ *
+ * A peer that never answers leaves the channel on the list for the life of
+ * the session; there is no reclaim short of wolfSSH_free(). */
 WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel);
 /* Sends SSH_MSG_CHANNEL_EOF, closing the sending direction and leaving the
  * receiving direction open (the half-close of RFC 4254 section 5.3). Data

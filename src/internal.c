@@ -11388,8 +11388,10 @@ static int DoChannelClose(WOLFSSH* ssh,
         }
     }
 
+    /* An unconfirmed channel has peerChannel 0, so a reply by peer id would
+     * land on whichever channel holds 0 -- normally the live session. */
     if (ret == WS_SUCCESS) {
-        if (!channel->closeTxd) {
+        if (!channel->closeTxd && channel->openConfirmed) {
             /* EOF ahead of the close, RFC 4254 section 5.3. Both go
              * unconditionally: DoPacket() consumes the peer's close whatever
              * this returns, so nothing runs it again. */
