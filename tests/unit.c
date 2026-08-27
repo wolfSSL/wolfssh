@@ -7327,6 +7327,12 @@ static int test_SendChannelEofSendFails(void)
     if (ch->eofTxd) { result = -1692; goto done; }
     if (ssh->outputBuffer.length != 0) { result = -1693; goto done; }
 
+    /* SendChannelClose() has the same shape, and a closeTxd claiming a close
+     * that never left makes wolfSSH_shutdown() skip the teardown. */
+    ret = SendChannelClose(ssh, ch->peerChannel);
+    if (ret != WS_SOCKET_ERROR_E) { result = -1762; goto done; }
+    if (ch->closeTxd) { result = -1763; goto done; }
+
     /* So the channel is not half-closed, and an EOF can still be built and
      * sent once the socket takes bytes again. */
     wolfSSH_SetIOSend(ctx, DiscardIoSend);
