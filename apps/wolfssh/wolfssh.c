@@ -325,21 +325,26 @@ static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
             wc_LockMutex(lock);
         }
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret == WS_FATAL_ERROR) {
-            /* the session holds the detail behind a fatal error */
-            ret = wolfSSH_get_error(ssh);
-        }
         if (lock != NULL) {
             wc_UnLockMutex(lock);
         }
-    } while (ret == WS_WANT_WRITE && WTIME(NULL) < deadline);
 
-    /* The queue is out. Whatever the worker made of the peer's end of the
-     * conversation is for the reader to sort out. A rekey started on the way
-     * through is the reader's as well, the send itself went out. */
-    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
-            || ret == WS_REKEYING) {
-        ret = WS_SUCCESS;
+        /* Anything outside the receive's own statuses is a failure. */
+        if (ret != WS_SUCCESS && ret != WS_WANT_READ && ret != WS_CHAN_RXD
+                && ret != WS_EXTDATA && ret != WS_REKEYING) {
+            break;
+        }
+    } while (wolfSSH_get_error(ssh) == WS_WANT_WRITE
+            && WTIME(NULL) < deadline);
+
+    /* Report only whether the queue went out. The deadline can run out
+     * with the packet still queued. */
+    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD
+            || ret == WS_EXTDATA || ret == WS_REKEYING) {
+        if (wolfSSH_get_error(ssh) == WS_WANT_WRITE)
+            ret = WS_WANT_WRITE;
+        else
+            ret = WS_SUCCESS;
     }
 
     return ret;
@@ -1353,9 +1358,6 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
         if (ret == WS_SUCCESS) {
             ret = wolfSSH_worker(ssh, NULL);
-            if (ret == WS_FATAL_ERROR) {
-                ret = wolfSSH_get_error(ssh);
-            }
             if (ret == WS_WANT_WRITE) {
                 /* The close messages are already out, whatever the drain
                  * still wants to send is a reply to the peer. */

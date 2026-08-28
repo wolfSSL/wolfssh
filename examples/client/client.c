@@ -1209,7 +1209,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         }
         ret = wolfSSH_worker(ssh, NULL);
         if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
+            ret != WS_CHANNEL_CLOSED &&
+            ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
             ClientFreeBuffers(pubKeyName, privKeyName, NULL);
             wolfSSH_free(ssh);
             wolfSSH_CTX_free(ctx);
@@ -1226,7 +1227,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
+            ret != WS_CHANNEL_CLOSED &&
+            ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
         err_sys("Closing client stream failed");
     }
 

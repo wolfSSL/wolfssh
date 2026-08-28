@@ -2618,20 +2618,17 @@ static void* HandleConnection(void* arg)
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
         ret = wolfSSH_shutdown(ssh);
 
-        /* peer hung up, stop shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        /* peer hung up or the channel is already gone, stop shutdown */
+        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
             ret = 0;
         }
 
-        error = wolfSSH_get_error(ssh);
-        if (error != WS_SOCKET_ERROR_E &&
-                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
             int maxAttempt = 10; /* make 10 attempts max before giving up */
             int attempt;
 
             for (attempt = 0; attempt < maxAttempt; attempt++) {
                 ret = wolfSSH_worker(ssh, NULL);
-                error = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
                 if (ret == WS_CHANNEL_CLOSED) {
@@ -2645,9 +2642,11 @@ static void* HandleConnection(void* arg)
                     break;
                 }
 
-                if (ret == WS_FATAL_ERROR &&
-                   (error != WS_WANT_READ &&
-                    error != WS_WANT_WRITE)) {
+                /* Keep draining while the socket blocks or the peer is still
+                 * talking. Anything else is a failure worth giving up on. */
+                if (ret != WS_SUCCESS && ret != WS_WANT_READ &&
+                        ret != WS_WANT_WRITE && ret != WS_CHAN_RXD &&
+                        ret != WS_EXTDATA && ret != WS_REKEYING) {
                     break;
                 }
             #ifdef _WIN32

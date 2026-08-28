@@ -1383,7 +1383,7 @@ static int sftp_worker(thread_ctx_t* threadCtx)
     }
 
     do {
-        if (ret == WS_WANT_WRITE || ret == WS_CHAN_RXD ||
+        if (ret == WS_CHAN_RXD || error == WS_WANT_WRITE ||
                 wolfSSH_SFTP_PendingSend(ssh)) {
             /* Yes, process the SFTP data. */
             ret = wolfSSH_SFTP_read(ssh);
@@ -1639,14 +1639,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
         ret = wolfSSH_shutdown(threadCtx->ssh);
 
-        /* peer hung up, stop shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        /* peer hung up or the channel is already gone, stop shutdown */
+        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
             ret = 0;
         }
 
-        error = wolfSSH_get_error(threadCtx->ssh);
-        if (error != WS_SOCKET_ERROR_E &&
-                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
             int maxAttempt = 10; /* make 10 attempts max before giving up */
             int attempt;
 
@@ -1680,6 +1678,10 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             }
         }
     }
+
+    /* The report below names how the connection ended, and the shutdown
+     * drain refreshes error only on the paths that enter it. */
+    error = wolfSSH_get_error(threadCtx->ssh);
 
     if (threadCtx->fd != -1) {
         WCLOSESOCKET(threadCtx->fd);

@@ -1178,8 +1178,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
        }
 
        /* continue on success and in case where queueing up send packets */
-       if (ret == WS_SUCCESS ||
-               (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE)) {
+       if (ret == WS_SUCCESS || ret == WS_WANT_WRITE) {
            ret = SendChannelExit(ssh, channel->peerChannel,
            #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
                ssh->exitStatus);
@@ -1189,8 +1188,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
        }
 
        /* continue on success and in case where queueing up send packets */
-       if (ret == WS_SUCCESS ||
-               (ret != WS_BAD_ARGUMENT && ssh->error == WS_WANT_WRITE))
+       if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
            ret = SendChannelClose(ssh, channel->peerChannel);
     }
 
@@ -3583,66 +3581,41 @@ const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 
 int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 {
-    int ret = WS_SUCCESS;
+    int ret = WS_BAD_ARGUMENT;
+    int sendRet = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_worker()");
 
-    if (ssh == NULL)
-        ret = WS_BAD_ARGUMENT;
-
-#ifdef WOLFSSH_TEST_BLOCK
-    /* In forced non-blocking test mode, keep legacy ordering (send before
-     * receive) to match the harness expectations and avoid synthetic spins. */
-    if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
-            ret = wolfSSH_SendPacket(ssh);
-    }
-    if (ret == WS_SUCCESS)
+    if (ssh != NULL) {
         ret = DoReceive(ssh);
-#else
-    /* Always service inbound data first so window updates can unblock sends. */
-    if (ret == WS_SUCCESS) {
-        ret = DoReceive(ssh);
-    }
 
-    /* If receive only wanted read or delivered channel data, still try to
-     * flush any pending outbound packets. */
-    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD) {
-        int sendRet = WS_SUCCESS;
+        /* DoReceive() reports an idle socket and a hard failure the same way:
+         * WS_FATAL_ERROR with the detail in ssh->error. */
+        if (ret == WS_FATAL_ERROR && ssh->error != WS_SUCCESS)
+            ret = ssh->error;
 
-        if (ssh->outputBuffer.length != 0)
-            sendRet = wolfSSH_SendPacket(ssh);
-
-        /* If send is back-pressured, immediately try another receive to pick
-         * up potential window-adjusts and then return the send status. */
-        if (sendRet == WS_WANT_WRITE || sendRet == WS_WINDOW_FULL) {
-            int recv2 = DoReceive(ssh);
-            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD)
-                ret = sendRet;
-            else
-                ret = recv2;
-        }
-        else {
-            /* Preserve meaningful receive status when send succeeded. */
-            if (sendRet != WS_SUCCESS)
-                ret = sendRet;
-            /* else leave ret as prior receive result (SUCCESS/WANT_READ/CHAN_RXD). */
-        }
-    }
-#endif /* WOLFSSH_TEST_BLOCK */
-
-    /* WS_EXTDATA reports the channel too, so a multi-channel caller can route
-     * the drain to wolfSSH_ChannelIdReadExt(). */
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
-        if (channelId != NULL) {
+        /* Record the channel first. */
+        if (channelId != NULL && (ret == WS_SUCCESS || ret == WS_CHAN_RXD ||
+                ret == WS_EXTDATA)) {
             *channelId = ssh->lastRxId;
         }
 
-        /* WS_EXTDATA is raised once, on arrival; masking it would strand the
-         * buffered stderr and its window credit. */
-        if (ssh->isKeying && ret != WS_EXTDATA) {
+        /* Send remaining bytes anyway */
+        if (ssh->outputBuffer.length != 0) {
+            sendRet = wolfSSH_SendPacket(ssh);
+
+            /* Store any failure except for WS_WANT_WRITE */
+            if (sendRet != WS_SUCCESS && sendRet != WS_WANT_WRITE) {
+                ssh->error = sendRet;
+                ret = sendRet;
+            }
+        }
+
+        /* WS_EXTDATA is not folded into WS_REKEYING. It is reported once,
+         * when the data arrives */
+        if (ssh->isKeying && (ret == WS_SUCCESS || ret == WS_CHAN_RXD)) {
             ssh->error = WS_REKEYING;
-            return WS_REKEYING;
+            ret = WS_REKEYING;
         }
     }
 
@@ -4013,9 +3986,7 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 {
     WOLFSSH_BUFFER* inputBuffer;
     WOLFSSH* ssh;
-    word32 creditedSz;
     int updateResult = WS_SUCCESS;
-    int savedError;
 
     if (channel == NULL || buf == NULL || bufSz == 0)
         return WS_BAD_ARGUMENT;
@@ -4033,23 +4004,8 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
     inputBuffer->idx += bufSz;
 
     /* Unguarded by bufSz: also compacts, and carries credit left behind. */
-    savedError = ssh->error;
-    creditedSz = inputBuffer->idx;
     updateResult = _UpdateChannelWindow(channel);
-    if (updateResult == WS_SUCCESS) {
-        /* Clear the old WS_WANT_WRITE only if this read sent an adjust of
-         * its own and the output buffer is now empty. */
-        if (savedError == WS_WANT_WRITE && creditedSz != 0
-                && inputBuffer->idx == 0 && ssh->outputBuffer.length == 0) {
-            ssh->error = WS_SUCCESS;
-        }
-        else {
-            ssh->error = savedError;
-        }
-    }
-    else {
-        /* SendPacket() records only WS_WANT_WRITE, so a hard failure has to
-         * be recorded here; rewriting WS_WANT_WRITE is deliberate. */
+    if (updateResult != WS_SUCCESS) {
         ssh->error = updateResult;
         if (updateResult != WS_WANT_WRITE) {
             WLOG(WS_LOG_ERROR,
@@ -4090,7 +4046,6 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 
     if (bufSz > 0) {
         int adjustResult;
-        int savedError = ssh->error;
 
         /* Credit locally regardless of the send result; ChannelCreditWindow()
          * owns getting it to the peer. */
@@ -4101,16 +4056,7 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
             ShrinkBuffer(extDataBuffer, 0);
 
         adjustResult = ChannelCreditWindow(ssh, channel, bufSz);
-        if (adjustResult == WS_SUCCESS) {
-            /* Don't restore an owed-flush status once the buffer has drained. */
-            if (savedError == WS_WANT_WRITE && ssh->outputBuffer.length == 0)
-                ssh->error = WS_SUCCESS;
-            else
-                ssh->error = savedError;
-        }
-        else {
-            /* SendPacket() sets ssh->error only for WS_WANT_WRITE, so hard
-             * failures must be recorded here or they stay hidden. */
+        if (adjustResult != WS_SUCCESS) {
             ssh->error = adjustResult;
             if (adjustResult != WS_WANT_WRITE) {
                 WLOG(WS_LOG_ERROR,
