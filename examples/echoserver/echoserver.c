@@ -1014,7 +1014,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             if (cnt_r <= 0) {
                                 /* Nothing was buffered. Only an actual data
                                  * report makes that a failure. */
-                                if (rc == WS_REKEYING)
+                                if (rc == WS_REKEYING && cnt_r == 0)
                                     continue;
                                 break;
                             }
@@ -1058,7 +1058,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             if (cnt_r <= 0) {
                                 /* Nothing was buffered. Only an actual data
                                  * report makes that a failure. */
-                                if (rc == WS_REKEYING)
+                                if (rc == WS_REKEYING && cnt_r == 0)
                                     continue;
                                 break;
                             }
@@ -1082,7 +1082,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             if (cnt_r <= 0) {
                                 /* Nothing was buffered. Only an actual data
                                  * report makes that a failure. */
-                                if (rc == WS_REKEYING)
+                                if (rc == WS_REKEYING && cnt_r == 0)
                                     continue;
                                 break;
                             }
