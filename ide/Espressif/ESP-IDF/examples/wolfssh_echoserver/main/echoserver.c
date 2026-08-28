@@ -1051,9 +1051,16 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         /* Only an emptied channel earns the EOF; anything
                          * else is retried on a later pass. */
                         if (eofDrained) {
-                            wolfSSH_ChannelSendEof(eofChannel);
-                            eofAnswered = 1;
-                            ChildRunning = 0;
+                            int eofRet;
+
+                            eofRet = wolfSSH_ChannelSendEof(eofChannel);
+                            /* A rekey queues nothing, so the reply is still
+                             * owed and the KEX traffic wakes the next pass.
+                             * A short send already bundled it. */
+                            if (eofRet != WS_REKEYING) {
+                                eofAnswered = 1;
+                                ChildRunning = 0;
+                            }
                         }
                     }
                 }
