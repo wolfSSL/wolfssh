@@ -438,6 +438,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int replyTries;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
+    word32 fwdChannelId = 0;
     byte* appBuffer = NULL;
     byte* sshBuffer = NULL;
     word32 appBufferSz = 0;
@@ -746,6 +747,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 if (fwdState.appFd != (SOCKET_T)-1 && newChannel != NULL) {
                     appFd = fwdState.appFd;
                     fwdChannel = newChannel;
+                    fwdChannelId = fwdState.channelId;
                     FD_SET(appFd, &templateFds);
                     nFds = findMax((int)sshFd, (int)appFd) + 1;
                     appFdSet = 1;
@@ -765,6 +767,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                  * touch the freed channel. */
                 fwdChannel = NULL;
                 break;
+            }
+
+            /* A refused open frees the channel and reports a fatal
+             * error, not a close, so the guard above does not run.
+             * Re-resolve by id rather than trust the pointer. */
+            if (fwdChannel != NULL) {
+                fwdChannel = wolfSSH_ChannelFind(ssh, fwdChannelId,
+                        WS_CHANNEL_ID_SELF);
+                if (fwdChannel == NULL)
+                    break;
             }
 
             /* Relay the half-close so a local reader waiting on end-of-input
@@ -836,6 +848,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             appFdSet = 1;
             fwdChannel = wolfSSH_ChannelFwdNew(ssh, fwdToHost, fwdToPort,
                     fwdFromHost, fwdFromPort);
+            if (fwdChannel != NULL
+                    && wolfSSH_ChannelGetId(fwdChannel, &fwdChannelId,
+                        WS_CHANNEL_ID_SELF) != WS_SUCCESS)
+                fwdChannel = NULL;
             continue;
         }
         if (appBufferUsed > 0) {
