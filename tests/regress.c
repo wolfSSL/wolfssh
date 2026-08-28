@@ -265,6 +265,31 @@ static WS_MAYBE_UNUSED word32 BuildExtInfoSigAlgs(byte* buf, word32 bufSz,
     return AppendString(buf, bufSz, idx, sigAlgs);
 }
 
+static word32 BuildChannelClosePacket(word32 peerChannelId, byte* out,
+        word32 outSz)
+{
+    byte payload[16];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, peerChannelId);
+
+    return WrapPacket(MSGID_CHANNEL_CLOSE, payload, idx, out, outSz);
+}
+
+
+static word32 BuildChannelDataPacket(word32 peerChannelId, const char* data,
+        byte* out, word32 outSz)
+{
+    byte payload[64];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, peerChannelId);
+    idx = AppendString(payload, sizeof(payload), idx, data);
+
+    return WrapPacket(MSGID_CHANNEL_DATA, payload, idx, out, outSz);
+}
+
+
 #ifdef WOLFSSH_FWD
 static word32 BuildDirectTcpipExtra(const char* host, word32 hostPort,
         const char* origin, word32 originPort, byte* out, word32 outSz)
@@ -4194,6 +4219,68 @@ static void TestDisconnectOutranksRekey(void)
 }
 
 
+/* wolfSSH_worker() is the other drive loop, and the one the SFTP and SCP
+ * layers turn. Once the session is over it has nothing to drive: the
+ * dispatch is skipped, so a post-disconnect message would leave
+ * ssh->error at WS_SUCCESS and the worker would keep reporting a healthy
+ * session for as long as the peer talks. It also outranks a rekey the peer
+ * abandoned, which only NEWKEYS could clear. RFC 4253 section 11.1. */
+static void TestWorkerReportsDisconnect(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[256];
+    byte out[256];
+    word32 inSz;
+    word32 idx;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* The peer's KEXINIT, the way DoKexInit records it. Nothing clears it
+     * after the disconnect below, so it latches for the session. */
+    ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+
+    /* The peer's disconnect, then a message behind it. An IGNORE draws no
+     * reply of its own, so what goes out can only come from the worker. */
+    idx = BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in, sizeof(in));
+    inSz = idx + BuildPacket(MSGID_IGNORE, in + idx, sizeof(in) - idx);
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_worker(ssh, NULL), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertTrue(ssh->disconnected);
+    AssertTrue(ssh->isKeying != 0);
+    io.outSz = 0;
+
+    /* The message behind it is still queued, and every further pass reports
+     * the disconnect rather than the WS_SUCCESS of a skipped dispatch or the
+     * WS_REKEYING of a rekey that cannot finish. */
+    AssertIntEQ(wolfSSH_worker(ssh, NULL), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(wolfSSH_worker(ssh, NULL), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    /* Nothing went out on any of them. */
+    AssertIntEQ(io.outSz, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 
 #ifndef NO_WOLFSSH_SERVER
 
@@ -4409,6 +4496,198 @@ static void TestDisconnectGatesConnect(void)
 
 #endif /* !NO_WOLFSSH_CLIENT */
 
+
+/* The public senders sit behind the disconnect gate, but the replies the
+ * library builds in answer to inbound traffic did not. A channel close
+ * draws an EOF and a close of ours out of DoChannelClose(), and a channel
+ * open a confirmation or a failure out of DoChannelOpen(); on a session
+ * that is already over, none of that may reach the peer. RFC 4253
+ * section 11.1. */
+static void TestDisconnectSilencesInboundReplies(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte in[256];
+    byte out[512];
+    word32 inSz;
+    word32 quietSz;
+    word32 channelId;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    channelId = channel->channel;
+    /* Past userauth, or the message filter turns the inbound messages away
+     * on its own and the wire check below proves nothing. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    inSz = BuildChannelClosePacket(channelId, in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Our own disconnect goes out first, and is the last thing that may. */
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(ssh->disconnected);
+    quietSz = io.outSz;
+    AssertTrue(quietSz > 0);
+
+    /* The peer's close arrives anyway: a caller's own wolfSSH_worker() loop
+     * still reads after a disconnect, and shutdown's pump can find packets
+     * queued behind the peer's DISCONNECT. A skipped packet
+     * is not an error; assert that, so the quiet-wire checks below cannot
+     * pass on a receive that never reached DoPacket(). */
+    AssertIntEQ(DoReceive(ssh), WS_SUCCESS);
+
+    /* No EOF and no close went out, and the handler never ran, so the
+     * channel it would have torn down is still on the list. */
+    AssertIntEQ(io.outSz, quietSz);
+    AssertNotNull(ssh->channelList);
+    AssertIntEQ(ssh->channelList->channel, channelId);
+    AssertFalse(channel->eofTxd);
+    AssertFalse(channel->closeTxd);
+
+    /* A channel open is the other half: it answers with a confirmation or
+     * a failure, and neither may go out now. */
+    inSz = BuildChannelOpenPacket("session", 99, 1024, 1024, NULL, 0,
+            in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    io.outSz = quietSz;
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(DoReceive(ssh), WS_SUCCESS);
+    AssertIntEQ(io.outSz, quietSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* Skipping the dispatch is all the gate does: the frame advance steps over
+ * the whole packet on its own, so a packet behind a skipped one is still
+ * found where it should be. And a DISCONNECT is not skipped -- DoDisconnect()
+ * sends nothing, and it is what latches WS_DISCONNECT for the caller, so
+ * swallowing the peer's would report a live session on a dead one. */
+static void TestDisconnectKeepsStreamInStep(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte in[256];
+    byte out[512];
+    word32 inSz;
+    word32 quietSz;
+    word32 channelId;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    channelId = channel->channel;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* A channel close for the gate to skip, with the peer's disconnect behind
+     * it in the same read. */
+    inSz = BuildChannelClosePacket(channelId, in, sizeof(in));
+    inSz += BuildDisconnectPacket(WOLFSSH_DISCONNECT_BY_APPLICATION,
+            in + inSz, (word32)sizeof(in) - inSz);
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Ours goes out first, and is the last thing that may. */
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(ssh->disconnected);
+    quietSz = io.outSz;
+    AssertTrue(quietSz > 0);
+
+    /* The close is skipped, so no reply and the channel stays. */
+    AssertIntEQ(DoReceive(ssh), WS_SUCCESS);
+    AssertIntEQ(io.outSz, quietSz);
+    AssertNotNull(ssh->channelList);
+    AssertIntEQ(ssh->channelList->channel, channelId);
+    AssertFalse(channel->eofTxd);
+    AssertFalse(channel->closeTxd);
+
+    /* The disconnect behind it decodes and latches, and still answers
+     * nothing. */
+    AssertIntEQ(DoReceive(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+    AssertIntEQ(io.outSz, quietSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* Skipping the dispatch drops what arrives, it does not queue it: the gate
+ * covers inbound data, not only replies. A caller that can no longer send has
+ * nothing to do with it. Pinned because the read path still hands back data
+ * that arrived before the disconnect, and the two are easy to confuse. */
+static void TestDisconnectDropsLateChannelData(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[256];
+    byte out[512];
+    byte buf[32];
+    word32 inSz;
+    word32 channelId;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channelId = ssh->channelList->channel;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    inSz = BuildChannelDataPacket(channelId, "late", in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION),
+            WS_SUCCESS);
+    AssertTrue(ssh->disconnected);
+
+    /* Read it, and it is gone: nothing buffered on the channel. */
+    AssertIntEQ(DoReceive(ssh), WS_SUCCESS);
+    AssertNotNull(ssh->channelList);
+    AssertIntEQ(ssh->channelList->inputBuffer.length
+            - ssh->channelList->inputBuffer.idx, 0);
+
+    /* So the read reports the dead session rather than the dropped bytes. */
+    AssertIntEQ(wolfSSH_stream_read(ssh, buf, sizeof(buf)), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
 
 /* disconnectTxd means "a flush is owed", not "a disconnect was sent". Once
  * ours has gone out, a teardown call must not push whatever the internal
@@ -8301,6 +8580,9 @@ int main(int argc, char** argv)
 #ifndef NO_WOLFSSH_CLIENT
     TestDisconnectGatesConnect();
 #endif
+    TestDisconnectSilencesInboundReplies();
+    TestDisconnectKeepsStreamInStep();
+    TestDisconnectDropsLateChannelData();
     TestDisconnectQuietWindowAdjust();
     TestDisconnectBlocksChannelAndFwdSends();
     TestStreamExitReportsDisconnect();
@@ -8315,6 +8597,7 @@ int main(int argc, char** argv)
     TestShutdownKeepsFlushWantWrite();
     TestDisconnectTxdClearsOnFlush();
     TestDisconnectOutranksRekey();
+    TestWorkerReportsDisconnect();
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
     TestTerminalResizeBlockedAfterDisconnect();
 #endif
