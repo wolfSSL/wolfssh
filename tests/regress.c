@@ -4480,13 +4480,13 @@ static void TestWorkerReadsWhenSendWouldBlock(void)
 
     recvCallCount = 0;
 
-    /* call worker; expect it to attempt send, notice back-pressure, and have
-     * invoked recv once. Depending on how DoReceive handles WANT_READ, the
-     * return may be WANT_WRITE or a fatal error; the important part is that
-     * recv was exercised. */
+    /* The worker attempts the send, notices the back-pressure and reports
+     * what the receive did. The short write stays in ssh->error. */
     ret = wolfSSH_worker(ssh, NULL);
 
-    AssertTrue(ret == WS_WANT_WRITE || ret == WS_FATAL_ERROR);
+    AssertIntEQ(ret, WS_WANT_READ);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
     AssertIntEQ(recvCallCount, 1);
 
     wolfSSH_free(ssh);

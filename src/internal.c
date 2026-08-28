@@ -4344,6 +4344,8 @@ int wolfSSH_OutputPending(WOLFSSH* ssh)
 }
 
 
+/* Reports what the read did: WS_SUCCESS, WS_WANT_READ when the socket
+ * would block, or WS_MEMORY_E / WS_SOCKET_ERROR_E. */
 static int GetInputData(WOLFSSH* ssh, word32 size)
 {
     int in;
@@ -4351,11 +4353,6 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
     /* Take into account the data already in the buffer. Update size
      * for what is missing in the request. */
     word32 haveDataSz;
-
-    /* reset want read state before attempting to read */
-    if (ssh->error == WS_WANT_READ) {
-        ssh->error = 0;
-    }
 
     haveDataSz = ssh->inputBuffer.length - ssh->inputBuffer.idx;
     if (haveDataSz >= size) {
@@ -4368,8 +4365,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
     }
 
     if (GrowBuffer(&ssh->inputBuffer, size) < 0) {
-        ssh->error = WS_MEMORY_E;
-        return WS_FATAL_ERROR;
+        return WS_MEMORY_E;
     }
 
     /* read data from network */
@@ -4378,13 +4374,11 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
                      ssh->inputBuffer.buffer + ssh->inputBuffer.length,
                      size);
         if (in == -1) {
-            ssh->error = WS_SOCKET_ERROR_E;
-            return WS_FATAL_ERROR;
+            return WS_SOCKET_ERROR_E;
         }
 
         if (in == WS_WANT_READ) {
-            ssh->error = WS_WANT_READ;
-            return WS_FATAL_ERROR;
+            return WS_WANT_READ;
         }
 
         if (in >= 0) {
@@ -4393,8 +4387,7 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
         }
         else {
             /* all other unexpected negative values is a failure case */
-            ssh->error = WS_SOCKET_ERROR_E;
-            return WS_FATAL_ERROR;
+            return WS_SOCKET_ERROR_E;
         }
 
     } while (size);
@@ -7715,7 +7708,6 @@ int ChannelCreditWindow(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel, word32 amount)
 static int SendPendingChannelWindowAdjust(WOLFSSH* ssh)
 {
     WOLFSSH_CHANNEL* cur;
-    int savedError;
     int ret = WS_SUCCESS;
 
     if (ssh == NULL)
@@ -7725,11 +7717,7 @@ static int SendPendingChannelWindowAdjust(WOLFSSH* ssh)
     if (ssh->isKeying)
         return WS_SUCCESS;
 
-    /* ssh->error is restored only when every channel flushed cleanly, so a
-     * back-pressured or broken transport is not hidden by this incidental
-     * flush. Keep going after a failure: the other channels are independent. */
-    savedError = ssh->error;
-
+    /* Keep going after a failure: the other channels are independent. */
     for (cur = ssh->channelList; cur != NULL; cur = cur->next) {
         if (cur->pendingWindowAdjust != 0) {
             int adjustResult = ChannelCreditWindow(ssh, cur, 0);
@@ -7739,9 +7727,7 @@ static int SendPendingChannelWindowAdjust(WOLFSSH* ssh)
         }
     }
 
-    if (ret == WS_SUCCESS)
-        ssh->error = savedError;
-    else
+    if (ret != WS_SUCCESS)
         ssh->error = ret;
 
     return ret;
@@ -12898,8 +12884,10 @@ int DoReceive(WOLFSSH* ssh)
         case PROCESS_INIT:
             readSz = peerBlockSz;
             WLOG(WS_LOG_DEBUG, "PR1: size = %u", readSz);
-            if ((ret = GetInputData(ssh, readSz)) < 0) {
-                return ret;
+            ret = GetInputData(ssh, readSz);
+            if (ret < 0) {
+                ssh->error = ret;
+                return WS_FATAL_ERROR;
             }
             ssh->processReplyState = PROCESS_PACKET_LENGTH;
 
@@ -12954,8 +12942,10 @@ int DoReceive(WOLFSSH* ssh)
             readSz = UINT32_SZ + ssh->curSz + peerMacSz;
             WLOG(WS_LOG_DEBUG, "PR2: size = %u", readSz);
             if (readSz > 0) {
-                if ((ret = GetInputData(ssh, readSz)) < 0) {
-                    return ret;
+                ret = GetInputData(ssh, readSz);
+                if (ret < 0) {
+                    ssh->error = ret;
+                    return WS_FATAL_ERROR;
                 }
 
                 if (!aeadMode) {
@@ -20375,6 +20365,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
+    int sendRet = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
@@ -20400,8 +20391,14 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
+        if (ssh->outputBuffer.length != 0) {
             ret = wolfSSH_SendPacket(ssh);
+
+            /* The payload is not bundled on this path, so mark the owed
+             * flush: the next call flushes first and returns WS_WANT_WRITE. */
+            if (ret == WS_WANT_WRITE)
+                ssh->outputBuffer.plainSz = dataSz;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -20475,14 +20472,20 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
 
     /* at this point the data has been loaded into WOLFSSH structure and is
      * considered consumed */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
+        sendRet = ret;
+
+        /* The byte count is the return value, so a short write reaches the
+         * caller through wolfSSH_get_error(). */
+        if (sendRet != WS_SUCCESS)
+            ssh->error = sendRet;
+        if (sendRet == WS_WANT_WRITE)
+            ssh->outputBuffer.plainSz = dataSz;
+    }
 
     if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
         ret = dataSz;
-
-    if (ssh && ssh->error == WS_WANT_WRITE)
-        ssh->outputBuffer.plainSz = dataSz;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
@@ -20495,6 +20498,7 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
     byte* output;
     word32 idx;
     int ret = WS_SUCCESS;
+    int sendRet = WS_SUCCESS;
     WOLFSSH_CHANNEL* channel = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering SendChannelData()");
@@ -20520,8 +20524,12 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
     }
 
     if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
+        if (ssh->outputBuffer.length != 0) {
             ret = wolfSSH_SendPacket(ssh);
+
+            if (ret == WS_WANT_WRITE)
+                ssh->outputBuffer.plainSz = dataSz;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -20598,14 +20606,18 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
 
     /* at this point the data has been loaded into WOLFSSH structure and is
      * considered consumed */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
+        sendRet = ret;
+
+        if (sendRet != WS_SUCCESS)
+            ssh->error = sendRet;
+        if (sendRet == WS_WANT_WRITE)
+            ssh->outputBuffer.plainSz = dataSz;
+    }
 
     if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
         ret = dataSz;
-
-    if (ssh && ssh->error == WS_WANT_WRITE)
-        ssh->outputBuffer.plainSz = dataSz;
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelExtendedData(), ret = %d", ret);
     return ret;

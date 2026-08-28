@@ -661,9 +661,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_Get(ssh, pt, to, resume, &myStatusCb);
@@ -772,9 +769,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_Put(ssh, pt, to, resume, &myStatusCb);
@@ -866,9 +860,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_STAT(ssh, pt, &atrb);
@@ -920,9 +911,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_CHMOD(ssh, path, mode);
@@ -987,9 +975,6 @@ static int doCmds(func_args* args)
                 do {
                     while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
                     }
                     ret = wolfSSH_SFTP_Open(ssh, path,
                             WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT |
@@ -1003,9 +988,6 @@ static int doCmds(func_args* args)
                 do {
                     while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                         ret = wolfSSH_worker(ssh, NULL);
-                        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                            ret = wolfSSH_get_error(ssh);
-                        }
                     }
                     ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
                     err = wolfSSH_get_error(ssh);
@@ -1060,9 +1042,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_RMDIR(ssh, pt);
@@ -1117,9 +1096,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_Remove(ssh, pt);
@@ -1210,9 +1186,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 ret = wolfSSH_SFTP_Rename(ssh, pt, to);
@@ -1348,9 +1321,6 @@ static int doCmds(func_args* args)
             do {
                 while (ret == WS_REKEYING || ssh->error == WS_REKEYING) {
                     ret = wolfSSH_worker(ssh, NULL);
-                    if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
-                        ret = wolfSSH_get_error(ssh);
-                    }
                 }
 
                 current = wolfSSH_SFTP_LS(ssh, workingDir);
@@ -1821,9 +1791,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             ret = 0;
         }
 
-        err = wolfSSH_get_error(ssh);
-        if (err != WS_SOCKET_ERROR_E &&
-                (err == WS_WANT_READ || err == WS_WANT_WRITE)) {
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
             int maxAttempt = 10; /* make 10 attempts max before giving up */
             int attempt;
 

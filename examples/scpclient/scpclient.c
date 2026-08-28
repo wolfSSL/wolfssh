@@ -326,7 +326,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
         }
         else {
             ret = wolfSSH_worker(ssh, NULL);
-            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
+            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED &&
+                    ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
                 WLOG(WS_LOG_DEBUG,
                     "Failed to listen for close messages from the peer.");
             }
