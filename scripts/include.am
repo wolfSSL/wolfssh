@@ -15,5 +15,5 @@ endif
 # app wasn't built.
 dist_noinst_SCRIPTS+= scripts/sshclient.test
 
-dist_noinst_SCRIPTS+= scripts/external.test scripts/fwd.test
+dist_noinst_SCRIPTS+= scripts/fwd.test
 EXTRA_DIST += scripts/fwd.test.expect
