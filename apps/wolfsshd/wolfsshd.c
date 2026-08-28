@@ -1987,8 +1987,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             struct timeval* timeout = NULL;
 
             /* Work already in hand must not wait on the descriptors, but the
-             * poll still runs so this pass sees the child's output too. */
-            if (pending) {
+             * poll still runs so this pass sees the child's output too. Data
+             * the child has not taken yet is not in hand: nothing can be
+             * pulled off the channel until it drains, so a zero timeout
+             * would spin. Its stdin is in the write set, so wait there. */
+            if (pending && childInIdx == childInSz) {
                 noWait.tv_sec = 0;
                 noWait.tv_usec = 0;
                 timeout = &noWait;
