@@ -12225,7 +12225,17 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         return WS_MSGID_NOT_ALLOWED_E;
     }
 
-    switch (msg) {
+    /* The session is over, RFC 4253 section 11.1, so skip the whole dispatch:
+     * the handlers that answer must not, and what the rest would record is of
+     * no use to a caller that can no longer send. Inbound data from here on is
+     * dropped rather than buffered. The frame advance at the end steps over
+     * the packet, so the stream stays in step. A DISCONNECT still dispatches,
+     * since DoDisconnect() sends nothing and latches the error. */
+    if (ssh->disconnected && msg != MSGID_DISCONNECT) {
+        WLOG(WS_LOG_DEBUG, "Ignoring message ID %u after a disconnect",
+             (word32)msg);
+    }
+    else switch (msg) {
 
         case MSGID_DISCONNECT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_DISCONNECT");

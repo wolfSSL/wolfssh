@@ -563,14 +563,17 @@ WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
  * wolfSSH_shutdown() above this comment, and every send call below it,
- * report WS_DISCONNECT from then on, as do wolfSSH_accept() and
- * wolfSSH_connect(). Neither driver flushes a disconnect of ours left queued
- * by a short send; wolfSSH_shutdown() or another wolfSSH_SendDisconnect()
- * owns that. Reads are not gated, so channel data that
- * arrived before the disconnect can still be drained; wolfSSH_stream_read()
- * and wolfSSH_stream_peek() report WS_DISCONNECT once their buffer runs
- * dry. A CHANNEL_EOF already received outranks that drain: both report
- * WS_EOF with data possibly still buffered. RFC 4253 section 11.1. */
+ * report WS_DISCONNECT from then on, as do wolfSSH_accept(),
+ * wolfSSH_connect() and wolfSSH_worker(). None of the three flushes a
+ * disconnect of ours left queued by a short send; wolfSSH_shutdown() or
+ * another wolfSSH_SendDisconnect() owns that. Inbound traffic is dropped:
+ * the receive path skips every message but a DISCONNECT, so late channel
+ * data is discarded and the channel callbacks stop firing. Reads are not
+ * gated, so channel data that arrived before the disconnect can still be
+ * drained; wolfSSH_stream_read() and wolfSSH_stream_peek() report
+ * WS_DISCONNECT once their buffer runs dry. A CHANNEL_EOF already received
+ * outranks that drain: both report WS_EOF with data possibly still
+ * buffered. RFC 4253 section 11.1. */
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Returns the bytes read; the next read clears the status. WS_WANT_WRITE
  * from wolfSSH_get_error() means the adjust is queued; it goes out on the

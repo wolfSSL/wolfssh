@@ -3604,6 +3604,16 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    /* Nothing left to drive: no reply may go out and inbound messages are
+     * skipped, so every pass from here on would answer WS_SUCCESS off a
+     * dispatch that did nothing and a caller turning the crank would never
+     * see the session end. What arrived before the disconnect is still the
+     * caller's, through the read calls. RFC 4253 section 11.1. */
+    if (ret == WS_SUCCESS && SendAfterDisconnect(ssh)) {
+        WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), session disconnected");
+        return WS_FATAL_ERROR;
+    }
+
 #ifdef WOLFSSH_TEST_BLOCK
     /* In forced non-blocking test mode, keep legacy ordering (send before
      * receive) to match the harness expectations and avoid synthetic spins. */
@@ -3653,7 +3663,9 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
         }
 
         /* WS_EXTDATA is raised once, on arrival; masking it would strand the
-         * buffered stderr and its window credit. */
+         * buffered stderr and its window credit. A disconnect cannot be seen
+         * here: the gate at the top returns before this, and the DISCONNECT
+         * that sets the flag mid-pass leaves ret fatal. */
         if (ssh->isKeying && ret != WS_EXTDATA) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
