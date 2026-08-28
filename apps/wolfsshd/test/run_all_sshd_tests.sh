@@ -207,6 +207,7 @@ run_teardown() {
 trap run_teardown EXIT
 
 TOTAL=0
+PASSED=0
 SKIPPED=0
 # Set as the last statement of each branch that runs tests, and checked before
 # the summary. A shell expansion error (a bad arithmetic expansion, say) unwinds
@@ -246,6 +247,7 @@ should_skip() {
     fi
     if [ "$1" == "$EXCLUDE" ]; then
         echo "Test '$1' is excluded. Skipping."
+        TOTAL=$((TOTAL+1))
         SKIPPED=$((SKIPPED+1))
         return 0
     fi
@@ -258,6 +260,19 @@ should_skip() {
 # be reached for the exclusion to be reported and counted.
 matches() {
     [ -z "$MATCH" ] || [ "$1" == "$MATCH" ]
+}
+
+# Counts each named test as skipped, for tests that need a local daemon on a run
+# against an external host. Takes the names rather than a number so the count
+# cannot drift from the tests it stands in for.
+skip_local_only() {
+    local test
+    for test in "$@"; do
+        if matches "$test"; then
+            TOTAL=$((TOTAL+1))
+            SKIPPED=$((SKIPPED+1))
+        fi
+    done
 }
 
 # Collect the directories above $1 that wolfSSHd's StrictModes check will
@@ -350,6 +365,7 @@ run_test() {
         SKIPPED=$((SKIPPED+1))
     elif [ "$RESULT" == 0 ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat stdout.txt
@@ -401,6 +417,7 @@ EOF
     TOTAL=$((TOTAL+1))
     if grep -q "group or world readable" strictmodes_log.txt; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat strictmodes_log.txt
@@ -459,6 +476,7 @@ EOF
             grep -q "but this build cannot enforce it" upn_nofpki_log.txt &&
             ! grep -q "Refusing to load" upn_nofpki_log.txt; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat upn_nofpki_log.txt
@@ -518,6 +536,7 @@ run_strictmodes_authkeys_negative_test() {
     after=${after:-0}
     if [ "$result" != 0 ] && [ "$after" -gt "$before" ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED! (expected StrictModes rejection: client exit=%s, new log matches=%s)\n" \
             "$result" "$((after - before))"
@@ -654,6 +673,7 @@ EOF
         rm -rf "$HK_WORK"
         printf "PASSED (mode and owner cases skipped, built with "
         printf "WOLFSSH_NO_HOSTKEY_PERMS)\n"
+        PASSED=$((PASSED+1))
         return
     fi
 
@@ -673,6 +693,7 @@ EOF
 
     rm -rf "$HK_WORK"
     printf "PASSED\n"
+    PASSED=$((PASSED+1))
 }
 
 # Run the tests. There is one path whether or not --match was given: every test
@@ -711,15 +732,15 @@ run_hostkey_perm_check
 # rejected. Reads the local ./log.txt, so only when we own the daemon.
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_test "sshd_pubkey_reject_test.sh"
-elif matches "sshd_pubkey_reject_test.sh"; then
-    SKIPPED=$((SKIPPED+1))
+else
+    skip_local_only "sshd_pubkey_reject_test.sh"
 fi
 
 # exercise the authorized_keys StrictModes path against the running sshd
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_strictmodes_authkeys_negative_test
-elif matches "strictmodes_authkeys_negative"; then
-    SKIPPED=$((SKIPPED+1))
+else
+    skip_local_only "strictmodes_authkeys_negative"
 fi
 
 if [ "$USING_LOCAL_HOST" == 1 ]; then
@@ -728,27 +749,32 @@ if [ "$USING_LOCAL_HOST" == 1 ]; then
 fi
 
 # these tests require setting up an sshd
+local_sshd_tests=(
+ "sshd_forcedcmd_test.sh"
+ "sshd_match_overlap_test.sh"
+ "sshd_window_full_test.sh"
+ "sshd_stderr_eof_test.sh"
+ "sshd_empty_password_test.sh"
+ "sshd_permitroot_test.sh"
+ "sshd_permitroot_prohibit_password.sh"
+ "sshd_permitroot_forced_cmd.sh"
+ "strictmodes_hostkey_negative"
+ "upn_unenforceable_negative"
+ "sshd_login_grace_test.sh"
+ "sshd_privdrop_fail_test.sh"
+ "sshd_chroot_fail_test.sh"
+)
 if [ "$USING_LOCAL_HOST" == 1 ]; then
-    run_test "sshd_forcedcmd_test.sh"
-    run_test "sshd_match_overlap_test.sh"
-    run_test "sshd_window_full_test.sh"
-    run_test "sshd_stderr_eof_test.sh"
-    run_test "sshd_empty_password_test.sh"
-    run_test "sshd_permitroot_test.sh"
-    run_test "sshd_permitroot_prohibit_password.sh"
-    run_test "sshd_permitroot_forced_cmd.sh"
-    run_strictmodes_negative_test
-    run_upn_unenforceable_negative_test
-    run_test "sshd_login_grace_test.sh"
-    run_test "sshd_privdrop_fail_test.sh"
-    run_test "sshd_chroot_fail_test.sh"
+    for test in "${local_sshd_tests[@]}"; do
+        case "$test" in
+            strictmodes_hostkey_negative) run_strictmodes_negative_test ;;
+            upn_unenforceable_negative) run_upn_unenforceable_negative_test ;;
+            *) run_test "$test" ;;
+        esac
+    done
 else
     printf "Skipping tests that need to setup local SSHD\n"
-    # the thirteen calls above; with --match at most one of them was going to run,
-    # and should_skip() has already counted it if it was excluded
-    if [ -z "$MATCH" ]; then
-        SKIPPED=$((SKIPPED+13))
-    fi
+    skip_local_only "${local_sshd_tests[@]}"
 fi
 
 # these tests run with X509 sshd-config loaded. The matches() guard keeps a
@@ -767,7 +793,9 @@ fi
 # negative test: a certificate UPN realm outside AuthorizedUPNDomains must
 # be rejected. Needs the dedicated bad-domain config, so only runs when we
 # control the local daemon.
-if [ "$USING_LOCAL_HOST" == 1 ] && matches "sshd_x509_upn_fail.sh"; then
+if [ "$USING_LOCAL_HOST" != 1 ]; then
+    skip_local_only "sshd_x509_upn_fail.sh"
+elif matches "sshd_x509_upn_fail.sh"; then
     start_wolfsshd "sshd_config_test_x509_upn_bad"
     run_test "sshd_x509_upn_fail.sh"
     printf "Shutting down test wolfSSHd\n"
@@ -779,7 +807,9 @@ fi
 # sshd_config_test_mldsa has no other host key, so an ML-DSA-less build
 # cannot start the daemon; check out here, not in the test script. The check
 # is the composite, not the umbrella: the ECDSA half can be missing on its own.
-if [ "$USING_LOCAL_HOST" == 1 ] && matches "sshd_mldsa_composite_test.sh"; then
+if [ "$USING_LOCAL_HOST" != 1 ]; then
+    skip_local_only "sshd_mldsa_composite_test.sh"
+elif matches "sshd_mldsa_composite_test.sh"; then
     if wolfssh_has MLDSA87_ES384; then
         start_wolfsshd "sshd_config_test_mldsa"
         run_test "sshd_mldsa_composite_test.sh"
@@ -798,6 +828,8 @@ fi
 # client when present.
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_test "sshd_ossh_cert_test.sh"
+else
+    skip_local_only "sshd_ossh_cert_test.sh"
 fi
 RUN_COMPLETE=1
 }
@@ -808,14 +840,35 @@ if [ "$RUN_COMPLETE" != 1 ]; then
 fi
 
 # A --match that reached no call site ran nothing and skipped nothing, which
-# would otherwise report a clean run. The local-only tests are unreachable
-# against an external host, so a name that is valid on a local run selects
-# nothing here; say so rather than exit 0 on an empty run.
+# would otherwise add up and report a clean "0 run". Every name is counted
+# somewhere -- the local-only ones as skipped against an external host -- so
+# this catches a call site that stopped counting; say so rather than exit 0 on
+# an empty run.
 if [ -n "$MATCH" ] && [ "$TOTAL" -eq 0 ]; then
     printf "ERROR: --match %s selected no test that could run here\n" "$MATCH"
     exit 1
 fi
 
-printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
+# TOTAL counts every test that was reached, skips included, so it is a "ran"
+# count and not a pass count. Print the three separately, and assert they add
+# up: a skip site that bumps one counter and not the other then fails the run
+# instead of quietly printing a wrong number.
+printf "All tests ran, %d run, %d passed, %d skipped\n" \
+    "$TOTAL" "$PASSED" "$SKIPPED"
+
+if [ "$((PASSED + SKIPPED))" -ne "$TOTAL" ]; then
+    printf "ERROR: counter mismatch (ran %d, passed %d, skipped %d)\n" \
+        "$TOTAL" "$PASSED" "$SKIPPED"
+    exit 1
+fi
+
+# Without --match every known test is reached once, run or skipped, so a
+# name no call site reaches -- one dropped from local_sshd_tests, say --
+# shows up here as a short count.
+KNOWN=$(( ${#test_cases[@]} + ${#extra_test_cases[@]} ))
+if [ -z "$MATCH" ] && [ "$TOTAL" -ne "$KNOWN" ]; then
+    printf "ERROR: %d tests known but %d reached\n" "$KNOWN" "$TOTAL"
+    exit 1
+fi
 
 exit 0
