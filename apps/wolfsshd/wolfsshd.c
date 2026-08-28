@@ -1618,6 +1618,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
     int   ptyReq = 0;
+    int   childInSz = 0;  /* Bytes read off the channel into channelBuffer
+                           * that the child has yet to take. The read is
+                           * destructive, so what a short write leaves is
+                           * carried to the next pass.  */
+    int   childInIdx = 0; /* How much of those the child has taken.  */
 
     childFd = -1;
     stdoutPipe[0] = -1;
@@ -1904,6 +1909,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         close(stdinPipe[0]);
     }
 
+    /* The loop below is the only reader of the child's output, so it must
+     * never be the thing waiting on the child. A descriptor that cannot be
+     * made non-blocking keeps the old behaviour: the write can stall, which
+     * is still better than dropping the peer's input on the floor. The read
+     * paths already treat EAGAIN as nothing to report. */
+    (void)SHELL_SetNonBlocking((!ptyReq || forcedCmd) ?
+            stdinPipe[1] : childFd);
+
     while (ChildRunning || windowFull || !stdoutEmpty || peerConnected) {
         byte tmp[2];
         fd_set readFds;
@@ -1913,6 +1926,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         int cnt_w;
         WOLFSSH_CHANNEL* current;
         int pending = 0;
+        int childStalled = 0; /* The child would not take the rest of what it
+                               * is owed on this pass.  */
 
         FD_ZERO(&readFds);
         FD_SET(sshFd, &readFds);
@@ -1933,24 +1948,53 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             pending = 1;
         }
 
-        if (!pending && wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
-            /* select on stdout/stderr pipes with forced commands */
-            if (!ptyReq || forcedCmd) {
-                FD_SET(stdoutPipe[0], &readFds);
-                if (stdoutPipe[0] > maxFd)
-                    maxFd = stdoutPipe[0];
+        if (!pending && wolfSSH_stream_peek(ssh, tmp, 1) > 0) {
+            pending = 1; /* found some pending SSH data */
+        }
 
-                FD_SET(stderrPipe[0], &readFds);
-                if (stderrPipe[0] > maxFd)
-                    maxFd = stderrPipe[0];
+        /* The child's output is watched on every pass, not only the ones
+         * that have nothing else to do. Draining it is what lets a child
+         * blocked writing carry on reading its stdin, so a pass that feeds
+         * the child has to be a pass that empties it as well. */
+        if (!ptyReq || forcedCmd) {
+            FD_SET(stdoutPipe[0], &readFds);
+            if (stdoutPipe[0] > maxFd)
+                maxFd = stdoutPipe[0];
+
+            FD_SET(stderrPipe[0], &readFds);
+            if (stderrPipe[0] > maxFd)
+                maxFd = stderrPipe[0];
+        }
+        else {
+            FD_SET(childFd, &readFds);
+            if (childFd > maxFd)
+                maxFd = childFd;
+        }
+
+        /* Bytes the child has not taken yet: wait for it to make room. */
+        if (childInIdx < childInSz) {
+            int childIn = (!ptyReq || forcedCmd) ? stdinPipe[1] : childFd;
+
+            if (childIn != -1) {
+                FD_SET(childIn, &writeFds);
+                if (childIn > maxFd)
+                    maxFd = childIn;
             }
-            else {
-                FD_SET(childFd, &readFds);
-                if (childFd > maxFd)
-                    maxFd = childFd;
+        }
+
+        {
+            struct timeval noWait;
+            struct timeval* timeout = NULL;
+
+            /* Work already in hand must not wait on the descriptors, but the
+             * poll still runs so this pass sees the child's output too. */
+            if (pending) {
+                noWait.tv_sec = 0;
+                noWait.tv_usec = 0;
+                timeout = &noWait;
             }
 
-            rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, NULL);
+            rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, timeout);
             if (rc == -1) {
                 /* Signal (e.g. SIGCHLD from child exit) interrupted select.
                  * Re-evaluate the loop condition so any pending windowFull
@@ -1960,11 +2004,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 break;
             }
         }
-        else {
-            pending = 1; /* found some pending SSH data */
-        }
 
-        if (wantWrite || windowFull || pending || FD_ISSET(sshFd, &readFds)) {
+        if (wantWrite || windowFull || pending || childInIdx < childInSz
+                || FD_ISSET(sshFd, &readFds)) {
             word32 avail;
 
             wantWrite = 0;
@@ -1986,6 +2028,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (stdinPipe[1] != -1 && (!ptyReq || forcedCmd)) {
                         close(stdinPipe[1]);
                         stdinPipe[1] = -1;
+                        /* Nothing left to write it to. */
+                        childInIdx = 0;
+                        childInSz = 0;
                     }
                     peerConnected = 0;
                     continue;
@@ -2019,49 +2064,61 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
              * while the window was full; this is the only copy. Gated on
              * windowFull, and not because the buffers overlap -- shellBuffer
              * and channelBuffer are disjoint. While the peer will not take
-             * the child's output, writing to the child's stdin deadlocks it:
-             * it blocks on a full stdout pipe, stops reading stdin, and this
-             * write never returns. The backlog clears as soon as the peer
-             * reads. One buffer per pass, since the write can block. */
-            if (avail > 0 && !windowFull) {
-                int off = 0;
-
+             * the child's output, pulling more off the channel only parks it
+             * somewhere the shutdown path cannot see. The backlog clears as
+             * soon as the peer reads. One buffer at a time: what the child
+             * will not take yet is carried to the next pass. */
+            if (childInIdx == childInSz && avail > 0 && !windowFull) {
                 cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                     channelBuffer, sizeof channelBuffer);
                 if (cnt_r <= 0)
                     break;
 
+                childInIdx = 0;
+                childInSz = cnt_r;
+
                 /* Data behind the peer's EOF, RFC 4254 section 5.3. Stdin
                  * is gone, so drop it rather than write to fd -1 and end the
                  * session on an EBADF. */
                 if ((!ptyReq || forcedCmd) && stdinPipe[1] == -1)
-                    off = cnt_r;
-
-                /* The read took the bytes off the channel, so this is the
-                 * only copy: a short write has to be finished, not dropped.
-                 * A PTY master goes short whenever the line discipline fills,
-                 * and a signal can cut a transfer already under way. */
-                while (off < cnt_r) {
-                    if (!ptyReq || forcedCmd) {
-                        cnt_w = (int)write(stdinPipe[1], channelBuffer + off,
-                            cnt_r - off);
-                    }
-                    else {
-                        cnt_w = (int)write(childFd, channelBuffer + off,
-                            cnt_r - off);
-                    }
-                    if (cnt_w <= 0) {
-                        /* errno only speaks for a -1 return. */
-                        if (cnt_w < 0 && errno == EINTR)
-                            continue;
-                        break;
-                    }
-                    off += cnt_w;
-                }
-                if (off < cnt_r)
-                    break;
+                    childInIdx = childInSz;
 
                 avail = current->inputBuffer.length - current->inputBuffer.idx;
+            }
+
+            /* The read took the bytes off the channel, so this is the only
+             * copy: a short write has to be finished, not dropped. The
+             * descriptor is non-blocking, so a child that has stopped
+             * reading leaves the rest here for the next pass rather than
+             * parking this loop inside write() -- which is the deadlock,
+             * since the child stops reading exactly when its output has
+             * nowhere to go and only this loop can empty it. */
+            while (childInIdx < childInSz) {
+                if (!ptyReq || forcedCmd) {
+                    cnt_w = (int)write(stdinPipe[1], channelBuffer + childInIdx,
+                        childInSz - childInIdx);
+                }
+                else {
+                    cnt_w = (int)write(childFd, channelBuffer + childInIdx,
+                        childInSz - childInIdx);
+                }
+                if (cnt_w <= 0) {
+                    /* errno only speaks for a -1 return. */
+                    if (cnt_w < 0 && errno == EINTR)
+                        continue;
+                    if (cnt_w < 0
+                            && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                        childStalled = 1;
+                    }
+                    break;
+                }
+                childInIdx += cnt_w;
+            }
+            if (childInIdx < childInSz && !childStalled)
+                break;
+            if (childInIdx == childInSz) {
+                childInIdx = 0;
+                childInSz = 0;
             }
 
             /* Peer done sending: close the child's stdin, but only once what
@@ -2073,7 +2130,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
              * a stdin nothing will ever close. */
             if (stdinPipe[1] != -1 && (!ptyReq || forcedCmd)) {
                 if (current == NULL
-                        || (wolfSSH_ChannelGetEof(current) && avail == 0)) {
+                        || (wolfSSH_ChannelGetEof(current) && avail == 0
+                            && childInIdx == childInSz)) {
                     /* SSH is done, close stdin pipe to child process */
                     close(stdinPipe[1]);
                     stdinPipe[1] = -1;
