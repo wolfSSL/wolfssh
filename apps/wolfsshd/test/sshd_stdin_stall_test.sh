@@ -3,8 +3,9 @@
 # Once the stdin pipe fills, the write returns EAGAIN and the unwritten tail
 # is carried to the next pass; nothing can come off the channel until it
 # drains, so a pass with data still in hand must wait on the descriptors
-# rather than poll. Fails if wolfsshd burns half a core or more while the
-# child sleeps on a full pipe.
+# rather than poll. A correct loop uses no measurable CPU while the child
+# sleeps on a full pipe and a spinning one saturates a core, so the bound is
+# set well below a partial spin rather than just below a full one.
 #
 # Needs the OpenSSH client: the wolfSSH example client sends its input and
 # then reads, so it never fills the pipe.
@@ -39,16 +40,25 @@ cpu_ticks() {
     echo $t
 }
 
-timeout 40 ssh "${SSH_OPTS[@]}" "$USER_NAME@$HOST" 'sleep 12' \
+# Let the transfer reach the stall before measuring, and leave the child
+# asleep past the end of the window. Contention can only push the reading
+# down, so a loaded machine misses a regression rather than failing a good
+# build.
+SETTLE=3
+WINDOW=3
+CHILD_SLEEP=9
+LIMIT=10
+
+timeout 40 ssh "${SSH_OPTS[@]}" "$USER_NAME@$HOST" "sleep $CHILD_SLEEP" \
     < "$KEYDIR/big" >/dev/null 2>&1 &
 SSHPID=$!
-sleep 3
+sleep "$SETTLE"
 A=`cpu_ticks`
-sleep 6
+sleep "$WINDOW"
 B=`cpu_ticks`
 wait $SSHPID
 
 HZ=`getconf CLK_TCK`
-PCT=$(( (B - A) * 100 / (6 * HZ) ))
-echo "wolfsshd CPU over the 6s window: ${PCT}% ($((B - A)) ticks)"
-[ "$PCT" -lt 50 ]
+PCT=$(( (B - A) * 100 / (WINDOW * HZ) ))
+echo "wolfsshd CPU over the ${WINDOW}s window: ${PCT}% ($((B - A)) ticks)"
+[ "$PCT" -lt "$LIMIT" ]
