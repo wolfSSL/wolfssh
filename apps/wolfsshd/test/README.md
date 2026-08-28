@@ -27,9 +27,12 @@ SSHD running on PID 7979
 sshd_exec_test.sh ... PASSED
 Shutting down test wolfSSHd
 Stopping SSHD, killing pid 7979
-All tests ran, 1 passed, 0 skipped
+All tests ran, 1 run, 1 passed, 0 skipped
 
 ```
+
+"run" counts every test reached, skips included. Passed plus skipped must equal
+run; the runner fails if they do not.
 
 To run a specific test do:
 
@@ -88,6 +91,11 @@ the test needs setup of its own -- a different daemon config, its own daemon, or
 the shared daemon stopped first -- and keep the `run_test` call where that setup
 happens. Both arrays drive `--match` and `--exclude`, so a test that is missing
 from them cannot be selected or skipped from the command line.
+
+A test that can only run against a daemon the runner starts itself is skipped
+when `--host` and `--port` point at an external one. Pass its name to
+`skip_local_only` on that path, or add it to `local_sshd_tests` if it belongs in
+that block, so the external run still counts it as skipped.
 
 ## Selecting Tests
 
