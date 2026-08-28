@@ -1011,6 +1011,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
+                /* Take the worker's status before the drain below: its
+                 * reads and sends latch their own into ssh->error. */
+                rc = wolfSSH_get_error(ssh);
 
                 /* The peer is done sending: hand back the backlog and answer
                  * its EOF, or a client that half-closed waits on a server
@@ -1072,7 +1075,6 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
 
                 if (cnt_r < 0) {
-                    rc = wolfSSH_get_error(ssh);
                     /* wolfSSH_worker() reports WS_REKEYING in place of
                      * WS_CHAN_RXD while a rekey is in flight, and the data
                      * report is never raised again, so drain on both or the
