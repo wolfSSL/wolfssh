@@ -210,6 +210,9 @@ typedef struct {
     byte shellBuffer[EXAMPLE_BUFFER_SZ];
 #endif
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
+    /* The EOF drain holds an unsent tail across worker passes,
+     * so it cannot share channelBuffer with the read path. */
+    byte eofBuffer[EXAMPLE_BUFFER_SZ];
     char statsBuffer[EXAMPLE_BUFFER_SZ];
 } thread_ctx_t;
 
@@ -794,6 +797,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
     WS_SOCKET_T sshFd;
     int rc = 0;
     int eofAnswered = 0;
+    /* Held across passes with 0 <= eofOff <= eofRead. */
+    int eofRead = 0;
+    int eofOff = 0;
     /* Without a shell there is no child to outlive the peer's EOF, and the
      * read path echoes unconditionally. */
     int echoOnly = 1;
@@ -1004,35 +1010,44 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             WS_CHANNEL_ID_SELF);
                     if (eofChannel != NULL
                             && wolfSSH_ChannelGetEof(eofChannel)) {
-                        int eofRead;
                         int eofSent;
-                        int eofOff;
+                        int eofDrained = 0;
 
-                        do {
-                            eofRead = wolfSSH_ChannelIdRead(ssh,
-                                    shellChannelId,
-                                    threadCtx->channelBuffer,
-                                    sizeof threadCtx->channelBuffer);
-                            eofOff = 0;
+                        for (;;) {
                             /* A send is bounded by the peer's window and
-                             * packet size, so a short one is normal and the
-                             * rest of the chunk is still owed. */
-                            while (eofOff < eofRead) {
-                                eofSent = wolfSSH_ChannelIdSend(ssh,
+                             * packet size, so a short one is normal. Read
+                             * the next chunk only once the last one is out:
+                             * the read consumed it from the channel, so its
+                             * tail cannot be dropped. */
+                            if (eofOff == eofRead) {
+                                int eofRxd;
+
+                                eofOff = eofRead = 0;
+                                eofRxd = wolfSSH_ChannelIdRead(ssh,
                                         shellChannelId,
-                                        threadCtx->channelBuffer + eofOff,
-                                        eofRead - eofOff);
-                                if (eofSent <= 0)
+                                        threadCtx->eofBuffer,
+                                        sizeof threadCtx->eofBuffer);
+                                /* A negative read is a rekey or a stalled
+                                 * channel, not a drained one. */
+                                if (eofRxd <= 0) {
+                                    eofDrained = (eofRxd == 0);
                                     break;
-                                eofOff += eofSent;
+                                }
+                                eofRead = eofRxd;
                             }
-                            if (eofOff < eofRead)
+
+                            eofSent = wolfSSH_ChannelIdSend(ssh,
+                                    shellChannelId,
+                                    threadCtx->eofBuffer + eofOff,
+                                    eofRead - eofOff);
+                            if (eofSent <= 0)
                                 break;
-                        } while (eofRead > 0);
+                            eofOff += eofSent;
+                        }
 
                         /* Only an emptied channel earns the EOF; anything
                          * else is retried on a later pass. */
-                        if (eofRead == 0) {
+                        if (eofDrained) {
                             wolfSSH_ChannelSendEof(eofChannel);
                             eofAnswered = 1;
                             ChildRunning = 0;
