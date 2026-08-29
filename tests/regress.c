@@ -4501,8 +4501,10 @@ static int ReplyDuringSendHighwaterCb(byte side, void* ctx)
     WOLFSSH_UNUSED(side);
 
     if (harness != NULL) {
-        /* The request is on the wire before this runs, so a peer answering it
-         * at once answers the slot the send is still holding. */
+        /* The request is on the wire and its slot committed before this runs,
+         * so a peer answering it at once answers a settled slot. The window
+         * where the sender still owns it is the IO send callback's, covered
+         * by the FromSend tests below. */
         replySz = WrapPacket(replyDuringSendMsgId, replyDuringSendData,
                 replyDuringSendDataSz, reply, sizeof(reply));
         FeedOnePacket(harness, reply, replySz);
@@ -4535,9 +4537,9 @@ static void InitReplyDuringSendHarness(ChannelOpenHarness* harness, byte msgId,
     harness->ssh->txCount = 1;
 }
 
-/* A refusal in that window says the peer bound nothing. The slot it answers
- * does not name the forward yet, so the verdict waits for the commit rather
- * than being dropped, which would leave a refused forward matching. */
+/* A refusal from the post-send callback says the peer bound nothing. The
+ * forward is registered by then, so the verdict has to unwind it rather than
+ * be dropped, which would leave a refused forward matching. */
 static void TestForwardedTcpipRefusalDuringSendDropsForward(void)
 {
     ChannelOpenHarness harness;
@@ -4557,9 +4559,9 @@ static void TestForwardedTcpipRefusalDuringSendDropsForward(void)
     FreeChannelOpenHarness(&harness);
 }
 
-/* A port-0 request answered in that window: the port the answer named has to
- * reach the registration, or it stays unmatchable for the life of the session
- * with nothing left to resolve it. */
+/* A port-0 request answered from the post-send callback: the port the answer
+ * named has to reach the registration, or it stays unmatchable for the life of
+ * the session with nothing left to resolve it. */
 static void TestForwardedTcpipPortZeroReplyDuringSendBinds(void)
 {
     ChannelOpenHarness harness;
@@ -4614,9 +4616,8 @@ static void TestForwardedTcpipRequestAfterReplyDuringSend(void)
     FreeChannelOpenHarness(&harness);
 }
 
-/* The slot takes its place in the queue before the send, so a reply the send
- * takes in can pop and free it before the request commits. Committing has to
- * find the slot gone rather than write through it. */
+/* The answer pops the slot and frees it. The commit that follows the send has
+ * to find the queue empty rather than write through a slot that is gone. */
 static void TestForwardedTcpipReplyDuringSendTakesSlot(void)
 {
     ChannelOpenHarness harness;
@@ -4626,8 +4627,8 @@ static void TestForwardedTcpipReplyDuringSendTakesSlot(void)
     AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
             WS_SUCCESS);
 
-    /* The answer was parked on the slot and applied once the forward it names
-     * was known, so the queue owes nothing further. */
+    /* The answer settled the forward and took its slot with it, so the queue
+     * owes nothing further. */
     AssertTrue(harness.ssh->fwdReplyHead == NULL);
     AssertTrue(harness.ssh->fwdReplyTail == NULL);
 
@@ -4638,6 +4639,211 @@ static void TestForwardedTcpipReplyDuringSendTakesSlot(void)
     harness.io.outSz = 0;
     AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
     AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The highwater callback runs after the request has committed, so the answers
+ * it pumps in find a settled slot. The IO send callback is the one place a
+ * peer's answer can still land while the sender owns its slot, and no
+ * ordering closes that window: the callback reenters from inside the flush.
+ * These drive the reply from there. */
+typedef struct {
+    ChannelOpenHarness* harness;
+    byte msgId;
+    const byte* data;
+    word32 dataSz;
+    word32 chunkSz;   /* short-write size, 0 to write the whole buffer */
+    byte failNext;    /* fail the send that follows the answer */
+    int calls;
+} FwdReplyFromSend;
+
+static FwdReplyFromSend fwdReplyFromSend;
+
+static int FwdReplyFromSendCb(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    FwdReplyFromSend* state = &fwdReplyFromSend;
+    byte reply[64];
+    word32 replySz;
+    int ret;
+
+    state->calls++;
+
+    /* The answer is in, so the rest of the request never makes it out. */
+    if (state->calls > 1 && state->failNext)
+        return WS_CBIO_ERR_GENERAL;
+
+    if (state->chunkSz != 0 && sz > state->chunkSz)
+        sz = state->chunkSz;
+
+    ret = MemSend(ssh, buf, sz, ctx);
+
+    /* Enough of the request is on the wire for the peer to answer it, and the
+     * send it answers has yet to commit. */
+    if (state->calls == 1 && ret > 0 && state->harness != NULL) {
+        replySz = WrapPacket(state->msgId, state->data, state->dataSz, reply,
+                sizeof(reply));
+        FeedOnePacket(state->harness, reply, replySz);
+    }
+
+    return ret;
+}
+
+static void InitReplyFromSendHarness(ChannelOpenHarness* harness, byte msgId,
+        const byte* data, word32 dataSz)
+{
+    InitFwdRemoteHarness(harness);
+    wolfSSH_SetIOSend(harness->ctx, FwdReplyFromSendCb);
+
+    WMEMSET(&fwdReplyFromSend, 0, sizeof(fwdReplyFromSend));
+    fwdReplyFromSend.harness = harness;
+    fwdReplyFromSend.msgId = msgId;
+    fwdReplyFromSend.data = data;
+    fwdReplyFromSend.dataSz = dataSz;
+}
+
+/* The answer arrives with the slot still uncommitted, so its verdict parks
+ * there for the commit to apply. The forward stands confirmed all the same. */
+static void TestForwardedTcpipReplyFromSendCommits(void)
+{
+    ChannelOpenHarness harness;
+
+    InitReplyFromSendHarness(&harness, MSGID_REQUEST_SUCCESS, NULL, 0);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    /* The parked verdict was applied and the slot freed with it. */
+    AssertTrue(harness.ssh->fwdReplyHead == NULL);
+    AssertTrue(harness.ssh->fwdReplyTail == NULL);
+    AssertIntEQ(harness.ssh->fwdReplyCount, 0);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 1);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A refusal parked the same way. The forward it names is registered by the
+ * commit and unwound by the verdict the commit then applies, so nothing is
+ * left matching a listener the peer never bound. */
+static void TestForwardedTcpipRefusalFromSendDropsForward(void)
+{
+    ChannelOpenHarness harness;
+
+    InitReplyFromSendHarness(&harness, MSGID_REQUEST_FAILURE, NULL, 0);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+    AssertTrue(harness.ssh->fwdReplyHead == NULL);
+
+    /* Matching is on from the first registration, so the open is refused. */
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A port-0 request answered in that window. The port the answer named has to
+ * survive being parked, or the registration stays unmatchable for the life of
+ * the session with nothing left to resolve it. */
+static void TestForwardedTcpipPortZeroReplyFromSendBinds(void)
+{
+    ChannelOpenHarness harness;
+    byte port[UINT32_SZ];
+    word32 portSz;
+
+    portSz = AppendUint32(port, sizeof(port), 0, REGRESS_FWD_ALLOC_PORT);
+    InitReplyFromSendHarness(&harness, MSGID_REQUEST_SUCCESS, port, portSz);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 0, 1),
+            WS_SUCCESS);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->portPending, 0);
+    AssertIntEQ(harness.ssh->fwdRemoteList->bindPort, REGRESS_FWD_ALLOC_PORT);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", REGRESS_FWD_ALLOC_PORT,
+            1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The peer answered what it had seen of the request, then the rest of the
+ * send failed. The request never reached the peer whole, so the parked
+ * verdict settles nothing and goes back with the slot. */
+static void TestForwardedTcpipFailedSendDiscardsAnsweredSlot(void)
+{
+    ChannelOpenHarness harness;
+
+    InitReplyFromSendHarness(&harness, MSGID_REQUEST_SUCCESS, NULL, 0);
+    /* Short-write the request so a second send is owed, and lose that one. */
+    fwdReplyFromSend.chunkSz = 8;
+    fwdReplyFromSend.failNext = 1;
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SOCKET_ERROR_E);
+
+    /* The session is as it was: nothing registered, nothing owed. */
+    AssertTrue(harness.ssh->fwdRemoteList == NULL);
+    AssertTrue(harness.ssh->fwdReplyHead == NULL);
+    AssertTrue(harness.ssh->fwdReplyTail == NULL);
+    AssertIntEQ(harness.ssh->fwdReplyCount, 0);
+    AssertIntEQ(harness.ssh->fwdRemoteTracked, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* An answer settling an earlier request has to see the one still in its send
+ * window, which names its forward by the bind it will register rather than by
+ * the entry. Here a setup is refused while the cancel that follows it is on
+ * its way out: the cancel is still owed an answer, so the forward it names
+ * stays put for that answer to settle. */
+static void TestForwardedTcpipRefusalFromSendSeesSendingCancel(void)
+{
+    ChannelOpenHarness harness;
+
+    InitReplyFromSendHarness(&harness, MSGID_REQUEST_FAILURE, NULL, 0);
+    /* The setup goes out on the plain transport; the cancel's send is the one
+     * that answers it. */
+    fwdReplyFromSend.harness = NULL;
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 0);
+
+    fwdReplyFromSend.harness = &harness;
+    fwdReplyFromSend.calls = 0;
+    harness.io.outSz = 0;
+
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    /* The setup's refusal found the cancel mid-send naming the same bind, so
+     * it left the forward for that cancel to answer for. */
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertNotNull(harness.ssh->fwdReplyHead);
+    AssertIntEQ(harness.ssh->fwdReplyHead->isCancel, 1);
+    AssertTrue(harness.ssh->fwdReplyHead->entry == harness.ssh->fwdRemoteList);
+
+    /* A cancel stops matching as it goes out, before the peer answers. */
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    /* The peer took the listener down, and nothing is left to hold the
+     * registration. */
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+    AssertTrue(harness.ssh->fwdReplyHead == NULL);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -10611,6 +10817,11 @@ int main(int argc, char** argv)
     TestForwardedTcpipReentrantSetupDuringSend();
     TestForwardedTcpipReentrantRequestKeepsSendOrder();
     TestForwardedTcpipReplyDuringSendTakesSlot();
+    TestForwardedTcpipReplyFromSendCommits();
+    TestForwardedTcpipRefusalFromSendDropsForward();
+    TestForwardedTcpipPortZeroReplyFromSendBinds();
+    TestForwardedTcpipFailedSendDiscardsAnsweredSlot();
+    TestForwardedTcpipRefusalFromSendSeesSendingCancel();
     TestForwardedTcpipRefusalDuringSendDropsForward();
     TestForwardedTcpipPortZeroReplyDuringSendBinds();
     TestForwardedTcpipRequestAfterReplyDuringSend();
