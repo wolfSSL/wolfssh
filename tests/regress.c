@@ -4051,6 +4051,36 @@ static void TestForwardedTcpipCancelBeforeSetupReply(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* The same overlap with both requests refused. The setup bound no listener,
+ * so the cancel's refusal is only the peer saying it has none to drop, and
+ * nothing is left to hold the registration open. */
+static void TestForwardedTcpipSetupAndCancelBothRefusedDrops(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    /* The setup is refused, but the queued cancel still names the forward, so
+     * it is held for that answer. */
+    FeedRequestFailure(&harness);
+    AssertNotNull(harness.ssh->fwdRemoteList);
+
+    /* The cancel is refused too. Nothing establishes the forward and nothing
+     * is owed an answer on it, so it goes rather than sitting unmatchable
+     * until the session ends. */
+    FeedRequestFailure(&harness);
+    AssertNull(harness.ssh->fwdRemoteList);
+
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* The same overlap, but with a second forward outstanding behind it. The
  * cancelled forward's reply must not be spent on the one still waiting. */
 static void TestForwardedTcpipCancelBeforeSetupReplyKeepsOther(void)
@@ -10800,6 +10830,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipUnmatchedCancelKeepsForward();
     TestForwardedTcpipCancelBeforeSetupReply();
     TestForwardedTcpipCancelBeforeSetupReplyKeepsOther();
+    TestForwardedTcpipSetupAndCancelBothRefusedDrops();
     TestForwardedTcpipDuplicateSetupIsOneForward();
     TestForwardedTcpipDuplicateSetupRefusalKeepsForward();
     TestForwardedTcpipDuplicateSetupLaterSuccessBinds();
