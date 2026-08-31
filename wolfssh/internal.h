@@ -1309,7 +1309,6 @@ struct WOLFSSH {
     WOLFSSH_FWD_REPLY* fwdReplyHead;   /* oldest want-reply request owed */
     WOLFSSH_FWD_REPLY* fwdReplyTail;
     word32 fwdReplyCount;  /* slots queued, kept off the walk it bounds */
-    byte fwdRemoteTracked; /* wolfSSH_FwdRemoteSetup() was used */
     byte fwdRemoteMatch;   /* WOLFSSH_FWD_MATCH_*, how strictly an inbound
                             * forwarded-tcpip must name a registration */
 #endif /* WOLFSSH_FWD */

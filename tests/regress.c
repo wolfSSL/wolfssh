@@ -3885,7 +3885,10 @@ static void TestForwardedTcpipRefusedForwardSendsOpenFail(void)
     FreeChannelOpenHarness(&harness);
 }
 
-static void TestForwardedTcpipUntrackedClientUnchanged(void)
+/* A client that asked for no forwards has nothing an open could answer for, so
+ * an empty list refuses every one of them. The fwdCb accepts throughout: it is
+ * the library that refuses, not the application. */
+static void TestForwardedTcpipNoForwardsRefusesOpen(void)
 {
     ChannelOpenHarness harness;
     byte extra[128];
@@ -3903,8 +3906,36 @@ static void TestForwardedTcpipUntrackedClientUnchanged(void)
     AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
             WS_SUCCESS);
 
-    /* A client that frames tcpip-forward itself registers nothing, so there
-     * is no list to match against and its fwdCb stays the only gate. */
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The opt-out puts it back the way it was: an application keeping its own
+ * bind list answers for what it accepts. */
+static void TestForwardedTcpipMatchOffNoForwardsAccepts(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    extraSz = BuildDirectTcpipExtra("10.0.0.1", 9999, "10.0.0.5", 4321,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("forwarded-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetFwdRemoteMatch(harness.ssh, WOLFSSH_FWD_MATCH_OFF),
+            WS_SUCCESS);
+
     ret = DoReceive(harness.ssh);
     AssertIntEQ(ret, WS_SUCCESS);
     AssertTrue(harness.io.outSz > 0);
@@ -4371,7 +4402,6 @@ static void RunForwardedTcpipPostSendErrorTest(WS_CallbackHighwater cb,
     AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
             expectRet);
     AssertNotNull(harness.ssh->fwdRemoteList);
-    AssertIntEQ(harness.ssh->fwdRemoteTracked, 1);
 
     harness.io.outSz = 0;
 
@@ -4411,7 +4441,6 @@ static void TestForwardedTcpipFailedSendRegistersNothing(void)
     AssertTrue(harness.ssh->fwdRemoteList == NULL);
     AssertTrue(harness.ssh->fwdReplyHead == NULL);
     AssertTrue(harness.ssh->fwdReplyTail == NULL);
-    AssertIntEQ(harness.ssh->fwdRemoteTracked, 0);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -4826,7 +4855,6 @@ static void TestForwardedTcpipFailedSendDiscardsAnsweredSlot(void)
     AssertTrue(harness.ssh->fwdReplyHead == NULL);
     AssertTrue(harness.ssh->fwdReplyTail == NULL);
     AssertIntEQ(harness.ssh->fwdReplyCount, 0);
-    AssertIntEQ(harness.ssh->fwdRemoteTracked, 0);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -5040,10 +5068,7 @@ static int InboundOpenDuringSendHighwaterCb(byte side, void* ctx)
 
     WOLFSSH_UNUSED(side);
 
-    /* The request is on the wire, so matching has to be live already: this is
-     * the first setup, and until it registers nothing is tracked and every
-     * open goes unchecked. */
-    AssertIntEQ(harness->ssh->fwdRemoteTracked, 1);
+    /* The request is on the wire, so matching has to be live already. */
     AssertForwardedOpenRefused(harness, "10.0.0.1", 9999);
 
     return WS_SUCCESS;
@@ -10863,7 +10888,8 @@ int main(int argc, char** argv)
     TestForwardedTcpipCancelledSendsOpenFail();
     TestForwardedTcpipPortZeroMatchesBoundPort();
     TestForwardedTcpipRefusedForwardSendsOpenFail();
-    TestForwardedTcpipUntrackedClientUnchanged();
+    TestForwardedTcpipNoForwardsRefusesOpen();
+    TestForwardedTcpipMatchOffNoForwardsAccepts();
     TestForwardedTcpipCancelConfirmedSendsOpenFail();
     TestForwardedTcpipCancelPendingStopsMatching();
     TestForwardedTcpipCancelRefusedRestoresMatching();
