@@ -9787,6 +9787,9 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
     WS_SFTP_GET_STATE* state = NULL;
     int sz;
     int ret = WS_SUCCESS;
+#ifdef USE_WINDOWS_API
+    DWORD creationDisp;
+#endif
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_Get()");
     if (ssh == NULL || from == NULL || to == NULL)
@@ -9865,6 +9868,36 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                 /* if resuming then check for saved offset */
                 if (resume) {
                     wolfSSH_SFTP_GetOfst(ssh, from, to, state->gOfst);
+
+                    /* A saved offset is only usable while the remote file
+                     * still holds bytes past it. */
+                    if ((state->gOfst[0] > 0 || state->gOfst[1] > 0)
+                            && (state->attrib.flags & WOLFSSH_FILEATRB_SIZE)
+                            && (state->attrib.sz[1] < state->gOfst[1]
+                                || (state->attrib.sz[1] == state->gOfst[1]
+                                    && state->attrib.sz[0]
+                                        <= state->gOfst[0]))) {
+                        WLOG(WS_LOG_SFTP, "Remote file too short");
+                        state->gOfst[0] = 0;
+                        state->gOfst[1] = 0;
+                    }
+
+                    /* a saved offset is only usable if the local file still
+                     * holds exactly that many bytes */
+                    if (state->gOfst[0] > 0 || state->gOfst[1] > 0) {
+                        WMEMSET(&state->attrib, 0, sizeof(state->attrib));
+                        if (SFTP_GetAttributes(ssh->fs, to, &state->attrib, 1,
+                                    ssh->ctx->heap) != WS_SUCCESS
+                                || (state->attrib.flags
+                                    & WOLFSSH_FILEATRB_SIZE) == 0
+                                || state->attrib.sz[0] != state->gOfst[0]
+                                || state->attrib.sz[1] != state->gOfst[1]) {
+                            WLOG(WS_LOG_SFTP,
+                                    "Size does not match, starting over");
+                            state->gOfst[0] = 0;
+                            state->gOfst[1] = 0;
+                        }
+                    }
                 }
                 state->state = STATE_GET_OPEN_LOCAL;
                 FALL_THROUGH;
@@ -9877,20 +9910,23 @@ int wolfSSH_SFTP_Get(WOLFSSH* ssh, char* from,
                     else
                         ret = WFOPEN(ssh->fs, &state->fl, to, WOLFSSH_O_WRONLY);
             #elif defined(USE_WINDOWS_API)
-                    {
-                        DWORD desiredAccess = GENERIC_WRITE;
-                        if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
-                            desiredAccess |= FILE_APPEND_DATA;
-                        state->fileHandle = WS_CreateFileA(to, desiredAccess,
-                            (FILE_SHARE_DELETE | FILE_SHARE_READ |
-                             FILE_SHARE_WRITE), CREATE_ALWAYS,
-                            FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+                    creationDisp = CREATE_ALWAYS;
+                    if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
+                        creationDisp = OPEN_EXISTING;
+                    state->fileHandle = WS_CreateFileA(to, GENERIC_WRITE,
+                        (FILE_SHARE_DELETE | FILE_SHARE_READ |
+                         FILE_SHARE_WRITE), creationDisp,
+                        FILE_ATTRIBUTE_NORMAL, ssh->ctx->heap);
+                    if (state->fileHandle == INVALID_HANDLE_VALUE) {
+                        WLOG(WS_LOG_SFTP, "Unable to open output file");
+                        ssh->error = WS_BAD_FILE_E;
+                        ret = WS_FATAL_ERROR;
+                        state->state = STATE_GET_CLEANUP;
+                        continue;
                     }
-                    if (resume) {
-                        WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
-                        state->offset.OffsetHigh = state->gOfst[1];
-                        state->offset.Offset = state->gOfst[0];
-                    }
+                    WMEMSET(&state->offset, 0, sizeof(OVERLAPPED));
+                    state->offset.OffsetHigh = state->gOfst[1];
+                    state->offset.Offset = state->gOfst[0];
                 #else
                     if (state->gOfst[0] > 0 || state->gOfst[1] > 0)
                         ret = WFOPEN(ssh->fs, &state->fl, to, "ab");
