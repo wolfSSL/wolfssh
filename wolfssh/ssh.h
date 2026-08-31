@@ -302,13 +302,14 @@ DEPRECATED WOLFSSH_API int wolfSSH_ChannelGetFwdFd(
  * the peer to choose, and needs wantReply, since its reply is the only place
  * the bound port is named; without it the call returns WS_BAD_ARGUMENT.
  *
- * From the first call on, this session refuses any "forwarded-tcpip" open
- * naming a bind it did not register, per RFC 4254 7.2. A bind of "", "*",
- * "0.0.0.0", or an IPv6 any-address matches on port alone; anything else must
- * equal the address the peer reports. Register the spelling the peer will echo
- * back, or a wildcard: a peer that canonicalises the bind, answering an open
- * for "127.0.0.1" against a registered "localhost", has those opens refused.
- * wolfSSH_SetFwdRemoteMatch() relaxes this for peers that need it.
+ * A client refuses any "forwarded-tcpip" open naming a bind it has not
+ * registered, per RFC 4254 7.2, from the session's start rather than from the
+ * first call here, so one that registers nothing refuses them all. A bind of
+ * "", "*", "0.0.0.0", or an IPv6 any-address matches on port alone; anything
+ * else must equal the address the peer reports. Register the spelling the peer
+ * will echo back, or a wildcard: a peer that canonicalises the bind, answering
+ * an open for "127.0.0.1" against a registered "localhost", has those opens
+ * refused. wolfSSH_SetFwdRemoteMatch() relaxes this for peers that need it.
  *
  * One bindAddr:bindPort is one registration however often it is registered,
  * since it is one listener on the peer, so one cancel undoes it. That covers a
@@ -350,8 +351,9 @@ enum WS_FwdRemoteMatch {
     WOLFSSH_FWD_MATCH_OFF    = 2  /* accept any open, matching nothing */
 };
 
-/* Relax the check wolfSSH_FwdRemoteSetup() turns on for this session. Set it
- * before the first setup, since opens are matched from that point.
+/* Relax the match this session holds inbound "forwarded-tcpip" opens to. A
+ * client matches them from the start, so a session that registered nothing
+ * refuses them all; set this before the peer can send one.
  *
  * STRICT is the default and is what RFC 4254 7.2 asks for. PORT is for a peer
  * that rewrites the bind address it echoes back but keeps the port, which

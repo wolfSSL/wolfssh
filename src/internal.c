@@ -4418,10 +4418,6 @@ void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
         else
             cur->next = pend->entry;
 
-        /* From here on, forwarded-tcpip opens are matched against this list. A
-         * client that never calls wolfSSH_FwdRemoteSetup() never sets this and
-         * has its opens go unchecked. */
-        ssh->fwdRemoteTracked = 1;
         target = pend->entry;
     }
 
@@ -11831,10 +11827,12 @@ static int DoChannelOpen(WOLFSSH* ssh,
 
             /* Per RFC 4254 7.2, a forwarded-tcpip open answers a forward the
              * client registered with tcpip-forward, so refuse one naming
-             * anything else before the policy callback sees it. Only a client
-             * that used wolfSSH_FwdRemoteSetup() has a list to check. */
+             * anything else before the policy callback sees it. A client that
+             * registered nothing has nothing an open can answer for, which is
+             * why an empty list refuses rather than admits. An application
+             * keeping its own list can say so with
+             * wolfSSH_SetFwdRemoteMatch(). */
             if (ret == WS_SUCCESS && typeId == ID_CHANTYPE_TCPIP_FORWARD &&
-                    ssh->fwdRemoteTracked &&
                     !FwdRemoteMatch(ssh, host, hostPort)) {
                 WLOG(WS_LOG_WARN, "Rejecting forwarded-tcpip channel open "
                         "for the unregistered forward %s:%u",
