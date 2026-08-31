@@ -708,6 +708,8 @@ enum NameIdType {
 #ifndef WOLFSSH_MAX_BANNER_LINES
     #define WOLFSSH_MAX_BANNER_LINES 10
 #endif
+/* RFC 4253 4.2. Documented as a literal 255 on
+ * wolfSSH_CTX_SetSshProtoIdStr() in the public ssh.h; keep in sync. */
 #define WOLFSSH_PROTOID_LIMIT 255
 
 /* Keep track of keying state for both sides of the connection.
@@ -1547,6 +1549,7 @@ WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ValidateProtoId(const char* protoIdStr, word32 len);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendKexDhInit(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendKexDhReply(WOLFSSH* ssh);
