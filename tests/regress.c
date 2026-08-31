@@ -5409,6 +5409,47 @@ static void TestForwardedTcpipPortZeroReplyFoldsDuplicate(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* A cancel queued against the entry the fold drops still names that bind, so
+ * the surviving registration is what it answers for. */
+static void TestForwardedTcpipPortZeroFoldSettlesQueuedCancel(void)
+{
+    ChannelOpenHarness harness;
+    byte reply[64];
+    word32 replySz;
+
+    InitFwdRemoteHarness(&harness);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 0, 1),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 2);
+
+    /* The peer refused the explicit setup, but the cancel still names that
+     * registration, so it stands for now. */
+    FeedRequestFailure(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 2);
+
+    /* The port-0 request got the port the refused one asked for. One bind,
+     * one registration. */
+    replySz = BuildRequestSuccessPortPacket(8080, reply, sizeof(reply));
+    AssertIntEQ(FeedOnePacket(&harness, reply, replySz), WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    /* The cancel went out after both setups, so it is the last word on the
+     * bind and matching stops on it alone. */
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    /* Confirming it takes the merged registration down with it. */
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestForwardedTcpipRepliesPairInSendOrder(void)
 {
     ChannelOpenHarness harness;
@@ -10843,6 +10884,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipConfirmedCancelDropsEarlierSuccess();
     TestForwardedTcpipConfirmedCancelThenSetupBinds();
     TestForwardedTcpipPortZeroReplyFoldsDuplicate();
+    TestForwardedTcpipPortZeroFoldSettlesQueuedCancel();
     TestForwardedTcpipPostSendErrorStillRegisters();
     TestForwardedTcpipFailedSendRegistersNothing();
     TestForwardedTcpipReentrantSetupDuringSend();

@@ -3986,6 +3986,21 @@ static void FwdReplyVoid(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
 }
 
 
+/* Hand every queued slot naming one forward over to another. A slot names the
+ * bind it asked about, so when two registrations turn out to be the same bind,
+ * the surviving one is what those requests were about. */
+static void FwdReplyRebind(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* from,
+        WOLFSSH_FWD_REMOTE* to)
+{
+    WOLFSSH_FWD_REPLY* reply;
+
+    for (reply = ssh->fwdReplyHead; reply != NULL; reply = reply->next) {
+        if (reply->entry == from)
+            reply->entry = to;
+    }
+}
+
+
 static void FwdRemoteUnlink(WOLFSSH* ssh, void* heap,
         WOLFSSH_FWD_REMOTE* entry)
 {
@@ -4149,6 +4164,11 @@ static void FwdRemoteSettle(WOLFSSH* ssh, WOLFSSH_FWD_REMOTE* entry,
 
             WLOG(WS_LOG_INFO, "Remote forward reply named a port already "
                     "registered");
+            /* Requests still queued on the stale entry asked about this bind,
+             * so they answer for the entry that stands at it now. Unlinking
+             * without this leaves them naming nothing, and a cancel among
+             * them would settle no forward. */
+            FwdReplyRebind(ssh, dup, entry);
             FwdRemoteUnlink(ssh, ssh->ctx->heap, dup);
         }
     }
