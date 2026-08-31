@@ -1060,14 +1060,24 @@ typedef struct WOLFSSH_FWD_REPLY {
 
 /* Bookkeeping for a global request that has not been sent yet. Everything that
  * can fail is allocated into one of these first, so a caller that gets an error
- * back knows nothing reached the peer. The registration is named by its bind
- * rather than by a pointer, since sending runs application callbacks that may
- * reenter the library and free it. */
+ * back knows nothing reached the peer.
+ *
+ * Sending runs application callbacks that may reenter the library and send
+ * requests of their own, so one of these is on the session's list of requests
+ * in flight for the length of its send. That is what lets a reentrant request
+ * see the forward the request it interrupted is registering, and what keeps a
+ * request from resolving to a registration made after it went out. Nothing on
+ * the list outlives its send: the frame that owns it cannot return until every
+ * call it made has. */
 typedef struct WOLFSSH_FWD_PENDING {
+    struct WOLFSSH_FWD_PENDING* next; /* next request in flight */
     WOLFSSH_FWD_REMOTE* entry;  /* new registration to link on commit */
+    WOLFSSH_FWD_REMOTE* found;  /* registration this request named, if it was
+                                 * already there. Cleared if it is freed
+                                 * mid-send, so a commit never settles a
+                                 * registration that is gone or one that
+                                 * replaced it. */
     WOLFSSH_FWD_REPLY* reply;   /* reply slot to queue on commit */
-    const char* bindAddr;       /* bind the request names, NULL if none */
-    word32 bindPort;
     byte isCancel;
 } WOLFSSH_FWD_PENDING;
 
@@ -1308,6 +1318,7 @@ struct WOLFSSH {
     WOLFSSH_FWD_REMOTE* fwdRemoteList; /* remote forwards this client asked for */
     WOLFSSH_FWD_REPLY* fwdReplyHead;   /* oldest want-reply request owed */
     WOLFSSH_FWD_REPLY* fwdReplyTail;
+    WOLFSSH_FWD_PENDING* fwdPendingHead; /* requests inside their own send */
     word32 fwdReplyCount;  /* slots queued, kept off the walk it bounds */
     byte fwdRemoteMatch;   /* WOLFSSH_FWD_MATCH_*, how strictly an inbound
                             * forwarded-tcpip must name a registration */

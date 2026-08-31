@@ -5096,6 +5096,293 @@ static void TestForwardedTcpipInboundOpenDuringSend(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* The highwater callback runs after the request has committed, so whatever it
+ * does lands on settled state. The IO send callback is the one place a
+ * forwarding call runs with the request that ran it still framed and
+ * uncommitted: the peer has the bytes, and this side has yet to write anything
+ * down. The tests below drive one from there.
+ *
+ * Sending from inside a send flushes the buffer the outer send is partway
+ * through, so these report a would-block rather than count the same bytes out
+ * twice. The outer request still reached the peer, which is what
+ * SendPacketDelivered() reports and what these turn on. */
+enum {
+    FWD_REENTER_CANCEL = 1,   /* cancel addr:port from the send */
+    FWD_REENTER_SETUP,        /* register addr:port from the send */
+    FWD_REENTER_OPEN,         /* feed a forwarded-tcpip for addr:port */
+    FWD_REENTER_CANCEL_OPEN,  /* cancel addr:port asking for a reply, then
+                               * feed a forwarded-tcpip for it */
+    FWD_REENTER_FAIL_OPEN     /* answer the request with a REQUEST_FAILURE,
+                               * then feed a forwarded-tcpip for it */
+};
+
+typedef struct {
+    ChannelOpenHarness* harness;
+    const char* addr;
+    word32 port;
+    int action;
+    int calls;
+    int ret;      /* what the reentrant call returned */
+    int openMsgId;      /* how an open fed from the send was answered */
+    word32 openChannels;/* channels the session held right after it */
+} FwdReentrantFromSend;
+
+static FwdReentrantFromSend fwdReentrantFromSend;
+
+static int FwdReentrantFromSendCb(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    FwdReentrantFromSend* state = &fwdReentrantFromSend;
+    byte in[192];
+    word32 inSz;
+
+    state->calls++;
+
+    /* The reentrant call's own sends, this one's bytes among them. */
+    if (state->calls > 1)
+        return MemSend(ssh, buf, sz, ctx);
+
+    switch (state->action) {
+        case FWD_REENTER_CANCEL:
+            state->ret = wolfSSH_FwdRemoteCancel(ssh, state->addr, state->port,
+                    0);
+            break;
+
+        case FWD_REENTER_SETUP:
+            state->ret = wolfSSH_FwdRemoteSetup(ssh, state->addr, state->port,
+                    0);
+            break;
+
+        case FWD_REENTER_OPEN:
+            inSz = BuildForwardedTcpipOpen(state->addr, state->port, in,
+                    sizeof(in));
+            state->ret = FeedOnePacket(state->harness, in, inSz);
+            break;
+
+        case FWD_REENTER_FAIL_OPEN:
+            FeedRequestFailure(state->harness);
+            inSz = BuildForwardedTcpipOpen(state->addr, state->port, in,
+                    sizeof(in));
+            state->ret = FeedOnePacket(state->harness, in, inSz);
+            state->openChannels = state->harness->ssh->channelListSz;
+            break;
+
+        case FWD_REENTER_CANCEL_OPEN:
+            state->ret = wolfSSH_FwdRemoteCancel(ssh, state->addr,
+                    state->port, 1);
+            inSz = BuildForwardedTcpipOpen(state->addr, state->port, in,
+                    sizeof(in));
+            (void)FeedOnePacket(state->harness, in, inSz);
+            state->openMsgId = ParseMsgId(state->harness->io.out,
+                    state->harness->io.outSz);
+            state->openChannels = state->harness->ssh->channelListSz;
+            break;
+    }
+
+    return WS_CBIO_ERR_WANT_WRITE;
+}
+
+static void ArmFwdReentrantFromSend(ChannelOpenHarness* harness, int action,
+        const char* addr, word32 port)
+{
+    wolfSSH_SetIOSend(harness->ctx, FwdReentrantFromSendCb);
+
+    WMEMSET(&fwdReentrantFromSend, 0, sizeof(fwdReentrantFromSend));
+    fwdReentrantFromSend.harness = harness;
+    fwdReentrantFromSend.action = action;
+    fwdReentrantFromSend.addr = addr;
+    fwdReentrantFromSend.port = port;
+}
+
+/* Where the second packet in the output starts. What the callback sent or
+ * answered went out behind the request that was still in the buffer. */
+static word32 NextPacketOffset(const byte* out, word32 outSz)
+{
+    word32 packetLen;
+
+    AssertTrue(outSz > UINT32_SZ);
+    WMEMCPY(&packetLen, out, sizeof(packetLen));
+    packetLen = ntohl(packetLen);
+
+    AssertTrue(outSz > UINT32_SZ + packetLen);
+    return UINT32_SZ + packetLen;
+}
+
+/* A cancel sent from inside a first setup's send names a forward that exists
+ * only on the request in flight. It went out behind that setup, so the peer
+ * holds no listener and neither may this side -- and the setup's commit must
+ * not put back what the cancel took. */
+static void TestForwardedTcpipCancelFromSendDropsForward(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+    ArmFwdReentrantFromSend(&harness, FWD_REENTER_CANCEL, "127.0.0.1", 8080);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_WANT_WRITE);
+    AssertIntEQ(fwdReentrantFromSend.ret, WS_SUCCESS);
+
+    /* Both requests reached the peer, the cancel second. */
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+
+    /* The setup asked for a reply and the peer owes one, so the slot stays
+     * queued. It answers for no forward now. */
+    AssertIntEQ(harness.ssh->fwdReplyCount, 1);
+
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(harness.ssh->fwdReplyCount, 0);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The same window the other way: a setup sent from inside an unmatched
+ * cancel's send. The setup went out last, so its registration stands, and the
+ * answer the cancel is owed speaks for a request that named nothing. */
+static void TestForwardedTcpipSetupFromSendSurvivesCancelReply(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+    ArmFwdReentrantFromSend(&harness, FWD_REENTER_SETUP, "127.0.0.1", 8080);
+
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_WANT_WRITE);
+    AssertIntEQ(fwdReentrantFromSend.ret, WS_SUCCESS);
+
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->confirmed, 1);
+
+    /* The cancel's slot answers for nothing, so a success on it takes no
+     * listener down. */
+    AssertIntEQ(harness.ssh->fwdReplyCount, 1);
+    AssertTrue(harness.ssh->fwdReplyHead->entry == NULL);
+
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "10.0.0.1", 9999);
+    AssertForwardedOpenAccepted(&harness, "127.0.0.1", 8080, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Pump an inbound forwarded-tcpip open from inside the send of a request for
+ * bindAddr:bindPort. A cancel needs a forward to name, so that case starts
+ * from a settled registration. */
+static void RunFwdOpenDuringSendTest(int isCancel, const char* bindAddr,
+        word32 bindPort, const char* openAddr, word32 openPort,
+        int expectAccept)
+{
+    ChannelOpenHarness harness;
+    word32 off;
+
+    InitFwdRemoteHarness(&harness);
+
+    if (isCancel) {
+        AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, bindAddr, bindPort, 0),
+                WS_SUCCESS);
+        AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    }
+
+    ArmFwdReentrantFromSend(&harness, FWD_REENTER_OPEN, openAddr, openPort);
+
+    if (isCancel)
+        AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, bindAddr, bindPort, 0),
+                WS_WANT_WRITE);
+    else
+        AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, bindAddr, bindPort, 1),
+                WS_WANT_WRITE);
+
+    AssertIntEQ(fwdReentrantFromSend.ret, WS_SUCCESS);
+
+    off = NextPacketOffset(harness.io.out, harness.io.outSz);
+    AssertIntEQ(ParseMsgId(harness.io.out + off, harness.io.outSz - off),
+            expectAccept ? MSGID_CHANNEL_OPEN_CONF : MSGID_CHANNEL_OPEN_FAIL);
+    AssertIntEQ(harness.ssh->channelListSz, expectAccept ? 1 : 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The request is on the wire before the call returns, so the listener it asks
+ * for can start feeding channels from there. Nothing on the session's list
+ * names that bind yet, and the reply slot does not name it until the commit. */
+static void TestForwardedTcpipOpenDuringSetupSendAccepted(void)
+{
+    RunFwdOpenDuringSendTest(0, "127.0.0.1", 8080, "127.0.0.1", 8080, 1);
+}
+
+/* Live matching, not a check that stopped running: a bind this side never
+ * asked for is refused in the same window. */
+static void TestForwardedTcpipOpenDuringSetupSendRefusesOther(void)
+{
+    RunFwdOpenDuringSendTest(0, "127.0.0.1", 8080, "10.0.0.1", 9999, 0);
+}
+
+/* A cancel with no reply asked for is the last word on its forward as it goes
+ * out, so an open naming that bind is refused from inside the cancel's own
+ * send. */
+static void TestForwardedTcpipOpenDuringCancelSendRefused(void)
+{
+    RunFwdOpenDuringSendTest(1, "127.0.0.1", 8080, "127.0.0.1", 8080, 0);
+}
+
+/* A cancel that asks for a reply commits inside the setup's send and leaves
+ * the list of requests in flight, so only its queued slot still names the
+ * forward. It went out behind the setup either way, so an open naming that
+ * bind is refused from inside the same send. */
+static void TestForwardedTcpipOpenAfterCancelWithReplyRefused(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+    ArmFwdReentrantFromSend(&harness, FWD_REENTER_CANCEL_OPEN,
+            "127.0.0.1", 8080);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_WANT_WRITE);
+    AssertIntEQ(fwdReentrantFromSend.ret, WS_SUCCESS);
+
+    AssertIntEQ(fwdReentrantFromSend.openMsgId, MSGID_CHANNEL_OPEN_FAIL);
+    AssertIntEQ(fwdReentrantFromSend.openChannels, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The peer refuses the setup while it is still being sent. That answer leaves
+ * the reply queue for the commit to apply, so no scan of the queue sees it,
+ * and the request itself is the only thing left saying the bind was ever
+ * asked for. An open naming it has to be refused: the commit is about to drop
+ * the forward, and a channel admitted here would outlive it. */
+static void TestForwardedTcpipOpenAfterMidSendFailureRefused(void)
+{
+    ChannelOpenHarness harness;
+
+    InitFwdRemoteHarness(&harness);
+    ArmFwdReentrantFromSend(&harness, FWD_REENTER_FAIL_OPEN,
+            "127.0.0.1", 8080);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_WANT_WRITE);
+
+    AssertIntEQ(fwdReentrantFromSend.ret, WS_SUCCESS);
+    AssertIntEQ(fwdReentrantFromSend.openChannels, 0);
+
+    /* The refusal settled at the commit, so the forward is gone and the
+     * queue is clear. */
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+    AssertIntEQ(harness.ssh->fwdReplyCount, 0);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestFwdRemoteMatchPortIgnoresBindAddr(void)
 {
     RunForwardedTcpipMatchModeTest(WOLFSSH_FWD_MATCH_STRICT, "localhost", 8080,
@@ -10929,6 +11216,13 @@ int main(int argc, char** argv)
     TestForwardedTcpipReentrantCancelOfFirstSetup();
     TestForwardedTcpipReentrantSetupDuringCancel();
     TestForwardedTcpipInboundOpenDuringSend();
+    TestForwardedTcpipCancelFromSendDropsForward();
+    TestForwardedTcpipSetupFromSendSurvivesCancelReply();
+    TestForwardedTcpipOpenDuringSetupSendAccepted();
+    TestForwardedTcpipOpenDuringSetupSendRefusesOther();
+    TestForwardedTcpipOpenDuringCancelSendRefused();
+    TestForwardedTcpipOpenAfterCancelWithReplyRefused();
+    TestForwardedTcpipOpenAfterMidSendFailureRefused();
     TestFwdRemoteMatchPortIgnoresBindAddr();
     TestFwdRemoteMatchOffAcceptsUnregistered();
     TestFwdRemoteMatchRejectsBadSetting();
