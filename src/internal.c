@@ -11617,6 +11617,22 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+#ifdef WOLFSSH_FWD
+        /* RFC 4254 section 7.1: a remote forward is the client's to ask for,
+         * so a client that receives the request answers a failure rather than
+         * registering a forward on the peer's say-so. Answered here and not
+         * in DoGlobalRequestFwd(), so the request body is never parsed and no
+         * forward state is touched. */
+        if ((globReqId == ID_GLOBREQ_TCPIP_FWD
+                    || globReqId == ID_GLOBREQ_TCPIP_FWD_CANCEL)
+                && ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+            WLOG(WS_LOG_WARN, "DGR: rejecting %s received by a client", name);
+            if (wantReply) {
+                ret = SendRequestSuccess(ssh, 0);
+            }
+        }
+        else
+#endif
         switch (globReqId) {
 #ifdef WOLFSSH_FWD
             case ID_GLOBREQ_TCPIP_FWD:
@@ -12928,6 +12944,57 @@ static int DoChannelExtendedData(WOLFSSH* ssh,
 }
 
 
+/* Has DoPacket()'s dispatch a case for this id? Keep in step with it, guards
+ * included: a message compiled out is one this build does not recognize. */
+INLINE static int MsgIdKnown(byte msg)
+{
+    switch (msg) {
+        case MSGID_DISCONNECT:
+        case MSGID_IGNORE:
+        case MSGID_UNIMPLEMENTED:
+        case MSGID_REQUEST_SUCCESS:
+        case MSGID_REQUEST_FAILURE:
+        case MSGID_DEBUG:
+        case MSGID_EXT_INFO:
+        case MSGID_KEXINIT:
+        case MSGID_NEWKEYS:
+        case MSGID_KEXDH_INIT:
+        case MSGID_KEXDH_REPLY:
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+        case MSGID_KEXDH_GEX_REQUEST:
+#endif
+        case MSGID_KEXDH_GEX_INIT:
+        case MSGID_KEXDH_GEX_REPLY:
+        case MSGID_SERVICE_REQUEST:
+        case MSGID_SERVICE_ACCEPT:
+        case MSGID_USERAUTH_REQUEST:
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        case MSGID_USERAUTH_INFO_RESPONSE:
+        case MSGID_USERAUTH_INFO_REQUEST:
+#endif
+        case MSGID_USERAUTH_FAILURE:
+        case MSGID_USERAUTH_SUCCESS:
+        case MSGID_USERAUTH_BANNER:
+        case MSGID_GLOBAL_REQUEST:
+        case MSGID_CHANNEL_OPEN:
+        case MSGID_CHANNEL_OPEN_CONF:
+        case MSGID_CHANNEL_OPEN_FAIL:
+        case MSGID_CHANNEL_WINDOW_ADJUST:
+        case MSGID_CHANNEL_DATA:
+        case MSGID_CHANNEL_EXTENDED_DATA:
+        case MSGID_CHANNEL_EOF:
+        case MSGID_CHANNEL_CLOSE:
+        case MSGID_CHANNEL_REQUEST:
+        case MSGID_CHANNEL_SUCCESS:
+        case MSGID_CHANNEL_FAILURE:
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
+
 static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 {
     byte* buf = (byte*)ssh->inputBuffer.buffer;
@@ -12939,6 +13006,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     byte padSz;
     byte msg;
     word32 payloadIdx = 0;
+    int msgAllowed;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
@@ -12973,7 +13041,15 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         return WS_OVERFLOW_E;
     }
 
-    if (!IsMessageAllowed(ssh, msg, WS_MSG_RECV)) {
+    msgAllowed = IsMessageAllowed(ssh, msg, WS_MSG_RECV);
+
+    if (!msgAllowed && (MsgIdKnown(msg) || MSGIDLIMIT_POST_USERAUTH(msg))) {
+        /* RFC 4252 section 6: disconnect on a known id at the wrong time,
+         * and on any id of 80 or higher, which IsMessageAllowed() refuses
+         * only before auth. Silent once over, RFC 4253 section 11.1. */
+        if (!ssh->disconnected) {
+            (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        }
         return WS_MSGID_NOT_ALLOWED_E;
     }
 
@@ -12986,6 +13062,12 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     if (ssh->disconnected && msg != MSGID_DISCONNECT) {
         WLOG(WS_LOG_DEBUG, "Ignoring message ID %u after a disconnect",
              (word32)msg);
+    }
+    else if (!msgAllowed) {
+        /* Refused, unimplemented, below 80. Answered off the dispatch so a
+         * refused id cannot reach a handler if MsgIdKnown() drifts. */
+        WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
+        ret = SendUnimplemented(ssh);
     }
     else switch (msg) {
 
@@ -13190,6 +13272,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             break;
 
         default:
+            /* RFC 4253 section 11.4, reached whatever the state allows. */
             WLOG(WS_LOG_DEBUG, "Unimplemented message ID (%d)", msg);
 #ifdef SHOW_UNIMPLEMENTED
             DumpOctetString(buf + idx, payloadSz);

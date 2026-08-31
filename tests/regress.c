@@ -2297,8 +2297,9 @@ static void TestClientServiceAcceptBlockedDuringKeying(WOLFSSH* ssh)
 
 
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
- * connectState: no channel created, no reply emitted. The connectState
- * gate does the rejecting; isKeying below is scene-setting only. */
+ * connectState: no channel created, and the only thing sent back is the
+ * disconnect RFC 4252 section 6 asks for. The connectState gate does the
+ * rejecting; isKeying below is scene-setting only. */
 static void TestChannelOpenRejectedBeforeKex(byte connectState)
 {
     WOLFSSH_CTX* ctx;
@@ -2330,7 +2331,11 @@ static void TestChannelOpenRejectedBeforeKex(byte connectState)
     AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
     AssertNull(ssh->channelList);
     AssertIntEQ(ssh->channelListSz, 0);
-    AssertIntEQ(io.outSz, 0);
+    /* Not silence: the peer is told why the session ended, and the message
+     * is a disconnect rather than anything answering the channel open. */
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_DISCONNECT);
+    AssertTrue(ssh->disconnected);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -2400,6 +2405,103 @@ static void TestServerUserauthBlockedBeforeKeyed(WOLFSSH* ssh)
     allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
             WS_MSG_RECV);
     AssertTrue(allowed);
+}
+
+
+/* One packet fed to a keyed but unauthenticated server. The cases below
+ * differ only in the packet and the answer it draws. */
+static void RunServerMsgIdAtKeyed(const byte* pkt, word32 pktSz,
+        int expectRet, int expectErr, byte expectReplyMsgId,
+        int expectDisconnected)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    MemIoInit(&io, (byte*)pkt, pktSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Past the key exchange, short of user auth being answered. */
+    ssh->acceptState = ACCEPT_KEYED;
+
+    AssertIntEQ(wolfSSH_TestDoReceive(ssh), expectRet);
+    AssertIntEQ(ssh->error, expectErr);
+    /* Nothing the filter refuses may leave a channel behind. */
+    AssertNull(ssh->channelList);
+    AssertIntEQ(ssh->channelListSz, 0);
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ParseMsgId(io.out, io.outSz), expectReplyMsgId);
+    AssertIntEQ(ssh->disconnected != 0, expectDisconnected);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The case RFC 4252 section 6 names: an id of 80 or higher before user auth.
+ * Keyed, so the post-userauth limit rejects it, not the pre-keyed range. */
+static void TestServerHighMsgIdBeforeAuthDisconnects(void)
+{
+    byte pkt[256];
+    word32 pktSz;
+
+    pktSz = BuildChannelOpenPacket("session", 0, 131072, 16384, NULL, 0,
+            pkt, sizeof(pkt));
+
+    RunServerMsgIdAtKeyed(pkt, pktSz, WS_FATAL_ERROR, WS_MSGID_NOT_ALLOWED_E,
+            MSGID_DISCONNECT, 1);
+}
+
+
+/* Id 79 is refused too, but it is unimplemented and below 80, so RFC 4253
+ * section 11.4 rules: UNIMPLEMENTED, and the session lives. */
+static void TestServerUnknownMsgIdBeforeAuthUnimplemented(void)
+{
+    byte pkt[256];
+    word32 pktSz;
+
+    pktSz = WrapPacket(79, NULL, 0, pkt, sizeof(pkt));
+
+    RunServerMsgIdAtKeyed(pkt, pktSz, WS_SUCCESS, WS_SUCCESS,
+            MSGID_UNIMPLEMENTED, 0);
+}
+
+
+/* Below 80 the dispatch decides: 53 has a case, so it disconnects where
+ * 79 does not. */
+static void TestServerKnownAuthMsgIdBeforeAuthDisconnects(void)
+{
+    byte pkt[256];
+    word32 pktSz;
+
+    pktSz = WrapPacket(MSGID_USERAUTH_BANNER, NULL, 0, pkt, sizeof(pkt));
+
+    RunServerMsgIdAtKeyed(pkt, pktSz, WS_FATAL_ERROR, WS_MSGID_NOT_ALLOWED_E,
+            MSGID_DISCONNECT, 1);
+}
+
+
+/* At 80 and above the range decides instead: id 200 disconnects though
+ * nothing dispatches it. */
+static void TestServerUnknownHighMsgIdBeforeAuthDisconnects(void)
+{
+    byte pkt[256];
+    word32 pktSz;
+
+    pktSz = WrapPacket(200, NULL, 0, pkt, sizeof(pkt));
+
+    RunServerMsgIdAtKeyed(pkt, pktSz, WS_FATAL_ERROR, WS_MSGID_NOT_ALLOWED_E,
+            MSGID_DISCONNECT, 1);
 }
 
 
@@ -2492,8 +2594,11 @@ static void TestServerServiceRequestRejectedDuringKeying(void)
     /* Not dispatched, so acceptState did not advance. */
     AssertIntEQ(ssh->clientState, CLIENT_BEGIN);
     AssertIntEQ(ssh->acceptState, ACCEPT_KEYED);
-    /* Nothing emitted in reply. */
-    AssertIntEQ(io.outSz, 0);
+    /* Not silence: nothing answers the service request, but the peer is told
+     * the session ended on a protocol error. */
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_DISCONNECT);
+    AssertTrue(ssh->disconnected);
 
     /* Allowed when only this side has started a rekey. */
     ssh->error = 0;
@@ -3073,6 +3178,104 @@ static void TestGlobalRequestFwdNoCbSendsFailure(void)
 
     AssertIntEQ(ret, WS_SUCCESS);
     AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifndef NO_WOLFSSH_CLIENT
+/* A client is the side that asks for a remote forward, so a tcpip-forward it
+ * receives is answered with a failure and never registered. RFC 4254 section
+ * 7.1. A fwdCb is registered throughout: without the role check that callback
+ * is the only gate, and it would answer success. */
+static void TestGlobalRequestFwdOnClientSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 1, in, sizeof(in));
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* cancel-tcpip-forward travels the same direction, so a client refuses it on
+ * the same grounds. */
+static void TestGlobalRequestFwdCancelOnClientSendsFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 1, 1, in, sizeof(in));
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The refusal is silent when the peer did not ask for a reply: nothing goes
+ * back, and the session carries on. Silence alone would also be the answer
+ * without the role check, since a request the callback accepts and that asks
+ * for no reply sends nothing either, so the callback is the discriminator
+ * here: the request must be turned away before it reaches one. */
+static void TestGlobalRequestFwdOnClientNoReplyStaysQuiet(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 0, in, sizeof(in));
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, CountingFwdCb, NULL),
+            WS_SUCCESS);
+    fwdCbCallCount = 0;
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(fwdCbCallCount, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#endif /* !NO_WOLFSSH_CLIENT */
+
+/* The role check must not cost the server anything: the same request that a
+ * client refuses is still honoured here. */
+static void TestGlobalRequestFwdOnServerStillSucceeds(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 2222, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -10816,6 +11019,10 @@ int main(int argc, char** argv)
     TestServerChannelBlockedBeforeAuth(serverSsh);
     TestServerChannelAllowedAfterAuth(serverSsh);
     TestServerUserauthBlockedBeforeKeyed(serverSsh);
+    TestServerHighMsgIdBeforeAuthDisconnects();
+    TestServerUnknownMsgIdBeforeAuthUnimplemented();
+    TestServerKnownAuthMsgIdBeforeAuthDisconnects();
+    TestServerUnknownHighMsgIdBeforeAuthDisconnects();
     TestServerOnlyUserauthMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
     TestServerServiceRequestRejectedDuringKeying();
@@ -10836,6 +11043,12 @@ int main(int argc, char** argv)
     TestDirectTcpipFwdCbRejectsChannelId();
     TestForwardedTcpipOnServerSendsOpenFail();
     TestGlobalRequestFwdNoCbSendsFailure();
+#ifndef NO_WOLFSSH_CLIENT
+    TestGlobalRequestFwdOnClientSendsFailure();
+    TestGlobalRequestFwdCancelOnClientSendsFailure();
+    TestGlobalRequestFwdOnClientNoReplyStaysQuiet();
+#endif
+    TestGlobalRequestFwdOnServerStillSucceeds();
     TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
     TestGlobalRequestFwdWithCbSendsSuccess();
     TestGlobalRequestFwdPort0ReturnsAllocatedPort();
