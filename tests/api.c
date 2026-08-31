@@ -5901,6 +5901,24 @@ static int sftpPutToCompletion(WOLFSSH* ssh, char* from, char* to, byte resume)
 
     return ret;
 }
+
+
+/* Drives one wolfSSH_SFTP_Get() to a terminal result. */
+static int sftpGetToCompletion(WOLFSSH* ssh, char* from, char* to, byte resume)
+{
+    int ret = WS_FATAL_ERROR;
+    int tries;
+
+    for (tries = 0; tries < SFTP_MAX_RETRY_TRIES; tries++) {
+        ret = wolfSSH_SFTP_Get(ssh, from, to, resume, NULL);
+        if (ret == WS_SUCCESS ||
+                !sftp_error_is_notice(wolfSSH_get_error(ssh))) {
+            break;
+        }
+    }
+
+    return ret;
+}
 #endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM && !WOLFSSH_ZEPHYR */
 
 
@@ -6031,9 +6049,141 @@ static void test_wolfSSH_SFTP_PutResume(void)
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
-#ifdef WOLFSSH_ZEPHYR
-    k_sleep(Z_TIMEOUT_TICKS(100));
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+#endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM && !WOLFSSH_ZEPHYR */
+}
+
+
+/* A resumed get must keep the bytes already at the local destination, and
+ * must only resume onto one whose size matches the saved offset. The
+ * echoserver shares this process, so the "remote" file is local. */
+static void test_wolfSSH_SFTP_GetResume(void)
+{
+/* staging both files needs the hosted fopen()/getcwd() wrappers */
+#if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    byte src[SFTP_PUT_RESUME_SZ];
+    byte stale[SFTP_PUT_RESUME_SZ + SFTP_PUT_RESUME_OFST];
+    byte expect[SFTP_PUT_RESUME_SZ];
+    word32 ofst[2];
+    char srcName[] = "wolfssh_12547_src.tmp";
+    char dstName[] = "wolfssh_12547_dst.tmp";
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    sftpPutFillPattern(src, (word32)sizeof(src));
+    WMEMSET(stale, 0xFF, sizeof(stale));
+    AssertIntEQ(sftpPutWriteFile(srcName, src, (word32)sizeof(src)), 0);
+
+    /* the saved offset matches the destination, so the download picks up
+     * where it left off. Staging a prefix unlike the source, and expecting it
+     * back untouched, is what separates a resume from a full re-download. */
+    AssertIntEQ(sftpPutWriteFile(dstName, stale, SFTP_PUT_RESUME_OFST), 0);
+    WMEMCPY(expect, stale, SFTP_PUT_RESUME_OFST);
+    WMEMCPY(expect + SFTP_PUT_RESUME_OFST, src + SFTP_PUT_RESUME_OFST,
+            sizeof(expect) - SFTP_PUT_RESUME_OFST);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, expect, (word32)sizeof(expect)),
+            0);
+
+    /* the destination is gone, so the whole file is fetched again */
+    WREMOVE(NULL, dstName);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* the destination is shorter than the saved offset, so the whole file is
+     * fetched again */
+    AssertIntEQ(sftpPutWriteFile(dstName, stale, SFTP_PUT_RESUME_OFST / 2), 0);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* the destination is longer than the saved offset, so the whole file is
+     * fetched again */
+    AssertIntEQ(sftpPutWriteFile(dstName, stale, SFTP_PUT_RESUME_OFST * 2), 0);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* a plain get still truncates a longer destination */
+    AssertIntEQ(sftpPutWriteFile(dstName, stale, (word32)sizeof(stale)), 0);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 0), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, (word32)sizeof(src)), 0);
+
+    /* the source has nothing left past the saved offset, so the whole file
+     * is fetched again. This case shortens the source, so it runs last. */
+    AssertIntEQ(sftpPutWriteFile(dstName, stale, SFTP_PUT_RESUME_OFST), 0);
+    AssertIntEQ(sftpPutWriteFile(srcName, src, SFTP_PUT_RESUME_OFST / 2), 0);
+    ofst[0] = SFTP_PUT_RESUME_OFST;
+    ofst[1] = 0;
+    AssertIntEQ(wolfSSH_SFTP_SaveOfst(ssh, srcName, dstName, ofst),
+            WS_SUCCESS);
+    AssertIntEQ(sftpGetToCompletion(ssh, srcName, dstName, 1), WS_SUCCESS);
+    AssertIntEQ(sftpPutFileMatches(dstName, src, SFTP_PUT_RESUME_OFST / 2), 0);
+
+    WREMOVE(NULL, dstName);
+    WREMOVE(NULL, srcName);
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = AbsorbBenignReset(ssh, wolfSSH_shutdown(ssh));
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
 #endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
     ThreadJoin(serThread);
     FreeTcpReady(&ready);
 #endif /* !NO_FILESYSTEM && !WOLFSSH_USER_FILESYSTEM && !WOLFSSH_ZEPHYR */
@@ -6051,6 +6201,7 @@ static void test_wolfSSH_SFTP_SetConfinePath(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
 static void test_wolfSSH_SFTP_PutResume(void) { ; }
+static void test_wolfSSH_SFTP_GetResume(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
 
@@ -7999,6 +8150,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
     test_wolfSSH_SFTP_PutResume();
+    test_wolfSSH_SFTP_GetResume();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
