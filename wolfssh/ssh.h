@@ -650,6 +650,17 @@ WOLFSSH_API int wolfSSH_SetUsername(WOLFSSH* ssh, const char* username);
 WOLFSSH_API char* wolfSSH_GetUsername(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx, const char* newBanner);
+/* ProtoIdStr is checked for validity and will be rejected unless
+ * it adheres to these criteria:
+ * MUST begin with "SSH-2.0-"
+ * MUST be between 11 and 255 bytes in length, counting the "SSH-2.0-"
+ *     prefix and the trailing "\r\n"
+ * MUST end with '\r\n'
+ * MUST NOT contain '\r' or '\n' in the body
+ * If these are not adhered to the function will return WS_BAD_ARGUMENT
+ * and not load the ProtoId in to the WOLFSSH_CTX struct.
+ * ProtoIdStr is stored by reference and is not copied, so it must remain
+ * valid for the lifetime of the WOLFSSH_CTX. */
 WOLFSSH_API int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
         const char* protoIdStr);
 /* Set the server-side limit on failed userauth attempts per connection. The

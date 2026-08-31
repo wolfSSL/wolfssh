@@ -14168,6 +14168,28 @@ int DoProtoId(WOLFSSH* ssh)
 }
 
 
+/* Validates a locally configured proto ID string */
+int ValidateProtoId(const char* protoIdStr, word32 len)
+{
+    /* Length is checked first: the prefix, terminator, and body checks below
+     * index and subtract from len. The minimum is the "SSH-2.0-" prefix plus
+     * one body byte plus CRLF. */
+    if (protoIdStr == NULL || len < SSH_PROTO_SZ + 3 ||
+            protoIdStr[len-1] != '\n' || protoIdStr[len-2] != '\r' ||
+            len > WOLFSSH_PROTOID_LIMIT ||
+            WSTRNCMP(protoIdStr, sshProtoIdPrefix, SSH_PROTO_SZ) != 0 ||
+            WSTRNSTR(protoIdStr, "\n", len - 2) != NULL ||
+            WSTRNSTR(protoIdStr, "\r", len - 2) != NULL) {
+        WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must start with "
+                "\"SSH-2.0-\", end in \\r\\n, be no longer than %d bytes, "
+                "and must not contain \\r or \\n in the body of the line",
+                WOLFSSH_PROTOID_LIMIT);
+        return WS_BAD_ARGUMENT;
+    }
+    return WS_SUCCESS;
+}
+
+
 int SendProtoId(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;

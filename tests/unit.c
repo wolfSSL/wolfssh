@@ -557,41 +557,32 @@ static int test_DoProtoId(void)
         }
     }
 
-    /* A non-conforming local proto ID doesn't reject a conforming peer. */
+    /* Ensure a malformed local protoId cannot be loaded. */
     {
-        static const ProtoIdTestVector customTv = {
-            "custom local proto ID accepts peer",
-            "SSH-2.0-OpenSSH_8.9\r\n",
-            0, WS_SUCCESS, WOLFSSH_ENDPOINT_CLIENT
+        static const struct {
+            const char* name;
+            const char* id;
+            int expectSuccess;
+        } protoIds[] = {
+            { "conforming custom ID", "SSH-2.0-this_is_my_app\r\n", 1 },
+            { "wrong version prefix", "SSH-2-this_is_my_app\r\n",   0 },
+            { "LF terminator only",   "SSH-2.0-this_is_my_app\n",    0 },
+            { "CR terminator only",   "SSH-2.0-this_is_my_app\r",    0 },
+            { "empty string",         "",                            0 },
+            { "prefix with no body",  "SSH-2.0-\r\n",                0 },
+            { "missing prefix",       "hello\r\n",                   0 },
         };
-        ProtoIdTestState state;
+        int pc = (int)(sizeof(protoIds) / sizeof(protoIds[0]));
 
-        state.tv = &customTv;
-        state.offset = 0;
-
-        wolfSSH_SetIORecv(clientCtx, RecvFromPtr);
-        if (wolfSSH_CTX_SetSshProtoIdStr(clientCtx,
-                    "SSH-2.0_NonConforming\r\n") != WS_SUCCESS) {
-            fprintf(stderr, "\t\"%s\" FAIL: SetSshProtoIdStr failed\n",
-                    customTv.name);
-            failures++;
-        }
-        else {
-            ssh = wolfSSH_new(clientCtx);
-            if (ssh == NULL) {
-                fprintf(stderr, "\t\"%s\" FAIL: wolfSSH_new returned NULL\n",
-                        customTv.name);
+        for (i = 0; i < pc; i++) {
+            ret = wolfSSH_CTX_SetSshProtoIdStr(clientCtx, protoIds[i].id);
+            if ((ret == WS_SUCCESS) != protoIds[i].expectSuccess) {
+                fprintf(stderr,
+                        "\t[protoId %d] \"%s\" FAIL: got %d, expected %s\n",
+                        i, protoIds[i].name, ret,
+                        protoIds[i].expectSuccess ? "WS_SUCCESS"
+                                                  : "WS_BAD_ARGUMENT");
                 failures++;
-            }
-            else {
-                wolfSSH_SetIOReadCtx(ssh, &state);
-                ret = wolfSSH_TestDoProtoId(ssh);
-                if (ret != customTv.expected) {
-                    fprintf(stderr, "\t\"%s\" FAIL: got %d, expected %d\n",
-                            customTv.name, ret, customTv.expected);
-                    failures++;
-                }
-                wolfSSH_free(ssh);
             }
         }
     }
