@@ -4006,6 +4006,89 @@ static void FwdReplyRebind(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* from,
 }
 
 
+/* Put a request on the session's list of requests in flight, where anything
+ * its own send reaches can see it. */
+static void FwdPendingPush(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
+{
+    pend->next = ssh->fwdPendingHead;
+    ssh->fwdPendingHead = pend;
+}
+
+
+/* Take it back off, its send being over. Requests nest, so this is not always
+ * the head: a callback's request commits inside the one that ran it. */
+static void FwdPendingPop(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
+{
+    WOLFSSH_FWD_PENDING* cur;
+
+    if (ssh->fwdPendingHead == pend) {
+        ssh->fwdPendingHead = pend->next;
+    }
+    else {
+        for (cur = ssh->fwdPendingHead; cur != NULL; cur = cur->next) {
+            if (cur->next == pend) {
+                cur->next = pend->next;
+                break;
+            }
+        }
+    }
+
+    pend->next = NULL;
+}
+
+
+/* Forget a forward every request still in its send window held a pointer to.
+ * Those requests resolved it before the send; freeing it without this leaves
+ * their commits naming memory that is gone. */
+static void FwdPendingVoid(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_PENDING* pend;
+
+    for (pend = ssh->fwdPendingHead; pend != NULL; pend = pend->next) {
+        if (pend->entry == entry)
+            pend->entry = NULL;
+        if (pend->found == entry)
+            pend->found = NULL;
+    }
+}
+
+
+/* A forward a request in flight is registering, or NULL. It is not on the
+ * session's list until that request commits, but it is what the peer is being
+ * asked for, so a request a callback sends meanwhile names the same one. */
+static WOLFSSH_FWD_REMOTE* FwdPendingFind(WOLFSSH* ssh, const char* bindAddr,
+        word32 bindPort)
+{
+    WOLFSSH_FWD_PENDING* pend;
+
+    for (pend = ssh->fwdPendingHead; pend != NULL; pend = pend->next) {
+        if (pend->entry == NULL || pend->entry->portPending ||
+                pend->entry->bindPort != bindPort)
+            continue;
+        if (WSTRCMP(pend->entry->bindAddr, bindAddr) == 0)
+            return pend->entry;
+    }
+
+    return NULL;
+}
+
+
+/* Is a cancel for this forward inside its own send window? It is on the wire
+ * ahead of anything a callback could send from there, so it is already the
+ * last word on the forward. */
+static int FwdPendingHasCancel(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
+{
+    WOLFSSH_FWD_PENDING* pend;
+
+    for (pend = ssh->fwdPendingHead; pend != NULL; pend = pend->next) {
+        if (pend->isCancel && pend->found == entry)
+            return 1;
+    }
+
+    return 0;
+}
+
+
 static void FwdRemoteUnlink(WOLFSSH* ssh, void* heap,
         WOLFSSH_FWD_REMOTE* entry)
 {
@@ -4024,6 +4107,7 @@ static void FwdRemoteUnlink(WOLFSSH* ssh, void* heap,
     }
 
     FwdReplyVoid(ssh, entry);
+    FwdPendingVoid(ssh, entry);
 
     WFREE(entry->bindAddr, heap, DYNTYPE_STRING);
     WFREE(entry, heap, DYNTYPE_FWD);
@@ -4272,9 +4356,12 @@ int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr, word32 bindPort,
 
     heap = ssh->ctx->heap;
     pend->isCancel = (byte)(isCancel != 0);
-    pend->bindAddr = bindAddr;
-    pend->bindPort = bindPort;
     found = FwdRemoteFind(ssh, bindAddr, bindPort);
+
+    /* A request a send callback is making names the forward the request that
+     * ran it is registering, which is on the wire but not on the list yet. */
+    if (found == NULL)
+        found = FwdPendingFind(ssh, bindAddr, bindPort);
 
     if (isCancel) {
         if (found == NULL) {
@@ -4344,6 +4431,13 @@ int FwdRemotePrepare(WOLFSSH* ssh, const char* bindAddr, word32 bindPort,
     /* An error leaves nothing to commit and nothing to give back. */
     if (ret != WS_SUCCESS)
         WMEMSET(pend, 0, sizeof(*pend));
+    else {
+        /* What this request resolved to is settled here rather than looked up
+         * again at commit: by then a callback the send ran may have registered
+         * the same bind anew, and this request went out ahead of it. */
+        pend->found = found;
+        FwdPendingPush(ssh, pend);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving FwdRemotePrepare(), ret = %d", ret);
     return ret;
@@ -4375,18 +4469,22 @@ int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
     pend->reply = FwdReplyNew(ssh, 0, NULL, 0);
     ret = pend->reply == NULL ? WS_MEMORY_E : WS_SUCCESS;
 
+    /* It names no forward, but every request in flight is on the list. */
+    if (ret == WS_SUCCESS)
+        FwdPendingPush(ssh, pend);
+
     WLOG(WS_LOG_DEBUG, "Leaving FwdReplyPrepare(), ret = %d", ret);
     return ret;
 }
 
 
-/* The request reached the wire, so link what was prepared. The registration it
- * names is looked up again here: the send runs the application's send and
- * highwater callbacks, which can reenter the library and free the entry a
- * pointer held across the send would name. */
+/* The request reached the wire, so link what was prepared. The forward it names
+ * was resolved before the send and held on the pending: the send runs the
+ * application's send and highwater callbacks, which can reenter the library,
+ * and a lookup from here would find what those did afterwards. */
 void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 {
-    WOLFSSH_FWD_REMOTE* target = NULL;
+    WOLFSSH_FWD_REMOTE* target;
     WOLFSSH_FWD_REMOTE* cur;
     void* heap;
 
@@ -4397,16 +4495,10 @@ void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 
     heap = ssh->ctx->heap;
 
-    if (pend->bindAddr != NULL)
-        target = FwdRemoteFind(ssh, pend->bindAddr, pend->bindPort);
+    /* Its send is over, so nothing a later request sends can name it. */
+    FwdPendingPop(ssh, pend);
 
-    if (pend->entry != NULL && target != NULL) {
-        /* A callback the send ran registered this bind first, so the entry
-         * built for it is one too many. */
-        WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
-        WFREE(pend->entry, heap, DYNTYPE_FWD);
-        pend->entry = NULL;
-    }
+    target = pend->entry != NULL ? pend->entry : pend->found;
 
     if (pend->entry != NULL) {
         for (cur = ssh->fwdRemoteList; cur != NULL && cur->next != NULL;
@@ -4417,8 +4509,6 @@ void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
             ssh->fwdRemoteList = pend->entry;
         else
             cur->next = pend->entry;
-
-        target = pend->entry;
     }
 
     if (pend->reply != NULL && pend->reply->answered) {
@@ -4468,9 +4558,13 @@ void FwdPendingDiscard(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 
     heap = ssh->ctx->heap;
 
+    /* Its send is over, so nothing a later request sends can name it. */
+    FwdPendingPop(ssh, pend);
+
     if (pend->entry != NULL) {
-        WFREE(pend->entry->bindAddr, heap, DYNTYPE_STRING);
-        WFREE(pend->entry, heap, DYNTYPE_FWD);
+        /* Nothing linked it, so there is no list to take it out of, but a
+         * request a callback sent may have named it and has to let go. */
+        FwdRemoteUnlink(ssh, heap, pend->entry);
     }
     if (pend->reply != NULL) {
         /* An answer that arrived mid-send dequeued the slot already, and
@@ -4487,10 +4581,26 @@ void FwdPendingDiscard(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 }
 
 
+/* Does the bind this open names reach that forward? A peer that rewrites the
+ * bind it echoes back can still be held to the port it was asked for. */
+static int FwdRemoteAddrMatch(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry,
+        const char* addr, word32 port)
+{
+    /* No port to match on until the peer's reply names the one it bound. */
+    if (entry->portPending || entry->bindPort != port)
+        return 0;
+
+    return ssh->fwdRemoteMatch == WOLFSSH_FWD_MATCH_PORT ||
+            FwdRemoteAddrIsWild(entry->bindAddr) ||
+            WSTRCMP(entry->bindAddr, addr) == 0;
+}
+
+
 /* Does an inbound forwarded-tcpip name a forward this client registered? */
 static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
 {
     WOLFSSH_FWD_REMOTE* cur;
+    WOLFSSH_FWD_PENDING* pend;
 
     if (ssh == NULL || addr == NULL)
         return 0;
@@ -4502,16 +4612,16 @@ static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
     for (cur = ssh->fwdRemoteList; cur != NULL; cur = cur->next) {
         WOLFSSH_FWD_REPLY* newest;
 
-        /* No port to match on until the peer's reply names the one it
-         * bound. */
-        if (cur->portPending || cur->bindPort != port)
+        if (!FwdRemoteAddrMatch(ssh, cur, addr, port))
             continue;
 
         /* The newest request governs: a cancel stops matching as it goes out,
          * so revoking never waits on the peer, and the peer refusing it puts
-         * the forward back. */
+         * the forward back. A cancel still inside its own send counts, since
+         * the session can only be pumped from a callback that send ran. */
         newest = FwdReplyNewest(ssh, cur);
-        if (newest != NULL && newest->isCancel)
+        if ((newest != NULL && newest->isCancel) ||
+                FwdPendingHasCancel(ssh, cur))
             continue;
 
         /* A forward stands on the peer having bound it, or on a request still
@@ -4519,12 +4629,36 @@ static int FwdRemoteMatch(WOLFSSH* ssh, const char* addr, word32 port)
         if (!cur->confirmed && newest == NULL)
             continue;
 
-        /* A peer that rewrites the bind it echoes back can still be held to
-         * the port it was asked for. */
-        if (ssh->fwdRemoteMatch == WOLFSSH_FWD_MATCH_PORT ||
-                FwdRemoteAddrIsWild(cur->bindAddr) ||
-                WSTRCMP(cur->bindAddr, addr) == 0)
-            return 1;
+        return 1;
+    }
+
+    /* A setup inside its own send is already on the wire, so the listener it
+     * asks for can start feeding channels before the call returns. It is the
+     * newest request for its bind by construction, and needs no reply to speak
+     * for it. */
+    for (pend = ssh->fwdPendingHead; pend != NULL; pend = pend->next) {
+        WOLFSSH_FWD_REPLY* newest;
+
+        if (pend->entry == NULL ||
+                !FwdRemoteAddrMatch(ssh, pend->entry, addr, port))
+            continue;
+
+        /* A cancel a callback sent from this setup's send went out behind it
+         * and committed, so the newest request governs here too. */
+        newest = FwdReplyNewest(ssh, pend->entry);
+        if ((newest != NULL && newest->isCancel) ||
+                FwdPendingHasCancel(ssh, pend->entry))
+            continue;
+
+        /* An answer that arrived mid-send left the queue for the commit to
+         * apply, so no scan of it sees this request. The peer refused the
+         * bind, so nothing speaks for the forward and the commit is about to
+         * drop it. */
+        if (pend->reply != NULL && pend->reply->answered &&
+                !pend->reply->success)
+            continue;
+
+        return 1;
     }
 
     return 0;
