@@ -4097,7 +4097,11 @@ static void FwdRemoteSettle(WOLFSSH* ssh, WOLFSSH_FWD_REMOTE* entry,
     if (isCancel) {
         if (!success) {
             /* The peer kept the listener, so the forward stands and matching
-             * resumes unless a later cancel is outstanding. */
+             * resumes unless a later cancel is outstanding. An unconfirmed
+             * forward has no listener to keep, though: its setup was refused
+             * too, and with none still queued nothing will ever bind it. */
+            if (!entry->confirmed && !FwdReplyHasSetup(ssh, entry))
+                FwdRemoteUnlink(ssh, ssh->ctx->heap, entry);
             return;
         }
 
