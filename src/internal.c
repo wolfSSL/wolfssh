@@ -1337,6 +1337,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->maxAuthAttempts = DEFAULT_MAX_AUTH_ATTEMPTS;
     ctx->sshProtoIdStr = sshProtoIdStr;
+    ctx->sshProtoIdStrSz = (word32)(sizeof(sshProtoIdStr) - 1);
     ctx->algoListKex = cannedKexAlgoNames;
     if (side == WOLFSSH_ENDPOINT_CLIENT) {
         ctx->algoListKey = cannedKeyAlgoNamesHostKey;
@@ -6533,9 +6534,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
         if (ret == WS_SUCCESS) {
-            byte SSH_PROTO_EOL_SZ = 2;
-
-            strSz = (word32)WSTRLEN(ssh->ctx->sshProtoIdStr) - SSH_PROTO_EOL_SZ;
+            /* The ID is hashed without its terminator. */
+            strSz = ssh->ctx->sshProtoIdStrSz - SSH_PROTO_EOL_SZ;
             c32toa(strSz, scratchLen);
             ret = HashUpdate(hash, hashId, scratchLen, LENGTH_SZ);
         }
@@ -14185,21 +14185,38 @@ int DoProtoId(WOLFSSH* ssh)
 /* Validates a locally configured proto ID string */
 int ValidateProtoId(const char* protoIdStr, word32 len)
 {
-    /* Length is checked first: the prefix, terminator, and body checks below
-     * index and subtract from len. The minimum is the "SSH-2.0-" prefix plus
-     * one body byte plus CRLF. */
-    if (protoIdStr == NULL || len < SSH_PROTO_SZ + 3 ||
-            protoIdStr[len-1] != '\n' || protoIdStr[len-2] != '\r' ||
-            len > WOLFSSH_PROTOID_LIMIT ||
-            WSTRNCMP(protoIdStr, sshProtoIdPrefix, SSH_PROTO_SZ) != 0 ||
-            WSTRNSTR(protoIdStr, "\n", len - 2) != NULL ||
-            WSTRNSTR(protoIdStr, "\r", len - 2) != NULL) {
-        WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must start with "
-                "\"SSH-2.0-\", end in \\r\\n, be no longer than %d bytes, "
-                "and must not contain \\r or \\n in the body of the line",
-                WOLFSSH_PROTOID_LIMIT);
+    word32 i;
+
+    if (protoIdStr == NULL ||
+            len < SSH_PROTO_SZ + 1 + SSH_PROTO_EOL_SZ ||
+            len > WOLFSSH_PROTOID_LIMIT) {
+        WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must be between %d and "
+                "%d bytes, counting the prefix and the terminator",
+                SSH_PROTO_SZ + 1 + SSH_PROTO_EOL_SZ, WOLFSSH_PROTOID_LIMIT);
         return WS_BAD_ARGUMENT;
     }
+
+    if (WSTRNCMP(protoIdStr, sshProtoIdPrefix, SSH_PROTO_SZ) != 0) {
+        WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must start with "
+                "\"SSH-2.0-\"");
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (protoIdStr[len - 1] != '\n' || protoIdStr[len - 2] != '\r') {
+        WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must end in \\r\\n");
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < len - SSH_PROTO_EOL_SZ; i++) {
+        byte c = (byte)protoIdStr[i];
+
+        if (c < 0x20 || c > 0x7e) {
+            WLOG(WS_LOG_ERROR, "Proto Id was invalid: byte %u is "
+                    "not printable US-ASCII", i);
+            return WS_BAD_ARGUMENT;
+        }
+    }
+
     return WS_SUCCESS;
 }
 
@@ -14214,7 +14231,7 @@ int SendProtoId(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "%s", ssh->ctx->sshProtoIdStr);
-        sshProtoIdStrSz = (word32)WSTRLEN(ssh->ctx->sshProtoIdStr);
+        sshProtoIdStrSz = ssh->ctx->sshProtoIdStrSz;
         ret = GrowBuffer(&ssh->outputBuffer, sshProtoIdStrSz);
     }
 

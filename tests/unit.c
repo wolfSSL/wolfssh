@@ -559,20 +559,40 @@ static int test_DoProtoId(void)
 
     /* Ensure a malformed local protoId cannot be loaded. */
     {
+        static char tooLongProtoId[257];
+        static char justRightProtoId[256];
         static const struct {
             const char* name;
             const char* id;
             int expectSuccess;
         } protoIds[] = {
-            { "conforming custom ID", "SSH-2.0-this_is_my_app\r\n", 1 },
-            { "wrong version prefix", "SSH-2-this_is_my_app\r\n",   0 },
+            { "conforming custom ID", "SSH-2.0-this_is_my_app\r\n",  1 },
+            { "shortest valid Id",    "SSH-2.0-t\r\n",               1 },
+            { "exact len custom ID",  justRightProtoId,              1 },
+            { "wrong version prefix", "SSH-2-this_is_my_app\r\n",    0 },
+            { "bad casing prefix",    "sSH-2.0-this_is_my_app\r\n",  0 },
             { "LF terminator only",   "SSH-2.0-this_is_my_app\n",    0 },
             { "CR terminator only",   "SSH-2.0-this_is_my_app\r",    0 },
             { "empty string",         "",                            0 },
             { "prefix with no body",  "SSH-2.0-\r\n",                0 },
-            { "missing prefix",       "hello\r\n",                   0 },
+            { "missing prefix",       "hello-this-is\r\n",           0 },
+            { "non ascii char",       "SSH-2.0-\x90s\r\n",           0 },
+            { "Body End in CR",       "SSH-2.0-s\r\r\n",             0 },
+            { "Body End in TAB",      "SSH-2.0-s\t\r\n",             0 },
+            { "Body Have bad char",   "SSH-2.0-\x02-a\t\r\n",        0 },
+            { "too long id",          tooLongProtoId,                0 },
         };
         int pc = (int)(sizeof(protoIds) / sizeof(protoIds[0]));
+        WMEMSET(tooLongProtoId, 'a', sizeof(tooLongProtoId));
+        WMEMCPY(tooLongProtoId, "SSH-2.0-", sizeof("SSH-2.0-") - 1);
+        tooLongProtoId[256] = '\0';
+        tooLongProtoId[255] = '\n';
+        tooLongProtoId[254] = '\r';
+        WMEMSET(justRightProtoId, 'a', sizeof(justRightProtoId));
+        WMEMCPY(justRightProtoId, "SSH-2.0-", sizeof("SSH-2.0-") - 1);
+        justRightProtoId[255] = '\0';
+        justRightProtoId[254] = '\n';
+        justRightProtoId[253] = '\r';
 
         for (i = 0; i < pc; i++) {
             ret = wolfSSH_CTX_SetSshProtoIdStr(clientCtx, protoIds[i].id);
@@ -582,6 +602,14 @@ static int test_DoProtoId(void)
                         i, protoIds[i].name, ret,
                         protoIds[i].expectSuccess ? "WS_SUCCESS"
                                                   : "WS_BAD_ARGUMENT");
+                failures++;
+            }
+            if ((ret == WS_SUCCESS) && clientCtx->sshProtoIdStrSz !=
+                    WSTRLEN(protoIds[i].id)) {
+                fprintf(stderr,
+                        "\t[protoId %d] \"%s\" FAIL: stored sshProtoIdSz "
+                        "was not retained\n",
+                        i, protoIds[i].name);
                 failures++;
             }
         }

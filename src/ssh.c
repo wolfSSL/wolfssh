@@ -3472,19 +3472,23 @@ int wolfSSH_GetMaxAuthAttempts(WOLFSSH* ssh)
 int wolfSSH_CTX_SetSshProtoIdStr(WOLFSSH_CTX* ctx,
                                           const char* protoIdStr)
 {
+    word32 protoIdStrSz;
     int ret;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CTX_SetSshProtoIdStr()");
 
     if (!ctx || !protoIdStr) {
         return WS_BAD_ARGUMENT;
     }
 
-    if ((ret = ValidateProtoId(protoIdStr, (word32)WSTRLEN(protoIdStr))) !=
-            WS_SUCCESS) {
+    protoIdStrSz = (word32)WSTRLEN(protoIdStr);
+    ret = ValidateProtoId(protoIdStr, protoIdStrSz);
+    if (ret != WS_SUCCESS) {
         return ret;
     }
 
     ctx->sshProtoIdStr = protoIdStr;
+    ctx->sshProtoIdStrSz = protoIdStrSz;
     return WS_SUCCESS;
 }
 

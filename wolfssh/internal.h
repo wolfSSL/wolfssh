@@ -576,6 +576,7 @@ enum NameIdType {
 #define UINT32_SZ 4
 #define LENGTH_SZ UINT32_SZ
 #define SSH_PROTO_SZ 8 /* "SSH-2.0-" */
+#define SSH_PROTO_EOL_SZ 2 /* "\r\n" */
 #define TERMINAL_MODE_SZ 5 /* opcode byte + argument uint32 */
 #define TERMINAL_MODES_MAX_SZ 4096
 #define TERMINAL_WIDTH_DEFAULT 80 /* used when there is no terminal */
@@ -862,6 +863,7 @@ struct WOLFSSH_CTX {
     const char* algoListMac;
     const char* algoListKeyAccepted;
     word32 bannerSz;
+    word32 sshProtoIdStrSz;           /* validated, counting the CRLF */
     word32 windowSz;
     word32 maxPacketSz;
     word32 maxAuthAttempts;           /* server cap on failed userauth */
