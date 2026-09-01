@@ -1827,13 +1827,19 @@ static int test_DoReceive_AeadTagFailure(void)
     /* Tamper with a ciphertext byte so the tag check must fail. */
     record[UINT32_SZ] ^= 0x01;
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
-            || wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+            INVALID_DEVID) != 0) {
         result = -226;
         goto done;
     }
+    /* claim the context before setting the key so wolfSSH_free frees it
+     * even if the key set fails */
     ssh->decryptCipher.isInit = 1;
     ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    if (wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -230;
+        goto done;
+    }
     ssh->peerEncryptId = ID_AES256_GCM;
     ssh->peerAeadMode = 1;
     ssh->peerBlockSz = AES_BLOCK_SIZE;
