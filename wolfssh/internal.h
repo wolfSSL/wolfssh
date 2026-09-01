@@ -1713,6 +1713,9 @@ WOLFSSH_LOCAL int GetUint32(word32* v,
 WOLFSSH_LOCAL int GetUint64(word64* v,
         const byte* buf, word32 len, word32* idx);
 #endif
+/* On success *idx has advanced past the length word and *v <= len - *idx,
+ * so *idx + *v never wraps or passes len: a caller may read *v bytes at
+ * buf + *idx without rechecking. Callers rely on this bound. */
 WOLFSSH_LOCAL int GetSize(word32* v,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetSkip(const byte* buf, word32 len, word32* idx);

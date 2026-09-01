@@ -5695,6 +5695,8 @@ int GetUint32(word32* v, const byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
+    /* The *idx < len test keeps len - *idx from wrapping and leaves
+     * *idx <= len on success; GetSize()'s bound depends on both. */
     if (*idx < len && UINT32_SZ <= len - *idx) {
         ato32(buf + *idx, v);
         *idx += UINT32_SZ;
@@ -5743,15 +5745,8 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
     word32 sz;
 
     result = GetSize(&sz, buf, len, idx);
-
-    if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        if (*idx <= len && sz <= len - *idx) {
-            *idx += sz;
-            result = WS_SUCCESS;
-        }
-    }
+    if (result == WS_SUCCESS)
+        *idx += sz;
 
     return result;
 }
@@ -13776,13 +13771,7 @@ static int DoChannelData(WOLFSSH* ssh,
     ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
         ret = GetSize(&dataSz, buf, len, &begin);
-
-    /* Validate dataSz */
-    if (ret == WS_SUCCESS) {
-        if (len < begin) {
-            ret = WS_RECV_OVERFLOW_E;
-        }
-    }
+    /* GetSize() already enforced dataSz <= len - begin. */
 
     if (ret == WS_SUCCESS) {
         *idx = begin + dataSz;
