@@ -4385,7 +4385,6 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     OVERLAPPED offset;
     HANDLE fd;
     DWORD bytesWritten;
-    LARGE_INTEGER fileSize;
     int ret = WS_SUCCESS;
     int rc;
     int isAppend = 0;
@@ -4455,19 +4454,16 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
         /* WOLFSSH_FXF_APPEND was requested at open: FILE_APPEND_DATA alone
          * does not force writes to EOF once the handle also carries
-         * FILE_WRITE_DATA (granted implicitly by GENERIC_WRITE), so the
-         * client-supplied offset must be overridden with the current EOF. */
+         * FILE_WRITE_DATA (granted implicitly by GENERIC_WRITE). Resolving
+         * EOF ourselves with GetFileSizeEx() and writing at that offset is a
+         * non-atomic read-modify-write: the file is shared FILE_SHARE_WRITE,
+         * so concurrent appenders would resolve the same offset and overwrite
+         * each other. Setting both OVERLAPPED offset fields to 0xFFFFFFFF
+         * tells WriteFile() to append atomically at end of file, matching the
+         * POSIX O_APPEND path. */
         if (isAppend) {
-            if (GetFileSizeEx(fd, &fileSize) == 0) {
-                WLOG(WS_LOG_SFTP, "Error getting file size for append");
-                res  = err;
-                type = WOLFSSH_FTP_FAILURE;
-                ret  = WS_INVALID_STATE_E;
-            }
-            else {
-                offset.Offset     = fileSize.LowPart;
-                offset.OffsetHigh = (DWORD)fileSize.HighPart;
-            }
+            offset.Offset     = 0xFFFFFFFF;
+            offset.OffsetHigh = 0xFFFFFFFF;
         }
     }
 
