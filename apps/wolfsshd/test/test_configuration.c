@@ -284,6 +284,13 @@ static int test_PermitRootProhibitPassword(void)
     return ret;
 }
 
+/* Logs the outcome of one scenario and maps it to a test result. */
+static int CheckScenario(int passed)
+{
+    Log("%s", passed ? " PASSED.\n" : " FAILED.\n");
+    return passed ? WS_SUCCESS : WS_FATAL_ERROR;
+}
+
 static int test_ParseConfigLine(void)
 {
     int ret = WS_SUCCESS;
@@ -308,7 +315,10 @@ static int test_ParseConfigLine(void)
         /* The option matcher requires whitespace (or end of line) after the
          * matched name, so an unknown name that extends a real one must not
          * prefix-match it. Ignore-unknown builds accept such lines with a
-         * warning, so only assert rejection where it is observable. */
+         * warning, so only assert rejection where it is observable. The
+         * end-of-line arm lets a keyword alone on a line still match; the
+         * standalone checks below pin that, and the OpenSSH spelling that
+         * prompted the rule. */
     #ifndef WOLFSSH_IGNORE_UNKNOWN_CONFIG
         {"Unknown extension of Port", "PortFoo 22", 1},
         {"Unknown extension of HostKey", "HostKeyFoo /tmp/x", 1},
@@ -415,6 +425,39 @@ static int test_ParseConfigLine(void)
         }
         wolfSSHD_ConfigFree(conf);
     }
+
+    /* The standalone checks share one fresh config. */
+    conf = NULL;
+    if (ret == WS_SUCCESS) {
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    /* States the bug directly, and holds however the build treats an
+     * unknown keyword: "HostKeyAlgorithms" used to match "HostKey" and
+     * take "Algorithms" as the host key file name. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: HostKeyAlgorithms leaves HostKey unset.");
+        (void)PCL("HostKeyAlgorithms ssh-rsa");
+        ret = CheckScenario(wolfSSHD_ConfigGetHostKeyFile(conf) == NULL);
+    }
+
+    /* The end-of-line arm: a keyword alone on a line still matches, then
+     * fails for want of a value. Assert the code, not just failure. Only
+     * the matched path reaches HandleStrictModes and returns
+     * WS_BAD_ARGUMENT; an unknown keyword gives WS_FATAL_ERROR, or
+     * WS_SUCCESS where the build ignores unknown options. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: bare keyword matches, then fails.");
+        ret = CheckScenario(PCL("StrictModes") == WS_BAD_ARGUMENT);
+    }
+#undef PCL
+
+    if (conf != NULL)
+        wolfSSHD_ConfigFree(conf);
 
     return ret;
 }

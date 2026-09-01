@@ -1658,6 +1658,10 @@ WOLFSSHD_STATIC int ParseConfigLine(WOLFSSHD_CONFIG** conf, const char* l,
     int idx;
     const CONFIG_OPTION* found = NULL;
 
+    /* Match the whole keyword: a prefix match only counts when the name is
+     * followed by whitespace or the end of the line. Without that check
+     * "HostKeyAlgorithms x" matches "HostKey" and "Algorithms" is taken as
+     * the host key file name. */
     for (idx = 0; idx < NUM_OPTIONS; ++idx) {
         sz = (int)WSTRLEN(options[idx].name);
         if (lSz >= sz && WSTRNCMP(l, options[idx].name, sz) == 0 &&
