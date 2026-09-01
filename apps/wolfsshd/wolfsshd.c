@@ -2846,6 +2846,23 @@ static char* _convertHelper(WCHAR* in, void* heap) {
     return ret;
 }
 
+/* free the argv/cmdArgs buffers built from the wide command line. Safe to
+ * call on partially initialized state: NULL argv or cmdArgs is ignored. */
+static void _freeWinArgs(char** argv, DWORD argc, LPWSTR* cmdArgs)
+{
+    DWORD z;
+
+    if (argv != NULL) {
+        for (z = 0; z < argc; z++) {
+            WFREE(argv[z], NULL, DYNTYPE_SSHD);
+        }
+        WFREE(argv, NULL, DYNTYPE_SSHD);
+    }
+    if (cmdArgs != NULL) {
+        LocalFree(cmdArgs);
+    }
+}
+
 static void StartSSHD(DWORD argc, LPTSTR* wargv)
 #else
 static int StartSSHD(int argc, char** argv)
@@ -2996,6 +3013,7 @@ static int StartSSHD(int argc, char** argv)
             #ifndef _WIN32
             return WS_FATAL_ERROR;
             #else
+            _freeWinArgs(argv, argc, cmdArgs);
             return;
             #endif
         #endif
@@ -3009,6 +3027,7 @@ static int StartSSHD(int argc, char** argv)
         #ifndef _WIN32
             return WS_SUCCESS;
         #else
+            _freeWinArgs(argv, argc, cmdArgs);
             return;
         #endif
 
@@ -3017,6 +3036,7 @@ static int StartSSHD(int argc, char** argv)
         #ifndef _WIN32
             return WS_SUCCESS;
         #else
+            _freeWinArgs(argv, argc, cmdArgs);
             return;
         #endif
         }
@@ -3149,11 +3169,9 @@ static int StartSSHD(int argc, char** argv)
                 if (SetServiceStatus(serviceStatusHandle, &serviceStatus) == FALSE) {
                     wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue updating service status");
                 }
+                _freeWinArgs(argv, argc, cmdArgs);
                 return;
             }
-        }
-        if (cmdArgs != NULL) {
-            LocalFree(cmdArgs);
         }
     }
 #endif
@@ -3335,13 +3353,11 @@ static int StartSSHD(int argc, char** argv)
     }
 
 #ifdef _WIN32
-    if (isDaemon) { /* free up temporary memory used for conversion of args from wchar_t */
-        unsigned int z;
-        for (z = 0; z < argc; z++) {
-            WFREE(argv[z], NULL, DYNTYPE_SSHD);
-        }
-        WFREE(argv, NULL, DYNTYPE_SSHD);
-    }
+    /* free up temporary memory used for conversion of args from wchar_t.
+     * Not gated on isDaemon: argv/cmdArgs are allocated in both daemon and
+     * -D modes. _freeWinArgs() tolerates NULL argv/cmdArgs from an early
+     * failure, and argc tracks argv's length once it is allocated. */
+    _freeWinArgs(argv, argc, cmdArgs);
 #else
     return 0;
 #endif
