@@ -469,7 +469,9 @@ int wolfSSH_SftpTest(int flag)
     int ret = 0;
     int argsCount;
 
-    const char* args[10];
+    /* The server thread holds ser.argv, so the client cannot share it. */
+    const char* argsServer[10];
+    const char* argsClient[10];
 #ifndef USE_WINDOWS_API
     char  portNumber[8];
 #endif
@@ -496,16 +498,16 @@ int wolfSSH_SftpTest(int flag)
 #endif
 
     argsCount = 0;
-    args[argsCount++] = ".";
-    args[argsCount++] = "-1";
+    argsServer[argsCount++] = ".";
+    argsServer[argsCount++] = "-1";
 #ifndef USE_WINDOWS_API
-    args[argsCount++] = "-p";
-    args[argsCount++] = "0";
+    argsServer[argsCount++] = "-p";
+    argsServer[argsCount++] = "0";
 #endif
     if (flag)
-        args[argsCount++] = "-N";
+        argsServer[argsCount++] = "-N";
 
-    ser.argv   = (char**)args;
+    ser.argv   = (char**)argsServer;
     ser.argc    = argsCount;
     ser.signal = &ready;
     InitTcpReady(ser.signal);
@@ -513,23 +515,23 @@ int wolfSSH_SftpTest(int flag)
     WaitTcpReady(&ready);
 
     argsCount = 0;
-    args[argsCount++] = ".";
-    args[argsCount++] = "-u";
-    args[argsCount++] = "jill";
-    args[argsCount++] = "-P";
-    args[argsCount++] = "upthehill";
+    argsClient[argsCount++] = ".";
+    argsClient[argsCount++] = "-u";
+    argsClient[argsCount++] = "jill";
+    argsClient[argsCount++] = "-P";
+    argsClient[argsCount++] = "upthehill";
 
 #ifndef USE_WINDOWS_API
     /* use port that server has found */
-    args[argsCount++] = "-p";
+    argsClient[argsCount++] = "-p";
     snprintf(portNumber, sizeof(portNumber), "%d", ready.port);
-    args[argsCount++] = portNumber;
+    argsClient[argsCount++] = portNumber;
 #endif
 
     if (flag)
-        args[argsCount++] = "-N";
+        argsClient[argsCount++] = "-N";
 
-    cli.argv    = (char**)args;
+    cli.argv    = (char**)argsClient;
     cli.argc    = argsCount;
     cli.signal  = &ready;
     cli.sftp_cb = commandCb;
