@@ -11945,7 +11945,15 @@ static int DoChannelOpen(WOLFSSH* ssh,
         typeId = NameToId(type, typeSz);
         switch (typeId) {
             case ID_CHANTYPE_SESSION:
-                if (ssh->channelListSz >= 1) {
+                /* RFC 4254 6.1: a session open travels client-to-server, so a
+                 * client refuses one ahead of any policy callback. */
+                if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+                    WLOG(WS_LOG_WARN, "Rejecting session channel open "
+                            "received by a client (wrong direction)");
+                    ret = WS_INVALID_CHANTYPE;
+                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                }
+                else if (ssh->channelListSz >= 1) {
                     ret = WS_INVALID_CHANID;
                     fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
                 }
