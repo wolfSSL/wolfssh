@@ -5872,7 +5872,15 @@ int GetStringRef(word32* strSz, const byte** str,
 
 /* Name-list to IDs. *idListSz is capacity in, count out, and bounds every
  * store. One ID per name at most, and names are capped at
- * WOLFSSH_MAX_NAMELIST_CNT, so an idList that size never trips the bound. */
+ * WOLFSSH_MAX_NAMELIST_CNT, so an idList that size never trips the bound.
+ * An empty element ends the list, silently dropping every name past it, as
+ * OpenSSH's match_list() does with a peer proposal. That is safe for the
+ * library's own lists on two counts: the canned defaults are built one
+ * "name," at a time, so they carry nothing but the trailing comma that
+ * AlgoListSz() strips, and a caller's list reaches those fields only
+ * through the ssh.c setters, which run CheckAlgoList() and reject every
+ * other empty element. A list built at runtime through neither route would
+ * lose algorithms; truncation is not an error, only a debug log. */
 static int GetNameListRaw(byte* idList, word32* idListSz,
         const byte* nameList, word32 nameListSz)
 {
@@ -5898,8 +5906,7 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
      * length of the list. Find the commas, or end of list, and then decode
      * the values. A name has a non-zero length, RFC 4251 section 5, so an
      * empty element -- what a leading, doubled, or trailing comma leaves
-     * behind -- ends the list. Names past it are dropped rather than
-     * rejected, which is what OpenSSH's match_list() does with a peer list.
+     * behind -- ends the list, per the contract above.
      */
 
     for (i = 0; i <= nameListSz; i++) {

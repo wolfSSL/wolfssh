@@ -16014,10 +16014,9 @@ typedef struct {
 /* RFC 4251 section 5: a name-list holds zero or more names separated by
  * commas, and every name has a non-zero length. So an empty element -- what a
  * leading, doubled, or trailing comma leaves behind -- can't be a name, and
- * the list ends there. Names past it are dropped rather than rejected, which
- * is what OpenSSH's match_list() does with a peer proposal. A local list never
- * arrives here with an empty element: CheckAlgoList() rejects one up front,
- * except for the single trailing comma that AlgoListSz() strips. */
+ * the list ends there. Names past it are dropped rather than rejected. See
+ * GetNameListRaw() in src/internal.c for the contract and the CheckAlgoList()
+ * invariant the library's own lists rely on. */
 static const EmptyNameCase emptyNameCases[] = {
     /* Nothing before the empty element, so nothing to negotiate with. */
     { "",                            ID_UNKNOWN, "zero names" },
