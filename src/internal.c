@@ -4480,6 +4480,7 @@ int FwdReplyPrepare(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
 {
     WOLFSSH_FWD_REMOTE* target;
+    WOLFSSH_FWD_REMOTE* dup;
     WOLFSSH_FWD_REMOTE* cur;
     void* heap;
 
@@ -4494,6 +4495,23 @@ void FwdPendingCommit(WOLFSSH* ssh, WOLFSSH_FWD_PENDING* pend)
     FwdPendingPop(ssh, pend);
 
     target = pend->entry != NULL ? pend->entry : pend->found;
+
+    /* An answer the send pumped in named the port this request asks for, so
+     * the bind stands registered already and the entry built for it is one too
+     * many. A cancel names a forward by its bind alone, so a bind gets one
+     * registration. A port-0 request has no port to be found by, and folds
+     * when the answer to it names one. */
+    if (pend->entry != NULL && !pend->entry->portPending) {
+        dup = FwdRemoteFind(ssh, pend->entry->bindAddr, pend->entry->bindPort);
+        if (dup != NULL) {
+            /* A request a callback sent named the entry built here, so it
+             * answers for the one that stands at the bind now. */
+            FwdReplyRebind(ssh, pend->entry, dup);
+            FwdRemoteUnlink(ssh, heap, pend->entry);
+            pend->entry = NULL;
+            target = dup;
+        }
+    }
 
     if (pend->entry != NULL) {
         for (cur = ssh->fwdRemoteList; cur != NULL && cur->next != NULL;
