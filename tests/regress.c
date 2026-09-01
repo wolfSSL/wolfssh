@@ -398,7 +398,7 @@ static WS_MAYBE_UNUSED void FreeChannelOpenHarness(ChannelOpenHarness* harness)
         wolfSSH_CTX_free(harness->ctx);
 }
 
-#if defined(WOLFSSH_FWD) && !defined(NO_WOLFSSH_CLIENT)
+#ifndef NO_WOLFSSH_CLIENT
 /* The same harness on the client side, sitting past userauth so an inbound
  * channel open is allowed through. */
 static void InitChannelOpenHarnessClient(ChannelOpenHarness* harness,
@@ -423,7 +423,7 @@ static void InitChannelOpenHarnessClient(ChannelOpenHarness* harness,
     AssertIntEQ(wolfSSH_SetHighwater(harness->ssh, 0), WS_SUCCESS);
     harness->ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
 }
-#endif /* WOLFSSH_FWD && !NO_WOLFSSH_CLIENT */
+#endif /* !NO_WOLFSSH_CLIENT */
 
 /* The tests below drive a server-side session. With NO_WOLFSSH_SERVER the
  * message filter has no server branch, so every message on such a session is
@@ -1810,6 +1810,15 @@ static WS_MAYBE_UNUSED void AssertChannelOpenFailResponse(
     AssertTrue(harness->ssh->channelList == NULL);
 }
 
+static WS_MAYBE_UNUSED int AcceptChannelOpenCb(WOLFSSH_CHANNEL* channel,
+        void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+
+    return WS_SUCCESS;
+}
+
 #ifdef WOLFSSH_FWD
 /* The port a peer picks for a port-0 forward in these tests. */
 #define REGRESS_FWD_ALLOC_PORT 49152
@@ -1930,14 +1939,6 @@ static int RejectChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
 }
 
 #ifdef WOLFSSH_FWD
-static int AcceptChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
-{
-    (void)channel;
-    (void)ctx;
-
-    return WS_SUCCESS;
-}
-
 static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
         const char* host, word32 port)
 {
@@ -2389,6 +2390,56 @@ static void TestChannelOpenRejectedBeforeKex(byte connectState)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+
+#ifndef NO_WOLFSSH_CLIENT
+/* RFC 4254 section 6.1 has a session open travelling client-to-server, so a
+ * client that receives one refuses it. OpenSSH and Dropbear reach the same
+ * answer by giving each role its own channel-type list. */
+static void TestSessionOnClientSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("session", 7, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The direction check runs ahead of the open policy hook, so a registered
+ * channelOpenCb cannot accept a session open on a client. */
+static void TestSessionOnClientBeatsOpenCb(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("session", 7, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx, AcceptChannelOpenCb),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 #ifndef NO_WOLFSSH_SERVER
@@ -12108,6 +12159,10 @@ int main(int argc, char** argv)
     TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
+#ifndef NO_WOLFSSH_CLIENT
+    TestSessionOnClientSendsOpenFail();
+    TestSessionOnClientBeatsOpenCb();
+#endif
 #ifndef NO_WOLFSSH_SERVER
     TestServerChannelBlockedBeforeAuth(serverSsh);
     TestServerChannelAllowedAfterAuth(serverSsh);
