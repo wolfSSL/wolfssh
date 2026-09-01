@@ -5062,10 +5062,11 @@ static int FwdReplyFromSendCb(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     return ret;
 }
 
-static void InitReplyFromSendHarness(ChannelOpenHarness* harness, byte msgId,
+/* Arm the callback on a harness in use, for a test that has to get the session
+ * somewhere before the answer lands. */
+static void ArmReplyFromSend(ChannelOpenHarness* harness, byte msgId,
         const byte* data, word32 dataSz)
 {
-    InitFwdRemoteHarness(harness);
     wolfSSH_SetIOSend(harness->ctx, FwdReplyFromSendCb);
 
     WMEMSET(&fwdReplyFromSend, 0, sizeof(fwdReplyFromSend));
@@ -5073,6 +5074,13 @@ static void InitReplyFromSendHarness(ChannelOpenHarness* harness, byte msgId,
     fwdReplyFromSend.msgId = msgId;
     fwdReplyFromSend.data = data;
     fwdReplyFromSend.dataSz = dataSz;
+}
+
+static void InitReplyFromSendHarness(ChannelOpenHarness* harness, byte msgId,
+        const byte* data, word32 dataSz)
+{
+    InitFwdRemoteHarness(harness);
+    ArmReplyFromSend(harness, msgId, data, dataSz);
 }
 
 /* The answer arrives with the slot still uncommitted, so its verdict parks
@@ -5145,6 +5153,42 @@ static void TestForwardedTcpipPortZeroReplyFromSendBinds(void)
     harness.io.outSz = 0;
     AssertForwardedOpenAccepted(&harness, "127.0.0.1", REGRESS_FWD_ALLOC_PORT,
             1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A port-0 forward the peer resolves to the port a setup in flight is asking
+ * for. The fold at settle scans the session's list, which that setup hasn't
+ * joined yet, so its commit is the one place the two can be folded. Without
+ * that, one bind takes two registrations and a cancel drops only the first. */
+static void TestForwardedTcpipCommitFoldsSettledDuplicate(void)
+{
+    ChannelOpenHarness harness;
+    byte port[UINT32_SZ];
+    word32 portSz;
+
+    InitFwdRemoteHarness(&harness);
+
+    /* A port-0 setup, still owed the port the peer bound. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 0, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    /* The next setup's send pumps in that answer, naming the port it is
+     * itself registering. */
+    portSz = AppendUint32(port, sizeof(port), 0, 8080);
+    ArmReplyFromSend(&harness, MSGID_REQUEST_SUCCESS, port, portSz);
+
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->bindPort, 8080);
+
+    /* One registration, so one cancel revokes the bind. */
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -12238,6 +12282,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipReplyFromSendCommits();
     TestForwardedTcpipRefusalFromSendDropsForward();
     TestForwardedTcpipPortZeroReplyFromSendBinds();
+    TestForwardedTcpipCommitFoldsSettledDuplicate();
     TestForwardedTcpipFailedSendDiscardsAnsweredSlot();
     TestForwardedTcpipRefusalFromSendSeesSendingCancel();
     TestForwardedTcpipRefusalDuringSendDropsForward();
