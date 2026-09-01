@@ -5195,6 +5195,47 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 }
 
 
+int wolfSSH_ChannelIdPeek(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz)
+{
+    WOLFSSH_CHANNEL* channel = NULL;
+    WOLFSSH_BUFFER* inputBuffer;
+    word32 avail;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdPeek(), ID = %u", channelId);
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    if (channel == NULL)
+        return WS_INVALID_CHANID;
+
+    inputBuffer = &channel->inputBuffer;
+    avail = inputBuffer->length - inputBuffer->idx;
+
+    /* Report the EOF only once the buffered data is drained. */
+    if (avail == 0 && channel->eofRxd) {
+        ssh->error = WS_EOF;
+        return WS_ERROR;
+    }
+
+    /* The EOF above outranks this: it names the channel. */
+    if (avail == 0 && ssh->disconnected) {
+        ssh->error = WS_DISCONNECT;
+        return WS_FATAL_ERROR;
+    }
+
+    bufSz = min(bufSz, avail);
+    if (buf != NULL) {
+        WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdPeek(), rxd = %u", bufSz);
+    return (int)bufSz;
+}
+
+
 int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz)
 {

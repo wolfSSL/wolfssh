@@ -979,6 +979,12 @@ WOLFSSH_API int wolfSSH_global_request(WOLFSSH* ssh, const unsigned char* data,
  * wolfSSH_ChannelRead() returns WS_REKEYING. */
 WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz);
+/* Peeks the channel named by channelId, with wolfSSH_stream_peek()'s
+ * contract, except that it peeks during a rekey the way
+ * wolfSSH_ChannelIdRead() reads during one. A NULL buf asks only for the
+ * count, still capped at bufSz. */
+WOLFSSH_API int wolfSSH_ChannelIdPeek(WOLFSSH* ssh, word32 channelId,
+        byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelIdSend(WOLFSSH* ssh, word32 channelId,
         byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_ChannelIdReadExt(WOLFSSH* ssh, word32 channelId,

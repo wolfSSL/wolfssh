@@ -10006,6 +10006,122 @@ done:
     return result;
 }
 
+/* wolfSSH_ChannelIdPeek() reports a named channel without consuming it. */
+static int test_ChannelIdPeek(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             in[32];
+    byte             out[32];
+    word32           i;
+
+    for (i = 0; i < (word32)sizeof(in); i++) {
+        in[i] = (byte)(i + 1);
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -7050;
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -7051; goto done; }
+
+    /* Bad args, before any channel exists. */
+    if (wolfSSH_ChannelIdPeek(NULL, 0, out, (word32)sizeof(out))
+            != WS_BAD_ARGUMENT) {
+        result = -7052; goto done;
+    }
+    if (wolfSSH_ChannelIdPeek(ssh, 99, out, (word32)sizeof(out))
+            != WS_INVALID_CHANID) {
+        result = -7053; goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    (word32)sizeof(in), DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -7054; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -7055;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    /* Open and empty: zero, not an error. */
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != 0) { result = -7056; goto done; }
+
+    if (wolfSSH_TestChannelPutData(ch, in, (word32)sizeof(in)) != WS_SUCCESS) {
+        result = -7057; goto done;
+    }
+
+    /* Whole payload reported and copied out. */
+    WMEMSET(out, 0, sizeof(out));
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -7058; goto done; }
+    if (WMEMCMP(out, in, sizeof(in)) != 0) { result = -7059; goto done; }
+
+    /* Consumed nothing, credited nothing. */
+    if (ch->inputBuffer.length - ch->inputBuffer.idx != (word32)sizeof(in)) {
+        result = -7060; goto done;
+    }
+    if (ch->windowSz != 0) { result = -7061; goto done; }
+
+    /* bufSz caps the count and the bytes written. */
+    WMEMSET(out, 0, sizeof(out));
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, 8);
+    if (ret != 8) { result = -7062; goto done; }
+    if (WMEMCMP(out, in, 8) != 0) { result = -7063; goto done; }
+    if (out[8] != 0) { result = -7064; goto done; }
+
+    /* A NULL buffer asks only for the count. */
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, NULL, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -7065; goto done; }
+
+    /* Still reported mid-rekey, where stream_peek returns WS_REKEYING. */
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    if (wolfSSH_stream_peek(ssh, out, (word32)sizeof(out)) != WS_REKEYING) {
+        result = -7066; goto done;
+    }
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -7067; goto done; }
+    ssh->isKeying = 0;
+
+    /* EOF stays hidden until the buffered data is drained. */
+    ch->eofRxd = 1;
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -7068; goto done; }
+
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != (int)sizeof(in)) { result = -7069; goto done; }
+
+    ssh->error = WS_SUCCESS;
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -7070; goto done; }
+    if (ssh->error != WS_EOF) { result = -7071; goto done; }
+
+    /* EOF outranks a disconnect. */
+    ssh->disconnected = 1;
+    ssh->error = WS_SUCCESS;
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -7072; goto done; }
+    if (ssh->error != WS_EOF) { result = -7073; goto done; }
+
+    /* Without the EOF, the dead session is reported instead. */
+    ch->eofRxd = 0;
+    ssh->error = WS_SUCCESS;
+    ret = wolfSSH_ChannelIdPeek(ssh, ch->channel, out, (word32)sizeof(out));
+    if (ret != WS_FATAL_ERROR) { result = -7074; goto done; }
+    if (ssh->error != WS_DISCONNECT) { result = -7075; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 /* wolfSSH_ChannelIdRead() counterpart of
  * test_stream_read_deferredWindowAdjust(): callers break out on a non-positive
  * read, and this entry point has to retire the owed-flush status itself. */
@@ -23093,6 +23209,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_ChannelIdRead_deferredWindowAdjust();
     printf("ChannelIdRead_deferredWindowAdjust: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelIdPeek();
+    printf("ChannelIdPeek: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_SERVER */
