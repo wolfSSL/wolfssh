@@ -1666,6 +1666,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->msgHighwaterMark = ctx->msgHighwaterMark;
     ssh->maxAuthAttempts = ctx->maxAuthAttempts;
+    ssh->appChannels = ctx->appChannels;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
     ssh->fs            = NULL;
@@ -12675,6 +12676,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
             if (ssh->ctx->channelReqShellCb) {
                 rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
             }
+            else {
+                rej = ssh->appChannels;
+            }
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
@@ -12683,6 +12687,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
             channel->sessionType = WOLFSSH_SESSION_EXEC;
             if (ssh->ctx->channelReqExecCb) {
                 rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
+            }
+            else {
+                rej = ssh->appChannels;
             }
             ssh->clientState = CLIENT_DONE;
 
@@ -12694,6 +12701,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
             if (ssh->ctx->channelReqSubsysCb) {
                 rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
+            }
+            else {
+                rej = ssh->appChannels;
             }
             ssh->clientState = CLIENT_DONE;
 
@@ -12836,7 +12846,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         int replyRet;
 
         if (rej) {
-            WLOG(WS_LOG_DEBUG, "Callback rejecting channel request.");
+            WLOG(WS_LOG_DEBUG, "Rejecting channel request.");
         }
         replyRet = SendChannelSuccess(ssh, channelId,
                 (ret == WS_SUCCESS && !rej));
