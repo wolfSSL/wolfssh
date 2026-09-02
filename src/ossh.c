@@ -298,7 +298,8 @@ static int GetOpenSshKeyMlDsa(MlDsaKey* key,
     return ret;
 }
 
-/* Parse OpenSSH ML-DSA composite private key. */
+/* Parse OpenSSH ML-DSA composite private key.
+ * Flattens failures to WS_KEY_FORMAT_E except init/memory errors. */
 static int GetOpenSshKeyMlDsaComposite(byte keyId, MlDsaKey* mldsa,
         void* tradKey, void* heap, const byte* buf, word32 len, word32* idx)
 {
@@ -342,22 +343,33 @@ static int GetOpenSshKeyMlDsaComposite(byte keyId, MlDsaKey* mldsa,
         ret = wc_MlDsaKey_MakeKeyFromSeed(mldsa, priv);
     }
     if (ret == WS_SUCCESS) {
-#ifndef WOLFSSH_NO_MLDSA87
-        byte mldsaPubCheck[WC_MLDSA_87_PUB_KEY_SIZE];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-        byte mldsaPubCheck[WC_MLDSA_65_PUB_KEY_SIZE];
-#else
-        byte mldsaPubCheck[WC_MLDSA_44_PUB_KEY_SIZE];
-#endif
-        word32 mldsaPubCheckSz = sizeof(mldsaPubCheck);
+#ifdef WOLFSSH_SMALL_STACK
+        byte* mldsaPubCheck = NULL;
+        word32 mldsaPubCheckSz = params.mldsaPubSz;
 
-        ret = wc_MlDsaKey_ExportPubRaw(mldsa, mldsaPubCheck,
-                &mldsaPubCheckSz);
-        if (ret == 0 &&
-                (mldsaPubCheckSz != params.mldsaPubSz ||
-                 WMEMCMP(mldsaPubCheck, pub, params.mldsaPubSz) != 0)) {
-            ret = WS_KEY_FORMAT_E;
+        mldsaPubCheck = (byte*)WMALLOC(mldsaPubCheckSz, heap, DYNTYPE_BUFFER);
+        if (mldsaPubCheck == NULL) {
+            ret = WS_MEMORY_E;
         }
+#else
+        byte mldsaPubCheck[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
+        word32 mldsaPubCheckSz = sizeof(mldsaPubCheck);
+#endif
+
+        if (ret == WS_SUCCESS) {
+            ret = wc_MlDsaKey_ExportPubRaw(mldsa, mldsaPubCheck,
+                    &mldsaPubCheckSz);
+            if (ret == 0 &&
+                    (mldsaPubCheckSz != params.mldsaPubSz ||
+                     WMEMCMP(mldsaPubCheck, pub, params.mldsaPubSz) != 0)) {
+                ret = WS_KEY_FORMAT_E;
+            }
+        }
+#ifdef WOLFSSH_SMALL_STACK
+        if (mldsaPubCheck) {
+            WFREE(mldsaPubCheck, heap, DYNTYPE_BUFFER);
+        }
+#endif
     }
     if (ret == WS_SUCCESS) {
         ret = ops->importPriv(tradKey, priv + MLDSA_SEED_SZ, params.tradPrivSz,
@@ -379,7 +391,9 @@ static int GetOpenSshKeyMlDsaComposite(byte keyId, MlDsaKey* mldsa,
     if (ret != 0) {
         wc_MlDsaKey_Free(mldsa);
         ops->free(tradKey);
-        ret = WS_KEY_FORMAT_E;
+        if (ret != WS_MEMORY_E) {
+            ret = WS_KEY_FORMAT_E;
+        }
     }
     return ret;
 }

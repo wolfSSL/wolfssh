@@ -64,18 +64,23 @@
 #ifndef WOLFSSH_NO_MLDSA
     #include <wolfssl/wolfcrypt/dilithium.h>
 
-    /* SendKexGetSigningKey() bitwise-copies MlDsaKey, so it must have no
-     * heap-allocated/self-referential members; guard against that here. */
-    #if defined(WOLFSSL_MLDSA_DYNAMIC_KEYS) || defined(WOLFSSL_DILITHIUM_DYNAMIC_KEYS) || \
-            (!(defined(WC_MLDSA_FIXED_ARRAY) || defined(WC_DILITHIUM_FIXED_ARRAY)) && \
-             (defined(WC_MLDSA_CACHE_MATRIX_A) || defined(WC_DILITHIUM_CACHE_MATRIX_A) || \
-              defined(WC_MLDSA_CACHE_PRIV_VECTORS) || defined(WC_DILITHIUM_CACHE_PRIV_VECTORS) || \
-              defined(WC_MLDSA_CACHE_PUB_VECTORS) || defined(WC_DILITHIUM_CACHE_PUB_VECTORS)))
-        #error "wolfSSH's ML-DSA composite key handling assumes MlDsaKey " \
-            "is flat and safe to bitwise-copy; this wolfCrypt build " \
-            "config gives it heap-allocated/pointer members, so " \
-            "SendKexGetSigningKey() must be reworked before it can be " \
-            "used with WOLFSSH_NO_MLDSA unset."
+    #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
+        /* SendKexGetSigningKey() bitwise-copies MlDsaKey, so it must be
+         * flat. */
+        #if defined(WOLFSSL_MLDSA_DYNAMIC_KEYS) || \
+                defined(WOLFSSL_DILITHIUM_DYNAMIC_KEYS) || \
+                (!(defined(WC_MLDSA_FIXED_ARRAY) || \
+                   defined(WC_DILITHIUM_FIXED_ARRAY)) && \
+                 (defined(WC_MLDSA_CACHE_MATRIX_A) || \
+                  defined(WC_DILITHIUM_CACHE_MATRIX_A) || \
+                  defined(WC_MLDSA_CACHE_PRIV_VECTORS) || \
+                  defined(WC_DILITHIUM_CACHE_PRIV_VECTORS) || \
+                  defined(WC_MLDSA_CACHE_PUB_VECTORS) || \
+                  defined(WC_DILITHIUM_CACHE_PUB_VECTORS)))
+            #error "MlDsaKey must be flat for bitwise copy. Disable " \
+                "dynamic keys/caching in wolfCrypt, or define " \
+                "WOLFSSH_NO_MLDSA_COMPOSITES."
+        #endif
     #endif
 
 #endif
@@ -1068,6 +1073,7 @@ static const char cannedKexAlgoNames[] =
 
 /* ML-DSA listed first (post-quantum priority), then ECDSA, ED25519, RSA. */
 static const char cannedKeyAlgoNames[] =
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
@@ -1090,6 +1096,7 @@ static const char cannedKeyAlgoNames[] =
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -1169,6 +1176,7 @@ static const char cannedKeyAlgoNames[] =
  * ("*-cert-v01@openssh.com") names: host-cert verification is unimplemented, so
  * a client must not advertise them as host keys. Keep plain/X.509 in sync. */
 static const char cannedKeyAlgoNamesHostKey[] =
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
@@ -1191,6 +1199,7 @@ static const char cannedKeyAlgoNamesHostKey[] =
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -3495,6 +3504,7 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_MLDSA44
     { ID_MLDSA44, TYPE_KEY, "ssh-mldsa-44" },
 #endif
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     { ID_MLDSA44_ES256, TYPE_KEY, "ssh-mldsa44-es256@wolfssl.com" },
 #endif
@@ -3517,6 +3527,7 @@ static const NameIdPair NameIdMap[] = {
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     { ID_MLDSA87_ED448, TYPE_KEY, "ssh-mldsa87-ed448@wolfssl.com" },
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA65
     { ID_MLDSA65, TYPE_KEY, "ssh-mldsa-65" },
 #endif
@@ -5619,6 +5630,7 @@ static const byte  cannedKeyAlgoClient[] = {
         #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 #endif /* WOLFSSH_CERTS */
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
     ID_MLDSA87_ED448,
 #endif
@@ -5641,6 +5653,7 @@ static const byte  cannedKeyAlgoClient[] = {
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
     ID_MLDSA44_ES256,
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     ID_MLDSA87,
 #endif
@@ -6878,16 +6891,6 @@ struct wolfSSH_sigKeyBlock {
 #ifndef WOLFSSH_NO_MLDSA
         struct {
             WS_MlDsaCompositeBody base;
-            /* largest mldsaPubSz + tradPubSz across WS_GetCompositeParams()
-             * combos; keep in sync with any new combo added there */
-#ifndef WOLFSSH_NO_MLDSA87
-            byte q[WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-            byte q[WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#else
-            byte q[WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#endif
-            word32 qSz;
         } mldsa_composite;
 #endif
     } sk;
@@ -14643,27 +14646,16 @@ struct wolfSSH_sigKeyBlockFull {
             struct {
                 MlDsaKey key;
                 /* Size to highest enabled ML-DSA level; qSz tracks actual. */
-#ifndef WOLFSSH_NO_MLDSA87
-                byte q[WC_MLDSA_87_PUB_KEY_SIZE];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-                byte q[WC_MLDSA_65_PUB_KEY_SIZE];
-#else
-                byte q[WC_MLDSA_44_PUB_KEY_SIZE];
-#endif
+                byte q[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
                 word32 qSz;
             } mldsa;
             struct {
                 WS_MlDsaCompositeBody base;
                 byte tradInit;
                 /* largest mldsaPubSz + tradPubSz across
-                 * WS_GetCompositeParams() combos; keep in sync */
-#ifndef WOLFSSH_NO_MLDSA87
-                byte q[WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-                byte q[WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#else
-                byte q[WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ];
-#endif
+                 * WS_GetCompositeParams() combos */
+                byte q[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ +
+                       COMPOSITE_MAX_TRAD_PUB_SZ];
                 word32 qSz;
             } mldsa_composite;
 #endif
@@ -22847,6 +22839,10 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
     XMEMSET(params, 0, sizeof(*params));
     params->keyId = keyId;
 
+#ifdef WOLFSSH_NO_MLDSA_COMPOSITES
+    /* Fail unconditionally if composites disabled. */
+    return WS_NOT_COMPILED;
+#else
     switch (keyId) {
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
         case ID_MLDSA44_ES256:
@@ -22966,6 +22962,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
     }
 
     return WS_SUCCESS;
+#endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
 }
 
 int WS_Hash_Helper(enum wc_HashType hashId, const byte* msg, word32 msgSz,
@@ -23002,6 +22999,14 @@ static int CompositeEccInit(void* key, void* heap)
 static void CompositeEccFree(void* key)
 {
     wc_ecc_free((ecc_key*)key);
+}
+
+/* returns 0 on success, negative on failure (wc_ecc_make_key_ex() code) */
+static int CompositeEccMakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    return wc_ecc_make_key_ex(rng, (int)params->tradPrivSz, (ecc_key*)key,
+            params->eccCurveId);
 }
 
 /* returns 0 on success, negative on failure (wc_ecc_import_x963() code) */
@@ -23194,7 +23199,7 @@ static int CompositeEccVerify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEccOps = {
-    CompositeEccInit, CompositeEccFree,
+    CompositeEccInit, CompositeEccFree, CompositeEccMakeKey,
     CompositeEccImportPub, CompositeEccImportPriv,
     CompositeEccExportPrivOnly, CompositeEccExportPub,
     CompositeEccSign, CompositeEccVerify,
@@ -23213,6 +23218,14 @@ static int CompositeEd25519Init(void* key, void* heap)
 static void CompositeEd25519Free(void* key)
 {
     wc_ed25519_free((ed25519_key*)key);
+}
+
+/* returns 0 on success, negative wc_ed25519_make_key() code on failure */
+static int CompositeEd25519MakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    WOLFSSH_UNUSED(params);
+    return wc_ed25519_make_key(rng, ED25519_KEY_SIZE, (ed25519_key*)key);
 }
 
 /* returns 0 on success, negative wc_ed25519_import_public() code on
@@ -23298,7 +23311,7 @@ static int CompositeEd25519Verify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEd25519Ops = {
-    CompositeEd25519Init, CompositeEd25519Free,
+    CompositeEd25519Init, CompositeEd25519Free, CompositeEd25519MakeKey,
     CompositeEd25519ImportPub, CompositeEd25519ImportPriv,
     CompositeEd25519ExportPrivOnly, CompositeEd25519ExportPub,
     CompositeEd25519Sign, CompositeEd25519Verify,
@@ -23317,6 +23330,14 @@ static int CompositeEd448Init(void* key, void* heap)
 static void CompositeEd448Free(void* key)
 {
     wc_ed448_free((ed448_key*)key);
+}
+
+/* returns 0 on success, negative wc_ed448_make_key() code on failure */
+static int CompositeEd448MakeKey(void* key, WC_RNG* rng,
+        const CompositeParams* params)
+{
+    WOLFSSH_UNUSED(params);
+    return wc_ed448_make_key(rng, ED448_KEY_SIZE, (ed448_key*)key);
 }
 
 /* returns 0 on success, negative wc_ed448_import_public() code on failure */
@@ -23399,7 +23420,7 @@ static int CompositeEd448Verify(void* key, void* heap,
 }
 
 static const CompositeTradOps compositeEd448Ops = {
-    CompositeEd448Init, CompositeEd448Free,
+    CompositeEd448Init, CompositeEd448Free, CompositeEd448MakeKey,
     CompositeEd448ImportPub, CompositeEd448ImportPriv,
     CompositeEd448ExportPrivOnly, CompositeEd448ExportPub,
     CompositeEd448Sign, CompositeEd448Verify,
@@ -24162,27 +24183,9 @@ int wolfSSH_TestSignHMlDsaComposite(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
     else {
         ret = ops->init(&sigKey.sk.mldsa_composite.base.trad, ssh->ctx->heap);
-        /* make_key not in CompositeTradOps. */
         if (ret == 0) {
-            if (params.tradType == TRAD_TYPE_ED25519) {
-#ifndef WOLFSSH_NO_ED25519
-                ret = wc_ed25519_make_key(ssh->rng, ED25519_KEY_SIZE,
-                        &sigKey.sk.mldsa_composite.base.trad.ed25519);
-#endif
-            }
-            else if (params.tradType == TRAD_TYPE_ED448) {
-#ifdef HAVE_ED448
-                ret = wc_ed448_make_key(ssh->rng, 57,
-                        &sigKey.sk.mldsa_composite.base.trad.ed448);
-#endif
-            }
-            else if (params.tradType == TRAD_TYPE_ECC) {
-#ifndef WOLFSSH_NO_ECDSA
-                ret = wc_ecc_make_key_ex(ssh->rng, (int)params.tradPrivSz,
-                        &sigKey.sk.mldsa_composite.base.trad.ecc,
-                        params.eccCurveId);
-#endif
-            }
+            ret = ops->makeKey(&sigKey.sk.mldsa_composite.base.trad, ssh->rng,
+                    &params);
         }
     }
 

@@ -71,7 +71,25 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
-        mldsa: [ 'yes', 'no' ]
+        # The last two variants reuse the ML-DSA-enabled wolfSSL and build
+        # wolfSSH with extra defines it has no configure option for: one
+        # turns the composite algorithms off, one takes the small-stack
+        # (heap-allocated) composite paths. Those legs stop after the sshd
+        # tests; the later steps reconfigure without the extra define.
+        mldsa: [ 'yes', 'no', 'yes-no-composites', 'yes-small-stack' ]
+        include:
+          - mldsa: 'yes'
+            wolfssl_mldsa: 'yes'
+            extra_flags: ''
+          - mldsa: 'no'
+            wolfssl_mldsa: 'no'
+            extra_flags: ''
+          - mldsa: 'yes-no-composites'
+            wolfssl_mldsa: 'yes'
+            extra_flags: ' -DWOLFSSH_NO_MLDSA_COMPOSITES'
+          - mldsa: 'yes-small-stack'
+            wolfssl_mldsa: 'yes'
+            extra_flags: ' -DWOLFSSH_SMALL_STACK'
     name: Build and test the wolfsshd and wolfssh apps
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -80,7 +98,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: build-dir/
-          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-mldsa-${{ matrix.mldsa }}-v3
+          key: wolfssh-sshd-wolfssl-${{ matrix.wolfssl }}-${{ matrix.os }}-mldsa-${{ matrix.wolfssl_mldsa }}-v3
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v6
@@ -94,7 +112,7 @@ jobs:
       - name: configure
         working-directory: ./wolfssh/
         run : |
-          ./configure --enable-all --enable-ossh-certs LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
+          ./configure --enable-all --enable-ossh-certs LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120${{ matrix.extra_flags }}"
 
       - name: make check
         working-directory: ./wolfssh/
@@ -109,6 +127,7 @@ jobs:
       # could use optimization with caching
       - name: Test memory after close down
         working-directory: ./wolfssh/
+        if: matrix.extra_flags == ''
         run: |
           sudo apt-get -y update
           sudo apt-get -y install valgrind
@@ -123,6 +142,7 @@ jobs:
       # regression test, check that cat command does not hang
       - name: Test cat command for hanging
         working-directory: ./wolfssh/
+        if: matrix.extra_flags == ''
         timeout-minutes: 1
         run: |
           touch sshd_config.txt
@@ -145,16 +165,19 @@ jobs:
 
       - name: configure with debug
         working-directory: ./wolfssh/
+        if: matrix.extra_flags == ''
         run : |
           ./configure --enable-all --enable-debug LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120"
 
       - name: make
         working-directory: ./wolfssh/
+        if: matrix.extra_flags == ''
         run: make
 
       # ssh_kex_algos.sh requires debug output otherwise it is skipped
       - name: Run wolfSSHd tests with debug
         working-directory: ./wolfssh/apps/wolfsshd/test
+        if: matrix.extra_flags == ''
         run: |
           git log -3
           sudo ./run_all_sshd_tests.sh --match ssh_kex_algos.sh
