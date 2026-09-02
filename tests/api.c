@@ -7906,6 +7906,9 @@ static void test_wolfSSH_KeyboardInteractive(void)
     argsCount = 0;
     args[argsCount++] = ".";
     args[argsCount++] = "-1";
+    /* Echo mode: "test" is not an account on the host, so the echoserver's
+     * shell callback would refuse the shell request this client sends. */
+    args[argsCount++] = "-f";
     args[argsCount++] = "-i";
     args[argsCount++] = "test:test";
     args[argsCount++] = "-p";
