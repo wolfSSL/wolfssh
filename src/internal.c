@@ -945,7 +945,13 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 
 
 /* 'state' argument is for if trying to send a message or receive one.
- * Returns 1 if allowed 0 if not allowed. */
+ * Returns 1 if allowed 0 if not allowed.
+ *
+ * The side helpers implement the receive policy only; 'state' is unused,
+ * and both WS_MSG_SEND callers ask about channel messages that no role
+ * list names. IDs 30 to 49 are per KEX method, so those lists hold for
+ * the methods in cannedKexAlgoNames, not the ids; RFC 4432 and RFC 4462
+ * send some of those ids the other way. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
 #ifndef NO_WOLFSSH_SERVER
