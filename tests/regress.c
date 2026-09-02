@@ -4879,6 +4879,60 @@ static void TestForwardedTcpipCommitFoldsSettledDuplicate(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* The mirror of that: an answer the cancel's send pumps in folds the very
+ * registration the cancel resolved to on the way in, and the unlink has to
+ * hand the cancel over rather than void it. Otherwise the cancel commits
+ * naming nothing and the registration standing at the bind is never
+ * revoked. */
+static void TestForwardedTcpipSettleFoldRebindsSendingCancel(void)
+{
+    ChannelOpenHarness harness;
+    byte port[UINT32_SZ];
+    word32 portSz;
+
+    InitFwdRemoteHarness(&harness);
+
+    /* A port-0 setup, still owed the port the peer bound. */
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 0, 1),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+
+    /* An explicit-port registration for the cancel to resolve to. */
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(harness.ssh, "127.0.0.1", 8080, 0),
+            WS_SUCCESS);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 2);
+
+    /* The cancel's send pumps in the port-0 answer, naming the port the
+     * cancel is revoking, which folds the entry the cancel resolved to. */
+    portSz = AppendUint32(port, sizeof(port), 0, 8080);
+    ArmReplyFromSend(&harness, MSGID_REQUEST_SUCCESS, port, portSz);
+
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(harness.ssh, "127.0.0.1", 8080, 1),
+            WS_SUCCESS);
+
+    /* One registration, and the cancel names it. */
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 1);
+    AssertIntEQ(harness.ssh->fwdRemoteList->bindPort, 8080);
+    AssertNotNull(harness.ssh->fwdReplyHead);
+    AssertIntEQ(harness.ssh->fwdReplyHead->isCancel, 1);
+    AssertTrue(harness.ssh->fwdReplyHead->entry == harness.ssh->fwdRemoteList);
+
+    /* A cancel stops matching as it goes out. */
+    harness.io.outSz = 0;
+    AssertForwardedOpenRefused(&harness, "127.0.0.1", 8080);
+
+    /* The peer took the listener down, and nothing is left at the bind. */
+    harness.io.outSz = 0;
+    FeedRequestSuccess(&harness);
+    AssertIntEQ(FwdRemoteCount(harness.ssh), 0);
+    AssertTrue(harness.ssh->fwdReplyHead == NULL);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
 /* The peer answered what it had seen of the request, then the rest of the
  * send failed. The request never reached the peer whole, so the parked
  * verdict settles nothing and goes back with the slot. */
@@ -11251,6 +11305,7 @@ int main(int argc, char** argv)
     TestForwardedTcpipRefusalFromSendDropsForward();
     TestForwardedTcpipPortZeroReplyFromSendBinds();
     TestForwardedTcpipCommitFoldsSettledDuplicate();
+    TestForwardedTcpipSettleFoldRebindsSendingCancel();
     TestForwardedTcpipFailedSendDiscardsAnsweredSlot();
     TestForwardedTcpipRefusalFromSendSeesSendingCancel();
     TestForwardedTcpipRefusalDuringSendDropsForward();

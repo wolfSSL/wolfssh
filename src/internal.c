@@ -4048,6 +4048,21 @@ static void FwdPendingVoid(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* entry)
 }
 
 
+/* Hand every request in flight naming one forward over to another. A request
+ * resolves its forward before its send, so when an answer that send pumped in
+ * folds two registrations into one, the survivor is what it named. */
+static void FwdPendingRebind(WOLFSSH* ssh, const WOLFSSH_FWD_REMOTE* from,
+        WOLFSSH_FWD_REMOTE* to)
+{
+    WOLFSSH_FWD_PENDING* pend;
+
+    for (pend = ssh->fwdPendingHead; pend != NULL; pend = pend->next) {
+        if (pend->found == from)
+            pend->found = to;
+    }
+}
+
+
 /* A forward a request in flight is registering, or NULL. It is not on the
  * session's list until that request commits, but it is what the peer is being
  * asked for, so a request a callback sends meanwhile names the same one. */
@@ -4249,10 +4264,12 @@ static void FwdRemoteSettle(WOLFSSH* ssh, WOLFSSH_FWD_REMOTE* entry,
             WLOG(WS_LOG_INFO, "Remote forward reply named a port already "
                     "registered");
             /* Requests still queued on the stale entry asked about this bind,
-             * so they answer for the entry that stands at it now. Unlinking
-             * without this leaves them naming nothing, and a cancel among
-             * them would settle no forward. */
+             * so they answer for the entry that stands at it now, and so does
+             * one still in its send window. Unlinking without this leaves
+             * them naming nothing, and a cancel among them would settle no
+             * forward. */
             FwdReplyRebind(ssh, dup, entry);
+            FwdPendingRebind(ssh, dup, entry);
             FwdRemoteUnlink(ssh, ssh->ctx->heap, dup);
         }
     }
