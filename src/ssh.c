@@ -1288,8 +1288,11 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
     if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
         ret = WS_FATAL_ERROR;
 
-    if (ret == WS_SUCCESS)
-        ret = ssh->error = SendKexInit(ssh);
+    if (ret == WS_SUCCESS) {
+        ret = SendKexInit(ssh);
+        if (ret != WS_SUCCESS)
+            ssh->error = ret;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TriggerKeyExchange(), ret = %d", ret);
     return ret;

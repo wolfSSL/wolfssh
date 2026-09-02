@@ -7167,6 +7167,46 @@ done:
 }
 #endif /* NO_WOLFSSH_CLIENT */
 
+#ifndef NO_WOLFSSH_CLIENT
+/* A rekey that starts cleanly leaves ssh->error alone. It runs from
+ * HighwaterCheck() inside wolfSSH_SendPacket(), so writing WS_SUCCESS there
+ * would erase what the pass the mark fired on had already reported. */
+static int test_TriggerKeyExchangeKeepsError(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    int          result = 0;
+    int          ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1820;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1821; goto done; }
+
+    /* The status the pass was carrying when the mark fired. */
+    ssh->error = WS_CHANNEL_CLOSED;
+
+    ret = wolfSSH_TriggerKeyExchange(ssh);
+    if (ret != WS_SUCCESS) { result = -1822; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
+        result = -1823;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
 
 /* A peer may half-close its channel before it makes its shell/exec/subsystem
  * request, RFC 4254 section 5.3. DoChannelEof() reports that as WS_EOF, and
@@ -20026,6 +20066,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("WorkerReportsExtDataChannelKeying: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_TriggerKeyExchangeKeepsError();
+    printf("TriggerKeyExchangeKeepsError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_StreamReadExtDataHeadChannel();
     printf("StreamReadExtDataHeadChannel: %s\n",
