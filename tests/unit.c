@@ -9245,6 +9245,68 @@ static int test_DoChannelRequest(void)
     }
 #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
 
+    /* Application-driven channels flip the no-callback default: with
+     * accept() already returned there is nothing left to start a shell,
+     * exec or subsystem, so all three are refused rather than accepted. */
+    {
+        static const byte paySubsys[] = {
+            0x00,0x00,0x00,0x00,              /* channelId = 0   */
+            0x00,0x00,0x00,0x09,              /* typeSz = 9      */
+            0x73,0x75,0x62,0x73,0x79,0x73,
+            0x74,0x65,0x6D,                   /* "subsystem"     */
+            0x01,                             /* wantReply = 1   */
+            0x00,0x00,0x00,0x04,              /* nameSz = 4      */
+            0x73,0x66,0x74,0x70               /* "sftp"          */
+        };
+        struct {
+            const char* label;
+            const byte* payload;
+            word32      payloadSz;
+            int         errBase;
+        } appCases[] = {
+            { "shell",     payShell,  (word32)sizeof(payShell),  -495 },
+            { "exec",      payExec,   (word32)sizeof(payExec),   -497 },
+            { "subsystem", paySubsys, (word32)sizeof(paySubsys), -499 }
+        };
+        int a;
+
+        for (a = 0; a < (int)(sizeof(appCases) / sizeof(appCases[0])); a++) {
+            word32 idxApp = 0;
+            int    retApp, capMsgId;
+
+            if (wolfSSH_SetAppChannels(ssh, 1) != WS_SUCCESS) {
+                printf("DoChannelRequest[app-%s]: set failed\n",
+                        appCases[a].label);
+                result = appCases[a].errBase;
+                goto done;
+            }
+
+            s_chanReqCaptureSz = 0;
+            WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+
+            retApp = wolfSSH_TestDoChannelRequest(ssh,
+                    (byte*)appCases[a].payload, appCases[a].payloadSz,
+                    &idxApp);
+            wolfSSH_SetAppChannels(ssh, 0);
+
+            if (retApp != WS_SUCCESS) {
+                printf("DoChannelRequest[app-%s]: ret=%d, expected=%d\n",
+                        appCases[a].label, retApp, WS_SUCCESS);
+                result = appCases[a].errBase;
+                goto done;
+            }
+
+            capMsgId = CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz);
+            if (capMsgId != (int)MSGID_CHANNEL_FAILURE) {
+                printf("DoChannelRequest[app-%s]: msg_id=0x%02x, "
+                        "expected=0x%02x\n", appCases[a].label, capMsgId,
+                        MSGID_CHANNEL_FAILURE);
+                result = appCases[a].errBase - 1;
+                goto done;
+            }
+        }
+    }
+
 done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
