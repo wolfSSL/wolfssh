@@ -300,7 +300,8 @@ static int test_ParseConfigLine(void)
     #ifndef WOLFSSH_IGNORE_UNKNOWN_CONFIG
         {"Unknown extension of Port", "PortFoo 22", 1},
         {"Unknown extension of HostKey", "HostKeyFoo /tmp/x", 1},
-        {"Unknown extension of HostKeyStore", "HostKeyStoreX MY", 1},
+        {"Unknown extension of wolfSSH_HostKeyStore",
+            "wolfSSH_HostKeyStoreX MY", 1},
         {"Unknown extension of TrustedUserCAStore",
             "wolfSSH_TrustedUserCAStoreX yes", 1},
     #endif
@@ -454,9 +455,10 @@ static int test_ConfigCopy(void)
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_TrustedUserCAStore yes");
 
 #ifdef WOLFSSHD_WIN_STORE_CONFIG
-    if (ret == WS_SUCCESS) ret = PCL("HostKeyStore MY");
-    if (ret == WS_SUCCESS) ret = PCL("HostKeyStoreSubject wolfSSH Host");
-    if (ret == WS_SUCCESS) ret = PCL("HostKeyStoreFlags 0x1000");
+    if (ret == WS_SUCCESS) ret = PCL("wolfSSH_HostKeyStore MY");
+    if (ret == WS_SUCCESS)
+        ret = PCL("wolfSSH_HostKeyStoreSubject wolfSSH Host");
+    if (ret == WS_SUCCESS) ret = PCL("wolfSSH_HostKeyStoreFlags 0x1000");
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_WinUserStores MY,Root");
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_WinUserDwFlags 0x1");
     if (ret == WS_SUCCESS) ret = PCL("wolfSSH_WinUserPvPara subjectName");
@@ -5142,8 +5144,7 @@ static int test_PermitRootLoginModes(void)
 }
 
 /* The config parser matches option names with WSTRNCMP over the options table
- * in order, so no entry may be a strict prefix of a later one (e.g. "HostKey"
- * must come after the "HostKeyStore*" names). */
+ * in order, so no entry may be a strict prefix of a later one. */
 static int test_ConfigOptionPrefixOrder(void)
 {
     int ret = WS_SUCCESS;
@@ -5193,9 +5194,9 @@ static int test_ConfigGlobalOnlyOptionsInMatch(void)
         { "HostCertificate /etc/ssh/host_cert.pem", WS_BAD_ARGUMENT },
 #endif
 #ifdef WOLFSSHD_WIN_STORE_CONFIG
-        { "HostKeyStore MY", WS_BAD_ARGUMENT },
-        { "HostKeyStoreSubject wolfSSH Host", WS_BAD_ARGUMENT },
-        { "HostKeyStoreFlags 0x1000", WS_BAD_ARGUMENT },
+        { "wolfSSH_HostKeyStore MY", WS_BAD_ARGUMENT },
+        { "wolfSSH_HostKeyStoreSubject wolfSSH Host", WS_BAD_ARGUMENT },
+        { "wolfSSH_HostKeyStoreFlags 0x1000", WS_BAD_ARGUMENT },
         { "wolfSSH_WinUserStores CERT_STORE_PROV_SYSTEM", WS_BAD_ARGUMENT },
         { "wolfSSH_WinUserDwFlags LOCAL_MACHINE", WS_BAD_ARGUMENT },
         { "wolfSSH_WinUserPvPara SSH_UserCA", WS_BAD_ARGUMENT },
