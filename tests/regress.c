@@ -3350,6 +3350,127 @@ static void TestChannelCloseCallbackReturnIgnored(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* Builds a plaintext SSH_MSG_CHANNEL_REQUEST whose type-specific tail is a
+ * single string, which is the shape of both "exec" and "subsystem". */
+static word32 BuildChannelStringRequestPacket(word32 recipientChannelId,
+        const char* type, byte wantReply, const char* arg,
+        byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendString(payload, sizeof(payload), idx, type);
+    idx = AppendByte(payload, sizeof(payload), idx, wantReply);
+    idx = AppendString(payload, sizeof(payload), idx, arg);
+
+    return WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, out, outSz);
+}
+
+/* What a session request callback saw. */
+static int sessionReqCbCalls;
+static WS_SessionType sessionReqCbType;
+static char sessionReqCbCommand[32];
+static void* sessionReqCbCtx;
+static int sessionReqCbReturn;
+
+static int RecordingSessionReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    const char* command;
+
+    sessionReqCbCalls++;
+    sessionReqCbCtx = ctx;
+    sessionReqCbCommand[0] = 0;
+
+    if (channel != NULL) {
+        sessionReqCbType = wolfSSH_ChannelGetSessionType(channel);
+        command = wolfSSH_ChannelGetSessionCommand(channel);
+        if (command != NULL) {
+            WSTRNCPY(sessionReqCbCommand, command,
+                    sizeof(sessionReqCbCommand) - 1);
+            sessionReqCbCommand[sizeof(sessionReqCbCommand) - 1] = 0;
+        }
+    }
+
+    return sessionReqCbReturn;
+}
+
+/* Drives one session request through a fresh harness, with the callback
+ * returning cbReturn, and returns the message id the server answered with. */
+static byte RunSessionRequest(const char* type, const char* arg, int cbReturn,
+        WS_SessionType expectType)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+    int cbCtx = 0;
+    byte replyId;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbType = WOLFSSH_SESSION_UNKNOWN;
+    sessionReqCbCommand[0] = 0;
+    sessionReqCbCtx = NULL;
+    sessionReqCbReturn = cbReturn;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    if (WSTRCMP(type, "exec") == 0) {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                    RecordingSessionReqCb), WS_SUCCESS);
+    }
+    else {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                    RecordingSessionReqCb), WS_SUCCESS);
+    }
+    AssertIntEQ(wolfSSH_SetChannelReqCtx(harness.ssh, &cbCtx), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, type, 1, arg,
+            in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertTrue(sessionReqCbCtx == &cbCtx);
+    AssertIntEQ(sessionReqCbType, expectType);
+    AssertIntEQ(WSTRCMP(sessionReqCbCommand, arg), 0);
+
+    replyId = ParseMsgId(harness.io.out, harness.io.outSz);
+    FreeChannelOpenHarness(&harness);
+
+    return replyId;
+}
+
+/* The exec callback is the only place an application can vet a remote
+ * command, and its return is what decides the reply on the wire.
+ * DoChannelRequest() tests only for nonzero, so a bare 1 rejects the same
+ * as a WS_ error. */
+static void TestChannelReqExecCallbackRuns(void)
+{
+    AssertIntEQ(RunSessionRequest("exec", "ls", WS_SUCCESS,
+                WOLFSSH_SESSION_EXEC), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(RunSessionRequest("exec", "ls", WS_BAD_ARGUMENT,
+                WOLFSSH_SESSION_EXEC), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(RunSessionRequest("exec", "ls", 1,
+                WOLFSSH_SESSION_EXEC), MSGID_CHANNEL_FAILURE);
+}
+
+/* Same contract for the subsystem callback, which is how a server decides
+ * whether to serve SFTP on a channel. */
+static void TestChannelReqSubsysCallbackRuns(void)
+{
+    AssertIntEQ(RunSessionRequest("subsystem", "sftp", WS_SUCCESS,
+                WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(RunSessionRequest("subsystem", "sftp", WS_BAD_ARGUMENT,
+                WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(RunSessionRequest("subsystem", "sftp", 1,
+                WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
+}
+
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
 {
@@ -12554,6 +12675,8 @@ int main(int argc, char** argv)
     TestChannelOpenFailCallbackRejects();
     TestChannelCloseCallbackRuns();
     TestChannelCloseCallbackReturnIgnored();
+    TestChannelReqExecCallbackRuns();
+    TestChannelReqSubsysCallbackRuns();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
     TestSameUserRetryAllowed();
