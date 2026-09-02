@@ -569,8 +569,8 @@ search so file arguments resolve against the current directory.
 wolfSSHd gains these configuration directives, all global only (they are
 rejected inside a `Match` block):
 
-* `HostKeyStore <store>`, `HostKeyStoreSubject <CN>`, and
-  `HostKeyStoreFlags <location>` select the host key from a certificate
+* `wolfSSH_HostKeyStore <store>`, `wolfSSH_HostKeyStoreSubject <CN>`, and
+  `wolfSSH_HostKeyStoreFlags <location>` select the host key from a certificate
   store. All three must be set together, and they conflict with `HostKey`,
   `HostCertificate`, and the `-h` command line option.
 * `wolfSSH_TrustedUserCAStore yes|no` loads the client-certificate trust

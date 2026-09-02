@@ -534,16 +534,6 @@ static const CONFIG_OPTION options[] = {
     {OPT_ACCEPT_ENV,              "AcceptEnv"},
     {OPT_PROTOCOL,                "Protocol"},
     {OPT_LOGIN_GRACE_TIME,        "LoginGraceTime"},
-    /* The parser requires a whitespace delimiter after the option name, which
-     * is the primary defence against a shorter name prefix-matching a longer
-     * one.  As belt-and-braces, longer option names that share a common prefix
-     * MUST still appear before the shorter one:
-     * HostKeyStoreSubject/HostKeyStoreFlags before HostKeyStore, and all
-     * HostKeyStore* before HostKey.  Kept unconditional so "HostKeyStore"
-     * never matches "HostKey" on non-store builds. */
-    {OPT_HOST_KEY_STORE_SUBJECT,  "HostKeyStoreSubject"},
-    {OPT_HOST_KEY_STORE_FLAGS,    "HostKeyStoreFlags"},
-    {OPT_HOST_KEY_STORE,          "HostKeyStore"},
     {OPT_HOST_KEY,                "HostKey"},
     {OPT_PASSWORD_AUTH,           "PasswordAuthentication"},
     {OPT_PUBKEY_AUTH,             "PubkeyAuthentication"},
@@ -564,6 +554,9 @@ static const CONFIG_OPTION options[] = {
     {OPT_WIN_USER_STORES,         "wolfSSH_WinUserStores"},
     {OPT_WIN_USER_DW_FLAGS,       "wolfSSH_WinUserDwFlags"},
     {OPT_WIN_USER_PV_PARA,        "wolfSSH_WinUserPvPara"},
+    {OPT_HOST_KEY_STORE_SUBJECT,  "wolfSSH_HostKeyStoreSubject"},
+    {OPT_HOST_KEY_STORE_FLAGS,    "wolfSSH_HostKeyStoreFlags"},
+    {OPT_HOST_KEY_STORE,          "wolfSSH_HostKeyStore"},
     {OPT_AUTHORIZED_UPN_DOMAINS,  "AuthorizedUPNDomains"},
 };
 #define NUM_OPTIONS ((int)(sizeof(options) / sizeof(*options)))
@@ -1570,13 +1563,13 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
     #ifdef WOLFSSHD_WIN_STORE_CONFIG
         case OPT_HOST_KEY_STORE:
-            ret = CheckNotInMatch(*conf, "HostKeyStore");
+            ret = CheckNotInMatch(*conf, "wolfSSH_HostKeyStore");
             if (ret == WS_SUCCESS)
                 ret = SetFileString(&(*conf)->hostKeyStore, value,
                     (*conf)->heap);
             break;
         case OPT_HOST_KEY_STORE_SUBJECT:
-            ret = CheckNotInMatch(*conf, "HostKeyStoreSubject");
+            ret = CheckNotInMatch(*conf, "wolfSSH_HostKeyStoreSubject");
             /* use the full line remainder so a CN containing spaces is
              * kept instead of being cut at the first token */
             if (ret == WS_SUCCESS)
@@ -1584,7 +1577,7 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
                     fullSz, (*conf)->heap);
             break;
         case OPT_HOST_KEY_STORE_FLAGS:
-            ret = CheckNotInMatch(*conf, "HostKeyStoreFlags");
+            ret = CheckNotInMatch(*conf, "wolfSSH_HostKeyStoreFlags");
             if (ret == WS_SUCCESS)
                 ret = SetFileString(&(*conf)->hostKeyStoreFlags, value,
                     (*conf)->heap);
@@ -1595,13 +1588,13 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_HOST_KEY_STORE_FLAGS:
         #ifdef WOLFSSH_IGNORE_UNKNOWN_CONFIG
             wolfSSH_Log(WS_LOG_WARN,
-                "[SSHD] Ignoring HostKeyStore* option: requires a "
+                "[SSHD] Ignoring wolfSSH_HostKeyStore* option: requires a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
             ignored = 1;
             ret = WS_SUCCESS;
         #else
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] HostKeyStore* options require a "
+                "[SSHD] wolfSSH_HostKeyStore* options require a "
                 "WOLFSSH_WINDOWS_CERT_STORE build");
             ret = WS_NOT_COMPILED;
         #endif

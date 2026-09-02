@@ -480,7 +480,7 @@ jobs:
           Set-Acl $keyFile $acl
           Write-Host "Granted SYSTEM FullControl on private key: $keyFile"
 
-          # Export the CN (without "CN=") for HostKeyStoreSubject
+          # Export the CN (without "CN=") for wolfSSH_HostKeyStoreSubject
           $subject = $serverCert.Subject
           if ($subject -match "^CN=(.+)$") { $subject = $matches[1] }
           Add-Content -Path $env:GITHUB_ENV -Value "SERVER_CERT_SUBJECT=$subject"
@@ -654,12 +654,12 @@ jobs:
 
         if ("${{ matrix.server_key_source }}" -eq "store") {
             # The certificate is part of the store entry. HostKey and
-            # HostCertificate alongside HostKeyStore are rejected at startup.
+            # HostCertificate alongside wolfSSH_HostKeyStore are rejected at startup.
             $configContent += @"
 
-        HostKeyStore My
-        HostKeyStoreSubject $env:SERVER_CERT_SUBJECT
-        HostKeyStoreFlags LOCAL_MACHINE
+        wolfSSH_HostKeyStore My
+        wolfSSH_HostKeyStoreSubject $env:SERVER_CERT_SUBJECT
+        wolfSSH_HostKeyStoreFlags LOCAL_MACHINE
         "@
         } else {
             $keyPath = (Resolve-Path "keys\server-key.pem").Path
@@ -1171,34 +1171,34 @@ jobs:
               "wolfSSH_WinUserPvPara wolfSSHLeafOnlyCA",
               "wolfSSH_WinUserDwFlags LOCAL_MACHINE") `
             "No usable CA certificates found in store"
-        Test-SshdRejects "HostKeyStore without HostKeyStoreSubject" `
-            ($base[0..0] + @("TrustedUserCAKeys $caPem", "HostKeyStore My",
-              "HostKeyStoreFlags LOCAL_MACHINE")) `
-            "HostKeyStoreSubject is missing"
-        Test-SshdRejects "HostKeyStore without HostKeyStoreFlags" `
-            ($base[0..0] + @("TrustedUserCAKeys $caPem", "HostKeyStore My",
-              "HostKeyStoreSubject wolfSSH-Test-Server")) `
-            "HostKeyStoreFlags is missing"
-        Test-SshdRejects "HostKeyStoreSubject/Flags without HostKeyStore" `
+        Test-SshdRejects "wolfSSH_HostKeyStore without wolfSSH_HostKeyStoreSubject" `
+            ($base[0..0] + @("TrustedUserCAKeys $caPem", "wolfSSH_HostKeyStore My",
+              "wolfSSH_HostKeyStoreFlags LOCAL_MACHINE")) `
+            "wolfSSH_HostKeyStoreSubject is missing"
+        Test-SshdRejects "wolfSSH_HostKeyStore without wolfSSH_HostKeyStoreFlags" `
+            ($base[0..0] + @("TrustedUserCAKeys $caPem", "wolfSSH_HostKeyStore My",
+              "wolfSSH_HostKeyStoreSubject wolfSSH-Test-Server")) `
+            "wolfSSH_HostKeyStoreFlags is missing"
+        Test-SshdRejects "wolfSSH_HostKeyStoreSubject/Flags without wolfSSH_HostKeyStore" `
             ($base[0..0] + @("TrustedUserCAKeys $caPem",
-              "HostKeyStoreSubject wolfSSH-Test-Server",
-              "HostKeyStoreFlags LOCAL_MACHINE")) `
-            "HostKeyStore is missing"
-        Test-SshdRejects "HostKeyStore conflicts with HostKey" `
-            ($base + @("HostKeyStore My",
-              "HostKeyStoreSubject wolfSSH-Test-Server",
-              "HostKeyStoreFlags LOCAL_MACHINE")) `
+              "wolfSSH_HostKeyStoreSubject wolfSSH-Test-Server",
+              "wolfSSH_HostKeyStoreFlags LOCAL_MACHINE")) `
+            "wolfSSH_HostKeyStore is missing"
+        Test-SshdRejects "wolfSSH_HostKeyStore conflicts with HostKey" `
+            ($base + @("wolfSSH_HostKeyStore My",
+              "wolfSSH_HostKeyStoreSubject wolfSSH-Test-Server",
+              "wolfSSH_HostKeyStoreFlags LOCAL_MACHINE")) `
             "HostKey conflicts"
-        Test-SshdRejects "HostKeyStore conflicts with HostCertificate" `
+        Test-SshdRejects "wolfSSH_HostKeyStore conflicts with HostCertificate" `
             ($base[0..0] + @("TrustedUserCAKeys $caPem",
-              "HostCertificate $hostCert", "HostKeyStore My",
-              "HostKeyStoreSubject wolfSSH-Test-Server",
-              "HostKeyStoreFlags LOCAL_MACHINE")) `
+              "HostCertificate $hostCert", "wolfSSH_HostKeyStore My",
+              "wolfSSH_HostKeyStoreSubject wolfSSH-Test-Server",
+              "wolfSSH_HostKeyStoreFlags LOCAL_MACHINE")) `
             "HostCertificate conflicts"
-        Test-SshdRejects "-h conflicts with HostKeyStore" `
-            ($base[0..0] + @("TrustedUserCAKeys $caPem", "HostKeyStore My",
-              "HostKeyStoreSubject wolfSSH-Test-Server",
-              "HostKeyStoreFlags LOCAL_MACHINE")) `
+        Test-SshdRejects "-h conflicts with wolfSSH_HostKeyStore" `
+            ($base[0..0] + @("TrustedUserCAKeys $caPem", "wolfSSH_HostKeyStore My",
+              "wolfSSH_HostKeyStoreSubject wolfSSH-Test-Server",
+              "wolfSSH_HostKeyStoreFlags LOCAL_MACHINE")) `
             "-h host key file conflicts" @("-h", $hostKey)
         # This build has no WOLFSSL_SYS_CA_CERTS, so the system CA directive
         # must fail closed rather than run without the configured anchors.

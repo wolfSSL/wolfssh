@@ -757,7 +757,7 @@ int wolfSSH_CertStoreLocationValid(word32 dwFlags)
 
 
 /* The one name-to-value table for CERT_SYSTEM_STORE_* locations, shared by
- * wolfSSH_ParseCertStoreSpec() and wolfsshd's HostKeyStoreFlags and
+ * wolfSSH_ParseCertStoreSpec() and wolfsshd's wolfSSH_HostKeyStoreFlags and
  * wolfSSH_WinUserDwFlags parsing so the accepted spellings cannot drift. */
 static const struct {
     const char* shortName;
@@ -905,10 +905,10 @@ int wolfSSH_ParseCertStoreSpec(const char* spec,
                 WFREE(specCopy, heap, DYNTYPE_TEMP);
                 return WS_BAD_ARGUMENT;
             }
-            /* Accept the same spellings as wolfsshd's HostKeyStoreFlags and
-             * wolfSSH_WinUserDwFlags so one name works everywhere; the
-             * shared parser also handles the numeric location forms and
-             * rejects control flags. */
+            /* Accept the same spellings as wolfsshd's
+             * wolfSSH_HostKeyStoreFlags and wolfSSH_WinUserDwFlags so one
+             * name works everywhere; the shared parser also handles the
+             * numeric location forms and rejects control flags. */
             if (wolfSSH_CertStoreLocationFromName(flagsStr, &flags)
                     != WS_SUCCESS) {
                 WLOG(WS_LOG_CERTMAN, "Malformed cert store flags value "

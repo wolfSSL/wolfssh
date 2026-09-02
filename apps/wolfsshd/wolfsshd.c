@@ -902,7 +902,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
 
         if (hostKeyStore != NULL && hostKeyStoreSubject == NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] HostKeyStore set but HostKeyStoreSubject is missing");
+                "[SSHD] wolfSSH_HostKeyStore set but "
+                "wolfSSH_HostKeyStoreSubject is missing");
             ret = WS_BAD_ARGUMENT;
         }
         /* The location is mandatory for the same reason wolfSSH_WinUserDwFlags
@@ -911,7 +912,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
          * anything running as that account install a host key. */
         else if (hostKeyStore != NULL && hostKeyStoreFlags == NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] HostKeyStore set but HostKeyStoreFlags is missing.");
+                "[SSHD] wolfSSH_HostKeyStore set but "
+                "wolfSSH_HostKeyStoreFlags is missing.");
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Set the store location explicitly, normally "
                 "LOCAL_MACHINE.");
@@ -920,8 +922,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         else if (hostKeyStore == NULL &&
                 (hostKeyStoreSubject != NULL || hostKeyStoreFlags != NULL)) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] HostKeyStoreSubject/HostKeyStoreFlags set but "
-                "HostKeyStore is missing");
+                "[SSHD] wolfSSH_HostKeyStoreSubject/wolfSSH_HostKeyStoreFlags "
+                "set but wolfSSH_HostKeyStore is missing");
             ret = WS_BAD_ARGUMENT;
         }
         /* The store branch below wins over the file path, so a HostKey line
@@ -930,8 +932,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         else if (hostKeyStore != NULL &&
                 wolfSSHD_ConfigGetHostKeyFile(conf) != NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] HostKey conflicts with the configured HostKeyStore. "
-                "Use one or the other.");
+                "[SSHD] HostKey conflicts with the configured "
+                "wolfSSH_HostKeyStore. Use one or the other.");
             ret = WS_BAD_ARGUMENT;
         }
         /* A store host key carries its own certificate. A HostCertificate
@@ -941,7 +943,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
                 wolfSSHD_ConfigGetHostCertFile(conf) != NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] HostCertificate conflicts with the configured "
-                "HostKeyStore, which supplies its own certificate.");
+                "wolfSSH_HostKeyStore, which supplies its own certificate.");
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Use one or the other.");
             ret = WS_BAD_ARGUMENT;
         }
@@ -964,8 +966,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             }
             if (ret == WS_SUCCESS && !IsElevationProtectedHive(dwFlags)) {
                 wolfSSH_Log(WS_LOG_WARN,
-                    "[SSHD] HostKeyStoreFlags selects a store hive that its "
-                    "own account can write to without elevation.");
+                    "[SSHD] wolfSSH_HostKeyStoreFlags selects a store hive "
+                    "that its own account can write to without elevation.");
                 wolfSSH_Log(WS_LOG_WARN,
                     "[SSHD] LOCAL_MACHINE is the safer location for the host "
                     "key.");
@@ -1269,8 +1271,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     /* Load user CA certs (trust anchors used to verify client X.509 certs)
      * directly from a Windows certificate store into the cert manager. */
     #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
-    /* Mirror the HostKeyStore* validation: the wolfSSH_WinUser* group only
-     * has an effect through LoadUserCACertsFromStore(), so accepting it
+    /* Mirror the wolfSSH_HostKeyStore* validation: the wolfSSH_WinUser* group
+     * only has an effect through LoadUserCACertsFromStore(), so accepting it
      * without the store enabled would start the daemon with no client CA
      * trust anchors and no indication why logins fail. */
     if (ret == WS_SUCCESS && !wolfSSHD_ConfigGetUserCAStore(conf) &&
@@ -1490,7 +1492,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * also needs certificate support. Fail startup rather than silently
      * ignore a configured realm policy, unless the build opts into
      * WOLFSSH_IGNORE_UNKNOWN_CONFIG, which downgrades not-compiled-in
-     * directives to a warning the same way the HostKeyStore* and
+     * directives to a warning the same way the wolfSSH_HostKeyStore* and
      * wolfSSH_WinUser* handlers do. Check every config node since the
      * directive may sit in a Match block. */
 #if !defined(WOLFSSL_FPKI) || !defined(WOLFSSH_CERTS)
@@ -4226,7 +4228,7 @@ static int StartSSHD(int argc, char** argv)
         if (wolfSSHD_ConfigGetHostKeyStore(conf) != NULL) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] -h host key file conflicts with the configured "
-                "HostKeyStore. Use one or the other.");
+                "wolfSSH_HostKeyStore. Use one or the other.");
             ret = WS_BAD_ARGUMENT;
         }
     #endif
