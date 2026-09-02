@@ -1,0 +1,332 @@
+#!/bin/sh
+
+# Bulk data through a local direct-tcpip forward.
+#
+#   [nc client] --plain--> :$entry_port [portfwd]
+#                                  |
+#                                 SSH
+#                                  |
+#                          [echoserver] --plain--> :$target_port [nc server]
+#
+# scripts/fwd.test moves a few hundred bytes, so nothing in the suite
+# exercises a forward past its first window. Phase 1 pushes a payload several
+# windows long and compares the bytes that come out. Phase 2 ends a transfer
+# one window plus a short tail in, the point where the tail is still sitting
+# in portfwd's buffer waiting on window credit when the local socket reports
+# end-of-input.
+#
+# The listening nc takes its stdin from a long sleep on purpose. Reading
+# end-of-input on stdin makes nc close the connection, which truncates the
+# transfer at whatever point the close lands and looks exactly like a
+# forwarding stall.
+
+no_pid=-1
+hold_pid=$no_pid
+nc_server_pid=$no_pid
+server_pid=$no_pid
+portfwd_pid=$no_pid
+nc_client_pid=$no_pid
+tail_hold_pid=$no_pid
+tail_nc_server_pid=$no_pid
+tail_server_pid=$no_pid
+tail_portfwd_pid=$no_pid
+tail_nc_client_pid=$no_pid
+work_dir="`pwd`/wolfssh_fwd_bulk$$"
+ready_file="$work_dir/ready"
+fwd_ready_file="$work_dir/fwd_ready"
+payload="$work_dir/payload"
+hold_fifo="$work_dir/hold"
+received="$work_dir/received"
+server_log="$work_dir/server.log"
+portfwd_log="$work_dir/portfwd.log"
+tail_payload="$work_dir/tail_payload"
+tail_received="$work_dir/tail_received"
+tail_server_log="$work_dir/tail_server.log"
+tail_portfwd_log="$work_dir/tail_portfwd.log"
+# Several times the 128K default window, so the transfer cannot finish
+# without the window being credited back at least once. The size the
+# receiver is held to is read back from the file dd made.
+payload_blocks=2000
+payload_size=0
+entry_port=0
+target_port=0
+port=0
+counter=0
+# Phase 2. One default window plus a tail short enough to be read in a single
+# pass, so the tail is what portfwd is holding when end-of-input arrives.
+# Whether the credit for the window beats the tail is a race, won here about
+# half the time and never on some hosts, so the transfer is repeated. A build
+# that overrides DEFAULT_WINDOW_SZ just moves bytes and proves nothing.
+tail_window_size=131072
+tail_size=2000
+tail_attempts=6
+tail_payload_size=0
+tail_entry_port=0
+tail_target_port=0
+tail_got=0
+# Seconds to wait for the payload. Generous: the point is that a stalled
+# forward fails this test instead of hanging make check.
+transfer_limit=90
+# Consecutive seconds with no new bytes before calling it stalled.
+stall_limit=15
+
+[ ! -x "`command -v nc`" ] && echo "nc doesn't exist, skipping" && exit 77
+[ ! -x ./examples/echoserver/echoserver ] \
+    && echo "echoserver doesn't exist, skipping" && exit 77
+./examples/echoserver/echoserver '-?' 2>&1 | grep -q "^echoserver " \
+    || { echo "echoserver doesn't run, skipping"; exit 77; }
+[ ! -x ./examples/portfwd/portfwd ] \
+    && echo "portfwd doesn't exist, skipping" && exit 77
+./examples/portfwd/portfwd '-?' 2>&1 | grep -q "does not exist" \
+    && { echo "forwarding not compiled in, skipping"; exit 77; }
+
+# A WOLFSSH_TEST_BLOCK build fails writes at random, which stalls the
+# echoserver regardless of what the peer does. The other echoserver scripts
+# skip it for the same reason.
+WOLFSSH_OPTIONS=`./apps/wolfssh-options` || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK" \
+    && { echo "macro WOLFSSH_TEST_BLOCK was used, skipping"; exit 77; }
+
+do_cleanup() {
+    for pid in $nc_client_pid $portfwd_pid $server_pid $nc_server_pid \
+            $hold_pid $tail_nc_client_pid $tail_portfwd_pid \
+            $tail_server_pid $tail_nc_server_pid $tail_hold_pid
+    do
+        if [ "$pid" != "$no_pid" ]
+        then
+            kill -9 "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+        fi
+    done
+    rm -rf "$work_dir"
+}
+
+# The failure here is usually just a byte count; the logs name the cause.
+do_dump_logs() {
+    for log in "$server_log" "$portfwd_log" "$tail_server_log" \
+            "$tail_portfwd_log"
+    do
+        [ -f "$log" ] || continue
+        echo "--- `basename "$log"` ---"
+        cat "$log" 2>/dev/null
+    done
+}
+
+do_fail() {
+    echo "$1"
+    do_dump_logs
+    do_cleanup
+    exit 1
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    exit 1
+}
+
+trap do_trap INT TERM
+
+do_reap_tail() {
+    for pid in $tail_nc_client_pid $tail_portfwd_pid $tail_server_pid \
+            $tail_nc_server_pid $tail_hold_pid
+    do
+        if [ "$pid" != "$no_pid" ]
+        then
+            kill -9 "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+        fi
+    done
+    tail_nc_client_pid=$no_pid
+    tail_portfwd_pid=$no_pid
+    tail_server_pid=$no_pid
+    tail_nc_server_pid=$no_pid
+    tail_hold_pid=$no_pid
+}
+
+# One window-plus-tail transfer through a forward of its own, leaving the
+# bytes that arrived in tail_got. Each attempt takes its own ports: the
+# previous one's are in TIME_WAIT.
+do_tail_attempt() {
+    tail_entry_port=`expr 16000 + $1 \* 1000 + \( $$ % 1000 \)`
+    tail_target_port=`expr 22000 + $1 \* 1000 + \( $$ % 1000 \)`
+    tail_fifo="$work_dir/tail_hold.$1"
+    tail_ready_file="$work_dir/tail_ready.$1"
+    tail_fwd_ready_file="$work_dir/tail_fwd_ready.$1"
+    tail_got=0
+    rm -f "$tail_received"
+
+    mkfifo "$tail_fifo" || do_fail "couldn't make the fifo"
+    sleep 300 > "$tail_fifo" 2>/dev/null &
+    tail_hold_pid=$!
+    nc -l $tail_target_port < "$tail_fifo" > "$tail_received" 2>/dev/null &
+    tail_nc_server_pid=$!
+
+    sleep 0.2
+    kill -0 "$tail_nc_server_pid" 2>/dev/null \
+        || do_fail "couldn't listen on port $tail_target_port, is it in use?"
+
+    ./examples/echoserver/echoserver -1 -f -R "$tail_ready_file" \
+        > "$tail_server_log" 2>&1 &
+    tail_server_pid=$!
+
+    counter=0
+    while [ ! -s "$tail_ready_file" ] && [ "$counter" -lt 20 ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$tail_ready_file" ] \
+        || do_fail "no ready file, echoserver didn't start"
+
+    ./examples/portfwd/portfwd -u jill -P upthehill \
+        -p `cat "$tail_ready_file"` \
+        -f $tail_entry_port -t $tail_target_port -R "$tail_fwd_ready_file" \
+        > "$tail_portfwd_log" 2>&1 &
+    tail_portfwd_pid=$!
+
+    counter=0
+    while [ ! -s "$tail_fwd_ready_file" ] && [ "$counter" -lt 20 ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$tail_fwd_ready_file" ] \
+        || do_fail "no ready file, portfwd didn't start"
+
+    nc 127.0.0.1 $tail_entry_port < "$tail_payload" > /dev/null 2>&1 &
+    tail_nc_client_pid=$!
+
+    # A dropped tail leaves the count one tail short of the payload, so stop
+    # as soon as it stops moving instead of waiting the whole limit out.
+    counter=0
+    last=-1
+    while [ "$tail_got" -lt "$tail_payload_size" ] && [ "$counter" -lt 24 ]
+    do
+        sleep 0.5
+        counter=`expr $counter + 1`
+        tail_got=`wc -c < "$tail_received" 2>/dev/null | tr -d ' '`
+        [ -z "$tail_got" ] && tail_got=0
+        [ "$tail_got" = "$last" ] && [ "$counter" -gt 4 ] && break
+        last=$tail_got
+    done
+
+    do_reap_tail
+}
+
+mkdir -p "$work_dir" || { echo "couldn't make the work directory"; exit 1; }
+
+# portfwd and nc bind what they are told, so the plaintext ports have to be
+# picked here. Stamped with the pid so concurrent runs of the suite do not
+# collide, kept below the ephemeral range so an outgoing connection cannot
+# take one first, and clear of the ports fwd.test.expect hardcodes.
+entry_port=`expr 14000 + \( $$ % 1000 \)`
+target_port=`expr 15000 + \( $$ % 1000 \)`
+
+dd if=/dev/urandom of="$payload" bs=1000 count=$payload_blocks 2>/dev/null \
+    || { echo "couldn't make the payload"; do_cleanup; exit 1; }
+payload_size=`wc -c < "$payload" | tr -d ' '`
+[ "$payload_size" -gt 0 ] \
+    || { echo "couldn't make the payload"; do_cleanup; exit 1; }
+
+# nc closes the connection when it reads end-of-input on stdin, which
+# truncates the transfer. Hold stdin open with a sleep on the far side of a
+# fifo, so both ends have a pid this script can reap.
+mkfifo "$hold_fifo" || { echo "couldn't make the fifo"; do_cleanup; exit 1; }
+sleep 300 > "$hold_fifo" 2>/dev/null &
+hold_pid=$!
+nc -l $target_port < "$hold_fifo" > "$received" 2>/dev/null &
+nc_server_pid=$!
+
+# A port already in use makes nc exit at once, and the echoserver's connect
+# would then be refused. Catch that here, or it reports as a stall.
+sleep 0.2
+if ! kill -0 "$nc_server_pid" 2>/dev/null
+then
+    nc_server_pid=$no_pid
+    echo "couldn't listen on port $target_port, is it in use?"
+    do_cleanup
+    exit 1
+fi
+
+./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+    > "$server_log" 2>&1 &
+server_pid=$!
+
+counter=0
+while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
+    sleep 0.1
+    counter=`expr $counter + 1`
+done
+[ -s "$ready_file" ] || do_fail "no ready file, echoserver didn't start"
+port=`cat "$ready_file"`
+
+./examples/portfwd/portfwd -u jill -P upthehill -p "$port" \
+    -f $entry_port -t $target_port -R "$fwd_ready_file" \
+    > "$portfwd_log" 2>&1 &
+portfwd_pid=$!
+
+counter=0
+while [ ! -s "$fwd_ready_file" ] && [ "$counter" -lt 20 ]; do
+    sleep 0.1
+    counter=`expr $counter + 1`
+done
+[ -s "$fwd_ready_file" ] || do_fail "no ready file, portfwd didn't start"
+
+nc 127.0.0.1 $entry_port < "$payload" > /dev/null 2>&1 &
+nc_client_pid=$!
+
+counter=0
+got=0
+last=0
+stalled=0
+while [ "$got" -lt "$payload_size" ] && [ "$counter" -lt "$transfer_limit" ]
+do
+    sleep 1
+    counter=`expr $counter + 1`
+    got=`wc -c < "$received" 2>/dev/null | tr -d ' '`
+    [ -z "$got" ] && got=0
+    # Give up early once the byte count stops moving, so a stalled forward
+    # reports in seconds instead of burning the whole limit.
+    if [ "$got" -eq "$last" ]
+    then
+        stalled=`expr $stalled + 1`
+        [ "$stalled" -ge "$stall_limit" ] && break
+    else
+        stalled=0
+        last=$got
+    fi
+done
+
+[ "$got" -eq "$payload_size" ] \
+    || do_fail "forward stalled: sent $payload_size bytes, received $got"
+
+cmp -s "$payload" "$received" \
+    || do_fail "forwarded data does not match what was sent"
+
+echo "moved $payload_size bytes through a local forward"
+
+# --- Phase 2: end the transfer one window in --------------------------------
+dd if=/dev/urandom of="$tail_payload" bs=4096 count=32 2>/dev/null \
+    && dd if=/dev/urandom bs=$tail_size count=1 2>/dev/null \
+        >> "$tail_payload" \
+    || { echo "couldn't make the payload"; do_cleanup; exit 1; }
+tail_payload_size=`wc -c < "$tail_payload" | tr -d ' '`
+[ "$tail_payload_size" -eq `expr $tail_window_size + $tail_size` ] \
+    || { echo "couldn't make the payload"; do_cleanup; exit 1; }
+
+attempt=0
+while [ "$attempt" -lt "$tail_attempts" ]
+do
+    do_tail_attempt $attempt
+    [ "$tail_got" -eq "$tail_payload_size" ] \
+        || do_fail "dropped the tail: sent $tail_payload_size, got $tail_got"
+    cmp -s "$tail_payload" "$tail_received" \
+        || do_fail "the tail transfer does not match what was sent"
+    attempt=`expr $attempt + 1`
+done
+
+echo "ended $tail_attempts transfers on a window boundary"
+do_cleanup
+exit 0
