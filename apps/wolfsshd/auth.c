@@ -253,13 +253,33 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
 }
 #endif
 
+/* Big-endian uint32 read. ato32() is WOLFSSH_LOCAL, so it is unresolvable
+ * in a NO_INLINE build linked against a shared libwolfssh. */
+static word32 AuthReadU32(const byte* c)
+{
+    return ((word32)c[0] << 24) | ((word32)c[1] << 16) |
+           ((word32)c[2] << 8) | (word32)c[3];
+}
+
+/* Maps signature algorithms to key types (e.g. RSA SHA-2 to ssh-rsa). */
+static const char* AuthKeysTokenKeyType(const char* type)
+{
+    if (WSTRCMP(type, "rsa-sha2-256") == 0 ||
+            WSTRCMP(type, "rsa-sha2-512") == 0) {
+        return "ssh-rsa";
+    }
+
+    return type;
+}
+
 /* TODO: Can use wolfSSH_ReadKey_buffer? */
+/* isCert skips the wire-format type/embedded-type cross-check. */
 #ifdef WOLFSSHD_UNIT_TEST
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
-                      word32 keySz)
+                      word32 keySz, int isCert)
 #else
 static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
-                             word32 keySz)
+                             word32 keySz, int isCert)
 #endif
 {
     int ret = WSSHD_AUTH_SUCCESS;
@@ -270,41 +290,22 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
     word32 keyCandSz = 0;
     char* last = NULL;
 
-    /* Valid key types come from the same TYPE_KEY name registry
-     * (NameIdMap) that KEX negotiation uses, via wolfSSH_QueryKey(),
-     * instead of a separately hand-maintained list that could drift
-     * out of sync with it. */
-    int typeOk = 0;
-    word32 queryIdx = 0;
-    const char* algoName;
-
     if (line == NULL || lineSz == 0 || key == NULL || keySz == 0) {
         ret = WS_BAD_ARGUMENT;
     }
 
     if (ret == WSSHD_AUTH_SUCCESS) {
+        /* Skip truncated or whitespace-only lines. */
         if ((type = WSTRTOK(line, " ", &last)) == NULL) {
-            ret = WS_FATAL_ERROR;
+            ret = WSSHD_AUTH_FAILURE;
         }
         else if ((keyCandBase64 = WSTRTOK(NULL, " ", &last)) == NULL) {
-            ret = WS_FATAL_ERROR;
+            ret = WSSHD_AUTH_FAILURE;
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
-        while ((algoName = wolfSSH_QueryKey(&queryIdx)) != NULL) {
-            /* OpenSSH cert types are verified via the CA path, not by
-             * literal comparison here; exclude them. */
-            if (WSTRSTR(algoName, "-cert-v01@openssh.com") != NULL) {
-                continue;
-            }
-            if (WSTRCMP(type, algoName) == 0) {
-                typeOk = 1;
-                break;
-            }
-        }
-        if (!typeOk) {
-            /* Skip unsupported key types so the scan continues to later
-             * entries instead of aborting the whole file. */
+        /* Cert types are verified via CA path, skip literal comparison. */
+        if (WSTRSTR(type, "-cert-v01@openssh.com") != NULL) {
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -318,8 +319,32 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         else {
             if (Base64_Decode((byte*)keyCandBase64, keyCandBase64Sz, keyCand,
                               &keyCandSz) != 0) {
-                ret = WS_FATAL_ERROR;
+                /* Skip non-base64 tokens (e.g. option-prefixed lines). */
+                ret = WSSHD_AUTH_FAILURE;
             }
+        }
+    }
+    if (ret == WSSHD_AUTH_SUCCESS && !isCert) {
+        /* Skip cross-check for raw DER certificate blobs. */
+        word32 typeStrSz;
+        const char* keyType = AuthKeysTokenKeyType(type);
+        word32 keyTypeSz = (word32)XSTRLEN(keyType);
+
+        if (keyCandSz >= 4) {
+            typeStrSz = AuthReadU32(keyCand);
+            if (typeStrSz != keyTypeSz || typeStrSz > keyCandSz - 4 ||
+                XMEMCMP(keyType, keyCand + 4, keyTypeSz) != 0) {
+                /* Skip: token type doesn't match embedded key blob type. */
+                wolfSSH_Log(WS_LOG_DEBUG, "[SSHD] Skipping key line, type %s "
+                    "does not match the type embedded in this line's key "
+                    "blob", type);
+                ret = WSSHD_AUTH_FAILURE;
+            }
+        }
+        else {
+            wolfSSH_Log(WS_LOG_DEBUG,
+                "[SSHD] Skipping key line, blob too short for a type field");
+            ret = WSSHD_AUTH_FAILURE;
         }
     }
     if (ret == WSSHD_AUTH_SUCCESS) {
@@ -1331,11 +1356,11 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
 #endif
 }
 
-/* Scan a resolved keys file (authorized_keys or TrustedUserCAKeys) for
- * (key, keySz). Fails closed with WSSHD_AUTH_FAILURE when no line matches.
- * strictModes opens through the secure gate; the file must be owned by uid. */
+/* Scan keys file. Fails closed on no match.
+ * strictModes requires uid ownership. isCert flags DER vs wire-format. */
 static int SearchKeysFile(const char* keysFilePath, const byte* key,
-                          word32 keySz, WUID_T uid, int strictModes)
+                          word32 keySz, WUID_T uid, int strictModes,
+                          int isCert)
 {
     int ret = WSSHD_AUTH_SUCCESS;
     WFILE *f = WBADFILE;
@@ -1389,7 +1414,7 @@ static int SearchKeysFile(const char* keysFilePath, const byte* key,
             continue; /* commented out line */
         }
 
-        rc = CheckAuthKeysLine(current, currentSz, key, keySz);
+        rc = CheckAuthKeysLine(current, currentSz, key, keySz, isCert);
         if (rc == WSSHD_AUTH_SUCCESS) {
             foundKey = 1;
             break;
@@ -1514,7 +1539,8 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
 
     if (ret == WSSHD_AUTH_SUCCESS) {
         ret = SearchKeysFile(authKeysPath, pubKeyCtx->publicKey,
-                pubKeyCtx->publicKeySz, uid, strictModes);
+                pubKeyCtx->publicKeySz, uid, strictModes,
+                pubKeyCtx->isCert);
     }
 
     return ret;
@@ -1571,7 +1597,7 @@ static int OsshCertCheckPrincipal(const WS_UserAuthData_PublicKey* pubKeyCtx,
 
     nameSz = (word32)WSTRLEN(name);
     while (idx + UINT32_SZ <= sz) {
-        ato32(p + idx, &entSz);
+        entSz = AuthReadU32(p + idx);
         idx += UINT32_SZ;
         if (entSz > sz - idx) {
             break; /* malformed principals region */
@@ -1846,7 +1872,8 @@ static int CheckPublicKeyUnix(const char* name,
          * anchor, so it is always secure-gated, regardless of StrictModes. */
         if (ret == WSSHD_AUTH_SUCCESS) {
             ret = SearchKeysFile(usrCaKeysFile, pubKeyCtx->caKey,
-                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */);
+                    pubKeyCtx->caKeySz, geteuid(), 1 /* strictModes */,
+                    0 /* isCert: caKey is a wire-format key, not a cert */);
         }
 
         /* Bind the certificate to the requested user via its principals. */

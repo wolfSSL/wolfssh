@@ -170,8 +170,9 @@ void DoFakePasswordCheck(WS_UserAuthData* authData);
 void wolfSSHD_ResetFakePasswordCheckCountForTest(void);
 int wolfSSHD_GetFakePasswordCheckCountForTest(void);
 #endif
+/* isCert: skips wire-format cross-check for DER certs. */
 int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
-                      word32 keySz);
+                      word32 keySz, int isCert);
 int ResolveAuthKeysPath(const char* homeDir, const char* pattern,
                         const char* user, char* resolved);
 int CAKeysFileDiffers(const char* a, const char* b);
