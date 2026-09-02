@@ -1630,6 +1630,10 @@ extern "C" {
             const unsigned int* shortOffset);
     #define WPWRITE(fs,fd,b,s,o) wPwrite((fd),(b),(s),(o))
     #define WPREAD(fs,fd,b,s,o)  wPread((fd),(b),(s),(o))
+    /* Positionless write, for O_APPEND handles: pwrite() only honors
+     * O_APPEND on Linux, write() does everywhere. */
+    #define WWRITE(fs,fd,b,s)    (int)write((fd),(b),(s))
+
 
     #define WTRUNCATE(fs,f,sz)   truncate((f),(off_t)(sz))
     #define WFTRUNCATE(fs,fd,sz) ftruncate((fd),(off_t)(sz))

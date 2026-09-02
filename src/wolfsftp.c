@@ -2347,21 +2347,27 @@ static DWORD SFTP_WinCreationDisp(word32 reason)
     DWORD disp;
 
     if (reason & WOLFSSH_FXF_CREAT) {
-        if (reason & WOLFSSH_FXF_EXCL)
+        if (reason & WOLFSSH_FXF_EXCL) {
             disp = CREATE_NEW;
-        else if (reason & WOLFSSH_FXF_TRUNC)
+        }
+        else if (reason & WOLFSSH_FXF_TRUNC) {
             disp = CREATE_ALWAYS;
-        else
+        }
+        else {
             disp = OPEN_ALWAYS;
+        }
     }
     else {
         /* TRUNCATE_EXISTING requires GENERIC_WRITE in dwDesiredAccess or
-         * CreateFile() fails with ERROR_INVALID_PARAMETER; without WRITE
-         * there is no way to truncate, so fall back to OPEN_EXISTING. */
-        if ((reason & WOLFSSH_FXF_TRUNC) && (reason & WOLFSSH_FXF_WRITE))
+         * CreateFile() fails with ERROR_INVALID_PARAMETER. TRUNC without
+         * WRITE is deliberately ignored and the open succeeds untruncated,
+         * as O_RDONLY|O_TRUNC does on most POSIX systems. */
+        if ((reason & WOLFSSH_FXF_TRUNC) && (reason & WOLFSSH_FXF_WRITE)) {
             disp = TRUNCATE_EXISTING;
-        else
+        }
+        else {
             disp = OPEN_EXISTING;
+        }
     }
 
     return disp;
@@ -2692,12 +2698,15 @@ cleanup:
     }
 #endif
 
-    if (reason & WOLFSSH_FXF_READ)
+    if (reason & WOLFSSH_FXF_READ) {
         desiredAccess |= GENERIC_READ;
-    if (reason & WOLFSSH_FXF_WRITE)
+    }
+    if (reason & WOLFSSH_FXF_WRITE) {
         desiredAccess |= GENERIC_WRITE;
-    if (reason & WOLFSSH_FXF_APPEND)
+    }
+    if (reason & WOLFSSH_FXF_APPEND) {
         desiredAccess |= FILE_APPEND_DATA;
+    }
 
     creationDisp = SFTP_WinCreationDisp(reason);
 
@@ -4265,6 +4274,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WFD    fd = 0;
     int    ret  = WS_SUCCESS;
     int    rc;
+    int    isAppend = 0;
     word32 idx  = 0;
     word32 ofst[2] = {0,0};
 
@@ -4279,6 +4289,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (ssh == NULL) {
         return WS_BAD_ARGUMENT;
     }
+    WOLFSSH_UNUSED(isAppend); /* only read on ports that define WWRITE */
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_WRITE");
 
@@ -4313,6 +4324,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             }
             else {
                 fd = fileEntry->fd;
+                isAppend = fileEntry->isAppend;
             }
         }
     }
@@ -4335,8 +4347,20 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             /* Retry while WPWRITE makes forward progress; bail on error
              * or zero return to avoid spinning on a stuck backend. */
             while (written < strSz) {
-                ret = WPWRITE(ssh->fs, fd, (byte*)str + written,
-                        strSz - written, ofst);
+            #ifdef WWRITE
+                if (isAppend) {
+                    /* FXF_APPEND: the offset is ignored and the O_APPEND
+                     * fd puts the write at EOF. pwrite() would honor the
+                     * offset on every POSIX system but Linux. */
+                    ret = WWRITE(ssh->fs, fd, (byte*)str + written,
+                            strSz - written);
+                }
+                else
+            #endif
+                {
+                    ret = WPWRITE(ssh->fs, fd, (byte*)str + written,
+                            strSz - written, ofst);
+                }
                 if (ret <= 0) {
                     break;
                 }
@@ -4459,8 +4483,8 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
          * non-atomic read-modify-write: the file is shared FILE_SHARE_WRITE,
          * so concurrent appenders would resolve the same offset and overwrite
          * each other. Setting both OVERLAPPED offset fields to 0xFFFFFFFF
-         * tells WriteFile() to append atomically at end of file, matching the
-         * POSIX O_APPEND path. */
+         * tells WriteFile() to append atomically at end of file, matching
+         * the POSIX O_APPEND path. */
         if (isAppend) {
             offset.Offset     = 0xFFFFFFFF;
             offset.OffsetHigh = 0xFFFFFFFF;
@@ -4473,7 +4497,9 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             return WS_BUFFER_E;
         }
 
-        if (WriteFile(fd, str, strSz, &bytesWritten, &offset) == 0) {
+        /* A short write is a failure too, as on the POSIX side. */
+        if (WriteFile(fd, str, strSz, &bytesWritten, &offset) == 0 ||
+                bytesWritten != strSz) {
             WLOG(WS_LOG_SFTP, "Error writing to file");
             res  = err;
             type = WOLFSSH_FTP_FAILURE;
