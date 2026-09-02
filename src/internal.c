@@ -16490,6 +16490,39 @@ static int SignHRsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
 #endif /* WOLFSSH_NO_RSA */
 
 
+#ifndef WOLFSSH_NO_ECDSA
+/* Encode ECDSA r/s mpints to [uint32 len][val] pairs, padding if needed.
+ * Returns WS_BUFFER_E when outSz can't hold both. */
+static int EncodeEcdsaRsToMpints(byte* out, word32 outSz,
+        const byte* r, word32 rSz, byte rPad,
+        const byte* s, word32 sSz, byte sPad, word32* written)
+{
+    word32 idx = 0;
+
+    if (outSz < (2 * LENGTH_SZ) + rSz + rPad + sSz + sPad) {
+        return WS_BUFFER_E;
+    }
+
+    c32toa(rSz + rPad, out + idx);
+    idx += LENGTH_SZ;
+    if (rPad)
+        out[idx++] = 0;
+    WMEMCPY(out + idx, r, rSz);
+    idx += rSz;
+
+    c32toa(sSz + sPad, out + idx);
+    idx += LENGTH_SZ;
+    if (sPad)
+        out[idx++] = 0;
+    WMEMCPY(out + idx, s, sSz);
+    idx += sSz;
+
+    *written = idx;
+
+    return WS_SUCCESS;
+}
+#endif /* !WOLFSSH_NO_ECDSA */
+
 static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
         struct wolfSSH_sigKeyBlockFull *sigKey)
 #ifndef WOLFSSH_NO_ECDSA
@@ -16504,6 +16537,8 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     enum wc_HashType hashId;
     word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ,
            sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
+    /* Save capacity since mpint form can be longer than ASN.1 form. */
+    word32 sigCap = *sigSz;
     byte rPad, sPad;
 #ifndef WOLFSSH_SMALL_STACK
     byte r_s[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
@@ -16598,22 +16633,18 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
-        int idx = 0;
+        word32 written;
+
         rPad = (r[0] & 0x80) ? 1 : 0;
         sPad = (s[0] & 0x80) ? 1 : 0;
-        *sigSz = (LENGTH_SZ * 2) + rSz + rPad + sSz + sPad;
-
-        c32toa(rSz + rPad, sig + idx);
-        idx += LENGTH_SZ;
-        if (rPad)
-            sig[idx++] = 0;
-        WMEMCPY(sig + idx, r, rSz);
-        idx += rSz;
-        c32toa(sSz + sPad, sig + idx);
-        idx += LENGTH_SZ;
-        if (sPad)
-            sig[idx++] = 0;
-        WMEMCPY(sig + idx, s, sSz);
+        ret = EncodeEcdsaRsToMpints(sig, sigCap, r, rSz, rPad, s, sSz,
+                sPad, &written);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "SignHEcdsa: sig buffer too small for mpints");
+        }
+        else {
+            *sigSz = written;
+        }
     }
 
     WS_FORCEZERO(digest, sizeof(digest));
@@ -19216,8 +19247,10 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
 }
 
 
+/* outputSz bounds the variable-length r/s mpint encoding; the fixed-size
+ * builders (RSA, Ed25519, ML-DSA) fit PreparePacket()'s estimate unbounded. */
 static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
-        byte* output, word32* idx,
+        byte* output, word32 outputSz, word32* idx,
         const WS_UserAuthData* authData,
         const byte* sigStart, word32 sigStartIdx,
         WS_KeySignature* keySig)
@@ -19289,6 +19322,13 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
                     sig_ptr, &sigSz,
                     authData->sf.publicKey.publicKey,
                     authData->sf.publicKey.publicKeySz, 0);
+        if (ret == WS_SUCCESS) {
+            /* begin indexes into output, whose capacity is outputSz. */
+            if (outputSz <= begin || outputSz - begin < LENGTH_SZ + sigSz) {
+                WLOG(WS_LOG_DEBUG, "SUAR: ECDSA agent sig doesn't fit output");
+                ret = WS_BUFFER_E;
+            }
+        }
         if (ret == WS_SUCCESS) {
             c32toa(sigSz, output + begin);
             begin += LENGTH_SZ;
@@ -19362,7 +19402,21 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                word32 outRemaining;
+
                 namesSz = (word32)WSTRLEN(names);
+
+                /* Bound the whole block, not just the mpints. */
+                outRemaining = (outputSz > begin) ? outputSz - begin : 0;
+                if (outRemaining < namesSz + (LENGTH_SZ * 5) +
+                        rSz + rPad + sSz + sPad) {
+                    WLOG(WS_LOG_DEBUG, "SUAR: ECDSA sig doesn't fit output");
+                    ret = WS_BUFFER_E;
+                }
+            }
+
+            if (ret == WS_SUCCESS) {
+                word32 written = 0;
 
                 c32toa(rSz + rPad + sSz + sPad + namesSz + LENGTH_SZ * 4,
                         output + begin);
@@ -19377,23 +19431,12 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
                 c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
 
-                c32toa(rSz + rPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (rPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, r_ptr, rSz);
-                begin += rSz;
-
-                c32toa(sSz + sPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (sPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, s_ptr, sSz);
-                begin += sSz;
+                ret = EncodeEcdsaRsToMpints(output + begin,
+                        outputSz - begin, r_ptr, rSz, rPad, s_ptr, sSz, sPad,
+                        &written);
+                if (ret == WS_SUCCESS) {
+                    begin += written;
+                }
             }
         }
     }
@@ -19484,8 +19527,10 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
 }
 
 
+/* outputSz bounds the variable-length r/s mpint encoding; the fixed-size
+ * builders (RSA, Ed25519, ML-DSA) fit PreparePacket()'s estimate unbounded. */
 static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
-        byte* output, word32* idx,
+        byte* output, word32 outputSz, word32* idx,
         const WS_UserAuthData* authData,
         const byte* sigStart, word32 sigStartIdx,
         WS_KeySignature* keySig)
@@ -19540,6 +19585,13 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                     sig, &sigSz,
                     authData->sf.publicKey.publicKey,
                     authData->sf.publicKey.publicKeySz, 0);
+        if (ret == WS_SUCCESS) {
+            /* begin indexes into output, whose capacity is outputSz. */
+            if (outputSz <= begin || outputSz - begin < LENGTH_SZ + sigSz) {
+                WLOG(WS_LOG_DEBUG, "SUAR: ECDSA agent sig doesn't fit output");
+                ret = WS_BUFFER_E;
+            }
+        }
         if (ret == WS_SUCCESS) {
             c32toa(sigSz, output + begin);
             begin += LENGTH_SZ;
@@ -19623,7 +19675,22 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
             }
 
             if (ret == WS_SUCCESS) {
+                word32 outRemaining;
+
                 namesSz = (word32)WSTRLEN(names);
+
+                /* Bound the whole block, not just the mpints. */
+                outRemaining = (outputSz > begin) ? outputSz - begin : 0;
+                if (outRemaining < namesSz + (LENGTH_SZ * 5) +
+                        rSz + rPad + sSz + sPad) {
+                    WLOG(WS_LOG_DEBUG,
+                            "SUAR: ECDSA cert sig doesn't fit output");
+                    ret = WS_BUFFER_E;
+                }
+            }
+
+            if (ret == WS_SUCCESS) {
+                word32 written = 0;
 
                 c32toa(rSz + rPad + sSz + sPad + namesSz+ LENGTH_SZ * 4,
                         output + begin);
@@ -19638,23 +19705,12 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
                 c32toa(rSz + rPad + sSz + sPad + LENGTH_SZ * 2, output + begin);
                 begin += LENGTH_SZ;
 
-                c32toa(rSz + rPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (rPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, r, rSz);
-                begin += rSz;
-
-                c32toa(sSz + sPad, output + begin);
-                begin += LENGTH_SZ;
-
-                if (sPad)
-                    output[begin++] = 0;
-
-                WMEMCPY(output + begin, s, sSz);
-                begin += sSz;
+                ret = EncodeEcdsaRsToMpints(output + begin,
+                        outputSz - begin, r, rSz, rPad, s, sSz, sPad,
+                        &written);
+                if (ret == WS_SUCCESS) {
+                    begin += written;
+                }
             }
         }
     }
@@ -20342,7 +20398,8 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                     begin += LENGTH_SZ;
                     WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
                     begin += pk->publicKeySz;
-                    ret = BuildUserAuthRequestEcc(ssh, output, &begin,
+                    ret = BuildUserAuthRequestEcc(ssh, output,
+                            ssh->outputBuffer.bufferSz, &begin,
                             authData, sigStart, sigStartIdx, keySig);
                     break;
                 #ifdef WOLFSSH_CERTS
@@ -20361,7 +20418,8 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
                             pk->publicKey, pk->publicKeySz, NULL, 0,
                             output, &ssh->outputBuffer.bufferSz, &begin);
                     if (ret == WS_SUCCESS) {
-                        ret = BuildUserAuthRequestEccCert(ssh, output, &begin,
+                        ret = BuildUserAuthRequestEccCert(ssh, output,
+                            ssh->outputBuffer.bufferSz, &begin,
                             authData, sigStart, sigStartIdx, keySig);
                     }
                     break;
@@ -23032,31 +23090,17 @@ static int CompositeEccSign(void* key, WC_RNG* rng, void* heap,
             ret = wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf, &sSz);
         }
         if (ret == 0) {
-            word32 offset = 0;
+            /* RFC 5656 3.1.2: mpints with the top bit set need a zero pad. */
             byte rPad = (rBuf[0] & 0x80) ? 1 : 0;
             byte sPad = (sBuf[0] & 0x80) ? 1 : 0;
+            word32 written;
 
-            /* RFC 5656 3.1.2: r/s are mpints; a positive value with its
-             * top bit set needs a leading zero pad byte. */
-            if (*wireSigSz < (2U * LENGTH_SZ) + rSz + rPad + sSz + sPad) {
+            if (EncodeEcdsaRsToMpints(wireSig, *wireSigSz, rBuf, rSz, rPad,
+                    sBuf, sSz, sPad, &written) != WS_SUCCESS) {
                 ret = WS_BAD_ARGUMENT;
             }
             else {
-                c32toa(rSz + rPad, wireSig + offset);
-                offset += LENGTH_SZ;
-                if (rPad)
-                    wireSig[offset++] = 0;
-                WMEMCPY(wireSig + offset, rBuf, rSz);
-                offset += rSz;
-
-                c32toa(sSz + sPad, wireSig + offset);
-                offset += LENGTH_SZ;
-                if (sPad)
-                    wireSig[offset++] = 0;
-                WMEMCPY(wireSig + offset, sBuf, sSz);
-                offset += sSz;
-
-                *wireSigSz = offset;
+                *wireSigSz = written;
             }
         }
 #ifdef WOLFSSH_SMALL_STACK
