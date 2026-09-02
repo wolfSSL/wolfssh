@@ -1375,6 +1375,7 @@ struct WOLFSSH_CHANNEL {
     byte eofTxd : 1;
     byte openConfirmed : 1;
     byte ptyReq : 1; /* flag for if interactive pty request was received */
+    byte fwdSetupTxd : 1; /* a LOCAL_SETUP succeeded, a cleanup is owed */
     word32 channel;
     word32 windowSz;
     word32 maxPacketSz;
