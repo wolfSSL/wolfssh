@@ -1170,7 +1170,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * above, which has already run this pass. */
                         continue;
                     }
-                    else if (rc != WS_WANT_READ) {
+                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
