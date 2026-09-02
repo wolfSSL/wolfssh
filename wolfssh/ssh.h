@@ -701,6 +701,14 @@ WOLFSSH_API int wolfSSH_CTX_SetWindowPacketSize(WOLFSSH_CTX* ctx,
 
 WOLFSSH_API int wolfSSH_accept(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
+/* Tears down the first channel in the list, and flushes whatever a short
+ * send left queued, not just a disconnect of ours: a rejected auth's
+ * USERAUTH_FAILURE, and a CHANNEL_CLOSE whose channel was retired the
+ * moment it was bundled, have nothing else left to carry the retry. That
+ * flush can be short too, so a WS_WANT_WRITE from here may be owed to it
+ * rather than to the teardown sends; either way the caller retries. Once
+ * the peer has disconnected, only our own queued disconnect still goes
+ * out, per the comment below. */
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
  * wolfSSH_shutdown() above this comment, and every send call below it,

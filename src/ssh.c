@@ -1149,17 +1149,20 @@ static int SendAfterDisconnect(WOLFSSH* ssh)
 }
 
 
-/* A disconnect of ours left queued by a short send still has to reach the
+/* Whatever a short send left in the output buffer still has to reach the
  * peer, and flushing bytes that are already bundled is not the new traffic
- * RFC 4253 section 11.1 forbids. Only our own disconnect qualifies: a
- * disconnect from the peer leaves nothing queued but unrelated traffic,
- * which the session is over for. Call only after a NULL check of ssh. */
-static int FlushQueuedDisconnect(WOLFSSH* ssh)
+ * RFC 4253 section 11.1 forbids. Once the peer has disconnected, though,
+ * only our own queued disconnect still qualifies: anything else in there
+ * belongs to a session that is over. Call only after a NULL check of ssh. */
+static int FlushQueuedOutput(WOLFSSH* ssh)
 {
-    if (!ssh->disconnectTxd || !wolfSSH_OutputPending(ssh))
+    if (!wolfSSH_OutputPending(ssh))
         return 0;
 
-    WLOG(WS_LOG_DEBUG, "Flushing a disconnect left queued by a short send");
+    if (ssh->disconnected && !ssh->disconnectTxd)
+        return 0;
+
+    WLOG(WS_LOG_DEBUG, "Flushing output left queued by a short send");
     return 1;
 }
 
@@ -1168,6 +1171,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
     int flushRet = WS_SUCCESS;
+    int flushed = 0;
     WOLFSSH_CHANNEL* channel = NULL;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_shutdown()");
@@ -1175,10 +1179,14 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
-    /* This is a teardown call, so a disconnect of ours left queued by a
-     * short send goes out here, with or without a channel to tear down. */
-    if (ret == WS_SUCCESS && FlushQueuedDisconnect(ssh))
+    /* This is a teardown call, so anything a short send left queued goes out
+     * here, with or without a channel to tear down. A rejected auth's
+     * USERAUTH_FAILURE has no channel, and a channel close is retired off
+     * the channel the moment it is bundled. */
+    if (ret == WS_SUCCESS && FlushQueuedOutput(ssh)) {
         flushRet = wolfSSH_SendPacket(ssh);
+        flushed = flushRet == WS_SUCCESS;
+    }
 
     if (ret == WS_SUCCESS && ssh->channelList == NULL)
         ret = WS_BAD_ARGUMENT;
@@ -1201,6 +1209,13 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * flush owns the error instead, since that retry is still owed. */
     if (ssh != NULL && ssh->disconnected && flushRet == WS_SUCCESS)
         ssh->error = WS_DISCONNECT;
+
+    /* A live session has no WS_DISCONNECT to displace that stale error with,
+     * and the widened flush reaches sessions that are still up. The write the
+     * short send latched WS_WANT_WRITE for is the one that just finished, so
+     * it is not owed twice. */
+    else if (flushed && ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
 
     /* if channel close was not already sent then send it */
     if (channel != NULL && !channel->closeTxd) {
@@ -1227,8 +1242,11 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
 
 
     /* if the channel was not yet removed then read to get
-     * response to SendChannelClose */
-    if (channel != NULL && ret == WS_SUCCESS) {
+     * response to SendChannelClose. Not while the flush left output queued:
+     * the peer cannot answer a close it has not finished receiving, and the
+     * worker has nothing to read, so a want-read from it would send the
+     * caller to wait on the wrong side of the socket. */
+    if (channel != NULL && ret == WS_SUCCESS && !wolfSSH_OutputPending(ssh)) {
         ret = wolfSSH_worker(ssh, NULL);
         if (ret == WS_CHAN_RXD || ret == WS_EOF) {
             /* received response */
@@ -1242,8 +1260,16 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     }
 
     /* An unfinished flush outranks the channel status: the caller has to
-     * come back for the rest of the disconnect. */
-    if (flushRet != WS_SUCCESS)
+     * come back for the rest of the disconnect. Not so once a teardown send
+     * has carried the leftovers out with it: that write is settled, and the
+     * teardown result stands. Nor does it outrank a teardown send that
+     * failed: a reset leaves the buffer intact, so the flush still reads as
+     * owed while the send holds the real reason. A flush that failed
+     * outright reports whatever else happened. */
+    if (flushRet != WS_SUCCESS &&
+            (flushRet != WS_WANT_WRITE ||
+                (wolfSSH_OutputPending(ssh) &&
+                    (ret == WS_SUCCESS || ret == WS_CHANNEL_CLOSED))))
         ret = flushRet;
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_shutdown(), ret = %d", ret);
@@ -1760,7 +1786,7 @@ int wolfSSH_SendDisconnect(WOLFSSH *ssh, word32 reason)
      * connection that is already over. A short send leaves the first one
      * queued, though, so that retry goes through. */
     if (SendAfterDisconnect(ssh)) {
-        if (FlushQueuedDisconnect(ssh))
+        if (FlushQueuedOutput(ssh))
             return wolfSSH_SendPacket(ssh);
         return WS_FATAL_ERROR;
     }
