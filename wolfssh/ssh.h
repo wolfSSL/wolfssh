@@ -475,6 +475,45 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
 
+/* What a request callback decides. UNHANDLED is what a missing callback
+ * answers, and leaves the request to the built-in handling.
+ *
+ * Note that 0 is UNHANDLED here, where the older request callbacks above
+ * read a 0 return as acceptance. A callback of this family returns one of
+ * these three and not WS_SUCCESS: returning 0 out of habit leaves the
+ * request to the handling below, which refuses a type the library does
+ * not know. */
+typedef enum WS_ReqCbResult {
+    WOLFSSH_REQ_UNHANDLED = 0,
+    WOLFSSH_REQ_ACCEPT,
+    WOLFSSH_REQ_REJECT
+} WS_ReqCbResult;
+
+/* Consulted first for every channel request, ahead of the three callbacks
+ * above and of the built-in handling, so a request with no callback of its
+ * own -- env, pty-req, window-change, exit-status, auth-agent-req, or a
+ * type the library does not know -- can be granted or refused by policy.
+ * type is the request name as it arrived, typeSz bytes, and data is the
+ * request's type-specific part, dataSz bytes, for the callback to parse.
+ * Neither is NUL terminated, and a name may hold any byte, so a policy
+ * matches on typeSz bytes rather than with the string functions.
+ * wantReply is what the peer asked for, before the library clears it for
+ * the types RFC 4254 never answers.
+ *
+ * ACCEPT and REJECT settle the request, and the shell, exec and subsystem
+ * callbacks are not consulted. The library still parses and records what
+ * it needs from a request it knows, so a session request accepted here
+ * sets the channel's session type and the modes of an accepted pty-req are
+ * kept; a request that does not fit its type is refused whatever the
+ * callback said. A type the library does not know is answered
+ * CHANNEL_SUCCESS on ACCEPT, where it is otherwise refused. Shares the
+ * channel request context. */
+typedef int (*WS_CallbackChannelReqAny)(WOLFSSH_CHANNEL* channel,
+        const byte* type, word32 typeSz, const byte* data, word32 dataSz,
+        int wantReply, void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetChannelReqAnyCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReqAny cb);
+
 /* Application-driven channel handling, server side, off by default.
  *
  * Off, wolfSSH_accept() runs the session state machine through to an
@@ -546,6 +585,40 @@ WOLFSSH_API void wolfSSH_SetGlobalReq(WOLFSSH_CTX* ctx,
         WS_CallbackGlobalReq cb);
 WOLFSSH_API void wolfSSH_SetGlobalReqCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void *wolfSSH_GetGlobalReqCtx(WOLFSSH* ssh);
+/* Consulted first for a global request, ahead of the forward callback
+ * that answers tcpip-forward and cancel-tcpip-forward and of the callback
+ * above that answers the rest, but for the two requests named below.
+ * name is the request name as it arrived, nameSz bytes, and data is the
+ * request's type-specific part, dataSz bytes, for the callback to parse,
+ * so a tcpip-forward naming a port can be set up from here without a
+ * forward callback. Neither is NUL terminated, and a name may hold any
+ * byte, so a policy matches on nameSz bytes rather than with the string
+ * functions. UNHANDLED leaves the request to those callbacks. ACCEPT and
+ * REJECT settle it, and no other callback is consulted; the reply, when
+ * one is wanted, is REQUEST_SUCCESS or REQUEST_FAILURE.
+ *
+ * Two requests never reach this callback, both per RFC 4254 7.1. A
+ * tcpip-forward asking for port 0 is answered with the port bound, which
+ * only the forward callback can report, so it is left to the handling
+ * that can bind it; so is one whose body does not parse, having no port
+ * to read. Were a policy asked about either, a grant would have to be
+ * refused once the policy had already bound a listener. And a client
+ * answers tcpip-forward and cancel-tcpip-forward with a failure, in any
+ * build, whatever a policy would make of them.
+ *
+ * Shares the global request context.
+ *
+ * name and data point into the session's input buffer and are good only
+ * for the length of the call, so a callback keeping either copies it.
+ * The packet is still being parsed, so the callback must not re-enter
+ * the receive side of the library on this session -- wolfSSH_worker(),
+ * wolfSSH_stream_read(), wolfSSH_accept(), the SFTP calls -- which may
+ * grow or compact that buffer and leave both pointers behind. */
+typedef int (*WS_CallbackGlobalReqAny)(WOLFSSH* ssh, const byte* name,
+        word32 nameSz, const byte* data, word32 dataSz, int wantReply,
+        void* ctx);
+WOLFSSH_API int wolfSSH_CTX_SetGlobalReqAnyCb(WOLFSSH_CTX* ctx,
+        WS_CallbackGlobalReqAny cb);
 typedef int (*WS_CallbackReqSuccess)(WOLFSSH* ssh, void* buf, word32 sz,
         void* ctx);
 WOLFSSH_API void wolfSSH_SetReqSuccess(WOLFSSH_CTX* ctx,

@@ -12188,6 +12188,79 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
 }
 #endif
 
+/* Exact match on a global request name, as ChannelRequestIs() does for a
+ * channel request type. The name is the one that arrived, so the match is
+ * on length and bytes. */
+static int GlobalRequestIs(const byte* name, word32 nameSz, const char* want)
+{
+    word32 wantSz = (word32)WSTRLEN(want);
+
+    return (nameSz == wantSz) && (WMEMCMP(name, want, wantSz) == 0);
+}
+
+
+/* Whether a tcpip-forward is the built-in handling's to answer rather than
+ * the generic callback's. RFC 4254 7.1: a port-0 request is answered with
+ * the port bound, which only the forward callback can report, and one
+ * whose body does not parse has no port to read. Granting either in the
+ * callback would mean refusing it afterwards, once the callback may
+ * already have bound a listener. */
+static int GlobalRequestNeedsFwdCb(const byte* name, word32 nameSz,
+        const byte* buf, word32 len, word32 begin)
+{
+    const byte* bindAddr;
+    word32 bindAddrSz, bindPort = 0, peek = begin;
+
+    if (!GlobalRequestIs(name, nameSz, "tcpip-forward")) {
+        return 0;
+    }
+    if (GetStringRef(&bindAddrSz, &bindAddr, buf, len, &peek) != WS_SUCCESS
+            || GetUint32(&bindPort, buf, len, &peek) != WS_SUCCESS) {
+        return 1;
+    }
+
+    return bindPort == 0;
+}
+
+
+/* Puts a global request to the generic callback, which sees the name and
+ * the type-specific part to parse itself. Returns 1 when the callback
+ * settled the request, with any wanted reply sent and *ret carrying the
+ * result, or 0 to leave it to the built-in handling. The name is the one
+ * that arrived, nameSz bytes, not the truncated copy the older callback
+ * is handed. */
+static int DoGlobalRequestAny(WOLFSSH* ssh, const byte* name, word32 nameSz,
+        byte* buf, word32 len, word32 begin, byte wantReply, int* ret)
+{
+    int decision, success;
+
+    if (ssh->ctx->globalReqAnyCb == NULL) {
+        return 0;
+    }
+
+    if (GlobalRequestNeedsFwdCb(name, nameSz, buf, len, begin)) {
+        WLOG(WS_LOG_DEBUG, "DGR: a port-0 forward is left to the handling "
+                "that can bind it");
+        return 0;
+    }
+
+    decision = ssh->ctx->globalReqAnyCb(ssh, name, nameSz, buf + begin,
+            len - begin, wantReply, ssh->globalReqCtx);
+    if (decision != WOLFSSH_REQ_ACCEPT && decision != WOLFSSH_REQ_REJECT) {
+        return 0;
+    }
+    success = (decision == WOLFSSH_REQ_ACCEPT);
+
+    WLOG(WS_LOG_DEBUG, "DGR: global request callback %s",
+            success ? "granted" : "refused");
+    if (wantReply) {
+        *ret = SendRequestSuccess(ssh, success);
+    }
+
+    return 1;
+}
+
+
 static int DoGlobalRequest(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -12195,6 +12268,8 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     int ret = WS_SUCCESS;
     char name[80];
     word32 nameSz = (word32)sizeof(name);
+    const byte* wireName;
+    word32 wireNameSz;
     int globReqId = ID_UNKNOWN;
     byte wantReply = 0;
 
@@ -12207,8 +12282,19 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
+        word32 copyBegin;
+
+        /* Read twice: the generic callback answers on the name as it
+         * arrived, where the callback below it has always been handed a
+         * copy, NUL terminated and truncated to the buffer. */
         begin = *idx;
-        ret = GetString(name, &nameSz, buf, len, &begin);
+        copyBegin = begin;
+        ret = GetStringRef(&wireNameSz, &wireName, buf, len, &begin);
+        if (ret == WS_SUCCESS) {
+            if (wireName == NULL)
+                wireName = (const byte*)""; /* an empty name parses as NULL */
+            ret = GetString(name, &nameSz, buf, len, &copyBegin);
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -12218,47 +12304,53 @@ static int DoGlobalRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-#ifdef WOLFSSH_FWD
         /* RFC 4254 section 7.1: a remote forward is the client's to ask for,
          * so a client that receives the request answers a failure rather than
          * registering a forward on the peer's say-so. Answered here and not
          * in DoGlobalRequestFwd(), so the request body is never parsed and no
-         * forward state is touched. */
-        if ((globReqId == ID_GLOBREQ_TCPIP_FWD
-                    || globReqId == ID_GLOBREQ_TCPIP_FWD_CANCEL)
+         * forward state is touched. Matched on the name as it arrived rather
+         * than on an ID: the name table carries these two only in a
+         * WOLFSSH_FWD build, while a client answers them in any build. */
+        if ((GlobalRequestIs(wireName, wireNameSz, "tcpip-forward")
+                    || GlobalRequestIs(wireName, wireNameSz,
+                        "cancel-tcpip-forward"))
                 && ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
             WLOG(WS_LOG_WARN, "DGR: rejecting %s received by a client", name);
             if (wantReply) {
                 ret = SendRequestSuccess(ssh, 0);
             }
         }
-        else
-#endif
-        switch (globReqId) {
+        else if (!DoGlobalRequestAny(ssh, wireName, wireNameSz,
+                    buf, len, begin, wantReply, &ret)) {
+            switch (globReqId) {
 #ifdef WOLFSSH_FWD
-            case ID_GLOBREQ_TCPIP_FWD:
-                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 0);
-                wantReply = 0;
-                break;
-            case ID_GLOBREQ_TCPIP_FWD_CANCEL:
-                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 1);
-                wantReply = 0;
-                break;
+                case ID_GLOBREQ_TCPIP_FWD:
+                    ret = DoGlobalRequestFwd(ssh, buf, len, &begin,
+                            wantReply, 0);
+                    wantReply = 0;
+                    break;
+                case ID_GLOBREQ_TCPIP_FWD_CANCEL:
+                    ret = DoGlobalRequestFwd(ssh, buf, len, &begin,
+                            wantReply, 1);
+                    wantReply = 0;
+                    break;
 #endif
-            default:
-                if (ssh->ctx->globalReqCb != NULL) {
-                    ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply,
-                            (void *)ssh->globalReqCtx);
+                default:
+                    if (ssh->ctx->globalReqCb != NULL) {
+                        ret = ssh->ctx->globalReqCb(ssh, name, nameSz,
+                                wantReply, (void *)ssh->globalReqCtx);
 
-                    if (wantReply) {
-                        ret = SendRequestSuccess(ssh, (ret == WS_SUCCESS));
+                        if (wantReply) {
+                            ret = SendRequestSuccess(ssh,
+                                    (ret == WS_SUCCESS));
+                        }
                     }
-                }
-                else if (wantReply)
-                    ret = SendRequestSuccess(ssh, 0);
-                    /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
-                     * IETF:draft-ssh-global-requests */
-                break;
+                    else if (wantReply)
+                        ret = SendRequestSuccess(ssh, 0);
+                        /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
+                         * IETF:draft-ssh-global-requests */
+                    break;
+            }
         }
     }
 
@@ -13074,12 +13166,14 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
 #endif /* !NO_TERMIOS && WOLFSSH_TERM */
 
 
-/* Exact match on a channel request type, as NameToIdType() does for names. */
-static int ChannelRequestIs(const char* type, word32 typeSz, const char* name)
+/* Exact match on a channel request type, as NameToIdType() does for names.
+ * The type is the name as it arrived, so the match is on length and bytes;
+ * a type with an embedded NUL is some other type. */
+static int ChannelRequestIs(const byte* type, word32 typeSz, const char* name)
 {
     word32 nameSz = (word32)WSTRLEN(name);
 
-    return (typeSz == nameSz) && (WSTRNCMP(type, name, nameSz) == 0);
+    return (typeSz == nameSz) && (WMEMCMP(type, name, nameSz) == 0);
 }
 
 
@@ -13101,10 +13195,11 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
 
 
 /* Answers a shell, exec, or subsystem request. Sets the session type and
- * command for the callback to read, and keeps them only if it accepts. */
+ * command for the callback to read, and keeps them only if it accepts.
+ * A request the generic callback already granted asks no callback. */
 static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
         WOLFSSH_CHANNEL* channel, byte sessionType, WS_CallbackChannelReq cb,
-        byte* buf, word32 len, word32* idx, int* rej)
+        int granted, byte* buf, word32 len, word32* idx, int* rej)
 {
     void* heap = ssh->ctx->heap;
     byte prevType = channel->sessionType;
@@ -13135,7 +13230,9 @@ static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
         }
         channel->sessionType = sessionType;
 
-        if (cb != NULL)
+        if (granted)
+            *rej = 0;
+        else if (cb != NULL)
             *rej = cb(channel, ssh->channelReqCtx);
         else
             *rej = ssh->appChannels;
@@ -13175,17 +13272,22 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 begin = *idx;
     word32 channelId;
     word32 typeSz;
-    char type[32];
+    const byte* type;
     byte wantReply;
-    int ret, rej = 0;
+    int ret, rej = 0, granted = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
     ret = GetUint32(&channelId, buf, len, &begin);
 
-    typeSz = (word32)sizeof(type);
-    if (ret == WS_SUCCESS)
-        ret = GetString(type, &typeSz, buf, len, &begin);
+    /* Taken as it arrived rather than copied into a buffer, which would
+     * truncate a long type and end a type at an embedded NUL. The generic
+     * callback below answers on what the peer actually sent. */
+    if (ret == WS_SUCCESS) {
+        ret = GetStringRef(&typeSz, &type, buf, len, &begin);
+        if (ret == WS_SUCCESS && type == NULL)
+            type = (const byte*)""; /* an empty type parses as NULL */
+    }
 
     if (ret == WS_SUCCESS)
         ret = GetBoolean(&wantReply, buf, len, &begin);
@@ -13202,9 +13304,45 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_DEBUG, "  channelId = %u", channelId);
-        WLOG(WS_LOG_DEBUG, "  type = %s", type);
+        WLOG(WS_LOG_DEBUG, "  type = %.*s", (int)typeSz, type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
+        /* The generic callback sees every request first, with the
+         * type-specific part to parse itself. A refusal skips the handling
+         * below; a grant runs it with the decision already made. */
+        if (ssh->ctx->channelReqAnyCb != NULL) {
+            int decision = ssh->ctx->channelReqAnyCb(channel, type, typeSz,
+                    buf + begin, len - begin, wantReply,
+                    ssh->channelReqCtx);
+            if (decision == WOLFSSH_REQ_REJECT) {
+                WLOG(WS_LOG_DEBUG, "  channel request callback refused.");
+                rej = 1;
+            }
+            else if (decision == WOLFSSH_REQ_ACCEPT) {
+                granted = 1;
+            }
+        }
+    }
+
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    /* RFC 4254 sec 6.10: these are never answered, whatever the handling
+     * below makes of them. Cleared here rather than in each branch, which
+     * a refusal or a freed channel skips. */
+    if (ret == WS_SUCCESS
+            && (ChannelRequestIs(type, typeSz, "exit-status")
+                || ChannelRequestIs(type, typeSz, "exit-signal"))) {
+        wantReply = 0;
+    }
+#endif
+#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
+    /* RFC 4254 sec 6.7: the same for window-change. */
+    if (ret == WS_SUCCESS
+            && ChannelRequestIs(type, typeSz, "window-change")) {
+        wantReply = 0;
+    }
+#endif
+
+    if (ret == WS_SUCCESS && !rej) {
         if (ChannelRequestIs(type, typeSz, "env")) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
@@ -13229,17 +13367,17 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (ChannelRequestIs(type, typeSz, "shell")) {
             ret = DoChannelRequestSession(ssh, channelId, channel,
                     WOLFSSH_SESSION_SHELL, ssh->ctx->channelReqShellCb,
-                    buf, len, &begin, &rej);
+                    granted, buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
             ret = DoChannelRequestSession(ssh, channelId, channel,
                     WOLFSSH_SESSION_EXEC, ssh->ctx->channelReqExecCb,
-                    buf, len, &begin, &rej);
+                    granted, buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
             ret = DoChannelRequestSession(ssh, channelId, channel,
                     WOLFSSH_SESSION_SUBSYSTEM, ssh->ctx->channelReqSubsysCb,
-                    buf, len, &begin, &rej);
+                    granted, buf, len, &begin, &rej);
         }
         #ifdef WOLFSSH_TERM
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
@@ -13286,7 +13424,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (ChannelRequestIs(type, typeSz, "window-change")) {
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
-            wantReply = 0; /* RFC 4254 sec 6.7: no reply for window-change */
             ret = GetUint32(&widthChar, buf, len, &begin);
             if (ret == WS_SUCCESS)
                 ret = GetUint32(&heightRows, buf, len, &begin);
@@ -13321,7 +13458,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
         #endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
         #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
         else if (ChannelRequestIs(type, typeSz, "exit-status")) {
-            wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-status */
             ret = GetUint32(&ssh->exitStatus, buf, len, &begin);
             WLOG(WS_LOG_AGENT, "Got exit status %u.", ssh->exitStatus);
         }
@@ -13330,7 +13466,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
             word32 sigSz;
             byte coreDumped;
 
-            wantReply = 0; /* RFC 4254 sec 6.10: no reply for exit-signal */
             WLOG(WS_LOG_AGENT, "Got exit signal, remote command terminated");
 
             sigSz = WOLFSSH_MAX_NAMESZ;
@@ -13364,6 +13499,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
         }
         #endif /* WOLFSSH_AGENT */
+        else if (granted) {
+            WLOG(WS_LOG_DEBUG, "  unknown channel request type, granted.");
+        }
         else {
             WLOG(WS_LOG_DEBUG, "  unknown channel request type, rejecting.");
             rej = 1;
