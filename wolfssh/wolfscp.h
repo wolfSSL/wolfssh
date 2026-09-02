@@ -158,6 +158,17 @@ WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH* ssh, const char* src,
         const char* dst);
 WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
         const char* dst);
+/* Server side. Drives an SCP transfer on a channel whose "exec scp ..."
+ * command is already bound. This is the same work wolfSSH_accept() does
+ * through its WS_SCP_INIT re-entry, exposed so an application can start the
+ * transfer itself; use one or the other, not both. Call it once
+ * wolfSSH_accept() has returned and the exec channel-request callback has
+ * reported an SCP command, not from inside that callback.
+ *
+ * Returns WS_SCP_COMPLETE when the transfer is done. On a non-blocking
+ * socket it returns WS_WANT_READ or WS_WANT_WRITE with the transfer part
+ * done; call it again on the same session until it completes. */
+WOLFSSH_API int   wolfSSH_SCP_accept(WOLFSSH* ssh);
 
 
 #ifdef __cplusplus
