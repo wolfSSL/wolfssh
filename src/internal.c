@@ -702,7 +702,9 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
     /* Only the server should send these messages, never receive. */
-    if (msg == MSGID_SERVICE_ACCEPT) {
+    if (msg == MSGID_SERVICE_ACCEPT ||
+            msg == MSGID_KEXDH_REPLY || /* aliases MSGID_KEXDH_GEX_GROUP */
+            msg == MSGID_KEXDH_GEX_REPLY) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                 msg, "server", "ever");
         ssh->error = WS_MSGID_NOT_ALLOWED_E;

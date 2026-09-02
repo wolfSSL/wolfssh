@@ -2528,6 +2528,58 @@ static void TestServerOnlyUserauthMsgsBlocked(WOLFSSH* ssh)
 }
 
 
+/* Reject the key exchange messages that only the server sends. */
+static void TestServerOnlyKexMsgsBlocked(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    /* The peer's KEXINIT has landed, its GEX request has not. */
+    ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    ssh->handshake = AllocHandshake(ssh);
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+    /* The server expects no particular message yet, so the expectMsgId
+     * check cannot catch these, the role check has to. */
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_GROUP,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REPLY,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    /* The message a conformant client sends in this state is unaffected. */
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REQUEST,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+    AssertIntEQ(ssh->error, WS_SUCCESS);
+
+    /* Same answer during a rekey on an established session. The pre-keyed
+     * range check does not run this far along, so a check placed there
+     * would leave this window open. */
+    ssh->error = 0;
+    ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_GROUP,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REPLY,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+}
+
+
 /* The server accepts a service request only once keyed, and never accepts
  * the service accept that only it sends. */
 static void TestServerServiceRequestStateGated(WOLFSSH* ssh)
@@ -11024,6 +11076,7 @@ int main(int argc, char** argv)
     TestServerKnownAuthMsgIdBeforeAuthDisconnects();
     TestServerUnknownHighMsgIdBeforeAuthDisconnects();
     TestServerOnlyUserauthMsgsBlocked(serverSsh);
+    TestServerOnlyKexMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
     TestServerServiceRequestRejectedDuringKeying();
     TestFailedSendClearsPendingPlaintext();
