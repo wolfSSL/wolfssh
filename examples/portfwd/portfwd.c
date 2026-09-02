@@ -249,6 +249,7 @@ typedef struct PortfwdState {
     SOCKET_T appFd;         /* socket to the local target, -1 when idle */
     word32 channelId;       /* id of the inbound forwarded-tcpip channel */
     int pending;            /* a new channel is waiting to be wired up */
+    int cleanupRxd;         /* LOCAL_CLEANUP closed appFd for us */
     int replied;            /* peer answered the tcpip-forward request */
     int refused;            /* ...and the answer was a refusal */
     int badPort;            /* ...or named a port outside 1..65535 */
@@ -319,15 +320,17 @@ static int portfwdRemoteFwdCb(WS_FwdCbAction action, void* ctx,
             st->pending = 1;
             break;
         case WOLFSSH_FWD_LOCAL_CLEANUP:
-            /* The library does not currently emit this action, so this branch
-             * never runs. The target socket is closed when portfwd_worker()
-             * leaves its loop. Kept so the handler is right if that changes. */
+            /* Paired with the LOCAL_SETUP that opened the target socket.
+             * portfwd_worker() keeps its own copy of the descriptor, so tell
+             * it not to close what has already been closed. The closing
+             * channel's id arrives in the port argument. */
             (void)address;
             (void)port;
             if (st->appFd != (SOCKET_T)-1) {
                 WCLOSESOCKET(st->appFd);
                 st->appFd = (SOCKET_T)-1;
             }
+            st->cleanupRxd = 1;
             break;
         case WOLFSSH_FWD_REMOTE_SETUP:
         case WOLFSSH_FWD_REMOTE_CLEANUP:
@@ -746,6 +749,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                         WS_CHANNEL_ID_SELF);
                 if (fwdState.appFd != (SOCKET_T)-1 && newChannel != NULL) {
                     appFd = fwdState.appFd;
+                    /* The latch describes this descriptor now, not one an
+                     * earlier failed open already cleaned up. */
+                    fwdState.cleanupRxd = 0;
                     fwdChannel = newChannel;
                     fwdChannelId = fwdState.channelId;
                     FD_SET(appFd, &templateFds);
@@ -885,7 +891,17 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WCLOSESOCKET(sshFd);
     if (listenFd != (SOCKET_T)-1)
         WCLOSESOCKET(listenFd);
-    WCLOSESOCKET(appFd);
+    /* Skip a descriptor the cleanup callback already closed; closing it
+     * twice can take down whatever has been handed the number since. */
+    if (fwdState.cleanupRxd)
+        appFd = (SOCKET_T)-1;
+    if (appFd != (SOCKET_T)-1) {
+        WCLOSESOCKET(appFd);
+        /* The loop can leave with the channel still open, and freeing the
+         * session below runs the cleanup handler on this same descriptor. */
+        if (fwdState.appFd == appFd)
+            fwdState.appFd = (SOCKET_T)-1;
+    }
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 #ifdef WOLFSSH_SMALL_STACK
