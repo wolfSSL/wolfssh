@@ -508,17 +508,28 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         appCtx->state = APP_STATE_CONNECT;
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
-        WCLOSESOCKET(appCtx->appFd);
-        appCtx->appFd = -1;
-        if (fwdCbCtx->hostName) {
-            WFREE(fwdCbCtx->hostName, NULL, 0);
-            fwdCbCtx->hostName = NULL;
+        /* The channel id rides in the port parameter. A channel can outlive
+         * its turn in the slot, so only the holder may tear it down. */
+        if (port == appCtx->channelId) {
+            /* This runs now, so the socket may already be gone: the open can
+             * fail after the setup, before anything connected. */
+            if (appCtx->appFd != (WS_SOCKET_T)-1) {
+                WCLOSESOCKET(appCtx->appFd);
+                appCtx->appFd = -1;
+            }
+            if (fwdCbCtx->hostName) {
+                WFREE(fwdCbCtx->hostName, NULL, 0);
+                fwdCbCtx->hostName = NULL;
+            }
+            if (fwdCbCtx->originName) {
+                WFREE(fwdCbCtx->originName, NULL, 0);
+                fwdCbCtx->originName = NULL;
+            }
+            /* A refused connect leaves this set; retire it with the
+             * channel. */
+            fwdCbCtx->isDirect = 0;
+            appCtx->state = APP_STATE_INIT;
         }
-        if (fwdCbCtx->originName) {
-            WFREE(fwdCbCtx->originName, NULL, 0);
-            fwdCbCtx->originName = NULL;
-        }
-        appCtx->state = APP_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
@@ -1181,21 +1192,35 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else if (rc == WS_CHANNEL_CLOSED) {
                         #ifdef WOLFSSH_FWD
-                        if (threadCtx->fwdCtx.state == APP_STATE_CONNECTED &&
-                            lastChannel == threadCtx->fwdCtx.channelId) {
-                            /* Read zero-returned. Socket is closed. Go back
-                               to listening. */
-                            if (fwdFd != -1) {
-                                WCLOSESOCKET(fwdFd);
+                        /* wolfSSH_worker() names the channel only for the
+                         * data and EOF statuses; DoChannelClose() recorded
+                         * the id it retired. */
+                        wolfSSH_GetLastRxId(ssh, &lastChannel);
+                        if (lastChannel == threadCtx->fwdCtx.channelId) {
+                            if (threadCtx->fwdCtx.appFd == -1) {
+                                /* The LOCAL_CLEANUP handler ran ahead of
+                                 * this and closed the socket; only this
+                                 * copy of the descriptor is stale. */
                                 fwdFd = -1;
-                                threadCtx->fwdCtx.appFd = -1;
                             }
-                            if (threadCtx->fwdCbCtx.originName != NULL) {
-                                WFREE(threadCtx->fwdCbCtx.originName,
-                                        NULL, 0);
-                                threadCtx->fwdCbCtx.originName = NULL;
+                            else if (threadCtx->fwdCtx.state
+                                    == APP_STATE_CONNECTED) {
+                                /* A locally opened forward is armed by no
+                                 * LOCAL_SETUP and so draws no cleanup. Its
+                                 * teardown is still ours: go back to
+                                 * listening. */
+                                if (fwdFd != -1) {
+                                    WCLOSESOCKET(fwdFd);
+                                    fwdFd = -1;
+                                    threadCtx->fwdCtx.appFd = -1;
+                                }
+                                if (threadCtx->fwdCbCtx.originName != NULL) {
+                                    WFREE(threadCtx->fwdCbCtx.originName,
+                                            NULL, 0);
+                                    threadCtx->fwdCbCtx.originName = NULL;
+                                }
+                                threadCtx->fwdCtx.state = APP_STATE_LISTEN;
                             }
-                            threadCtx->fwdCtx.state = APP_STATE_LISTEN;
                         }
                         #endif
                         continue;
