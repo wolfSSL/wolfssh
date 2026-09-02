@@ -3252,6 +3252,104 @@ static void TestChannelOpenFailCallbackRejects(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* What the close callback saw, including whether the channel was still on
+ * the list when it ran. */
+static int closeCbCalls;
+static word32 closeCbChannel;
+static void* closeCbCtx;
+static word32 closeCbListSz;
+static int closeCbReturn;
+
+static int RecordingChannelCloseCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    AssertNotNull(channel);
+    AssertNotNull(channel->ssh);
+    closeCbCalls++;
+    closeCbChannel = channel->channel;
+    closeCbCtx = ctx;
+    closeCbListSz = channel->ssh->channelListSz;
+
+    return closeCbReturn;
+}
+
+/* Drives a peer close of a confirmed channel through the recording callback,
+ * set to return cbReturn, and returns what DoReceive() reported. */
+static int CloseThroughRecordingCb(ChannelOpenHarness* harness, void* cbCtx,
+        int cbReturn, word32* selfChannelId)
+{
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+    int ret;
+
+    closeCbCalls = 0;
+    closeCbChannel = REGRESS_NO_CHANNEL;
+    closeCbCtx = NULL;
+    closeCbListSz = 0;
+    closeCbReturn = cbReturn;
+
+    InitChannelOpenHarness(harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelCloseCb(harness->ctx,
+                RecordingChannelCloseCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetChannelCloseCtx(harness->ssh, cbCtx), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(harness);
+    *selfChannelId = channel->channel;
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelClosePacket(*selfChannelId, in, sizeof(in));
+    RepointHarnessInput(harness, in, inSz);
+
+    ret = DoReceive(harness->ssh);
+    AssertIntEQ(harness->io.inOff, harness->io.inSz);
+
+    return ret;
+}
+
+/* The close callback is an application's only notice that a peer closed a
+ * channel, and it has to run while the channel is still findable:
+ * DoChannelClose() retires it a few lines later, and after that there is
+ * nothing left to name. */
+static void TestChannelCloseCallbackRuns(void)
+{
+    ChannelOpenHarness harness;
+    word32 selfChannelId;
+    int cbCtx = 0;
+    int ret;
+
+    ret = CloseThroughRecordingCb(&harness, &cbCtx, WS_SUCCESS,
+            &selfChannelId);
+    AssertIntEQ(ret, WS_CHANNEL_CLOSED);
+    AssertIntEQ(closeCbCalls, 1);
+    AssertIntEQ(closeCbChannel, selfChannelId);
+    AssertTrue(closeCbCtx == &cbCtx);
+    AssertIntEQ(closeCbListSz, 1);
+
+    /* And the channel is gone by the time the caller is told. */
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The close callback's return is discarded: the peer has closed whatever
+ * the application thinks, so the close completes either way. */
+static void TestChannelCloseCallbackReturnIgnored(void)
+{
+    ChannelOpenHarness harness;
+    word32 selfChannelId;
+    int cbCtx = 0;
+    int ret;
+
+    ret = CloseThroughRecordingCb(&harness, &cbCtx, WS_BAD_ARGUMENT,
+            &selfChannelId);
+    AssertIntEQ(ret, WS_CHANNEL_CLOSED);
+    AssertIntEQ(closeCbCalls, 1);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
 {
@@ -12454,6 +12552,8 @@ int main(int argc, char** argv)
     TestChannelOpenFailCallbackRuns();
     TestChannelOpenConfCallbackRejects();
     TestChannelOpenFailCallbackRejects();
+    TestChannelCloseCallbackRuns();
+    TestChannelCloseCallbackReturnIgnored();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
     TestSameUserRetryAllowed();
