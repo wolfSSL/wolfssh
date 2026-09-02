@@ -8584,6 +8584,23 @@ static int CaptureMsgId(const byte* buf, word32 len)
  * A custom IoSend callback captures the outgoing packet in plaintext
  * (no cipher negotiated on a fresh session). Message ID is read via
  * CaptureMsgId() using LENGTH_SZ + PAD_LENGTH_SZ. */
+/* A session request callback that refuses everything, and counts. The
+ * callback sees the session type and command of the request it is vetting;
+ * what it does not see is a session already committed to the channel. */
+static int s_rejectChanReqCalls;
+
+static int RejectChanReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    s_rejectChanReqCalls++;
+    if (channel == NULL
+            || wolfSSH_ChannelGetSessionType(channel)
+                == WOLFSSH_SESSION_UNKNOWN) {
+        return 0;
+    }
+    return 1;
+}
+
 static byte   s_chanReqCapture[256];
 static word32 s_chanReqCaptureSz = 0;
 
@@ -8836,6 +8853,15 @@ static int test_DoChannelRequest(void)
         0x00,0x00,0x00,0x02,              /* cmdSz = 2       */
         0x6C,0x73                         /* "ls"            */
     };
+    static const byte paySubsys[] = {
+        0x00,0x00,0x00,0x00,              /* channelId = 0   */
+        0x00,0x00,0x00,0x09,              /* typeSz = 9      */
+        0x73,0x75,0x62,0x73,0x79,0x73,
+        0x74,0x65,0x6D,                   /* "subsystem"     */
+        0x01,                             /* wantReply = 1   */
+        0x00,0x00,0x00,0x04,              /* nameSz = 4      */
+        0x73,0x66,0x74,0x70               /* "sftp"          */
+    };
     static const byte payUnknown[] = {
         0x00,0x00,0x00,0x00,              /* channelId = 0   */
         0x00,0x00,0x00,0x0C,              /* typeSz = 12     */
@@ -8960,6 +8986,78 @@ static int test_DoChannelRequest(void)
                 goto done;
             }
         }
+    }
+
+    /* A callback that refuses a shell, exec or subsystem request must leave
+     * nothing behind: no session type or command on the channel, and the
+     * client state short of CLIENT_DONE, or wolfSSH_accept() would go on to
+     * serve the session it just refused. */
+    {
+        struct {
+            const char* label;
+            const byte* payload;
+            word32      payloadSz;
+            int         errBase;
+        } rejCases[] = {
+            { "shell",     payShell,  (word32)sizeof(payShell),  -520 },
+            { "exec",      payExec,   (word32)sizeof(payExec),   -525 },
+            { "subsystem", paySubsys, (word32)sizeof(paySubsys), -530 }
+        };
+        int r;
+
+        wolfSSH_CTX_SetChannelReqShellCb(ctx, RejectChanReqCb);
+        wolfSSH_CTX_SetChannelReqExecCb(ctx, RejectChanReqCb);
+        wolfSSH_CTX_SetChannelReqSubsysCb(ctx, RejectChanReqCb);
+
+        for (r = 0; r < (int)(sizeof(rejCases) / sizeof(rejCases[0])); r++) {
+            word32 idxRej = 0;
+            int    retRej, capMsgId;
+
+            s_chanReqCaptureSz = 0;
+            WMEMSET(s_chanReqCapture, 0, sizeof(s_chanReqCapture));
+            s_rejectChanReqCalls = 0;
+
+            retRej = wolfSSH_TestDoChannelRequest(ssh,
+                    (byte*)rejCases[r].payload, rejCases[r].payloadSz,
+                    &idxRej);
+            if (retRej != WS_SUCCESS) {
+                printf("DoChannelRequest[rej-%s]: ret=%d, expected=%d\n",
+                        rejCases[r].label, retRej, WS_SUCCESS);
+                result = rejCases[r].errBase;
+                goto done;
+            }
+            if (s_rejectChanReqCalls != 1) {
+                printf("DoChannelRequest[rej-%s]: callback ran %d times\n",
+                        rejCases[r].label, s_rejectChanReqCalls);
+                result = rejCases[r].errBase - 1;
+                goto done;
+            }
+            capMsgId = CaptureMsgId(s_chanReqCapture, s_chanReqCaptureSz);
+            if (capMsgId != (int)MSGID_CHANNEL_FAILURE) {
+                printf("DoChannelRequest[rej-%s]: msg_id=0x%02x, "
+                        "expected=0x%02x\n", rejCases[r].label, capMsgId,
+                        MSGID_CHANNEL_FAILURE);
+                result = rejCases[r].errBase - 2;
+                goto done;
+            }
+            if (ch->sessionType != WOLFSSH_SESSION_UNKNOWN
+                    || ch->command != NULL) {
+                printf("DoChannelRequest[rej-%s]: session committed\n",
+                        rejCases[r].label);
+                result = rejCases[r].errBase - 3;
+                goto done;
+            }
+            if (ssh->clientState == CLIENT_DONE) {
+                printf("DoChannelRequest[rej-%s]: client state changed\n",
+                        rejCases[r].label);
+                result = rejCases[r].errBase - 4;
+                goto done;
+            }
+        }
+
+        wolfSSH_CTX_SetChannelReqShellCb(ctx, NULL);
+        wolfSSH_CTX_SetChannelReqExecCb(ctx, NULL);
+        wolfSSH_CTX_SetChannelReqSubsysCb(ctx, NULL);
     }
 
     for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
@@ -9249,15 +9347,6 @@ static int test_DoChannelRequest(void)
      * accept() already returned there is nothing left to start a shell,
      * exec or subsystem, so all three are refused rather than accepted. */
     {
-        static const byte paySubsys[] = {
-            0x00,0x00,0x00,0x00,              /* channelId = 0   */
-            0x00,0x00,0x00,0x09,              /* typeSz = 9      */
-            0x73,0x75,0x62,0x73,0x79,0x73,
-            0x74,0x65,0x6D,                   /* "subsystem"     */
-            0x01,                             /* wantReply = 1   */
-            0x00,0x00,0x00,0x04,              /* nameSz = 4      */
-            0x73,0x66,0x74,0x70               /* "sftp"          */
-        };
         struct {
             const char* label;
             const byte* payload;
