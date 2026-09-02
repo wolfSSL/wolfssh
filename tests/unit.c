@@ -4373,6 +4373,22 @@ static WS_MAYBE_UNUSED int WantWriteIoSend(WOLFSSH* ssh, void* buf, word32 sz,
     return WS_CBIO_ERR_WANT_WRITE;
 }
 
+/* A socket the peer reset under the send. */
+static WS_MAYBE_UNUSED int ConnResetIoSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    (void)ssh; (void)buf; (void)sz; (void)ctx;
+    return WS_CBIO_ERR_CONN_RST;
+}
+
+/* A send callback that claims more bytes than it was handed. */
+static WS_MAYBE_UNUSED int OobIoSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    (void)ssh; (void)buf; (void)ctx;
+    return (int)sz + 1;
+}
+
 static int test_DoChannelExtendedData_overflow(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -6279,6 +6295,901 @@ done:
     return result;
 }
 
+/* channelId=0, type=1 (stderr), dataSz=10, payload all 0x44. */
+static const byte s_workerExtBlob[] = {
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x0A,
+    0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44
+};
+
+/* Bundles a window adjust into ssh->outputBuffer with the send blocked,
+ * then leaves the receive idle. */
+static int WorkerParkAdjust(WOLFSSH_CTX* ctx, WOLFSSH* ssh,
+                            WOLFSSH_CHANNEL* channel)
+{
+    word32 idx = 0;
+    int ret;
+    byte out[32];
+
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)s_workerExtBlob,
+                                            (word32)sizeof(s_workerExtBlob),
+                                            &idx);
+    if (ret != WS_EXTDATA)
+        return WS_FATAL_ERROR;
+    if (channel->windowSz != 118)
+        return WS_FATAL_ERROR;
+
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ret = wolfSSH_extended_data_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10)
+        return WS_FATAL_ERROR;
+    if (ssh->outputBuffer.length == 0)
+        return WS_FATAL_ERROR;
+    if (channel->pendingWindowAdjust != 0)
+        return WS_FATAL_ERROR;
+
+    /* No staged packet, so PacketIoRecv reports want-read. */
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+
+    return WS_SUCCESS;
+}
+
+/* A window adjust a short write left in ssh->outputBuffer goes out on a
+ * later wolfSSH_worker() call. The peer is out of window and sends nothing
+ * until it arrives, so the receive stays idle. */
+static int test_WorkerFlushesOnIdleReceive(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1700;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1701; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1702; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1703;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1704;
+        goto done;
+    }
+
+    /* The socket takes writes again. */
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    s_extSendCount = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+
+    if (s_extSendCount != 1) { result = -1705; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1706; goto done; }
+
+    /* Nothing left queued, so the call reports the idle receive. */
+    if (ret != WS_FATAL_ERROR) { result = -1707; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_READ) { result = -1708; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* While the flush stays short, ssh->error keeps reporting WS_WANT_WRITE so
+ * the caller selects for writability instead of waiting on a read the peer
+ * cannot produce. */
+static int test_WorkerReportsOwedFlush(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1710;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1711; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1712; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1713;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1714;
+        goto done;
+    }
+
+    /* The send still blocks, so the flush stays owed across both calls. */
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1715; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1716; goto done; }
+    if (ssh->outputBuffer.length == 0) { result = -1717; goto done; }
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1718; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_WANT_WRITE) { result = -1719; goto done; }
+    if (ssh->outputBuffer.length == 0) { result = -1720; goto done; }
+
+    /* Bundled credit is owed by the output buffer, not the channel. */
+    if (ch->pendingWindowAdjust != 0) { result = -1721; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A receive that failed keeps ssh->error: the flush runs on the same call
+ * and wolfSSH_SendPacket() would otherwise leave WS_WANT_WRITE there, which
+ * reads as transient and would have the caller retry a dead session. */
+static int test_WorkerHardRecvErrorOutranksFlush(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[8];
+
+    /* packet_length far past MAX_PACKET_SZ, so DoReceive() fails the length
+     * check with WS_OVERFLOW_E instead of blocking. */
+    static const byte badLen[8] = {
+        0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1730;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1731; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1732; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1733;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1734;
+        goto done;
+    }
+
+    WMEMCPY(pkt, badLen, sizeof(pkt));
+    s_recvPkt = pkt;
+    s_recvPktSz = (word32)sizeof(pkt);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1735; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_OVERFLOW_E) { result = -1736; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A hard send failure on a pass whose receive was idle leaves
+ * WS_SOCKET_ERROR_E in ssh->error, not the receive's WS_WANT_READ. A caller
+ * routing on that would select for read on a reset socket. */
+static int test_WorkerHardSendErrorOnIdleReceive(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1740;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1741; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1742; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1743;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1744;
+        goto done;
+    }
+
+    /* The receive stays idle and the peer resets under the flush. */
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1745; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1746;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Channel data arrives and the flush fails on the same call. ret carries
+ * WS_CHAN_RXD so the caller reads the data, and ssh->error carries the send
+ * failure, which is the rule wolfssh/ssh.h states for wolfSSH_worker(). */
+static int test_WorkerChanRxdSurfacesSendError(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1750;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1751; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1752; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1753;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1754;
+        goto done;
+    }
+
+    /* Channel data arrives, and the peer resets the socket on the send. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelDataPacket(pkt, ch->channel, 0x55);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHAN_RXD) { result = -1755; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1756;
+        goto done;
+    }
+    /* A reset does not discard, so the bytes stay owed. */
+    if (ssh->outputBuffer.length == 0) { result = -1757; goto done; }
+
+    /* And the failure persists rather than being a one-pass artefact. */
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1758; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1759;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#ifndef NO_WOLFSSH_CLIENT
+/* A high water mark firing on wolfSSH_shutdown()'s read sends a KEXINIT.
+ * If the socket will not take it, the teardown must not return success. */
+static int test_ShutdownReportsWorkerOwedFlush(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1860;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1861; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1862; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1863;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The teardown sends are already done, so the read is all that is left
+     * and the output buffer is empty going into it. */
+    ch->eofTxd = 1;
+    ch->closeTxd = 1;
+
+    /* The mark fires on the first packet received. */
+    if (wolfSSH_SetHighwater(ssh, 1) != WS_SUCCESS) {
+        result = -1864;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelDataPacket(pkt, ch->channel, 0xAA);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_WANT_WRITE) { result = -1865; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1866; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* NO_WOLFSSH_CLIENT */
+
+
+/* A packet whose framing fails leaves nothing queued behind it. The buffer
+ * keeps the packets already bundled, so only the aborted one is dropped. */
+static int test_BundlePacketFailureDropsPartial(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+    byte             bundled = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1850;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1851; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1852; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1853;
+        goto done;
+    }
+
+    /* One adjust frames cleanly and parks in the buffer, since the send
+     * blocks. */
+    ret = SendChannelWindowAdjust(ssh, ch->channel, 10, &bundled);
+    if (ret != WS_WANT_WRITE) { result = -1854; goto done; }
+    queued = ssh->outputBuffer.length;
+    if (queued == 0) { result = -1855; goto done; }
+
+    /* Encrypt() has no case for ID_UNKNOWN, so the next bundle fails after
+     * PreparePacket() has already moved length past packetStartIdx. */
+    ssh->encryptId = ID_UNKNOWN;
+
+    ret = SendChannelWindowAdjust(ssh, ch->channel, 10, &bundled);
+    if (ret == WS_SUCCESS) { result = -1856; goto done; }
+
+    /* The aborted packet is gone and the framed one is untouched. */
+    if (ssh->outputBuffer.length != queued) { result = -1857; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Extended data arrives and the flush fails on the same call. Neither the
+ * close nor the receive-failure rule applies, so ret keeps WS_EXTDATA and
+ * ssh->error carries the send failure. */
+static int test_WorkerExtDataSurfacesSendError(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           reportedId = 0xFFFFFFFF;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1830;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1831; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1832; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1833;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1834;
+        goto done;
+    }
+
+    /* Stderr arrives, and the peer resets the socket on the send. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildExtDataStderrPacket(pkt, ch->channel, 0x99);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_EXTDATA) { result = -1835; goto done; }
+    if (reportedId != ch->channel) { result = -1836; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1837;
+        goto done;
+    }
+    /* A reset does not discard, so the bytes stay owed. */
+    if (ssh->outputBuffer.length == 0) { result = -1838; goto done; }
+
+    /* The stderr is still there to drain, which is why ret kept it. */
+    if (ch->extDataBuffer.length - ch->extDataBuffer.idx != 10) {
+        result = -1839;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* The peer half-closes and the flush fails on the same call. ret keeps
+ * WS_EOF and ssh->error carries the send failure. */
+static int test_WorkerEofSurfacesSendError(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           reportedId = 0xFFFFFFFF;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1840;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1841; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1842; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1843;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1844;
+        goto done;
+    }
+
+    /* The half-close arrives, and the peer resets the socket on the send. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelEofPacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_EOF) { result = -1845; goto done; }
+    if (reportedId != ch->channel) { result = -1846; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1847;
+        goto done;
+    }
+    /* A reset does not discard, so the bytes stay owed. */
+    if (ssh->outputBuffer.length == 0) { result = -1848; goto done; }
+
+    /* The half-close is latched, which is the durable half of the report. */
+    if (!wolfSSH_ChannelGetEof(ch)) { result = -1849; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* The same pass with a rekey in flight. WS_REKEYING would tell the caller to
+ * keep turning the crank, so a flush that hard-failed keeps ssh->error and
+ * the rekey mask stands down. */
+static int test_WorkerKeyingSurfacesSendError(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1800;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1801; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1802; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1803;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1804;
+        goto done;
+    }
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelDataPacket(pkt, ch->channel, 0x77);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHAN_RXD) { result = -1805; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1806;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The other arm: a rekey in flight and a flush that went out. The worker
+ * reports WS_REKEYING so the caller keeps driving the rekey. */
+static int test_WorkerKeyingReportsRekey(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1810;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1811; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1812; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1813;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1814;
+        goto done;
+    }
+
+    /* Channel data arrives and the socket takes the flush. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelDataPacket(pkt, ch->channel, 0x88);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_REKEYING) { result = -1815; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_REKEYING) {
+        result = -1816;
+        goto done;
+    }
+    /* The flush ran and drained, which the rekey report is gated on. */
+    if (ssh->outputBuffer.length != 0) { result = -1817; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A send that fails with WS_CBIO_ERR_GENERAL discards the output buffer, so
+ * no later call retries the flush. ssh->error has to keep the send failure
+ * even though the receive reported channel data. */
+static int test_WorkerDiscardedFlushKeepsError(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1760;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1761; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1762; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1763;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1764;
+        goto done;
+    }
+
+    /* Channel data arrives, and the send throws the queued adjust away. */
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelDataPacket(pkt, ch->channel, 0x66);
+    s_recvPktOff = 0;
+    wolfSSH_SetIOSend(ctx, FailIoSend);
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHAN_RXD) { result = -1765; goto done; }
+    /* Nothing is left to flush, so this is the only report there will be. */
+    if (ssh->outputBuffer.length != 0) { result = -1766; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1767;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A send callback reporting more bytes than it was handed trips the
+ * out-of-bounds check, and ssh->error carries WS_SEND_OOB_READ_E. */
+static int test_WorkerSendOobReadReported(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1770;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1771; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1772; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1773;
+        goto done;
+    }
+
+    if (WorkerParkAdjust(ctx, ssh, ch) != WS_SUCCESS) {
+        result = -1774;
+        goto done;
+    }
+
+    /* The receive stays idle, so only the send can set ssh->error. */
+    wolfSSH_SetIOSend(ctx, OobIoSend);
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1775; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SEND_OOB_READ_E) {
+        result = -1776;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A session with no send callback set. wolfSSH_SendPacket() reports the
+ * socket error before it reaches the transport, and ssh->error carries it. */
+static int test_WorkerNoSendCallbackReported(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1780;
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1781; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+    ctx->ioSendCb = NULL;
+
+    /* Queued output, so the flush runs. */
+    ssh->outputBuffer.length = 1;
+    ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.buffer[0] = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1782; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        result = -1783;
+        goto done;
+    }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* An output buffer whose length runs past its size. wolfSSH_SendPacket()
+ * stops on the sanity check and ssh->error carries WS_BUFFER_E. */
+static int test_WorkerBadBufferStateReported(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    int              result = 0;
+    int              ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1785;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1786; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.length = ssh->outputBuffer.bufferSz + 1;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR) { result = -1787; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_BUFFER_E) {
+        result = -1788;
+        goto done;
+    }
+
+done:
+    if (ssh != NULL)
+        ssh->outputBuffer.length = 0;
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 /* The documented primary flow: wolfSSH_stream_read() reports WS_EXTDATA when
  * stderr arrives on the head channel, and the caller drains it with
  * wolfSSH_extended_data_read() until that returns 0 (wolfssh/ssh.h). */
@@ -6393,11 +7304,8 @@ done:
 }
 
 /* A drain whose window adjust hits a dead socket must surface the transport
- * failure. wolfSSH_SendPacket() sets ssh->error only for WS_WANT_WRITE, so
- * leaving it untouched on a hard failure preserves whatever was there before --
- * in the documented flow, the WS_EXTDATA that prompted the drain -- and
- * wolfSSH_get_error() reports a healthy session on a broken connection. Drives
- * the real receive path so ssh->error genuinely holds WS_EXTDATA first. */
+ * failure, not the WS_EXTDATA that prompted the drain. Drives the real
+ * receive path so ssh->error genuinely holds WS_EXTDATA first. */
 static int test_ChannelReadExtHardFailureReported(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -6787,6 +7695,23 @@ static int RefuseThenCaptureIoSend(WOLFSSH* ssh, void* buf, word32 sz,
 }
 
 
+/* Refuses the sends DoChannelClose() makes, then resets the socket under the
+ * worker's flush. */
+static int RefuseThenResetIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+
+    if (s_sendRefusals > 0) {
+        s_sendRefusals--;
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    return WS_CBIO_ERR_CONN_RST;
+}
+
+
 /* DoPacket() consumes the peer's CHANNEL_CLOSE whatever DoChannelClose()
  * returns, so the reply gets one chance to be built. A blocked socket must not
  * cost it: the EOF and the close both have to be bundled, and the channel
@@ -6947,6 +7872,63 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* The peer's close, with both of DoChannelClose()'s sends refused and the
+ * worker's flush then hitting a reset socket. wolfSSH_worker() reports the
+ * close in ret and ssh->error, not the send's WS_SOCKET_ERROR_E. */
+static int test_DoChannelCloseHardFlushKeepsClose(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1790;
+    /* Two refusals cover the EOF and the close it sends. */
+    s_sendRefusals = 2;
+    wolfSSH_SetIOSend(ctx, RefuseThenResetIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1791; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1792; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1793;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelClosePacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_CHANNEL_CLOSED) { result = -1794; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
+        result = -1795;
+        goto done;
+    }
+
+done:
+    s_sendRefusals = 0;
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 
 
 #ifdef WOLFSSH_SFTP
@@ -7842,12 +8824,6 @@ done:
 /* A connection reset fails the send without discarding the buffer, so the EOF
  * is still queued and eofTxd has to latch: the retry flushes those bytes and
  * must not build a second EOF behind them. The other arm of the same test. */
-static int ConnResetIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
-{
-    (void)ssh; (void)buf; (void)sz; (void)ctx;
-    return WS_CBIO_ERR_CONN_RST;
-}
-
 static int test_SendChannelEofConnReset(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -7912,8 +8888,8 @@ static int EofRecordingCb(WOLFSSH_CHANNEL* channel, void* ctx)
 }
 
 /* The channel EOF callback is the durable half of the contract: the WS_EOF
- * from wolfSSH_worker() is raised once and a back-pressure status can take
- * its place, but the callback fires from DoChannelEof() itself. */
+ * from wolfSSH_worker() is raised once and a flush failure can replace it in
+ * wolfSSH_get_error(), but the callback fires from DoChannelEof() itself. */
 static int test_ChannelEofCallback(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -8415,8 +9391,8 @@ static int test_stream_read_deferredWindowAdjust(void)
         result = -6994; goto done;
     }
 
-    /* A peer that reset rather than blocked. wolfSSH_SendPacket() records only
-     * WS_WANT_WRITE, so the read path has to record a hard failure itself. */
+    /* A peer that reset rather than blocked. The read path records the code
+     * itself: the adjust can fail before it reaches the transport. */
     wolfSSH_SetIOSend(ctx, FailIoSend);
 
     if (wolfSSH_TestChannelPutData(ch, in, (word32)sizeof(in)) != WS_SUCCESS) {
@@ -8519,8 +9495,8 @@ static int test_ChannelIdRead_deferredWindowAdjust(void)
         result = -7020; goto done;
     }
 
-    /* A peer that reset rather than blocked. wolfSSH_SendPacket() records only
-     * WS_WANT_WRITE, so the read path has to record a hard failure itself. */
+    /* A peer that reset rather than blocked. The read path records the code
+     * itself: the adjust can fail before it reaches the transport. */
     wolfSSH_SetIOSend(ctx, FailIoSend);
 
     if (wolfSSH_TestChannelPutData(ch, in, (word32)sizeof(in)) != WS_SUCCESS) {
@@ -20067,6 +21043,83 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_WorkerFlushesOnIdleReceive();
+    printf("WorkerFlushesOnIdleReceive: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerReportsOwedFlush();
+    printf("WorkerReportsOwedFlush: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerHardRecvErrorOutranksFlush();
+    printf("WorkerHardRecvErrorOutranksFlush: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerHardSendErrorOnIdleReceive();
+    printf("WorkerHardSendErrorOnIdleReceive: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerChanRxdSurfacesSendError();
+    printf("WorkerChanRxdSurfacesSendError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_ShutdownReportsWorkerOwedFlush();
+    printf("ShutdownReportsWorkerOwedFlush: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+    unitResult = test_BundlePacketFailureDropsPartial();
+    printf("BundlePacketFailureDropsPartial: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerExtDataSurfacesSendError();
+    printf("WorkerExtDataSurfacesSendError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerEofSurfacesSendError();
+    printf("WorkerEofSurfacesSendError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerKeyingSurfacesSendError();
+    printf("WorkerKeyingSurfacesSendError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerKeyingReportsRekey();
+    printf("WorkerKeyingReportsRekey: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerDiscardedFlushKeepsError();
+    printf("WorkerDiscardedFlushKeepsError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerSendOobReadReported();
+    printf("WorkerSendOobReadReported: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerNoSendCallbackReported();
+    printf("WorkerNoSendCallbackReported: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_WorkerBadBufferStateReported();
+    printf("WorkerBadBufferStateReported: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_TriggerKeyExchangeKeepsError();
     printf("TriggerKeyExchangeKeepsError: %s\n",
@@ -20111,6 +21164,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelCloseFlushesReply();
     printf("DoChannelCloseFlushesReply: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoChannelCloseHardFlushKeepsClose();
+    printf("DoChannelCloseHardFlushKeepsClose: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 

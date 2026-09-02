@@ -77,15 +77,18 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  *                     wolfSSH_ChannelIdReadExt()
  *   WS_EOF            the peer half-closed a channel; it sends no more data,
  *                     but the channel is still open for sending. Raised once,
- *                     on arrival, and a back-pressure status from the flush
- *                     that follows can supersede it, so an application that
- *                     must not miss one tests wolfSSH_ChannelGetEof() or takes
- *                     the channel EOF callback. Reply, if the protocol wants
- *                     one, with wolfSSH_ChannelSendEof(); the library does
- *                     not.
+ *                     on arrival, so an application that must not miss one
+ *                     tests wolfSSH_ChannelGetEof() or takes the channel EOF
+ *                     callback. Reply, if the protocol wants one, with
+ *                     wolfSSH_ChannelSendEof(); the library does not.
  *   WS_CHANNEL_CLOSED the peer closed a channel, which has been retired
- *   WS_WANT_READ / WS_WANT_WRITE / WS_REKEYING / WS_WINDOW_FULL
+ *   WS_WANT_READ / WS_WANT_WRITE / WS_REKEYING
  *                     transient; call again
+ * A status above survives in the return even when the flush that follows
+ * fails, and wolfSSH_get_error() then holds the flush's code. Two
+ * exceptions: a WS_CHANNEL_CLOSED whose flush failed hard keeps the close,
+ * which callers route their teardown on, and WS_REKEYING is not reported
+ * when the flush failed, so the transport error reaches the caller instead.
  * Anything else is an error: WS_BAD_ARGUMENT, or WS_FATAL_ERROR with the
  * cause in wolfSSH_get_error() -- WS_DISCONNECT for the peer's disconnect,
  * which is how most sessions end.
@@ -413,8 +416,8 @@ WOLFSSH_API int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel);
  * The library never answers a received EOF with one of its own. It reports it
  * as WS_EOF and through the channel EOF callback, and the application decides
  * whether to reply, with this call or wolfSSH_stream_send_eof(). A
- * back-pressure status can supersede the WS_EOF from wolfSSH_worker();
- * wolfSSH_ChannelGetEof() is the durable check.
+ * flush failure can replace the WS_EOF in wolfSSH_get_error(), though not in
+ * wolfSSH_worker()'s return; wolfSSH_ChannelGetEof() is the durable check.
  * wolfSSH_ChannelExit() and wolfSSH_shutdown() send an EOF themselves while
  * tearing the channel down.
  *
@@ -726,7 +729,7 @@ WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Returns the bytes read; the next read clears the status. WS_WANT_WRITE
  * from wolfSSH_get_error() means the adjust is queued; it goes out on the
- * next send or a wolfSSH_worker() whose receive succeeded. Others failed. */
+ * next send or the next wolfSSH_worker(). Others failed. */
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Half-closes the first channel in the list. See wolfSSH_ChannelSendEof().
