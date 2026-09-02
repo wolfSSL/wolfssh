@@ -2274,6 +2274,9 @@ static void TestClientOnlyKexMsgsBlocked(WOLFSSH* ssh)
     ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
     ssh->handshake = AllocHandshake(ssh);
     ssh->handshake->kexId = ID_DH_GEX_SHA256;
+    /* The client expects no particular message yet, so the expectMsgId
+     * check cannot catch these, the role check has to. */
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
 
     allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_INIT,
             WS_MSG_RECV);
@@ -2300,11 +2303,35 @@ static void TestClientOnlyKexMsgsBlocked(WOLFSSH* ssh)
             WS_MSG_RECV);
     AssertTrue(allowed);
     AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+    AssertIntEQ(ssh->error, WS_SUCCESS);
+
+    /* 33 sits between the two blocked ids and has to stay allowed. Assert
+     * it where the client actually expects it, once it has sent its GEX
+     * init. */
+    ssh->error = 0;
+    ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_REPLY;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REPLY,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+    AssertIntEQ(ssh->error, WS_SUCCESS);
 
     /* Same answer during a rekey on an established session. */
     ssh->error = 0;
     ssh->connectState = CONNECT_DONE;
 
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_INIT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_INIT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
     allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REQUEST,
             WS_MSG_RECV);
     AssertFalse(allowed);
