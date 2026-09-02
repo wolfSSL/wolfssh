@@ -1683,6 +1683,58 @@ static void TestAppChannelsLateEnableReturns(void)
     FreeKexReplyHarness(&harness);
 }
 
+/* Refuses the session request, and records what the channel showed. */
+static int rejectShellReqCalls;
+static WS_SessionType rejectShellReqType;
+
+static int RejectShellReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    rejectShellReqCalls++;
+    rejectShellReqType = wolfSSH_ChannelGetSessionType(channel);
+    return 1;
+}
+
+/* A shell request the callback refuses gets CHANNEL_FAILURE and nothing
+ * more: the channel keeps no session type, and accept() stays where it was,
+ * waiting on a request it can grant, rather than reporting an established
+ * session it just refused. */
+static void TestSessionReqRejectedKeepsAcceptWaiting(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    WS_SessionType sessionType;
+
+    rejectShellReqCalls = 0;
+    rejectShellReqType = WOLFSSH_SESSION_UNKNOWN;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.serverCtx,
+            RejectShellReqCb), WS_SUCCESS);
+
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(rejectShellReqCalls, 1);
+    AssertIntEQ(rejectShellReqType, WOLFSSH_SESSION_SHELL);
+    AssertFalse(result.clientSuccess);
+    AssertIntEQ(result.clientErr, WS_CHANOPEN_FAILED);
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_SERVER_CHANNEL_ACCEPT_SENT);
+    AssertTrue(harness.server->clientState < CLIENT_DONE);
+    sessionType = wolfSSH_GetSessionType(harness.server);
+    AssertIntEQ(sessionType, WOLFSSH_SESSION_UNKNOWN);
+    channel = wolfSSH_ChannelNext(harness.server, NULL);
+    AssertNotNull(channel);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+    AssertFalse(harness.clientIo.sawDisconnect);
+    AssertFalse(harness.serverIo.sawDisconnect);
+
+    FreeKexReplyHarness(&harness);
+}
+
 static void TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade(void)
 {
     AssertHandshakeSucceeds("rsa-sha2-256", REGRESS_SERVER_KEY_PATH);
@@ -13930,6 +13982,7 @@ int main(int argc, char** argv)
     TestAppChannelsAcceptStopsAtUserAuth();
     TestAppChannelsNoShellCbRejects();
     TestAppChannelsLateEnableReturns();
+    TestSessionReqRejectedKeepsAcceptWaiting();
     TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade();
     #endif
     #ifndef WOLFSSH_NO_RSA_SHA2_512
