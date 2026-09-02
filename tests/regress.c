@@ -2263,6 +2263,55 @@ static void TestChannelAllowedAfterAuth(WOLFSSH* ssh)
 }
 
 
+/* Reject the key exchange messages that only the client sends. */
+static void TestClientOnlyKexMsgsBlocked(WOLFSSH* ssh)
+{
+    int allowed;
+
+    ResetSession(ssh);
+    /* Our KEXINIT is out, the server's group has not arrived. */
+    ssh->connectState = CONNECT_CLIENT_KEXINIT_SENT;
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    ssh->handshake = AllocHandshake(ssh);
+    ssh->handshake->kexId = ID_DH_GEX_SHA256;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_INIT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_INIT,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    ssh->error = 0;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REQUEST,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+    /* 31 is the server's answer to a group request, so it stays allowed
+     * where the client expects it. */
+    ssh->error = 0;
+    ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_GROUP;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_GROUP,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+
+    /* Same answer during a rekey on an established session. */
+    ssh->error = 0;
+    ssh->connectState = CONNECT_DONE;
+
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_REQUEST,
+            WS_MSG_RECV);
+    AssertFalse(allowed);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+}
+
+
 /* A service accept is allowed only when no key exchange is in flight.
  * connectState does not see a rekey, so isKeying is checked too. */
 static void TestClientServiceAcceptBlockedDuringKeying(WOLFSSH* ssh)
@@ -2560,6 +2609,16 @@ static void TestServerOnlyKexMsgsBlocked(WOLFSSH* ssh)
             WS_MSG_RECV);
     AssertTrue(allowed);
     AssertIntEQ(ssh->error, WS_SUCCESS);
+
+    /* 32 sits between the two blocked ids and has to stay allowed. Assert
+     * it where the server actually expects it, once it has sent the
+     * group. */
+    ssh->error = 0;
+    ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_INIT;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXDH_GEX_INIT,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
 
     /* Same answer during a rekey on an established session. The pre-keyed
      * range check does not run this far along, so a check placed there
@@ -11770,6 +11829,7 @@ int main(int argc, char** argv)
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelBlockedEveryPreAuthState(ssh);
     TestChannelAllowedAfterAuth(ssh);
+    TestClientOnlyKexMsgsBlocked(ssh);
     TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);

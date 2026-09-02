@@ -703,7 +703,7 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
     /* Only the server should send these messages, never receive. */
     if (msg == MSGID_SERVICE_ACCEPT ||
-            msg == MSGID_KEXDH_REPLY || /* aliases MSGID_KEXDH_GEX_GROUP */
+            msg == MSGID_KEXDH_REPLY || /* 31: also ECDH, KEM, GEX_GROUP */
             msg == MSGID_KEXDH_GEX_REPLY) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                 msg, "server", "ever");
@@ -826,7 +826,10 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 {
     /* Only the client should send these messages, never receive. */
-    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_USERAUTH_REQUEST) {
+    if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_USERAUTH_REQUEST ||
+            msg == MSGID_KEXDH_INIT || /* 30: also ECDH, KEM, GEX_REQ_OLD */
+            msg == MSGID_KEXDH_GEX_INIT ||
+            msg == MSGID_KEXDH_GEX_REQUEST) {
         WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                 msg, "client", "ever");
         ssh->error = WS_MSGID_NOT_ALLOWED_E;
