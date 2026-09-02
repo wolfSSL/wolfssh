@@ -205,13 +205,18 @@ static word32 AppendData(byte* buf, word32 bufSz, word32 idx,
     return idx;
 }
 
+/* A string of any bytes, for the names a C string cannot hold. */
+static word32 AppendStringSz(byte* buf, word32 bufSz, word32 idx,
+        const char* value, word32 valueSz)
+{
+    idx = AppendUint32(buf, bufSz, idx, valueSz);
+    return AppendData(buf, bufSz, idx, (const byte*)value, valueSz);
+}
+
 static word32 AppendString(byte* buf, word32 bufSz, word32 idx,
         const char* value)
 {
-    word32 valueSz = (word32)WSTRLEN(value);
-
-    idx = AppendUint32(buf, bufSz, idx, valueSz);
-    return AppendData(buf, bufSz, idx, (const byte*)value, valueSz);
+    return AppendStringSz(buf, bufSz, idx, value, (word32)WSTRLEN(value));
 }
 
 static word32 WrapPacket(byte msgId, const byte* payload, word32 payloadSz,
@@ -442,6 +447,49 @@ static void InitChannelOpenHarnessClient(ChannelOpenHarness* harness,
     harness->ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
 }
 #endif /* !NO_WOLFSSH_CLIENT */
+
+static void RepointHarnessInput(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    harness->io.in = in;
+    harness->io.inSz = inSz;
+    harness->io.inOff = 0;
+    harness->io.outSz = 0;
+}
+
+static word32 BuildGlobalRequestPacketSz(const char* name, word32 nameSz,
+        byte wantReply, const byte* tail, word32 tailSz, byte* out,
+        word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendStringSz(payload, sizeof(payload), idx, name, nameSz);
+    idx = AppendByte(payload, sizeof(payload), idx, wantReply);
+    idx = AppendData(payload, sizeof(payload), idx, tail, tailSz);
+
+    return WrapPacket(MSGID_GLOBAL_REQUEST, payload, idx, out, outSz);
+}
+
+static word32 BuildGlobalRequestPacket(const char* name, byte wantReply,
+        const byte* tail, word32 tailSz, byte* out, word32 outSz)
+{
+    return BuildGlobalRequestPacketSz(name, (word32)WSTRLEN(name), wantReply,
+            tail, tailSz, out, outSz);
+}
+
+/* Feeds one packet to the harness and returns the id of the reply, or 0
+ * when nothing was sent. */
+static byte ReplyToPacket(ChannelOpenHarness* harness, byte* in,
+        word32 inSz)
+{
+    RepointHarnessInput(harness, in, inSz);
+    AssertIntEQ(DoReceive(harness->ssh), WS_SUCCESS);
+    AssertIntEQ(harness->io.inOff, harness->io.inSz);
+
+    return harness->io.outSz == 0 ? 0 : ParseMsgId(harness->io.out,
+            harness->io.outSz);
+}
 
 /* The tests below drive a server-side session. With NO_WOLFSSH_SERVER the
  * message filter has no server branch, so every message on such a session is
@@ -3481,15 +3529,6 @@ static void InitUserAuthHarness(ChannelOpenHarness* harness,
     harness->ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
 }
 
-static void RepointHarnessInput(ChannelOpenHarness* harness,
-        byte* in, word32 inSz)
-{
-    harness->io.in = in;
-    harness->io.inSz = inSz;
-    harness->io.inOff = 0;
-    harness->io.outSz = 0;
-}
-
 /* Builds a plaintext SSH_MSG_CHANNEL_OPEN_CONFIRMATION. */
 static word32 BuildChannelOpenConfPacket(word32 recipientChannelId,
         word32 senderChannelId, word32 initialWindowSz, word32 maxPacketSz,
@@ -3957,6 +3996,822 @@ static void TestChannelReqSubsysCallbackRuns(void)
     AssertIntEQ(RunSessionRequest("subsystem", "sftp", 1,
                 WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
 }
+
+/* Builds a plaintext SSH_MSG_CHANNEL_REQUEST with a raw type-specific
+ * tail, so a test can send any request type. */
+static word32 BuildChannelRequestPacketSz(word32 recipientChannelId,
+        const char* type, word32 typeSz, byte wantReply, const byte* tail,
+        word32 tailSz, byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendStringSz(payload, sizeof(payload), idx, type, typeSz);
+    idx = AppendByte(payload, sizeof(payload), idx, wantReply);
+    idx = AppendData(payload, sizeof(payload), idx, tail, tailSz);
+
+    return WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, out, outSz);
+}
+
+static word32 BuildChannelRequestPacket(word32 recipientChannelId,
+        const char* type, byte wantReply, const byte* tail, word32 tailSz,
+        byte* out, word32 outSz)
+{
+    return BuildChannelRequestPacketSz(recipientChannelId, type,
+            (word32)WSTRLEN(type), wantReply, tail, tailSz, out, outSz);
+}
+
+/* Builds a plaintext SSH_MSG_GLOBAL_REQUEST with a raw type-specific
+ * tail. */
+/* What the generic request callbacks saw, and what they answer. The name
+ * arrives as it was sent, so it is kept with its length and terminated
+ * here for the checks that compare it as a string. */
+static int anyReqCbCalls;
+static char anyReqCbName[128];
+static word32 anyReqCbNameSz;
+static byte anyReqCbData[64];
+static word32 anyReqCbDataSz;
+static int anyReqCbWantReply;
+static void* anyReqCbCtx;
+static int anyReqCbReturn;
+
+static void ResetAnyReqCb(int cbReturn)
+{
+    anyReqCbCalls = 0;
+    anyReqCbName[0] = 0;
+    anyReqCbNameSz = 0;
+    anyReqCbDataSz = 0;
+    anyReqCbWantReply = -1;
+    anyReqCbCtx = NULL;
+    anyReqCbReturn = cbReturn;
+}
+
+static void RecordAnyReq(const byte* name, word32 nameSz, const byte* data,
+        word32 dataSz, void* ctx)
+{
+    anyReqCbCalls++;
+    AssertNotNull(name); /* a name of no bytes is still a name */
+    AssertTrue(nameSz < sizeof(anyReqCbName));
+    anyReqCbNameSz = nameSz;
+    if (nameSz > 0) {
+        WMEMCPY(anyReqCbName, name, nameSz);
+    }
+    anyReqCbName[nameSz] = 0;
+    anyReqCbDataSz = dataSz;
+    if (dataSz > 0) {
+        AssertTrue(dataSz <= sizeof(anyReqCbData));
+        WMEMCPY(anyReqCbData, data, dataSz);
+    }
+    anyReqCbCtx = ctx;
+}
+
+static int RecordingChannelReqAnyCb(WOLFSSH_CHANNEL* channel,
+        const byte* type, word32 typeSz, const byte* data, word32 dataSz,
+        int wantReply, void* ctx)
+{
+    AssertNotNull(channel);
+    RecordAnyReq(type, typeSz, data, dataSz, ctx);
+    anyReqCbWantReply = wantReply;
+    return anyReqCbReturn;
+}
+
+static int RecordingGlobalReqAnyCb(WOLFSSH* ssh, const byte* name,
+        word32 nameSz, const byte* data, word32 dataSz, int wantReply,
+        void* ctx)
+{
+    AssertNotNull(ssh);
+    RecordAnyReq(name, nameSz, data, dataSz, ctx);
+    anyReqCbWantReply = wantReply;
+    return anyReqCbReturn;
+}
+
+/* What the older global request callback saw, and what it answers. Its
+ * name buffer is the size of the one the library copies into, so a
+ * truncated name fills it exactly. */
+static int legacyGlobalReqCbCalls;
+static char legacyGlobalReqCbName[80];
+static word32 legacyGlobalReqCbNameSz;
+static int legacyGlobalReqCbWantReply;
+static void* legacyGlobalReqCbCtx;
+static int legacyGlobalReqCbReturn;
+
+static int RecordingGlobalReqCb(WOLFSSH* ssh, void* buf, word32 sz,
+        int reply, void* ctx)
+{
+    (void)ssh;
+    legacyGlobalReqCbCalls++;
+    AssertNotNull(buf);
+    legacyGlobalReqCbNameSz = sz;
+    if (sz >= (word32)sizeof(legacyGlobalReqCbName))
+        sz = (word32)sizeof(legacyGlobalReqCbName) - 1;
+    WMEMCPY(legacyGlobalReqCbName, buf, sz);
+    legacyGlobalReqCbName[sz] = 0;
+    legacyGlobalReqCbWantReply = reply;
+    legacyGlobalReqCbCtx = ctx;
+    return legacyGlobalReqCbReturn;
+}
+
+/* A typed session callback that only counts, to show whether the generic
+ * callback left the request to it. */
+static int typedReqCbCalls;
+
+static int CountingSessionReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+    typedReqCbCalls++;
+    return 0;
+}
+
+/* Seeds a confirmed session channel on the harness, the state a channel is
+ * in when requests arrive on it. */
+static WOLFSSH_CHANNEL* SeedConfirmedSessionChannel(
+        ChannelOpenHarness* harness)
+{
+    WOLFSSH_CHANNEL* channel;
+
+    channel = ChannelNew(harness->ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    AssertNotNull(channel);
+    AssertIntEQ(ChannelAppend(harness->ssh, channel), WS_SUCCESS);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    return channel;
+}
+
+/* The generic channel request callback sees every request first, with
+ * the type-specific part to parse itself, and can refuse a type the
+ * library would otherwise take in. */
+static void TestChannelReqCallbackSeesRequestAndRefuses(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte tail[32];
+    word32 tailSz = 0;
+    byte in[128];
+    word32 inSz;
+    int cbCtx = 0;
+
+    ResetAnyReqCb(WOLFSSH_REQ_REJECT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetChannelReqCtx(harness.ssh, &cbCtx), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    tailSz = AppendString(tail, sizeof(tail), tailSz, "FOO");
+    tailSz = AppendString(tail, sizeof(tail), tailSz, "bar");
+    inSz = BuildChannelRequestPacket(channel->channel, "env", 1,
+            tail, tailSz, in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "env"), 0);
+    AssertIntEQ(anyReqCbDataSz, tailSz);
+    AssertIntEQ(WMEMCMP(anyReqCbData, tail, tailSz), 0);
+    AssertTrue(anyReqCbCtx == &cbCtx);
+
+    /* Left to the built-in handling, the same request is taken in. */
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 2);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A type the library does not know is refused unless the callback grants
+ * it, which is how an application answers its own request types. */
+static void TestChannelReqCallbackGrantsUnknownType(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    static const byte tail[] = { 1, 2, 3 };
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    inSz = BuildChannelRequestPacket(channel->channel, "x-custom@wolfssh",
+            1, tail, sizeof(tail), in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "x-custom@wolfssh"), 0);
+    AssertIntEQ(anyReqCbDataSz, sizeof(tail));
+
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The type reaches the callback as it arrived: a type too long to fit a
+ * copy, and one carrying an embedded NUL, both arrive whole, so a policy
+ * answers on what the peer sent. */
+static void TestChannelReqCallbackSeesWholeType(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    static const char longType[] =
+        "x-very-long-request-type-name@wolfssh.example.com";
+    static const char nulType[] = "env\0trailer";
+    word32 longTypeSz = (word32)sizeof(longType) - 1;
+    word32 nulTypeSz = (word32)sizeof(nulType) - 1;
+    byte in[192];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_REJECT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    inSz = BuildChannelRequestPacketSz(channel->channel, longType,
+            longTypeSz, 1, NULL, 0, in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(anyReqCbNameSz, longTypeSz);
+    AssertIntEQ(WMEMCMP(anyReqCbName, longType, longTypeSz), 0);
+
+    /* env with a trailer is not env. The callback sees all of it, and left
+     * unhandled it is refused as the unknown type it is. */
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    inSz = BuildChannelRequestPacketSz(channel->channel, nulType,
+            nulTypeSz, 1, NULL, 0, in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(anyReqCbNameSz, nulTypeSz);
+    AssertIntEQ(WMEMCMP(anyReqCbName, nulType, nulTypeSz), 0);
+
+    /* A type of no bytes is refused the same way, and the callback is
+     * handed a name it can read rather than a NULL. */
+    inSz = BuildChannelRequestPacketSz(channel->channel, "", 0, 1, NULL, 0,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(anyReqCbNameSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Drives one exec request through a fresh harness that registers both the
+ * generic and the typed exec callback, the generic one set to answer
+ * anyReturn, and returns the reply id. The harness is left for the caller
+ * to inspect and free. */
+static byte RunExecThroughBothCallbacks(ChannelOpenHarness* harness,
+        WOLFSSH_CHANNEL** channel, int anyReturn)
+{
+    byte tail[32];
+    word32 tailSz = 0;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(anyReturn);
+    typedReqCbCalls = 0;
+    InitChannelOpenHarness(harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness->ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness->ctx,
+                CountingSessionReqCb), WS_SUCCESS);
+    *channel = SeedConfirmedSessionChannel(harness);
+
+    tailSz = AppendString(tail, sizeof(tail), tailSz, "ls");
+    inSz = BuildChannelRequestPacket((*channel)->channel, "exec", 1,
+            tail, tailSz, in, sizeof(in));
+
+    return ReplyToPacket(harness, in, inSz);
+}
+
+/* A session request the generic callback settles asks the typed callback
+ * nothing. A grant still commits the session, since the library needs the
+ * type and command whoever decided; a refusal commits nothing. */
+static void TestChannelReqCallbackSettlesSessionRequest(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+
+    AssertIntEQ(RunExecThroughBothCallbacks(&harness, &channel,
+                WOLFSSH_REQ_ACCEPT), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(typedReqCbCalls, 0);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_EXEC);
+    AssertNotNull(channel->command);
+    AssertIntEQ(WSTRCMP(channel->command, "ls"), 0);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_DONE);
+    FreeChannelOpenHarness(&harness);
+
+    AssertIntEQ(RunExecThroughBothCallbacks(&harness, &channel,
+                WOLFSSH_REQ_REJECT), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(typedReqCbCalls, 0);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+    AssertNull(channel->command);
+    AssertTrue(harness.ssh->clientState < CLIENT_DONE);
+    FreeChannelOpenHarness(&harness);
+
+    AssertIntEQ(RunExecThroughBothCallbacks(&harness, &channel,
+                WOLFSSH_REQ_UNHANDLED), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(typedReqCbCalls, 1);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_EXEC);
+    FreeChannelOpenHarness(&harness);
+}
+
+/* With application-driven channels on and no shell callback, a shell
+ * request is refused unless the generic callback grants it. */
+static void TestChannelReqCallbackGrantOverridesAppChannels(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_UNHANDLED);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.ssh, 1), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    inSz = BuildChannelRequestPacket(channel->channel, "shell", 1,
+            NULL, 0, in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+
+    anyReqCbReturn = WOLFSSH_REQ_ACCEPT;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_SHELL);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_DONE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Both setters answer a NULL context, the only error either has. */
+static void TestReqAnyCallbackSettersRejectNullCtx(void)
+{
+    WOLFSSH_CTX* ctx;
+
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(NULL,
+                RecordingChannelReqAnyCb), WS_SSH_CTX_NULL_E);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(NULL,
+                RecordingGlobalReqAnyCb), WS_SSH_CTX_NULL_E);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+    wolfSSH_CTX_free(ctx);
+}
+
+#ifdef WOLFSSH_TERM
+/* A granted request the library knows is still parsed and recorded, and a
+ * request that does not fit its type is refused whatever the callback
+ * said. pty-req is the case that does both. */
+static void TestChannelReqCallbackKeepsTypeChecks(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte tail[64];
+    word32 tailSz;
+    byte in[192];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    tailSz = AppendString(tail, sizeof(tail), 0, "vt100");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 80);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 24);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 640);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 480);
+    tailSz = AppendString(tail, sizeof(tail), tailSz, "");
+    inSz = BuildChannelRequestPacket(channel->channel, "pty-req", 1,
+            tail, tailSz, in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(anyReqCbWantReply, 1);
+    AssertIntEQ(channel->ptyReq, 1);
+    AssertIntEQ(harness.ssh->widthChar, 80);
+    AssertIntEQ(harness.ssh->heightRows, 24);
+    AssertIntEQ(harness.ssh->widthPixels, 640);
+    AssertIntEQ(harness.ssh->heightPixels, 480);
+
+    FreeChannelOpenHarness(&harness);
+
+    /* The same grant on a pty-req that stops after the term name. The
+     * grant does not stand in for the parse: the request is refused, and
+     * the malformed packet fails the session as one always has. */
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    tailSz = AppendString(tail, sizeof(tail), 0, "vt100");
+    inSz = BuildChannelRequestPacket(channel->channel, "pty-req", 1,
+            tail, tailSz, in, sizeof(in));
+
+    RepointHarnessInput(&harness, in, inSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(channel->ptyReq, 0);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_TERM */
+
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+/* RFC 4254 sec 6.7 and 6.10 leave exit-status, exit-signal and
+ * window-change unanswered. A peer that asks for a reply anyway still gets
+ * none, whatever the generic callback decided. */
+static void TestChannelReqCallbackKeepsNoReplyTypes(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte tail[32];
+    word32 tailSz;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_REJECT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    tailSz = AppendUint32(tail, sizeof(tail), 0, 7);
+    inSz = BuildChannelRequestPacket(channel->channel, "exit-status", 1,
+            tail, tailSz, in, sizeof(in));
+
+    /* Refused, so the status is not taken, and still nothing is sent. */
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(anyReqCbWantReply, 1);
+    AssertIntEQ(harness.ssh->exitStatus, 0);
+
+    anyReqCbReturn = WOLFSSH_REQ_ACCEPT;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(harness.ssh->exitStatus, 7);
+
+    FreeChannelOpenHarness(&harness);
+
+#if defined(WOLFSSH_SHELL) && defined(WOLFSSH_TERM)
+    /* window-change is refused without a pty on the channel, whatever the
+     * callback said, and is unanswered either way. */
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    tailSz = AppendUint32(tail, sizeof(tail), 0, 100);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 40);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildChannelRequestPacket(channel->channel, "window-change", 1,
+            tail, tailSz, in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(harness.ssh->widthChar, 0);
+
+    /* With a pty on it the grant stands, and the resize is taken. */
+    channel->ptyReq = 1;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(harness.ssh->widthChar, 100);
+    AssertIntEQ(harness.ssh->heightRows, 40);
+
+    FreeChannelOpenHarness(&harness);
+#endif /* WOLFSSH_SHELL && WOLFSSH_TERM */
+}
+#endif /* WOLFSSH_TERM || WOLFSSH_SHELL */
+
+/* The generic global request callback sees the name, the type-specific
+ * part and whether a reply is wanted, and its answer is the reply. Left
+ * unhandled, a name nothing else answers is refused as before. */
+static void TestGlobalReqCallbackSettlesRequest(void)
+{
+    ChannelOpenHarness harness;
+    static const byte tail[] = { 7, 8 };
+    byte in[128];
+    word32 inSz;
+    int cbCtx = 0;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+    wolfSSH_SetGlobalReqCtx(harness.ssh, &cbCtx);
+
+    inSz = BuildGlobalRequestPacket("keepalive@openssh.com", 1,
+            tail, sizeof(tail), in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "keepalive@openssh.com"), 0);
+    AssertIntEQ(anyReqCbDataSz, sizeof(tail));
+    AssertIntEQ(WMEMCMP(anyReqCbData, tail, sizeof(tail)), 0);
+    AssertIntEQ(anyReqCbWantReply, 1);
+    AssertTrue(anyReqCbCtx == &cbCtx);
+
+    anyReqCbReturn = WOLFSSH_REQ_REJECT;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+
+    /* No reply wanted, none sent, whatever the answer. */
+    anyReqCbReturn = WOLFSSH_REQ_REJECT;
+    inSz = BuildGlobalRequestPacket("keepalive@openssh.com", 0,
+            tail, sizeof(tail), in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(anyReqCbWantReply, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The same for a global request: the name arrives whole, past the length
+ * of the copy the callback below it is handed. */
+static void TestGlobalReqCallbackSeesWholeName(void)
+{
+    ChannelOpenHarness harness;
+    char longName[100];
+    word32 longNameSz = (word32)sizeof(longName);
+    byte in[192];
+    word32 inSz;
+
+    WMEMSET(longName, 'a', sizeof(longName));
+    longName[0] = 'x';
+
+    ResetAnyReqCb(WOLFSSH_REQ_REJECT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+
+    inSz = BuildGlobalRequestPacketSz(longName, longNameSz, 1, NULL, 0,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbNameSz, longNameSz);
+    AssertIntEQ(WMEMCMP(anyReqCbName, longName, longNameSz), 0);
+
+    inSz = BuildGlobalRequestPacketSz("", 0, 1, NULL, 0, in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbNameSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The generic callback sits ahead of the older global request callback,
+ * which still answers what it leaves unhandled. The two are handed
+ * different names: the older one has always seen a NUL terminated copy,
+ * truncated to its buffer, where the generic one sees the name whole. */
+static void TestGlobalReqCallbackLeavesLegacyCallback(void)
+{
+    ChannelOpenHarness harness;
+    char longName[100];
+    word32 longNameSz = (word32)sizeof(longName);
+    word32 copySz = (word32)sizeof(legacyGlobalReqCbName) - 1;
+    byte in[192];
+    word32 inSz;
+
+    WMEMSET(longName, 'a', sizeof(longName));
+    longName[0] = 'x';
+
+    ResetAnyReqCb(WOLFSSH_REQ_UNHANDLED);
+    legacyGlobalReqCbCalls = 0;
+    legacyGlobalReqCbReturn = WS_SUCCESS;
+    InitChannelOpenHarness(&harness, NULL, 0);
+    wolfSSH_SetGlobalReq(harness.ctx, RecordingGlobalReqCb);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+    wolfSSH_SetGlobalReqCtx(harness.ssh, &harness);
+
+    /* Left unhandled, the request carries on to the older callback, which
+     * answers it. */
+    inSz = BuildGlobalRequestPacketSz(longName, longNameSz, 1, NULL, 0,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(legacyGlobalReqCbCalls, 1);
+    AssertIntEQ(legacyGlobalReqCbWantReply, 1);
+
+    /* Both read the request context. */
+    AssertTrue(anyReqCbCtx == (void*)&harness);
+    AssertTrue(legacyGlobalReqCbCtx == (void*)&harness);
+
+    /* The whole name to the generic callback, the truncated copy to the
+     * older one. */
+    AssertIntEQ(anyReqCbNameSz, longNameSz);
+    AssertIntEQ(WMEMCMP(anyReqCbName, longName, longNameSz), 0);
+    AssertIntEQ(legacyGlobalReqCbNameSz, copySz);
+    AssertIntEQ((word32)WSTRLEN(legacyGlobalReqCbName), copySz);
+    AssertIntEQ(WMEMCMP(legacyGlobalReqCbName, longName, copySz), 0);
+
+    /* The older callback's return decides the reply. */
+    legacyGlobalReqCbReturn = WS_FATAL_ERROR;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(legacyGlobalReqCbCalls, 2);
+    legacyGlobalReqCbReturn = WS_SUCCESS;
+
+    /* Settled by the generic callback, the older one hears nothing. */
+    anyReqCbReturn = WOLFSSH_REQ_ACCEPT;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(legacyGlobalReqCbCalls, 2);
+
+    anyReqCbReturn = WOLFSSH_REQ_REJECT;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(legacyGlobalReqCbCalls, 2);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A port-0 tcpip-forward is not the generic callback's to answer, since
+ * only the forward callback can report the port bound. It is not asked at
+ * all, rather than asked and overruled after it may have bound a
+ * listener. None of this is a WOLFSSH_FWD matter: the callback can be set
+ * in any build, and a build without forwarding has to refuse the request
+ * rather than answer it without a port. */
+static void TestGlobalReqCallbackSkipsPortZeroForward(void)
+{
+    ChannelOpenHarness harness;
+    byte tail[32];
+    word32 tailSz;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+
+    /* The callback never sees it, and with no forward callback to bind it
+     * the request is refused. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 0);
+
+    /* One that ends before the port has no port to read, so it is left
+     * alone the same way. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 0);
+
+    /* A port the peer picked is the callback's to grant. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 8080);
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "tcpip-forward"), 0);
+
+    /* The skip is for tcpip-forward alone: a port-0 cancel still reaches
+     * the callback. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildGlobalRequestPacket("cancel-tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 2);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifdef WOLFSSH_FWD
+/* A tcpip-forward the generic callback grants is answered without the
+ * forward callback, so a forward can be set up from either. A port-0
+ * request is the exception: only the forward callback can report the
+ * port bound, so a grant there is refused. */
+static void TestGlobalReqCallbackAnswersTcpipForward(void)
+{
+    ChannelOpenHarness harness;
+    byte tail[32];
+    word32 tailSz;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    fwdCbCallCount = 0;
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, CountingFwdCb, NULL),
+            WS_SUCCESS);
+
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 8080);
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "tcpip-forward"), 0);
+    AssertIntEQ(fwdCbCallCount, 0);
+
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(fwdCbCallCount, 1);
+
+    /* A port-0 request goes to the forward callback whatever the policy
+     * would say, since only that callback can report the port bound. The
+     * generic callback is not asked. This one reports no port, so the
+     * request is refused and the setup undone, per RFC 4254 7.1. */
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 0);
+    AssertIntEQ(fwdCbCallCount, 3); /* the setup, then the cleanup */
+
+    /* A tcpip-forward that ends before the port has no port to read, so
+     * it is left alone the same way. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 0);
+
+    /* The port-0 check is for tcpip-forward alone: a granted cancel is
+     * answered as asked, and the forward callback hears nothing. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildGlobalRequestPacket("cancel-tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(WSTRCMP(anyReqCbName, "cancel-tcpip-forward"), 0);
+    AssertIntEQ(fwdCbCallCount, 3);
+
+    /* Left unhandled, the same cancel reaches the forward callback. */
+    anyReqCbReturn = WOLFSSH_REQ_UNHANDLED;
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(fwdCbCallCount, 4);
+
+    FreeChannelOpenHarness(&harness);
+}
+/* A port-0 forward still works with the generic callback registered. The
+ * callback is passed over so the forward callback can report the port it
+ * bound, and the reply carries that port, per RFC 4254 7.1. Refusing a
+ * port-0 request outright rather than passing it over would break this. */
+static int portReportingFwdCbPort;
+
+static int PortReportingFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    fwdCbCallCount++;
+    if (action == WOLFSSH_FWD_REMOTE_SETUP)
+        return portReportingFwdCbPort;
+
+    return WS_SUCCESS;
+}
+
+static void TestGlobalReqCallbackKeepsPortZeroForwardWorking(void)
+{
+    ChannelOpenHarness harness;
+    byte tail[32];
+    word32 tailSz;
+    byte in[128];
+    word32 inSz;
+
+    portReportingFwdCbPort = 49152;
+    fwdCbCallCount = 0;
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                RecordingGlobalReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, PortReportingFwdCb, NULL),
+            WS_SUCCESS);
+
+    tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    inSz = BuildGlobalRequestPacket("tcpip-forward", 1, tail, tailSz,
+            in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 0);
+    AssertIntEQ(fwdCbCallCount, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_FWD */
 
 /* What a length-aware session request callback saw. */
 static word32 sessionReqCbCommandSz;
@@ -5915,6 +6770,64 @@ static void TestAgentChannelOpenOnClientRefused(void)
 
 
 #endif /* NO_WOLFSSH_SERVER */
+
+#ifndef NO_WOLFSSH_CLIENT
+/* RFC 4254 7.1: a remote forward is the client's to ask for, so a client
+ * refuses tcpip-forward and cancel-tcpip-forward rather than register one
+ * on the peer's say-so. The refusal comes before any policy callback, and
+ * matches the name as it arrived, so it holds in a build without
+ * forwarding, where neither name is in the name table. */
+static int clientFwdPolicyCalls;
+
+static int AcceptingGlobalReqAnyCb(WOLFSSH* ssh, const byte* name,
+        word32 nameSz, const byte* data, word32 dataSz, int wantReply,
+        void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(name);
+    WOLFSSH_UNUSED(nameSz);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(dataSz);
+    WOLFSSH_UNUSED(wantReply);
+    WOLFSSH_UNUSED(ctx);
+
+    clientFwdPolicyCalls++;
+    return WOLFSSH_REQ_ACCEPT;
+}
+
+static void TestClientRefusesForwardRequestsBeforePolicy(void)
+{
+    const char* names[2];
+    int i;
+
+    names[0] = "tcpip-forward";
+    names[1] = "cancel-tcpip-forward";
+
+    for (i = 0; i < 2; i++) {
+        ChannelOpenHarness harness;
+        byte tail[32];
+        word32 tailSz;
+        byte in[128];
+        word32 inSz;
+
+        clientFwdPolicyCalls = 0;
+        InitChannelOpenHarnessClient(&harness, NULL, 0);
+        AssertIntEQ(wolfSSH_CTX_SetGlobalReqAnyCb(harness.ctx,
+                    AcceptingGlobalReqAnyCb), WS_SUCCESS);
+
+        tailSz = AppendString(tail, sizeof(tail), 0, "localhost");
+        tailSz = AppendUint32(tail, sizeof(tail), tailSz, 8080);
+        inSz = BuildGlobalRequestPacket(names[i], 1, tail, tailSz,
+                in, sizeof(in));
+
+        AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_REQUEST_FAILURE);
+        AssertIntEQ(clientFwdPolicyCalls, 0);
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
+#endif /* !NO_WOLFSSH_CLIENT */
+
 
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
     && !defined(NO_WOLFSSH_CLIENT)
@@ -14891,6 +15804,26 @@ int main(int argc, char** argv)
     TestServerServiceRequestRejectedDuringKeying();
     TestFailedSendClearsPendingPlaintext();
     TestChannelOpenCallbackRejectSendsOpenFail();
+    TestChannelReqCallbackSeesRequestAndRefuses();
+    TestChannelReqCallbackGrantsUnknownType();
+    TestChannelReqCallbackSeesWholeType();
+    TestChannelReqCallbackSettlesSessionRequest();
+    TestChannelReqCallbackGrantOverridesAppChannels();
+    TestReqAnyCallbackSettersRejectNullCtx();
+#ifdef WOLFSSH_TERM
+    TestChannelReqCallbackKeepsTypeChecks();
+#endif
+#if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+    TestChannelReqCallbackKeepsNoReplyTypes();
+#endif
+    TestGlobalReqCallbackSettlesRequest();
+    TestGlobalReqCallbackSeesWholeName();
+    TestGlobalReqCallbackLeavesLegacyCallback();
+    TestGlobalReqCallbackSkipsPortZeroForward();
+#ifdef WOLFSSH_FWD
+    TestGlobalReqCallbackAnswersTcpipForward();
+    TestGlobalReqCallbackKeepsPortZeroForwardWorking();
+#endif
     TestChannelOpenConfCallbackRuns();
     TestChannelOpenFailCallbackRuns();
     TestChannelOpenConfCallbackRejects();
@@ -14974,6 +15907,9 @@ int main(int argc, char** argv)
 #endif
 #endif
 #endif /* NO_WOLFSSH_SERVER */
+#ifndef NO_WOLFSSH_CLIENT
+    TestClientRefusesForwardRequestsBeforePolicy();
+#endif
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
     && !defined(NO_WOLFSSH_CLIENT)
     TestAgentEd25519UserAuthEmitsSignature();
