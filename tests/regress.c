@@ -176,6 +176,20 @@ static WS_MAYBE_UNUSED word32 ReadUint32(const byte* buf)
             ((word32)buf[2] << 8) | (word32)buf[3];
 }
 
+/* Where the packet after this one starts: a length prefix and the bytes it
+ * counts. A packet that ends the output fits exactly, so summing spans can
+ * account for every byte written. */
+static word32 NextPacketOffset(const byte* out, word32 outSz)
+{
+    word32 packetLen;
+
+    AssertTrue(outSz >= UINT32_SZ);
+    packetLen = ReadUint32(out);
+
+    AssertTrue(outSz - UINT32_SZ >= packetLen);
+    return UINT32_SZ + packetLen;
+}
+
 static word32 AppendData(byte* buf, word32 bufSz, word32 idx,
         const byte* data, word32 dataSz)
 {
@@ -6148,20 +6162,6 @@ static void ArmFwdReentrantFromSend(ChannelOpenHarness* harness, int action,
     fwdReentrantFromSend.port = port;
 }
 
-/* Where the second packet in the output starts. What the callback sent or
- * answered went out behind the request that was still in the buffer. */
-static word32 NextPacketOffset(const byte* out, word32 outSz)
-{
-    word32 packetLen;
-
-    AssertTrue(outSz > UINT32_SZ);
-    WMEMCPY(&packetLen, out, sizeof(packetLen));
-    packetLen = ntohl(packetLen);
-
-    AssertTrue(outSz > UINT32_SZ + packetLen);
-    return UINT32_SZ + packetLen;
-}
-
 /* A cancel sent from inside a first setup's send names a forward that exists
  * only on the request in flight. It went out behind that setup, so the peer
  * holds no listener and neither may this side -- and the setup's commit must
@@ -7569,6 +7569,449 @@ static void TestShutdownFlushesWithNoChannel(void)
     /* The flush finished, so the WS_WANT_WRITE that queued it is stale.
      * Leaving it sends the caller back for a write that is already done. */
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The flush is no longer tied to a disconnect, so it reaches sessions that
+ * are still up, where there is no WS_DISCONNECT to displace the WS_WANT_WRITE
+ * the short send latched. A completed flush is the write that error was
+ * asking for: left standing it sends the caller back for a write that is
+ * already done, and the apps answer a want-write with a worker loop. */
+static void TestShutdownFlushClearsWantWrite(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[256];
+    byte data[8];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* An IGNORE needs no channel, so the short send leaves the want-write
+     * with nothing but teardown left to answer it. */
+    WMEMSET(data, 0, sizeof(data));
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, data, sizeof(data)), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertFalse(ssh->disconnected);
+    AssertFalse(ssh->disconnectTxd);
+    AssertNull(ssh->channelList);
+    AssertIntEQ(io.outSz, 0);
+
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_CHANNEL_CLOSED);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(ParseMsgId(out, io.outSz), MSGID_IGNORE);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_SUCCESS);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+#ifndef NO_WOLFSSH_SERVER
+
+static int RejectUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    WOLFSSH_UNUSED(authType);
+    WOLFSSH_UNUSED(authData);
+    WOLFSSH_UNUSED(ctx);
+
+    return WOLFSSH_USERAUTH_REJECTED;
+}
+
+
+/* A rejected authentication owes the peer a USERAUTH_FAILURE, RFC 4252
+ * section 5.1. Below the auth-failure cap nothing queues a disconnect to
+ * drag the buffer out, and authentication never completed so there is no
+ * channel: teardown is the only thing left that can push the reply. */
+static void TestShutdownFlushesQueuedUserAuthFailure(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthPasswordRequest("alice", "pw", in, sizeof(in));
+
+    InitUserAuthHarness(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, RejectUserAuthCb);
+    wolfSSH_SetIOSend(harness.ctx, MemSendWantWrite);
+
+    /* The failure is bundled, then the socket refuses it. */
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_USER_AUTH_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(harness.ssh));
+
+    /* Neither of the two things that would have flushed it anyway. */
+    AssertFalse(harness.ssh->disconnectTxd);
+    AssertNull(harness.ssh->channelList);
+
+    /* The socket takes bytes now, so only the gate stands between the
+     * queued failure and the peer. */
+    AssertIntEQ(wolfSSH_shutdown(harness.ssh), WS_CHANNEL_CLOSED);
+    AssertFalse(wolfSSH_OutputPending(harness.ssh));
+
+    /* The failure, and nothing bundled behind it. */
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_FAILURE);
+    AssertIntEQ(harness.io.outSz,
+            NextPacketOffset(harness.io.out, harness.io.outSz));
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#endif /* !NO_WOLFSSH_SERVER */
+
+
+/* DoChannelClose() retires the channel once the close is bundled, so a close
+ * the socket refused is left with no channel to carry the retry. Teardown
+ * still owes the peer that close, RFC 4254 section 5.3. */
+static void TestShutdownFlushesQueuedChannelClose(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[512];
+    word32 inSz;
+    word32 channelId;
+    word32 closeOff;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channelId = ssh->channelList->channel;
+    /* Past userauth, or the message filter turns the close away and the
+     * wire checks below prove nothing. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    inSz = BuildChannelClosePacket(channelId, in, sizeof(in));
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Our EOF and close answer the peer's close. Refuse both sends, or the
+     * second one carries the first out with it. */
+    MemSendWantWriteCount = 2;
+    AssertIntEQ(DoReceive(ssh), WS_CHANNEL_CLOSED);
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    /* The channel that would have retried the send is already gone. */
+    AssertNull(ssh->channelList);
+    AssertFalse(ssh->disconnectTxd);
+
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_CHANNEL_CLOSED);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+
+    /* Both halves reached the peer, EOF ahead of the close, and nothing
+     * else: the two packets account for every byte written. */
+    AssertIntEQ(ParseMsgId(out, io.outSz), MSGID_CHANNEL_EOF);
+    closeOff = NextPacketOffset(out, io.outSz);
+    AssertIntEQ(ParseMsgId(out + closeOff, io.outSz - closeOff),
+            MSGID_CHANNEL_CLOSE);
+    AssertIntEQ(io.outSz,
+            closeOff + NextPacketOffset(out + closeOff, io.outSz - closeOff));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* One copy each of the channel data and the three teardown messages, in
+ * order, accounting for every byte written. */
+static void AssertDataThenTeardownOnWire(const byte* out, word32 outSz)
+{
+    word32 eofOff;
+    word32 reqOff;
+    word32 closeOff;
+
+    AssertIntEQ(ParseMsgId(out, outSz), MSGID_CHANNEL_DATA);
+    eofOff = NextPacketOffset(out, outSz);
+    AssertIntEQ(ParseMsgId(out + eofOff, outSz - eofOff), MSGID_CHANNEL_EOF);
+    reqOff = eofOff + NextPacketOffset(out + eofOff, outSz - eofOff);
+    AssertIntEQ(ParseMsgId(out + reqOff, outSz - reqOff),
+            MSGID_CHANNEL_REQUEST);
+    closeOff = reqOff + NextPacketOffset(out + reqOff, outSz - reqOff);
+    AssertIntEQ(ParseMsgId(out + closeOff, outSz - closeOff),
+            MSGID_CHANNEL_CLOSE);
+    AssertIntEQ(outSz,
+            closeOff + NextPacketOffset(out + closeOff, outSz - closeOff));
+}
+
+
+/* The flush is no longer tied to a disconnect, so it can fire on a live
+ * session with the channel still listed and then short-send itself. The
+ * teardown sends bundle in behind bytes the socket has not taken, and the
+ * caller has to come back: the retry owes the peer the rest of the buffer
+ * and not a second copy of the EOF and close. */
+static void TestShutdownFlushShortSendsWithChannel(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[1024];
+    byte data[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* Channel data the socket will not take, on a session that is neither
+     * disconnected nor out of channels. */
+    WMEMSET(data, 'x', sizeof(data));
+    MemSendWantWriteCount = 5;
+    AssertIntEQ(wolfSSH_stream_send(ssh, data, sizeof(data)),
+            (int)sizeof(data));
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertFalse(ssh->disconnected);
+    AssertNotNull(ssh->channelList);
+
+    /* The flush and all three teardown sends are refused, so the unfinished
+     * flush owns the return and the whole teardown is still queued. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_WANT_WRITE);
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(MemSendWantWriteCount, 0);
+
+    /* Bundled counts as sent, so the retry must not emit them again. The
+     * list comes first: a channel retired here would be freed, and the
+     * reads below it would be of freed memory. */
+    AssertNotNull(ssh->channelList);
+    AssertTrue(channel->eofTxd);
+    AssertTrue(channel->closeTxd);
+
+    /* The socket takes bytes now. The retry drains what was queued and
+     * lands on the wait for the peer's close, not on a stale want-write
+     * for a buffer that is already empty. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_READ);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+
+    /* One copy of each, in order, accounting for every byte written. */
+    AssertDataThenTeardownOnWire(out, io.outSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The retry's own flush can short-send too, with the teardown already
+ * bundled and the channel still listed, waiting on the peer's close. The
+ * worker then has nothing to read, and a want-read is the wrong answer: the
+ * peer cannot reply to a close it has not finished receiving, so the bytes
+ * still queued are what the caller has to come back for. */
+static void TestShutdownRetryFlushShortSendsWithChannel(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[1024];
+    byte data[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    WMEMSET(data, 'x', sizeof(data));
+    MemSendWantWriteCount = 5;
+    AssertIntEQ(wolfSSH_stream_send(ssh, data, sizeof(data)),
+            (int)sizeof(data));
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_WANT_WRITE);
+    AssertIntEQ(io.outSz, 0);
+    AssertNotNull(ssh->channelList);
+    AssertTrue(channel->closeTxd);
+
+    /* The retry's flush is refused as well. Nothing else in the call can
+     * carry the bytes: the teardown is skipped as already sent, and the
+     * worker has nothing to read. */
+    MemSendWantWriteCount = 1;
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(io.outSz, 0);
+    AssertNotNull(ssh->channelList);
+
+    /* The socket takes bytes now: the queue drains and the call lands on
+     * the wait for the peer's close. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_READ);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertDataThenTeardownOnWire(out, io.outSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* The flush can also be the only short send: the socket takes the EOF, and
+ * the bytes it was queued behind go out with it. That settles the write the
+ * flush was owed, so the return belongs to the teardown, not to a stale
+ * WS_WANT_WRITE for a buffer that is already empty. */
+static void TestShutdownFlushSettledByTeardown(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WOLFSSH_CHANNEL* channel;
+    MemIo io;
+    byte out[1024];
+    byte data[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWrite);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    channel = ssh->channelList;
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* The data send and the flush are refused; the EOF behind them is not. */
+    WMEMSET(data, 'x', sizeof(data));
+    MemSendWantWriteCount = 2;
+    AssertIntEQ(wolfSSH_stream_send(ssh, data, sizeof(data)),
+            (int)sizeof(data));
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    /* Everything went out on the EOF send, and the call lands on the wait
+     * for the peer's close. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_READ);
+    AssertIntEQ(MemSendWantWriteCount, 0);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+    AssertNotNull(ssh->channelList);
+    AssertTrue(channel->eofTxd);
+    AssertTrue(channel->closeTxd);
+
+    AssertDataThenTeardownOnWire(out, io.outSz);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* A reset leaves the output buffer intact, so a flush that short-sent still
+ * reads as owed after the teardown send behind it hit the reset. That send
+ * holds the real reason the session is over, and it is what the caller has
+ * to see: a stale want-write sends them back to wait on a socket that is
+ * never going to take the rest. */
+static int MemSendResetAfterCount;
+
+static int MemSendWantWriteThenReset(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+
+    if (MemSendResetAfterCount > 0) {
+        MemSendResetAfterCount--;
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    return WS_CBIO_ERR_CONN_RST;
+}
+
+static void TestShutdownResetOutranksFlush(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[1024];
+    byte data[32];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSendWantWriteThenReset);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AddSessionChannel(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    /* The data send and the flush are refused; the peer resets the
+     * connection under the teardown sends that follow. */
+    WMEMSET(data, 'x', sizeof(data));
+    MemSendResetAfterCount = 2;
+    AssertIntEQ(wolfSSH_stream_send(ssh, data, sizeof(data)),
+            (int)sizeof(data));
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(ssh));
+
+    /* The reset is the answer, not the write the flush is still owed for. */
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SOCKET_ERROR_E);
+    AssertTrue(ssh->connReset);
+    AssertIntEQ(io.outSz, 0);
+
+    /* Nothing left to take those bytes, so a retry says so too rather than
+     * handing back another want-write for a buffer that cannot drain. */
+    AssertTrue(wolfSSH_OutputPending(ssh));
+    AssertIntEQ(wolfSSH_shutdown(ssh), WS_SOCKET_ERROR_E);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -12838,6 +13281,15 @@ int main(int argc, char** argv)
     TestPeerDisconnectKeepsTrafficQueued(0);
     TestPeerDisconnectKeepsTrafficQueued(1);
     TestShutdownFlushesWithNoChannel();
+    TestShutdownFlushClearsWantWrite();
+#ifndef NO_WOLFSSH_SERVER
+    TestShutdownFlushesQueuedUserAuthFailure();
+#endif
+    TestShutdownFlushesQueuedChannelClose();
+    TestShutdownFlushShortSendsWithChannel();
+    TestShutdownRetryFlushShortSendsWithChannel();
+    TestShutdownFlushSettledByTeardown();
+    TestShutdownResetOutranksFlush();
     TestQueuedDisconnectFlushes();
     TestShutdownFlushesQueuedDisconnect();
     TestShutdownKeepsFlushWantWrite();
