@@ -1966,6 +1966,51 @@ static int RejectDirectTcpipSetup(WS_FwdCbAction action, void* ctx,
     return WS_SUCCESS;
 }
 
+#define REGRESS_FWD_ACTION_MAX 8
+static WS_FwdCbAction fwdActions[REGRESS_FWD_ACTION_MAX];
+static word32 fwdActionCount;
+
+/* Records the actions the library asked for, so a test can assert the
+ * sequence a forwarding channel produces. */
+static int RecordingFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    if (fwdActionCount < REGRESS_FWD_ACTION_MAX)
+        fwdActions[fwdActionCount] = action;
+    fwdActionCount++;
+
+    return WS_SUCCESS;
+}
+
+/* As RecordingFwdCb, but refuses the channel-id handoff so the open fails
+ * after a successful setup. */
+static int RecordingRejectChannelIdFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    int ret = RecordingFwdCb(action, ctx, host, port);
+
+    if (action == WOLFSSH_FWD_CHANNEL_ID)
+        return WS_FWD_NOT_AVAILABLE;
+
+    return ret;
+}
+
+/* As RecordingFwdCb, but refuses the setup itself. */
+static int RecordingRejectSetupFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    int ret = RecordingFwdCb(action, ctx, host, port);
+
+    if (action == WOLFSSH_FWD_LOCAL_SETUP)
+        return WS_FWD_SETUP_E;
+
+    return ret;
+}
+
 /* Counts every action the library asks for. File scope rather than reached
  * through the callback ctx, so a zero reading means the hook did not run and
  * cannot instead mean the ctx stopped being delivered. */
@@ -3804,6 +3849,226 @@ static void TestDirectTcpipFwdCbRejectsChannelId(void)
     AssertIntEQ(fwdCbCallCount, 3);
 
     FreeChannelOpenHarness(&harness);
+}
+
+/* A forwarding channel that opened with a LOCAL_SETUP has to report a
+ * LOCAL_CLEANUP when it closes, or an application has no hook to release what
+ * it set up. */
+static void TestDirectTcpipCloseSendsLocalCleanup(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    byte in2[64];
+    word32 extraSz;
+    word32 inSz;
+    word32 in2Sz;
+    word32 selfChannelId;
+    int ret;
+
+    fwdActionCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, RecordingFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN_CONF);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(fwdActionCount, 2);
+    AssertIntEQ(fwdActions[0], WOLFSSH_FWD_LOCAL_SETUP);
+    AssertIntEQ(fwdActions[1], WOLFSSH_FWD_CHANNEL_ID);
+
+    selfChannelId = harness.ssh->channelList->channel;
+    in2Sz = BuildChannelClosePacket(selfChannelId, in2, sizeof(in2));
+    RepointHarnessInput(&harness, in2, in2Sz);
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_CHANNEL_CLOSED);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(fwdActionCount, 3);
+    AssertIntEQ(fwdActions[2], WOLFSSH_FWD_LOCAL_CLEANUP);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Closes a channel this side created itself, which never saw a
+ * LOCAL_SETUP, and reports how many forwarding actions that produced. */
+static word32 CloseSelfOpenedChannel(byte channelType)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+    word32 selfChannelId;
+
+    fwdActionCount = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, RecordingFwdCb, NULL),
+            WS_SUCCESS);
+
+    channel = ChannelNew(harness.ssh, channelType, 1024, 1024);
+    AssertNotNull(channel);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    AssertIntEQ(ChannelAppend(harness.ssh, channel), WS_SUCCESS);
+    channel->openConfirmed = 1;
+    selfChannelId = channel->channel;
+
+    inSz = BuildChannelClosePacket(selfChannelId, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_CHANNEL_CLOSED);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+
+    return fwdActionCount;
+}
+
+/* wolfSSH_ChannelFwdNewLocal() and wolfSSH_ChannelFwdNewRemote() build a
+ * forwarding channel without a LOCAL_SETUP, so its close owes no cleanup:
+ * the application never armed one and would be freeing what it does not
+ * own. This is why the emission is gated on the channel, not its type. */
+static void TestLocalForwardCloseSendsNoCleanup(void)
+{
+    AssertIntEQ(CloseSelfOpenedChannel(ID_CHANTYPE_TCPIP_DIRECT), 0);
+}
+
+/* And a session channel produces no forwarding action at all. */
+static void TestSessionCloseSendsNoFwdAction(void)
+{
+    AssertIntEQ(CloseSelfOpenedChannel(ID_CHANTYPE_SESSION), 0);
+}
+
+/* A setup that succeeded is owed its cleanup even when the open goes on to
+ * fail, or the application keeps a socket for a channel that never existed.
+ * The channel-id handoff rejecting is the reachable way in. */
+static void TestFailedOpenAfterSetupSendsCleanup(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    fwdActionCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx,
+            RecordingRejectChannelIdFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(fwdActionCount, 3);
+    AssertIntEQ(fwdActions[0], WOLFSSH_FWD_LOCAL_SETUP);
+    AssertIntEQ(fwdActions[1], WOLFSSH_FWD_CHANNEL_ID);
+    AssertIntEQ(fwdActions[2], WOLFSSH_FWD_LOCAL_CLEANUP);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A setup that reported failure set nothing up, so it is owed no cleanup;
+ * one would have the application release what it never acquired. */
+static void TestRejectedSetupSendsNoCleanup(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    int ret;
+
+    fwdActionCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, RecordingRejectSetupFwdCb,
+            NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(fwdActionCount, 1);
+    AssertIntEQ(fwdActions[0], WOLFSSH_FWD_LOCAL_SETUP);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Opens a direct-tcpip forward through the recording callback and checks
+ * the setup and channel-id handoff went out, leaving the channel live. */
+static void OpenRecordedDirectTcpip(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    byte extra[128];
+    word32 extraSz;
+
+    fwdActionCount = 0;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, inSz);
+
+    InitChannelOpenHarness(harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness->ctx, RecordingFwdCb, NULL),
+            WS_SUCCESS);
+
+    AssertIntEQ(DoReceive(harness->ssh), WS_SUCCESS);
+    AssertIntEQ(harness->ssh->channelListSz, 1);
+    AssertIntEQ(fwdActionCount, 2);
+    AssertIntEQ(fwdActions[0], WOLFSSH_FWD_LOCAL_SETUP);
+    AssertIntEQ(fwdActions[1], WOLFSSH_FWD_CHANNEL_ID);
+}
+
+/* A dropped transport never delivers a CHANNEL_CLOSE, so freeing the session
+ * is the only chance the application gets to release a forward's socket. */
+static void TestSessionFreeSendsLocalCleanup(void)
+{
+    ChannelOpenHarness harness;
+    byte in[192];
+
+    OpenRecordedDirectTcpip(&harness, in, sizeof(in));
+
+    FreeChannelOpenHarness(&harness);
+    AssertIntEQ(fwdActionCount, 3);
+    AssertIntEQ(fwdActions[2], WOLFSSH_FWD_LOCAL_CLEANUP);
+}
+
+/* Same for a channel the application retires itself, and only once: the
+ * session free that follows must not report it again. */
+static void TestChannelFreeSendsLocalCleanup(void)
+{
+    ChannelOpenHarness harness;
+    byte in[192];
+
+    OpenRecordedDirectTcpip(&harness, in, sizeof(in));
+
+    AssertIntEQ(wolfSSH_ChannelFree(harness.ssh->channelList), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(fwdActionCount, 3);
+    AssertIntEQ(fwdActions[2], WOLFSSH_FWD_LOCAL_CLEANUP);
+
+    FreeChannelOpenHarness(&harness);
+    AssertIntEQ(fwdActionCount, 3);
 }
 
 static void TestForwardedTcpipOnServerSendsOpenFail(void)
@@ -13135,6 +13400,13 @@ int main(int argc, char** argv)
     TestDirectTcpipOpenCbRejectBeatsFwdCb();
     TestDirectTcpipFwdCbRejectAfterOpenCbAccept();
     TestDirectTcpipFwdCbRejectsChannelId();
+    TestDirectTcpipCloseSendsLocalCleanup();
+    TestLocalForwardCloseSendsNoCleanup();
+    TestSessionCloseSendsNoFwdAction();
+    TestFailedOpenAfterSetupSendsCleanup();
+    TestRejectedSetupSendsNoCleanup();
+    TestSessionFreeSendsLocalCleanup();
+    TestChannelFreeSendsLocalCleanup();
     TestForwardedTcpipOnServerSendsOpenFail();
     TestGlobalRequestFwdNoCbSendsFailure();
 #ifndef NO_WOLFSSH_CLIENT
