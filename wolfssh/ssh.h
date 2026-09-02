@@ -452,6 +452,29 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_SetChannelReqCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
 
+/* Application-driven channel handling, server side, off by default.
+ *
+ * Off, wolfSSH_accept() runs the session state machine through to an
+ * established session with the first channel open, as it always has, and a
+ * shell, exec, or subsystem request with no callback registered for it is
+ * accepted.
+ *
+ * On, wolfSSH_accept() returns WS_SUCCESS as soon as the user has
+ * authenticated, and the application owns every channel from there, driving
+ * the session with wolfSSH_worker() and the callbacks above. A shell, exec,
+ * or subsystem request with no callback registered is then rejected: with
+ * accept() already returned, nothing is left to service it.
+ *
+ * Set it on the context before wolfSSH_new(), or on a session before the
+ * first wolfSSH_accept() call. Turning it on once accept() has established
+ * the session has no effect on that session.
+ *
+ * The mode drives the session channels itself, so it does not combine with
+ * the built-in wolfSSH_SFTP_accept() and WS_SCP_INIT entry points; an
+ * application using those leaves this off. */
+WOLFSSH_API int wolfSSH_CTX_SetAppChannels(WOLFSSH_CTX* ctx, byte enable);
+WOLFSSH_API int wolfSSH_SetAppChannels(WOLFSSH* ssh, byte enable);
+
 typedef int (*WS_CallbackChannelEof)(WOLFSSH_CHANNEL* channel, void* ctx);
 WOLFSSH_API int wolfSSH_CTX_SetChannelEofCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelEof cb);

@@ -575,6 +575,8 @@ const char acceptState[] = "accept state: %s";
 
 int wolfSSH_accept(WOLFSSH* ssh)
 {
+    byte stopState;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_accept()");
 
     if (ssh == NULL)
@@ -594,6 +596,15 @@ int wolfSSH_accept(WOLFSSH* ssh)
         return WS_INVALID_STATE_E;
     }
 
+    /* In application-driven mode the state machine stops as soon as the
+     * user is authenticated; everything past that is the application's.
+     * Only stop there if the session has not already gone by: the loop
+     * below tests the stop state exactly, so a state it has stepped over
+     * would never terminate it. */
+    stopState = (ssh->appChannels
+            && ssh->acceptState <= ACCEPT_SERVER_USERAUTH_SENT) ?
+        ACCEPT_SERVER_USERAUTH_SENT : ACCEPT_CLIENT_SESSION_ESTABLISHED;
+
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&
             ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
@@ -605,7 +616,11 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
                 ssh->acceptState != ACCEPT_KEYED &&
-                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT) {
+                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT &&
+                /* Never step over where this call is meant to stop. The
+                 * loop below tests for that state exactly, and the SCP and
+                 * SFTP re-entry states sort after it. */
+                ssh->acceptState != stopState) {
                 WLOG(WS_LOG_DEBUG, "Advancing accept state");
                 ssh->acceptState++;
             }
@@ -627,7 +642,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         }
     }
 
-    while (ssh->acceptState != ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+    while (ssh->acceptState != stopState) {
         switch (ssh->acceptState) {
 
             case ACCEPT_BEGIN:
@@ -717,6 +732,12 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
+                if (stopState == ACCEPT_SERVER_USERAUTH_SENT) {
+                    /* The application takes it from here. Tested through
+                     * stopState so a callback that changed the flag during
+                     * this call cannot half-apply it. */
+                    break;
+                }
                 FALL_THROUGH;
 
             case ACCEPT_SERVER_USERAUTH_SENT:
@@ -3921,7 +3942,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
             newChannel, ret);
     return newChannel;
 }
@@ -4908,6 +4930,32 @@ int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 
     if (ctx != NULL) {
         ctx->channelReqSubsysCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetAppChannels(WOLFSSH_CTX* ctx, byte enable)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->appChannels = (enable != 0);
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetAppChannels(WOLFSSH* ssh, byte enable)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->appChannels = (enable != 0);
         ret = WS_SUCCESS;
     }
 
