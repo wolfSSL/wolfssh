@@ -2887,6 +2887,25 @@ static int test_ScanShadowFile_truncatedLine(void)
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
 
 #ifdef WOLFSSL_BASE64_ENCODE
+/* Build SSH wire-format public key blob. Returns size or 0 if too small. */
+static word32 BuildWireKeyBlob(const char* type, const byte* payload,
+                               word32 payloadSz, byte* out, word32 outSz)
+{
+    word32 typeLen = (word32)WSTRLEN(type);
+    word32 blobSz = LENGTH_SZ + typeLen + payloadSz;
+
+    if (outSz < blobSz) {
+        return 0;
+    }
+    out[0] = (byte)((typeLen >> 24) & 0xff);
+    out[1] = (byte)((typeLen >> 16) & 0xff);
+    out[2] = (byte)((typeLen >> 8) & 0xff);
+    out[3] = (byte)(typeLen & 0xff);
+    WMEMCPY(out + LENGTH_SZ, type, typeLen);
+    WMEMCPY(out + LENGTH_SZ + typeLen, payload, payloadSz);
+    return blobSz;
+}
+
 /* Build a mutable "<type> <base64(key)>" line; WSTRTOK mutates in place. */
 static int BuildAuthKeysLineType(const char* type, const byte* key,
                                  word32 keySz, char* lineOut, word32 lineOutSz)
@@ -2919,8 +2938,7 @@ static int BuildAuthKeysLine(const byte* key, word32 keySz,
     return BuildAuthKeysLineType("ssh-rsa", key, keySz, lineOut, lineOutSz);
 }
 
-/* Confirms every key-type CheckAuthKeysLine accepts via wolfSSH_QueryKey()
- * is recognized. */
+/* Test CheckAuthKeysLine type cross-check and rejection. */
 static int test_CheckAuthKeysLineTypes(void)
 {
     static const char* types[] = {
@@ -3001,6 +3019,9 @@ static int test_CheckAuthKeysLineTypes(void)
     static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
     const byte* keyA = (const byte*)keyAStr;
     const word32 keySz = (word32)(sizeof(keyAStr) - 1);
+    /* 64 covers the longest type name. */
+    byte blob[LENGTH_SZ + 64 + sizeof(keyAStr) - 1];
+    word32 blobSz;
     char line[256];
     char lineCopy[256];
     word32 i;
@@ -3008,7 +3029,14 @@ static int test_CheckAuthKeysLineTypes(void)
     int rc;
 
     for (i = 0; i < (word32)(sizeof(types) / sizeof(types[0])); i++) {
-        ret = BuildAuthKeysLineType(types[i], keyA, keySz, line, sizeof(line));
+        blobSz = BuildWireKeyBlob(types[i], keyA, keySz, blob, sizeof(blob));
+        if (blobSz == 0) {
+            Log("    CheckAuthKeysLine type %s: blob build failed.\n",
+                types[i]);
+            return WS_BUFFER_E;
+        }
+        ret = BuildAuthKeysLineType(types[i], blob, blobSz, line,
+                                    sizeof(line));
         if (ret != WS_SUCCESS) {
             Log("    CheckAuthKeysLine type %s: build failed.\n", types[i]);
             return ret;
@@ -3016,10 +3044,9 @@ static int test_CheckAuthKeysLineTypes(void)
         Log("    Testing scenario: known type %s reaches key comparison.",
             types[i]);
         WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
-        /* Matching key: a recognized type must proceed to the key
-         * comparison and report success. */
+        /* Valid token proceeds to key comparison. */
         rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
-                               keyA, keySz);
+                               blob, blobSz, 0);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
@@ -3029,16 +3056,20 @@ static int test_CheckAuthKeysLineTypes(void)
         }
     }
 
-    /* An unknown type must be skipped (not matched) rather than aborting
-     * the whole authorized_keys scan with a fatal error. */
-    ret = BuildAuthKeysLineType("ssh-bogus-type", keyA, keySz, line,
+    /* Reject line token naming a different key type. */
+    blobSz = BuildWireKeyBlob("ssh-rsa", keyA, keySz, blob, sizeof(blob));
+    if (blobSz == 0) {
+        return WS_BUFFER_E;
+    }
+    ret = BuildAuthKeysLineType("ssh-bogus-type", blob, blobSz, line,
                                 sizeof(line));
     if (ret != WS_SUCCESS) {
         return ret;
     }
-    Log("    Testing scenario: unknown type is rejected.");
+    Log("    Testing scenario: mismatched line type is rejected.");
     WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
-    rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy), keyA, keySz);
+    rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy), blob, blobSz,
+                           0);
     if (rc == WSSHD_AUTH_FAILURE) {
         Log(" PASSED.\n");
     }
@@ -3078,10 +3109,17 @@ static int CheckAuthKeysLineMaxSzCase(const char* type, word32 keySz,
     }
 
     if (ret == WS_SUCCESS) {
+        word32 typeLen = (word32)WSTRLEN(type);
+        word32 headerSz = LENGTH_SZ + typeLen;
         word32 i;
-        /* Non-repeating pattern so a truncation bug shows up as a
-         * mismatch, not accidental luck. */
-        for (i = 0; i < keySz; i++) {
+
+        /* Provide real header; the rest is non-repeating filler. */
+        key[0] = (byte)((typeLen >> 24) & 0xff);
+        key[1] = (byte)((typeLen >> 16) & 0xff);
+        key[2] = (byte)((typeLen >> 8) & 0xff);
+        key[3] = (byte)(typeLen & 0xff);
+        WMEMCPY(key + LENGTH_SZ, type, typeLen);
+        for (i = headerSz; i < keySz; i++) {
             key[i] = (byte)(i * 31 + 7);
         }
 
@@ -3101,7 +3139,7 @@ static int CheckAuthKeysLineMaxSzCase(const char* type, word32 keySz,
         }
         else {
             WMEMCPY(lineCopy, line, lineLen + 1);
-            rc = CheckAuthKeysLine(lineCopy, lineLen, key, keySz);
+            rc = CheckAuthKeysLine(lineCopy, lineLen, key, keySz, 0);
             if (rc == WSSHD_AUTH_SUCCESS) {
                 Log(" PASSED.\n");
             }
@@ -3186,22 +3224,30 @@ static int test_CheckAuthKeysLineMaxSz(void)
 static int test_CheckAuthKeysLine(void)
 {
     int ret = WS_SUCCESS;
-    /* keyALastByte differs from keyA only in the final byte, killing a
-     * dropped-ConstantCompare mutation that the length check alone would miss. */
+    /* blobALastByte differs in final byte to test ConstantCompare. */
     static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
     static const char keyBStr[] = "wolfssh-auth-key-test-B-BBBBBBB";
     const byte* keyA = (const byte*)keyAStr;
     const byte* keyB = (const byte*)keyBStr;
     const word32 keySz = (word32)(sizeof(keyAStr) - 1);
-    byte keyALastByte[sizeof(keyAStr) - 1];
+    byte blobA[LENGTH_SZ + 7 /* strlen("ssh-rsa") */ + sizeof(keyAStr) - 1];
+    byte blobB[sizeof(blobA)];
+    byte blobALastByte[sizeof(blobA)];
+    word32 blobSz;
     char line[256];
-    char lineCopy[320]; /* fits the longer unsupported-type scenario line */
+    char lineCopy[320]; /* fits the longer mismatched-type scenario line */
     int rc;
 
-    WMEMCPY(keyALastByte, keyA, keySz);
-    keyALastByte[keySz - 1] ^= 0x01;
+    blobSz = BuildWireKeyBlob("ssh-rsa", keyA, keySz, blobA, sizeof(blobA));
+    if (blobSz == 0 ||
+            BuildWireKeyBlob("ssh-rsa", keyB, keySz, blobB, sizeof(blobB))
+                    != blobSz) {
+        return WS_BUFFER_E;
+    }
+    WMEMCPY(blobALastByte, blobA, blobSz);
+    blobALastByte[blobSz - 1] ^= 0x01;
 
-    ret = BuildAuthKeysLine(keyA, keySz, line, sizeof(line));
+    ret = BuildAuthKeysLine(blobA, blobSz, line, sizeof(line));
     if (ret != WS_SUCCESS) {
         return ret;
     }
@@ -3209,7 +3255,7 @@ static int test_CheckAuthKeysLine(void)
     Log("    Testing scenario: matching key authenticates.");
     WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
     rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
-                           keyA, keySz);
+                           blobA, blobSz, 0);
     if (rc == WSSHD_AUTH_SUCCESS) {
         Log(" PASSED.\n");
     }
@@ -3222,7 +3268,7 @@ static int test_CheckAuthKeysLine(void)
         Log("    Testing scenario: different same-length key is rejected.");
         WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
         rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
-                               keyB, keySz);
+                               blobB, blobSz, 0);
         if (rc == WSSHD_AUTH_FAILURE) {
             Log(" PASSED.\n");
         }
@@ -3237,7 +3283,7 @@ static int test_CheckAuthKeysLine(void)
             "rejected.");
         WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
         rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
-                               keyALastByte, keySz);
+                               blobALastByte, blobSz, 0);
         if (rc == WSSHD_AUTH_FAILURE) {
             Log(" PASSED.\n");
         }
@@ -3248,15 +3294,170 @@ static int test_CheckAuthKeysLine(void)
     }
 
     if (ret == WS_SUCCESS) {
-        /* An unsupported key type must be skipped (WSSHD_AUTH_FAILURE), not
-         * treated as a hard error, so SearchKeysFile keeps scanning later
-         * TrustedUserCAKeys entries. */
-        Log("    Testing scenario: unsupported key type is skipped.");
+        /* Mismatched line type token is rejected safely. */
+        Log("    Testing scenario: mismatched line type is rejected.");
         WSNPRINTF(lineCopy, sizeof(lineCopy), "sk-ssh-ed25519@openssh.com %s",
                   line + WSTRLEN("ssh-rsa "));
         rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
-                               keyA, keySz);
+                               blobA, blobSz, 0);
         if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* OpenSSH maps an RSA SHA-2 signature name onto ssh-rsa, so these
+         * lines authenticate an ssh-rsa key there and must here too. */
+        static const char* rsaAliases[] = { "rsa-sha2-256", "rsa-sha2-512" };
+        word32 i;
+
+        for (i = 0; i < (word32)(sizeof(rsaAliases) / sizeof(rsaAliases[0]));
+                i++) {
+            Log("    Testing scenario: %s line type for an ssh-rsa key "
+                "authenticates.", rsaAliases[i]);
+            ret = BuildAuthKeysLineType(rsaAliases[i], blobA, blobSz, line,
+                                        sizeof(line));
+            if (ret != WS_SUCCESS) {
+                return ret;
+            }
+            WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+            rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                                   blobA, blobSz, 0);
+            if (rc == WSSHD_AUTH_SUCCESS) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED (rc=%d).\n", rc);
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* A name that only looks like an alias must still be rejected, so the
+         * mapping can't decay into a prefix match. */
+        Log("    Testing scenario: rsa-sha2-384 line type is rejected.");
+        ret = BuildAuthKeysLineType("rsa-sha2-384", blobA, blobSz, line,
+                                    sizeof(line));
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               blobA, blobSz, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Type and embedded blob type both agree on a cert type name, so
+         * this isolates the cert-type guard from the type/blob match. */
+        static const char certType[] = "ssh-rsa-cert-v01@openssh.com";
+        byte certBlob[LENGTH_SZ + sizeof(certType) - 1 + sizeof(keyAStr) - 1];
+        word32 certBlobSz;
+
+        certBlobSz = BuildWireKeyBlob(certType, keyA, keySz, certBlob,
+                                      sizeof(certBlob));
+        if (certBlobSz == 0) {
+            return WS_BUFFER_E;
+        }
+        ret = BuildAuthKeysLineType(certType, certBlob, certBlobSz, line,
+                                    sizeof(line));
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+        Log("    Testing scenario: OpenSSH cert-type line is rejected.");
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               certBlob, certBlobSz, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* Blob too short to hold the wire-format length field
+         * (keyCandSz >= 4 else-branch in auth.c). */
+        static const byte shortBlob[] = { 0x00, 0x01 };
+
+        Log("    Testing scenario: short blob (< 4 bytes) is rejected.");
+        ret = BuildAuthKeysLineType("ssh-rsa", shortBlob, sizeof(shortBlob),
+                                    line, sizeof(line));
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        /* Pass shortBlob itself as the key, not blobA: otherwise the
+         * pre-existing keyCandSz != keySz check masks the guard. */
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               shortBlob, sizeof(shortBlob), 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* truncType is not RSA-SHA2-aliased, so keyTypeSz equals the
+         * declared type length (7) and the XMEMCMP content matches: only
+         * the typeStrSz > keyCandSz - 4 bound can reject this blob. */
+        static const char truncType[] = "ssh-rsa";
+        static const byte truncatedBlob[] = {
+            0x00, 0x00, 0x00, 0x07, 's', 's', 'h'
+        };
+
+        Log("    Testing scenario: truncated blob (declared type length "
+            "exceeds decoded blob) is rejected.");
+        ret = BuildAuthKeysLineType(truncType, truncatedBlob,
+                                    sizeof(truncatedBlob), line, sizeof(line));
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        /* Pass truncatedBlob itself as the key, not blobA: otherwise the
+         * pre-existing keyCandSz != keySz check masks the guard. */
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               truncatedBlob, sizeof(truncatedBlob), 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        /* isCert: key is a raw DER certificate, not an SSH wire-format
+         * blob, so the type/embedded-type cross-check must be skipped. */
+        Log("    Testing scenario: cert candidate with non-wire-format "
+            "payload authenticates.");
+        ret = BuildAuthKeysLineType("ssh-rsa", keyA, keySz, line,
+                                    sizeof(line));
+        if (ret != WS_SUCCESS) {
+            return ret;
+        }
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               keyA, keySz, 1 /* isCert */);
+        if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
         else {
@@ -3280,6 +3481,11 @@ static int test_SearchForPubKey(void)
     const byte* keyA = (const byte*)keyAStr;
     const byte* keyB = (const byte*)keyBStr;
     const word32 keySz = (word32)(sizeof(keyAStr) - 1);
+    /* CheckAuthKeysLine cross-checks the type token against the embedded type,
+     * so pubKeyCtx.publicKey needs a full SSH wire-format key blob. */
+    byte blobA[LENGTH_SZ + 7 /* strlen("ssh-rsa") */ + sizeof(keyAStr) - 1];
+    byte blobB[sizeof(blobA)];
+    word32 blobSz;
     char base[] = "/tmp/wolfsshd_pkXXXXXX";
     char keysPath[64] = "";
     char missPath[64] = "";
@@ -3289,6 +3495,13 @@ static int test_SearchForPubKey(void)
     FILE* f = NULL;
     int rc;
 
+    blobSz = BuildWireKeyBlob("ssh-rsa", keyA, keySz, blobA, sizeof(blobA));
+    if (blobSz == 0 ||
+            BuildWireKeyBlob("ssh-rsa", keyB, keySz, blobB, sizeof(blobB))
+                    != blobSz) {
+        return WS_BUFFER_E;
+    }
+
     if (mkdtemp(base) == NULL) {
         Log("    mkdtemp failed.\n");
         ret = WS_FATAL_ERROR;
@@ -3297,7 +3510,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         snprintf(keysPath, sizeof(keysPath), "%s/authorized_keys", base);
         snprintf(missPath, sizeof(missPath), "%s/absent_keys", base);
-        ret = BuildAuthKeysLine(keyA, keySz, line, sizeof(line));
+        ret = BuildAuthKeysLine(blobA, blobSz, line, sizeof(line));
     }
 
     if (ret == WS_SUCCESS) {
@@ -3321,12 +3534,12 @@ static int test_SearchForPubKey(void)
     }
 
     WMEMSET(&pubKeyCtx, 0, sizeof(pubKeyCtx));
-    pubKeyCtx.publicKeySz = keySz;
+    pubKeyCtx.publicKeySz = blobSz;
 
     /* StrictModes disabled so the check stays hermetic (no ownership gate). */
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: authorized key is accepted.");
-        pubKeyCtx.publicKey = keyA;
+        pubKeyCtx.publicKey = blobA;
         rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
@@ -3341,7 +3554,7 @@ static int test_SearchForPubKey(void)
      * secure-open branch must also accept the authorized key. */
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: authorized key accepted under StrictModes.");
-        pubKeyCtx.publicKey = keyA;
+        pubKeyCtx.publicKey = blobA;
         rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 1);
         if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
@@ -3354,9 +3567,74 @@ static int test_SearchForPubKey(void)
 
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: unauthorized key is rejected.");
-        pubKeyCtx.publicKey = keyB;
+        pubKeyCtx.publicKey = blobB;
         rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Malformed line (bad base64) must be skipped, not abort the scan. */
+    if (ret == WS_SUCCESS) {
+        f = fopen(keysPath, "w");
+        if (f == NULL) {
+            Log("    fopen of authorized_keys failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("no-pty not-base64!!\n", f);
+            fputs(line, f);
+            fputs("\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS && chmod(keysPath, S_IRUSR | S_IWUSR) != 0) {
+        Log("    chmod of authorized_keys failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: malformed line is skipped, scan "
+            "continues to matching key.");
+        pubKeyCtx.publicKey = blobA;
+        rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* Malformed line (single token, no key field) must be skipped too,
+     * not abort the scan. */
+    if (ret == WS_SUCCESS) {
+        f = fopen(keysPath, "w");
+        if (f == NULL) {
+            Log("    fopen of authorized_keys failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs("single-token-line\n", f);
+            fputs(line, f);
+            fputs("\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS && chmod(keysPath, S_IRUSR | S_IWUSR) != 0) {
+        Log("    chmod of authorized_keys failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: single-token line is skipped, scan "
+            "continues to matching key.");
+        pubKeyCtx.publicKey = blobA;
+        rc = SearchForPubKey(base, keysPath, "testuser", &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
             Log(" PASSED.\n");
         }
         else {
@@ -3368,7 +3646,7 @@ static int test_SearchForPubKey(void)
     /* A missing authorized_keys file is an error, not a silent accept. */
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: missing keys file returns an error.");
-        pubKeyCtx.publicKey = keyA;
+        pubKeyCtx.publicKey = blobA;
         rc = SearchForPubKey(base, missPath, "testuser", &pubKeyCtx, uid, 0);
         if (rc < 0) {
             Log(" PASSED.\n");
@@ -5964,14 +6242,16 @@ static int test_CheckPublicKeyUnixOrdering(void)
     word64 now = (word64)WTIME(NULL);
     FILE* f = NULL;
     WOLFSSHD_AUTH* auth = NULL;
-    /* Arbitrary bytes standing in for a CA signing-key blob; only byte-for-byte
-     * trust-list membership is checked here, not a signature. */
-    static const byte caBlob[32] = {
+    /* Arbitrary CA signing-key blob for byte-for-byte trust-list check.
+     * Wrapped as a full SSH wire-format blob for type token cross-check. */
+    static const byte caPayload[32] = {
         0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,
         0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,
         0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
         0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f,0x20
     };
+    byte caBlob[LENGTH_SZ + 7 /* strlen("ssh-rsa") */ + sizeof(caPayload)];
+    word32 caBlobSz;
     /* principals list that does not contain the running account. */
     static const byte wrongP[] = { 0,0,0,7, 'n','o','m','a','t','c','h' };
 
@@ -5980,6 +6260,12 @@ static int test_CheckPublicKeyUnixOrdering(void)
         Log("    getpwuid failed.\n");
         return WS_FATAL_ERROR;
     }
+    caBlobSz = BuildWireKeyBlob("ssh-rsa", caPayload, sizeof(caPayload),
+                                caBlob, sizeof(caBlob));
+    if (caBlobSz == 0) {
+        return WS_BUFFER_E;
+    }
+
     user = pw->pw_name;
     nameLen = (word32)WSTRLEN(user);
     if (nameLen == 0 || nameLen + 4 > (word32)sizeof(principals)) {
@@ -6008,7 +6294,7 @@ static int test_CheckPublicKeyUnixOrdering(void)
     snprintf(emptyFile, sizeof(emptyFile), "%s/empty", base);
 
     /* A TrustedUserCAKeys file that trusts caBlob, plus an empty one. */
-    ret = BuildAuthKeysLine(caBlob, (word32)sizeof(caBlob), line, sizeof(line));
+    ret = BuildAuthKeysLine(caBlob, caBlobSz, line, sizeof(line));
     if (ret == WS_SUCCESS) {
         f = fopen(caFile, "w");
         if (f == NULL) {
@@ -6041,7 +6327,7 @@ static int test_CheckPublicKeyUnixOrdering(void)
     WMEMSET(&good, 0, sizeof(good));
     good.isOsshCert = 1;
     good.caKey = caBlob;
-    good.caKeySz = (word32)sizeof(caBlob);
+    good.caKeySz = caBlobSz;
     good.principals = principals;
     good.principalsSz = pSz;
     good.validAfter = 0;
