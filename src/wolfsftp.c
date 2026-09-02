@@ -1383,8 +1383,12 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
         ssh->error = WS_SUCCESS;
 
-    /* check accept is done, if not call wolfSSH accept */
-    if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+    /* check accept is done, if not call wolfSSH accept. In
+     * application-driven mode accept() parks at ACCEPT_SERVER_USERAUTH_SENT
+     * and never advances, so that state counts as done here. */
+    if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED
+            && !(ssh->appChannels
+                && ssh->acceptState >= ACCEPT_SERVER_USERAUTH_SENT)) {
         byte name[] = "sftp";
 
         WLOG(WS_LOG_SFTP, "Trying to do SSH accept first");
