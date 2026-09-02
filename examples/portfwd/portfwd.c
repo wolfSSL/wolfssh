@@ -432,6 +432,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int ch;
     int appFdSet = 0;
     int appFdHalfClosed = 0;
+    int appEof = 0;
     int reverse = 0;
     int fwdFromPortSet = 0;
     PortfwdState fwdState;
@@ -728,8 +729,12 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                     appBuffer + appBufferUsed, appBufferSz - appBufferUsed, 0);
             if (rxd > 0)
                 appBufferUsed += rxd;
-            else
-                break;
+            else {
+                /* Local end-of-input. Stop polling the socket and leave once
+                 * what is buffered has gone out; leaving now would drop it. */
+                appEof = 1;
+                FD_CLR(appFd, &templateFds);
+            }
         }
         if (FD_ISSET(sshFd, &rxFds)) {
             word32 channelId = 0;
@@ -868,6 +873,11 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             #endif
             }
         }
+        /* Nothing left to hand over, or nothing left to hand it to: without
+         * the channel check a failed open would leave the buffer forever
+         * unsendable and the loop with no way out. */
+        if (appEof && (appBufferUsed == 0 || fwdChannel == NULL))
+            break;
     }
 
     if (reverse) {
