@@ -3109,8 +3109,16 @@ static int StartSSHD(int argc, char** argv)
         }
         else {
             unsigned int z;
+
+            /* Zero first: _freeWinArgs() walks all argc slots. */
+            WMEMSET(argv, 0, argc * sizeof(char*));
             for (z = 0; z < argc; z++) {
                 argv[z] = _convertHelper(cmdArgs[z], NULL);
+                if (argv[z] == NULL) {
+                    /* mygetopt() dereferences every entry it walks. */
+                    ret = WS_MEMORY_E;
+                    break;
+                }
             }
         }
     }
