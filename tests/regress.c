@@ -3799,7 +3799,9 @@ static void TestDirectTcpipFwdCbRejectsChannelId(void)
      * unlike the rejections that set the reason themselves. */
     AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
             OPEN_ADMINISTRATIVELY_PROHIBITED);
-    AssertIntEQ(fwdCbCallCount, 2);
+    /* Three, not two: the setup that succeeded is owed its cleanup even
+     * though the open went on to fail. */
+    AssertIntEQ(fwdCbCallCount, 3);
 
     FreeChannelOpenHarness(&harness);
 }

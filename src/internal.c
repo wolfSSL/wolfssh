@@ -3840,12 +3840,45 @@ WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
 }
 
 
+#ifdef WOLFSSH_FWD
+/* Counterpart of the WOLFSSH_FWD_LOCAL_SETUP sent when a forwarding channel
+ * was opened, so the application can release what it set up there. Gated on
+ * that setup having succeeded: a locally opened forward draws no setup, and
+ * one that reported failure set nothing up. Cleaning up after either would
+ * free what the application does not own. Runs from ChannelDelete() so every
+ * way a channel goes, a peer close, a refused open, wolfSSH_ChannelFree(),
+ * or the session being freed, reports it once.
+ * The channel's id rides in the port parameter, the way CHANNEL_ID passes
+ * it. */
+static void NotifyFwdLocalCleanup(WOLFSSH_CHANNEL* channel)
+{
+    WOLFSSH* ssh;
+    int ret;
+
+    if (channel == NULL || !channel->fwdSetupTxd)
+        return;
+    ssh = channel->ssh;
+    if (ssh == NULL || ssh->ctx->fwdCb == NULL)
+        return;
+
+    channel->fwdSetupTxd = 0;
+    ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_CLEANUP, ssh->fwdCbCtx,
+            NULL, channel->channel);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_WARN, "Forward cleanup failed for channel %u, ret = %d",
+                channel->channel, ret);
+    }
+}
+#endif /* WOLFSSH_FWD */
+
+
 void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
 {
     WOLFSSH_UNUSED(heap);
 
     if (channel) {
     #ifdef WOLFSSH_FWD
+        NotifyFwdLocalCleanup(channel);
         if (channel->host)
             WFREE(channel->host, heap, DYNTYPE_STRING);
         if (channel->origin)
@@ -12053,6 +12086,9 @@ static int DoChannelOpen(WOLFSSH* ssh,
                     ret = ssh->ctx->fwdCb(WOLFSSH_FWD_LOCAL_SETUP,
                             ssh->fwdCbCtx, host, hostPort);
                     if (ret == WS_SUCCESS) {
+                        /* The application now owns whatever the setup made,
+                         * so it is owed the matching cleanup. */
+                        newChannel->fwdSetupTxd = 1;
                         ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID,
                                 ssh->fwdCbCtx, NULL, newChannel->channel);
                     }
