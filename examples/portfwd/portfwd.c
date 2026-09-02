@@ -832,10 +832,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
             /* Relay the half-close so a local reader waiting on end-of-input
              * returns; nothing else relays it. Driven off the latched channel
-             * state, not the WS_EOF status: the flush inside wolfSSH_worker()
-             * can supersede that, and it is raised only once. Only the channel
-             * appFd is wired to, since half-closing the wrong socket truncates
-             * a live transfer. */
+             * state, not the once-only WS_EOF status. Only the channel appFd
+             * is wired to: half-closing the wrong socket truncates a live
+             * transfer. */
             if (appFdSet && fwdChannel != NULL && !appFdHalfClosed
                     && wolfSSH_ChannelGetEof(fwdChannel)) {
                 int drained;
@@ -935,7 +934,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     }
 
     ret = wolfSSH_shutdown(ssh);
-    if (ret != WS_SUCCESS)
+    /* The socket closes next, so a queued write and a retired channel are
+     * both done as far as this teardown is concerned. */
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_CHANNEL_CLOSED)
         err_sys("Closing port forward stream failed.");
 
     WCLOSESOCKET(sshFd);

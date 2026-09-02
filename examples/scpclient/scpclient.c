@@ -323,7 +323,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ret != WS_CHANNEL_CLOSED && ret != WS_SOCKET_ERROR_E &&
             wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E &&
             wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
-        if (ret != WS_SUCCESS) {
+        if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
             WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
         else {
@@ -351,7 +351,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
 #endif
 
     if ((ret != WS_SUCCESS) && (ret != WS_CHANNEL_CLOSED)
-            && (ret != WS_EOF))
+            && (ret != WS_EOF) && (ret != WS_WANT_WRITE))
         ((func_args*)args)->return_code = 1;
     return 0;
 }

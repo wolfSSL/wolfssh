@@ -9851,11 +9851,19 @@ static void TestWorkerReportsDisconnect(void)
     wolfSSH_SetIOReadCtx(ssh, &io);
     wolfSSH_SetIOWriteCtx(ssh, &io);
 
+    /* Queued output, so the flush on this pass has something to push. */
+    ssh->outputBuffer.length = 1;
+    ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.buffer[0] = 0;
+
     AssertIntEQ(wolfSSH_worker(ssh, NULL), WS_FATAL_ERROR);
     AssertIntEQ(wolfSSH_get_error(ssh), WS_DISCONNECT);
     AssertTrue(ssh->disconnected);
     AssertTrue(ssh->isKeying != 0);
-    io.outSz = 0;
+
+    /* The queued byte stays put: the session ended on this very pass. */
+    AssertIntEQ(io.outSz, 0);
+    AssertTrue(wolfSSH_OutputPending(ssh));
 
     /* The message behind it is still queued, and every further pass reports
      * the disconnect rather than the WS_SUCCESS of a skipped dispatch or the
@@ -10533,11 +10541,9 @@ static void TestPasswordEofNoCrash(void)
     ClientFreeBuffers();
 }
 
-/* When the send path is back-pressured (WANT_WRITE), wolfSSH_worker()
- * still needs to service Receive() so window-adjusts can arrive and
- * unblock the flow control. Verify the receive callback is invoked even
- * when the first send attempt would block. */
-#ifndef WOLFSSH_TEST_BLOCK
+/* An idle receive still gets its flush. The receive runs first and reports
+ * want-read, and the queued byte is pushed anyway, so ssh->error carries the
+ * write the socket would not take. */
 static int recvCallCount;
 
 static int WantWriteSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
@@ -10553,7 +10559,6 @@ static int WantReadRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
     return WS_CBIO_ERR_WANT_READ;
 }
 
-#ifndef WOLFSSH_TEST_BLOCK
 static void TestWorkerReadsWhenSendWouldBlock(void)
 {
     WOLFSSH_CTX* ctx;
@@ -10576,20 +10581,16 @@ static void TestWorkerReadsWhenSendWouldBlock(void)
 
     recvCallCount = 0;
 
-    /* call worker; expect it to attempt send, notice back-pressure, and have
-     * invoked recv once. Depending on how DoReceive handles WANT_READ, the
-     * return may be WANT_WRITE or a fatal error; the important part is that
-     * recv was exercised. */
     ret = wolfSSH_worker(ssh, NULL);
 
-    AssertTrue(ret == WS_WANT_WRITE || ret == WS_FATAL_ERROR);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_WANT_WRITE);
     AssertIntEQ(recvCallCount, 1);
+    AssertTrue(wolfSSH_OutputPending(ssh));
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
-#endif /* !WOLFSSH_TEST_BLOCK */
-#endif
 
 
 #ifdef WOLFSSH_SFTP
@@ -14951,9 +14952,7 @@ int main(int argc, char** argv)
     TestClientBuffersIdempotent();
 #endif
     TestPasswordEofNoCrash();
-#ifndef WOLFSSH_TEST_BLOCK
     TestWorkerReadsWhenSendWouldBlock();
-#endif
 
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
     #ifndef WOLFSSH_NO_RSA_SHA2_256

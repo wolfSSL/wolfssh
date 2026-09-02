@@ -1203,7 +1203,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
      * is still owed, so the drain below is exactly what is wanted. */
     if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
-        if (ret != WS_SUCCESS) {
+        if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
             ClientFreeBuffers(pubKeyName, privKeyName, NULL);
             wolfSSH_free(ssh);
             wolfSSH_CTX_free(ctx);
