@@ -821,6 +821,7 @@ struct WOLFSSH_CTX {
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
     WS_CallbackGlobalReq globalReqCb; /* Global Request Callback */
+    WS_CallbackGlobalReqAny globalReqAnyCb; /* Global Request, any name */
     WS_CallbackReqSuccess reqSuccessCb; /* Global Request Success Callback */
     WS_CallbackReqSuccess reqFailureCb; /* Global Request Failure Callback */
     WS_CallbackChannelOpen channelOpenCb;     /* Channel Open Requested */
@@ -829,6 +830,7 @@ struct WOLFSSH_CTX {
     WS_CallbackChannelReq channelReqShellCb; /* Channel Request "Shell" */
     WS_CallbackChannelReq channelReqExecCb; /* Channel Request "Exec" */
     WS_CallbackChannelReq channelReqSubsysCb; /* Channel Request "Subsystem" */
+    WS_CallbackChannelReqAny channelReqAnyCb; /* Channel Request, any */
     WS_CallbackChannelEof channelEofCb; /* Channel Eof Callback */
     WS_CallbackChannelClose channelCloseCb; /* Channel Close Callback */
 #ifdef WOLFSSH_SCP

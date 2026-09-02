@@ -11800,6 +11800,56 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
 }
 #endif
 
+/* Puts a global request to the generic callback, which sees the name and
+ * the type-specific part to parse itself. Returns 1 when the callback
+ * settled the request, with any wanted reply sent and *ret carrying the
+ * result, or 0 to leave it to the built-in handling. */
+static int DoGlobalRequestAny(WOLFSSH* ssh, const char* name, int globReqId,
+        byte* buf, word32 len, word32 begin, byte wantReply, int* ret)
+{
+    int decision, success;
+
+    if (ssh->ctx->globalReqAnyCb == NULL) {
+        return 0;
+    }
+
+    decision = ssh->ctx->globalReqAnyCb(ssh, name, buf + begin, len - begin,
+            wantReply, ssh->globalReqCtx);
+    if (decision != WOLFSSH_REQ_ACCEPT && decision != WOLFSSH_REQ_REJECT) {
+        return 0;
+    }
+    success = (decision == WOLFSSH_REQ_ACCEPT);
+
+#ifdef WOLFSSH_FWD
+    /* RFC 4254 7.1: a port-0 request is answered with the port bound,
+     * which only the forward callback can report. */
+    if (success && globReqId == ID_GLOBREQ_TCPIP_FWD) {
+        const byte* bindAddr;
+        word32 bindAddrSz, bindPort = 0, peek = begin;
+
+        if (GetStringRef(&bindAddrSz, &bindAddr, buf, len, &peek)
+                    != WS_SUCCESS
+                || GetUint32(&bindPort, buf, len, &peek) != WS_SUCCESS
+                || bindPort == 0) {
+            WLOG(WS_LOG_WARN, "DGR: a port-0 forward needs the forward "
+                    "callback to bind it; rejecting");
+            success = 0;
+        }
+    }
+#else
+    (void)globReqId;
+#endif
+
+    WLOG(WS_LOG_DEBUG, "DGR: global request callback %s",
+            success ? "granted" : "refused");
+    if (wantReply) {
+        *ret = SendRequestSuccess(ssh, success);
+    }
+
+    return 1;
+}
+
+
 static int DoGlobalRequest(WOLFSSH* ssh,
                            byte* buf, word32 len, word32* idx)
 {
@@ -11846,31 +11896,37 @@ static int DoGlobalRequest(WOLFSSH* ssh,
         }
         else
 #endif
-        switch (globReqId) {
+        if (!DoGlobalRequestAny(ssh, name, globReqId, buf, len, begin,
+                    wantReply, &ret)) {
+            switch (globReqId) {
 #ifdef WOLFSSH_FWD
-            case ID_GLOBREQ_TCPIP_FWD:
-                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 0);
-                wantReply = 0;
-                break;
-            case ID_GLOBREQ_TCPIP_FWD_CANCEL:
-                ret = DoGlobalRequestFwd(ssh, buf, len, &begin, wantReply, 1);
-                wantReply = 0;
-                break;
+                case ID_GLOBREQ_TCPIP_FWD:
+                    ret = DoGlobalRequestFwd(ssh, buf, len, &begin,
+                            wantReply, 0);
+                    wantReply = 0;
+                    break;
+                case ID_GLOBREQ_TCPIP_FWD_CANCEL:
+                    ret = DoGlobalRequestFwd(ssh, buf, len, &begin,
+                            wantReply, 1);
+                    wantReply = 0;
+                    break;
 #endif
-            default:
-                if (ssh->ctx->globalReqCb != NULL) {
-                    ret = ssh->ctx->globalReqCb(ssh, name, nameSz, wantReply,
-                            (void *)ssh->globalReqCtx);
+                default:
+                    if (ssh->ctx->globalReqCb != NULL) {
+                        ret = ssh->ctx->globalReqCb(ssh, name, nameSz,
+                                wantReply, (void *)ssh->globalReqCtx);
 
-                    if (wantReply) {
-                        ret = SendRequestSuccess(ssh, (ret == WS_SUCCESS));
+                        if (wantReply) {
+                            ret = SendRequestSuccess(ssh,
+                                    (ret == WS_SUCCESS));
+                        }
                     }
-                }
-                else if (wantReply)
-                    ret = SendRequestSuccess(ssh, 0);
-                    /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
-                     * IETF:draft-ssh-global-requests */
-                break;
+                    else if (wantReply)
+                        ret = SendRequestSuccess(ssh, 0);
+                        /* response SSH_MSG_REQUEST_FAILURE to Keep-Alive.
+                         * IETF:draft-ssh-global-requests */
+                    break;
+            }
         }
     }
 
@@ -12672,9 +12728,10 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
  * kept only if it accepts; a refused request leaves the channel as it was
  * and the accept loop still waiting, so nothing serves a session the
  * application turned down. Without a callback the request is accepted,
- * unless the application drives its own channels. */
+ * unless the application drives its own channels. A request the generic
+ * callback already granted asks no callback. */
 static int DoChannelRequestSession(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
-        byte sessionType, WS_CallbackChannelReq cb,
+        byte sessionType, WS_CallbackChannelReq cb, int granted,
         byte* buf, word32 len, word32* idx, int* rej)
 {
     char* prevCommand = NULL;
@@ -12694,7 +12751,10 @@ static int DoChannelRequestSession(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
 
     if (ret == WS_SUCCESS) {
         channel->sessionType = sessionType;
-        if (cb != NULL) {
+        if (granted) {
+            *rej = 0;
+        }
+        else if (cb != NULL) {
             *rej = cb(channel, ssh->channelReqCtx);
         }
         else {
@@ -12731,7 +12791,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte wantReply;
-    int ret, rej = 0;
+    int ret, rej = 0, granted = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
@@ -12760,6 +12820,23 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %s", type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
+        /* The generic callback sees every request first, with the
+         * type-specific part to parse itself. A refusal skips the handling
+         * below; a grant runs it with the decision already made. */
+        if (ssh->ctx->channelReqAnyCb != NULL) {
+            int decision = ssh->ctx->channelReqAnyCb(channel, type,
+                    buf + begin, len - begin, ssh->channelReqCtx);
+            if (decision == WOLFSSH_REQ_REJECT) {
+                WLOG(WS_LOG_DEBUG, "  channel request callback refused.");
+                rej = 1;
+            }
+            else if (decision == WOLFSSH_REQ_ACCEPT) {
+                granted = 1;
+            }
+        }
+    }
+
+    if (ret == WS_SUCCESS && !rej) {
         if (ChannelRequestIs(type, typeSz, "env")) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;
@@ -12778,16 +12855,18 @@ static int DoChannelRequest(WOLFSSH* ssh,
         }
         else if (ChannelRequestIs(type, typeSz, "shell")) {
             ret = DoChannelRequestSession(ssh, channel, WOLFSSH_SESSION_SHELL,
-                    ssh->ctx->channelReqShellCb, buf, len, &begin, &rej);
+                    ssh->ctx->channelReqShellCb, granted, buf, len, &begin,
+                    &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
             ret = DoChannelRequestSession(ssh, channel, WOLFSSH_SESSION_EXEC,
-                    ssh->ctx->channelReqExecCb, buf, len, &begin, &rej);
+                    ssh->ctx->channelReqExecCb, granted, buf, len, &begin,
+                    &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
             ret = DoChannelRequestSession(ssh, channel,
                     WOLFSSH_SESSION_SUBSYSTEM, ssh->ctx->channelReqSubsysCb,
-                    buf, len, &begin, &rej);
+                    granted, buf, len, &begin, &rej);
         }
         #ifdef WOLFSSH_TERM
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
@@ -12912,6 +12991,9 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_AGENT, "Agent callback not set, not using.");
         }
         #endif /* WOLFSSH_AGENT */
+        else if (granted) {
+            WLOG(WS_LOG_DEBUG, "  unknown channel request type, granted.");
+        }
         else {
             WLOG(WS_LOG_DEBUG, "  unknown channel request type, rejecting.");
             rej = 1;

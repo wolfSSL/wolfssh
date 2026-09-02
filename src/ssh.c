@@ -345,6 +345,19 @@ void wolfSSH_SetReqFailure(WOLFSSH_CTX *ctx, WS_CallbackReqSuccess cb)
         ctx->reqFailureCb = cb;
 }
 
+int wolfSSH_CTX_SetGlobalReqCb(WOLFSSH_CTX* ctx, WS_CallbackGlobalReqAny cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->globalReqAnyCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
 void wolfSSH_SetGlobalReqCtx(WOLFSSH* ssh, void *ctx)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetGlobalReqCtx()");
@@ -4930,6 +4943,20 @@ int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 
     if (ctx != NULL) {
         ctx->channelReqSubsysCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetChannelReqCb(WOLFSSH_CTX* ctx,
+        WS_CallbackChannelReqAny cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->channelReqAnyCb = cb;
         ret = WS_SUCCESS;
     }
 
