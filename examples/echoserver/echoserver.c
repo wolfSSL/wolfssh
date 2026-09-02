@@ -2051,9 +2051,10 @@ typedef struct {
     const char* label;
 } MlDsaCompositeEntry;
 
-/* NULL-terminated so the table is never empty if ECDSA and Ed25519/Ed448
- * are both disabled */
+/* NULL-terminated so the table is never empty if composites are compiled
+ * out or ECDSA and Ed25519/Ed448 are both disabled */
 static const MlDsaCompositeEntry mldsaCompositeEntries[] = {
+#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
         !defined(NO_SHA512)
     { "mldsa44-ed25519", "./keys/server-key-mldsa44ed25519",
@@ -2082,6 +2083,7 @@ static const MlDsaCompositeEntry mldsaCompositeEntries[] = {
     { "mldsa87-es384", "./keys/server-key-mldsa87es384",
         "ML-DSA-87+ES384" },
 #endif
+#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
     { NULL, NULL, NULL }
 };
 

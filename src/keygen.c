@@ -375,95 +375,76 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
 
 /* Build OpenSSH-key-v1 envelope. */
 #if !defined(WOLFSSH_NO_MLDSA)
+/* Guard matches MakeCompositeTradKey() callers to avoid unused warnings. */
+#if !defined(WOLFSSH_NO_ED25519) || defined(HAVE_ED448) || \
+        !defined(WOLFSSH_NO_ECDSA)
+/* Shared init/makeKey/export/free chain for traditional types. */
+static int MakeCompositeTradKeyGeneric(const CompositeTradOps* ops, void* key,
+        WC_RNG* rng, const CompositeParams* params, byte* tradPub,
+        byte* tradPriv)
+{
+    int ret;
+    word32 sz;
+
+    if (ops->init(key, NULL) != 0) {
+        return WS_CRYPTO_FAILED;
+    }
+
+    ret = (ops->makeKey(key, rng, params) == 0) ? 0 : WS_CRYPTO_FAILED;
+    if (ret == 0) {
+        sz = params->tradPrivSz;
+        if (ops->exportPrivOnly(key, tradPriv, &sz) != 0 ||
+                sz != params->tradPrivSz) {
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+    if (ret == 0) {
+        sz = params->tradPubSz;
+        if (ops->exportPub(key, tradPub, &sz) != 0 ||
+                sz != params->tradPubSz) {
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+    ops->free(key);
+
+    return ret;
+}
+#endif /* traditional algorithm enabled */
+
 /* Gen trad composite key half. */
 static int MakeCompositeTradKey(WC_RNG* rng, const CompositeParams* params,
         byte* tradPub, byte* tradPriv)
 {
     int ret = WS_NOT_COMPILED;
+    const CompositeTradOps* ops = WS_GetTradOps(params->tradType);
 
     WOLFSSH_UNUSED(rng);
     WOLFSSH_UNUSED(tradPub);
     WOLFSSH_UNUSED(tradPriv);
 
+    if (ops == NULL) {
+        return WS_NOT_COMPILED;
+    }
+
     if (params->tradType == TRAD_TYPE_ED25519) {
 #ifndef WOLFSSH_NO_ED25519
         ed25519_key key;
-        word32 sz;
-
-        if (wc_ed25519_init(&key) != 0) {
-            return WS_CRYPTO_FAILED;
-        }
-        ret = (wc_ed25519_make_key(rng, ED25519_KEY_SIZE, &key) == 0) ?
-                0 : WS_CRYPTO_FAILED;
-        if (ret == 0) {
-            sz = params->tradPrivSz;
-            if (wc_ed25519_export_private_only(&key, tradPriv, &sz) != 0 ||
-                    sz != params->tradPrivSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        if (ret == 0) {
-            sz = params->tradPubSz;
-            if (wc_ed25519_export_public(&key, tradPub, &sz) != 0 ||
-                    sz != params->tradPubSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        wc_ed25519_free(&key);
+        ret = MakeCompositeTradKeyGeneric(ops, &key, rng, params, tradPub,
+                tradPriv);
 #endif
     }
     else if (params->tradType == TRAD_TYPE_ED448) {
 #ifdef HAVE_ED448
         ed448_key key;
-        word32 sz;
-
-        if (wc_ed448_init(&key) != 0) {
-            return WS_CRYPTO_FAILED;
-        }
-        ret = (wc_ed448_make_key(rng, ED448_KEY_SIZE, &key) == 0) ?
-                0 : WS_CRYPTO_FAILED;
-        if (ret == 0) {
-            sz = params->tradPrivSz;
-            if (wc_ed448_export_private_only(&key, tradPriv, &sz) != 0 ||
-                    sz != params->tradPrivSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        if (ret == 0) {
-            sz = params->tradPubSz;
-            if (wc_ed448_export_public(&key, tradPub, &sz) != 0 ||
-                    sz != params->tradPubSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        wc_ed448_free(&key);
+        ret = MakeCompositeTradKeyGeneric(ops, &key, rng, params, tradPub,
+                tradPriv);
 #endif
     }
     else if (params->tradType == TRAD_TYPE_ECC) {
 #ifndef WOLFSSH_NO_ECDSA
         ecc_key key;
-        word32 sz;
-        /* Pin ECC curve explicitly. */
-        if (wc_ecc_init(&key) != 0) {
-            return WS_CRYPTO_FAILED;
-        }
-        ret = (wc_ecc_make_key_ex(rng, (int)params->tradPrivSz, &key,
-                params->eccCurveId) == 0) ? 0 : WS_CRYPTO_FAILED;
-        if (ret == 0) {
-            sz = params->tradPrivSz;
-            if (wc_ecc_export_private_only(&key, tradPriv, &sz) != 0 ||
-                    sz != params->tradPrivSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        if (ret == 0) {
-            sz = params->tradPubSz;
-            if (wc_ecc_export_x963(&key, tradPub, &sz) != 0 ||
-                    sz != params->tradPubSz) {
-                ret = WS_CRYPTO_FAILED;
-            }
-        }
-        wc_ecc_free(&key);
+        ret = MakeCompositeTradKeyGeneric(ops, &key, rng, params, tradPub,
+                tradPriv);
 #endif
     }
 
@@ -496,17 +477,17 @@ int wolfSSH_MakeMlDsaCompositeKey(byte* out, word32 outSz, word32 level,
     int ret;
     WC_RNG rng;
     int rngInit = 0;
-    MlDsaKey mldsaKey;
+#ifdef WOLFSSH_SMALL_STACK
+    MlDsaKey* mldsaKey = NULL;
+    byte* mldsaPub = NULL;
+#else
+    MlDsaKey mldsaKeyBuf;
+    MlDsaKey* mldsaKey = &mldsaKeyBuf;
+    byte mldsaPub[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
+#endif
     int mldsaInit = 0;
     int mldsaGenOk;
     byte mldsaSeed[MLDSA_SEED_SZ];
-#ifndef WOLFSSH_NO_MLDSA87
-    byte mldsaPub[WC_MLDSA_87_PUB_KEY_SIZE];
-#elif !defined(WOLFSSH_NO_MLDSA65)
-    byte mldsaPub[WC_MLDSA_65_PUB_KEY_SIZE];
-#else
-    byte mldsaPub[WC_MLDSA_44_PUB_KEY_SIZE];
-#endif
     byte tradPub[COMPOSITE_MAX_TRAD_PUB_SZ];
     byte tradPriv[COMPOSITE_MAX_TRAD_PRIV_SZ];
     word32 sz;
@@ -591,27 +572,37 @@ int wolfSSH_MakeMlDsaCompositeKey(byte* out, word32 outSz, word32 level,
     }
     rngInit = 1;
 
-    ret = wc_RNG_GenerateBlock(&rng, mldsaSeed, sizeof(mldsaSeed));
-    if (ret != 0) {
-        ret = WS_CRYPTO_FAILED;
+    ret = 0;
+#ifdef WOLFSSH_SMALL_STACK
+    mldsaKey = (MlDsaKey*)WMALLOC(sizeof(MlDsaKey), NULL, DYNTYPE_PRIVKEY);
+    mldsaPub = (byte*)WMALLOC(params.mldsaPubSz, NULL, DYNTYPE_BUFFER);
+    if (mldsaKey == NULL || mldsaPub == NULL) {
+        ret = WS_MEMORY_E;
     }
-    else {
-        if (wc_MlDsaKey_Init(&mldsaKey, NULL, INVALID_DEVID) != 0) {
+#endif
+    if (ret == 0) {
+        ret = wc_RNG_GenerateBlock(&rng, mldsaSeed, sizeof(mldsaSeed));
+        if (ret != 0) {
             ret = WS_CRYPTO_FAILED;
         }
         else {
-            mldsaInit = 1;
-            if (wc_MlDsaKey_SetParams(&mldsaKey, params.mldsaLevel) != 0 ||
-                    wc_MlDsaKey_MakeKeyFromSeed(&mldsaKey, mldsaSeed) != 0) {
+            if (wc_MlDsaKey_Init(mldsaKey, NULL, INVALID_DEVID) != 0) {
                 ret = WS_CRYPTO_FAILED;
             }
+            else {
+                mldsaInit = 1;
+                if (wc_MlDsaKey_SetParams(mldsaKey, params.mldsaLevel) != 0 ||
+                        wc_MlDsaKey_MakeKeyFromSeed(mldsaKey, mldsaSeed) != 0) {
+                    ret = WS_CRYPTO_FAILED;
+                }
+            }
         }
-    }
-    if (ret == 0) {
-        sz = params.mldsaPubSz;
-        if (wc_MlDsaKey_ExportPubRaw(&mldsaKey, mldsaPub, &sz) != 0 ||
-                sz != params.mldsaPubSz) {
-            ret = WS_CRYPTO_FAILED;
+        if (ret == 0) {
+            sz = params.mldsaPubSz;
+            if (wc_MlDsaKey_ExportPubRaw(mldsaKey, mldsaPub, &sz) != 0 ||
+                    sz != params.mldsaPubSz) {
+                ret = WS_CRYPTO_FAILED;
+            }
         }
     }
     if (ret != 0) {
@@ -698,7 +689,7 @@ int wolfSSH_MakeMlDsaCompositeKey(byte* out, word32 outSz, word32 level,
         }
     }
 
-    if (mldsaInit) wc_MlDsaKey_Free(&mldsaKey);
+    if (mldsaInit) wc_MlDsaKey_Free(mldsaKey);
     if (rngInit) wc_FreeRng(&rng);
 
     WS_FORCEZERO(mldsaSeed, sizeof(mldsaSeed));
@@ -708,6 +699,15 @@ int wolfSSH_MakeMlDsaCompositeKey(byte* out, word32 outSz, word32 level,
         WS_FORCEZERO(tmpBuf, fileSz);
         WFREE(tmpBuf, NULL, DYNTYPE_BUFFER);
     }
+
+#ifdef WOLFSSH_SMALL_STACK
+    if (mldsaKey != NULL) {
+        WFREE(mldsaKey, NULL, DYNTYPE_PRIVKEY);
+    }
+    if (mldsaPub != NULL) {
+        WFREE(mldsaPub, NULL, DYNTYPE_BUFFER);
+    }
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeMlDsaCompositeKey(), ret = %d",
             ret);

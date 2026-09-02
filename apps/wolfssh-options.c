@@ -147,9 +147,10 @@ int main(void)
 #ifndef WOLFSSH_NO_MLDSA
     printf("MLDSA\n");
 #endif
-    /* Same guard as cannedKeyAlgoNamesHostKey in src/internal.c: the
-     * composite needs the ECDSA half too. */
-#if !defined(WOLFSSH_NO_MLDSA87) && \
+    /* Same guard as cannedKeyAlgoNamesHostKey in src/internal.c: composites
+     * as a whole can be compiled out, and this one needs the ECDSA half. */
+#if !defined(WOLFSSH_NO_MLDSA_COMPOSITES) && \
+        !defined(WOLFSSH_NO_MLDSA87) && \
         !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
     printf("MLDSA87_ES384\n");
 #endif
