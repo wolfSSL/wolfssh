@@ -51,11 +51,25 @@ if [ ! -r /proc/self/stat ]; then
     exit 77
 fi
 
-PIDS_BEFORE=$(pgrep wolfsshd | sort)
+PIDS_BEFORE=$(pgrep wolfsshd | tr '\n' ' ')
 if [ -z "$PIDS_BEFORE" ]; then
     echo "no local wolfsshd to measure, skipping"
     exit 77
 fi
+
+# Echoes the first wolfsshd that did not exist before this connection. The
+# difference has to be one-way: a pid that LEFT during the window is not a
+# candidate, and a symmetric difference offers it as readily as the child
+# that arrived, leaving an unreadable /proc entry to measure.
+new_wolfsshd_pid() {
+    for P in $(pgrep wolfsshd); do
+        case " $PIDS_BEFORE " in
+            *" $P "*) ;;
+            *) echo "$P"; return 0 ;;
+        esac
+    done
+    return 1
+}
 
 # Hold a session open without sending a single request. The client takes its
 # commands from this pipe, and nothing ever writes one; the sleep bounds how
@@ -66,12 +80,31 @@ HOLDER=$!
 "$TEST_SFTP_CLIENT" -u "$3" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
     -h "$1" -p "$2" < "$FIFO" > /dev/null 2>&1 &
 CLIENT=$!
+
+# Poll for the child rather than sampling a fixed second in. NewConnection()
+# forks right after accept(), so it appears long before the five seconds the
+# old sample waited.
+WAITED=0
+CHILD=$(new_wolfsshd_pid)
+while [ -z "$CHILD" ] && [ "$WAITED" -lt 50 ]; do
+    sleep 0.1
+    WAITED=$((WAITED + 1))
+    CHILD=$(new_wolfsshd_pid)
+done
+
+if [ -z "$CHILD" ]; then
+    echo "Expecting another wolfSSHd pid after connection"
+    echo "  before: $PIDS_BEFORE"
+    echo "  after:  $(pgrep wolfsshd | tr '\n' ' ')"
+    exit 1
+fi
+
+# Let the handshake, authentication and SFTP setup finish, so the ticks they
+# cost land before the baseline rather than inside the measurement.
 sleep 5
 
-PIDS_AFTER=$(pgrep wolfsshd | sort)
-CHILD=$(printf '%s\n%s\n' "$PIDS_BEFORE" "$PIDS_AFTER" | sort | uniq -u | head -1)
-if [ -z "$CHILD" ] || [ ! -r "/proc/$CHILD/stat" ]; then
-    echo "Expecting another wolfSSHd pid after connection"
+if [ ! -r "/proc/$CHILD/stat" ]; then
+    echo "Connection process $CHILD exited before the measurement"
     exit 1
 fi
 
