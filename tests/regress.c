@@ -3006,6 +3006,252 @@ static void RepointHarnessInput(ChannelOpenHarness* harness,
     harness->io.outSz = 0;
 }
 
+/* Builds a plaintext SSH_MSG_CHANNEL_OPEN_CONFIRMATION. */
+static word32 BuildChannelOpenConfPacket(word32 recipientChannelId,
+        word32 senderChannelId, word32 initialWindowSz, word32 maxPacketSz,
+        byte* out, word32 outSz)
+{
+    byte payload[32];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendUint32(payload, sizeof(payload), idx, senderChannelId);
+    idx = AppendUint32(payload, sizeof(payload), idx, initialWindowSz);
+    idx = AppendUint32(payload, sizeof(payload), idx, maxPacketSz);
+
+    return WrapPacket(MSGID_CHANNEL_OPEN_CONF, payload, idx, out, outSz);
+}
+
+/* Builds a plaintext SSH_MSG_CHANNEL_OPEN_FAILURE with an empty language
+ * tag, which is what every sender in the tree emits. */
+static word32 BuildChannelOpenFailPacket(word32 recipientChannelId,
+        word32 reasonId, const char* desc, byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendUint32(payload, sizeof(payload), idx, reasonId);
+    idx = AppendString(payload, sizeof(payload), idx, desc);
+    idx = AppendString(payload, sizeof(payload), idx, "");
+
+    return WrapPacket(MSGID_CHANNEL_OPEN_FAIL, payload, idx, out, outSz);
+}
+
+/* What the open-response callbacks saw. File scope rather than reached
+ * through the callback ctx, so a zero reading means the hook did not run and
+ * cannot instead mean the ctx stopped being delivered. Each hook has its own
+ * count, so a test can tell which one ran. The harness's first channel has
+ * id 0, so the recorded id starts at a value no channel can have. */
+#define REGRESS_NO_CHANNEL ((word32)-1)
+static int openConfCbCalls;
+static int openFailCbCalls;
+static word32 openRespCbChannel;
+static void* openRespCbCtx;
+static word32 openConfCbPeerChannel;
+static word32 openConfCbPeerWindowSz;
+static word32 openConfCbPeerMaxPacketSz;
+static word32 openFailCbListSz;
+static int openRespCbReturn;
+
+static int RecordingChannelOpenConfCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    AssertNotNull(channel);
+    openConfCbCalls++;
+    openRespCbChannel = channel->channel;
+    openRespCbCtx = ctx;
+    openConfCbPeerChannel = channel->peerChannel;
+    openConfCbPeerWindowSz = channel->peerWindowSz;
+    openConfCbPeerMaxPacketSz = channel->peerMaxPacketSz;
+
+    return openRespCbReturn;
+}
+
+static int RecordingChannelOpenFailCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    AssertNotNull(channel);
+    AssertNotNull(channel->ssh);
+    openFailCbCalls++;
+    openRespCbChannel = channel->channel;
+    openRespCbCtx = ctx;
+    openFailCbListSz = channel->ssh->channelListSz;
+
+    return openRespCbReturn;
+}
+
+/* Seeds an unconfirmed channel of our own, the state a channel is in while
+ * its open is outstanding and the only state the open responses apply to. */
+static WOLFSSH_CHANNEL* SeedUnconfirmedChannel(ChannelOpenHarness* harness)
+{
+    WOLFSSH_CHANNEL* channel;
+
+    channel = ChannelNew(harness->ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    AssertNotNull(channel);
+    AssertIntEQ(ChannelAppend(harness->ssh, channel), WS_SUCCESS);
+
+    return channel;
+}
+
+/* Registers both open-response hooks, set to return cbReturn, and seeds the
+ * outstanding channel. */
+static WOLFSSH_CHANNEL* SeedOpenRespHarness(ChannelOpenHarness* harness,
+        void* cbCtx, int cbReturn)
+{
+    openConfCbCalls = 0;
+    openFailCbCalls = 0;
+    openRespCbChannel = REGRESS_NO_CHANNEL;
+    openRespCbCtx = NULL;
+    openConfCbPeerChannel = 0;
+    openConfCbPeerWindowSz = 0;
+    openConfCbPeerMaxPacketSz = 0;
+    openFailCbListSz = 0;
+    openRespCbReturn = cbReturn;
+
+    InitChannelOpenHarness(harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenRespCb(harness->ctx,
+                RecordingChannelOpenConfCb, RecordingChannelOpenFailCb),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetChannelOpenCtx(harness->ssh, cbCtx), WS_SUCCESS);
+
+    return SeedUnconfirmedChannel(harness);
+}
+
+/* The confirmation callback is the application's only notice that a channel
+ * it opened is usable, and it runs with the peer's parameters already
+ * recorded. */
+static void TestChannelOpenConfCallbackRuns(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+    word32 selfChannelId;
+    int cbCtx = 0;
+    int ret;
+
+    channel = SeedOpenRespHarness(&harness, &cbCtx, WS_SUCCESS);
+    selfChannelId = channel->channel;
+
+    inSz = BuildChannelOpenConfPacket(selfChannelId, 7, 0x4000, 0x8000,
+            in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(openConfCbCalls, 1);
+    AssertIntEQ(openFailCbCalls, 0);
+    AssertIntEQ(openRespCbChannel, selfChannelId);
+    AssertTrue(openRespCbCtx == &cbCtx);
+
+    /* Read in the callback: the peer's numbers are already in place when it
+     * runs, not merely by the time DoReceive() returns. */
+    AssertIntEQ(openConfCbPeerChannel, 7);
+    AssertIntEQ(openConfCbPeerWindowSz, 0x4000);
+    AssertIntEQ(openConfCbPeerMaxPacketSz, 0x8000);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The failure callback runs while the channel is still findable, since it is
+ * removed immediately afterward and the application would otherwise have no
+ * way to tell which open was refused. */
+static void TestChannelOpenFailCallbackRuns(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+    word32 selfChannelId;
+    int cbCtx = 0;
+    int ret;
+
+    channel = SeedOpenRespHarness(&harness, &cbCtx, WS_SUCCESS);
+    selfChannelId = channel->channel;
+
+    inSz = BuildChannelOpenFailPacket(selfChannelId,
+            OPEN_ADMINISTRATIVELY_PROHIBITED, "no", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    /* DoReceive() reports WS_CHANOPEN_FAILED through ssh->error; only the
+     * statuses it can resume from come back as themselves. */
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_CHANOPEN_FAILED);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(openFailCbCalls, 1);
+    AssertIntEQ(openConfCbCalls, 0);
+    AssertIntEQ(openRespCbChannel, selfChannelId);
+    AssertTrue(openRespCbCtx == &cbCtx);
+    /* Still on the list when the callback ran, gone by the time the caller
+     * is told. */
+    AssertIntEQ(openFailCbListSz, 1);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A confirm callback that returns an error fails the receive with that
+ * error, and the open is not marked done: the session state and default
+ * peer channel stay as they were. */
+static void TestChannelOpenConfCallbackRejects(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+    word32 defaultPeerChannelId;
+    int serverState;
+    int cbCtx = 0;
+    int ret;
+
+    channel = SeedOpenRespHarness(&harness, &cbCtx, WS_BAD_ARGUMENT);
+    serverState = harness.ssh->serverState;
+    defaultPeerChannelId = harness.ssh->defaultPeerChannelId;
+
+    inSz = BuildChannelOpenConfPacket(channel->channel, 7, 0x4000, 0x8000,
+            in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_BAD_ARGUMENT);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(openConfCbCalls, 1);
+    AssertIntEQ(harness.ssh->serverState, serverState);
+    AssertIntEQ(harness.ssh->defaultPeerChannelId, defaultPeerChannelId);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A failure callback that returns an error is reported in place of
+ * WS_CHANOPEN_FAILED, and the refused channel is left on the list for the
+ * application to retire. */
+static void TestChannelOpenFailCallbackRejects(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+    int cbCtx = 0;
+    int ret;
+
+    channel = SeedOpenRespHarness(&harness, &cbCtx, WS_BAD_ARGUMENT);
+
+    inSz = BuildChannelOpenFailPacket(channel->channel,
+            OPEN_ADMINISTRATIVELY_PROHIBITED, "no", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_BAD_ARGUMENT);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(openFailCbCalls, 1);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
 {
@@ -12204,6 +12450,10 @@ int main(int argc, char** argv)
     TestServerServiceRequestRejectedDuringKeying();
     TestFailedSendClearsPendingPlaintext();
     TestChannelOpenCallbackRejectSendsOpenFail();
+    TestChannelOpenConfCallbackRuns();
+    TestChannelOpenFailCallbackRuns();
+    TestChannelOpenConfCallbackRejects();
+    TestChannelOpenFailCallbackRejects();
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
     TestSameUserRetryAllowed();
