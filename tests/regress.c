@@ -1692,6 +1692,58 @@ static void TestAppChannelsLateEnableReturns(void)
     FreeKexReplyHarness(&harness);
 }
 
+/* Refuses the session request, and records what the channel showed. */
+static int rejectShellReqCalls;
+static WS_SessionType rejectShellReqType;
+
+static int RejectShellReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    rejectShellReqCalls++;
+    rejectShellReqType = wolfSSH_ChannelGetSessionType(channel);
+    return 1;
+}
+
+/* A shell request the callback refuses gets CHANNEL_FAILURE and nothing
+ * more: the channel keeps no session type, and accept() stays where it was,
+ * waiting on a request it can grant, rather than reporting an established
+ * session it just refused. */
+static void TestSessionReqRejectedKeepsAcceptWaiting(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    WS_SessionType sessionType;
+
+    rejectShellReqCalls = 0;
+    rejectShellReqType = WOLFSSH_SESSION_UNKNOWN;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.serverCtx,
+            RejectShellReqCb), WS_SUCCESS);
+
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(rejectShellReqCalls, 1);
+    AssertIntEQ(rejectShellReqType, WOLFSSH_SESSION_SHELL);
+    AssertFalse(result.clientSuccess);
+    AssertIntEQ(result.clientErr, WS_CHANOPEN_FAILED);
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_SERVER_CHANNEL_ACCEPT_SENT);
+    AssertTrue(harness.server->clientState < CLIENT_DONE);
+    sessionType = wolfSSH_GetSessionType(harness.server);
+    AssertIntEQ(sessionType, WOLFSSH_SESSION_UNKNOWN);
+    channel = wolfSSH_ChannelNext(harness.server, NULL);
+    AssertNotNull(channel);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+    AssertFalse(harness.clientIo.sawDisconnect);
+    AssertFalse(harness.serverIo.sawDisconnect);
+
+    FreeKexReplyHarness(&harness);
+}
+
 static void TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade(void)
 {
     AssertHandshakeSucceeds("rsa-sha2-256", REGRESS_SERVER_KEY_PATH);
@@ -4433,10 +4485,42 @@ static void TestSftpAcceptAppChannelsServesEstablishedSftp(void)
     FreeChannelOpenHarness(&harness);
 }
 
-/* A refused "subsystem sftp" still leaves sessionType/command set on the
- * channel, so check wolfSSH_SFTP_accept() looks at the grant, not the
- * leftovers. rejectVia 0 registers no callback at all (app channels alone
- * refuse); 1 registers one that rejects. */
+/* The grant clause of the gate on its own. Everything else it asks for
+ * still matches -- a subsystem channel carrying "sftp" -- so the cleared
+ * grant is the only thing left that can refuse. The refusals above all
+ * stop on the type or the command, and would pass with the clause gone. */
+static void TestSftpAcceptAppChannelsNeedsGrantAlone(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+
+    channel = SeedAppChannelsSession(&harness, "subsystem", "sftp");
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_SUBSYSTEM);
+    AssertIntEQ(channel->commandSz, 4);
+    AssertIntEQ(channel->sessionGranted, 1);
+
+    /* White box: the callback's answer taken back, the request that won
+     * it left as it was. */
+    channel->sessionGranted = 0;
+
+    inSz = BuildSftpInitDataPacket(channel->channel, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(wolfSSH_SFTP_accept(harness.ssh), WS_INVALID_STATE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.io.inOff, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A refused "subsystem sftp" leaves the channel as it was: the refusal
+ * puts the session type and command back and records no grant, so
+ * wolfSSH_SFTP_accept() has nothing to serve. rejectVia 0 registers no
+ * callback at all (app channels alone refuse); 1 registers one that
+ * rejects. */
 static void CheckSftpAcceptRefusesUngranted(int rejectVia)
 {
     ChannelOpenHarness harness;
@@ -4556,10 +4640,10 @@ static void TestAcceptDivertMatchesSftpNameWhole(void)
 
 
 
-/* The divert asks for the grant, not just the name. A subsystem callback
- * that refuses sftp answers CHANNEL_FAILURE, yet sessionType and command
- * are recorded ahead of that answer and stay set, so the name alone would
- * hand the refused session to the built-in server. */
+/* A subsystem callback that refuses sftp answers CHANNEL_FAILURE and
+ * leaves the client state short of CLIENT_DONE, so accept() stops there
+ * rather than handing the refused session to the built-in server. The
+ * same name, granted, does divert. */
 static void CheckAcceptDivertNeedsSftpGrant(int reject)
 {
     ChannelOpenHarness harness;
@@ -4591,9 +4675,10 @@ static void CheckAcceptDivertNeedsSftpGrant(int reject)
 
     harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
     if (reject) {
-        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+        /* Short of CLIENT_DONE, so accept() diverts nowhere. */
+        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
         AssertIntEQ(harness.ssh->acceptState,
-                ACCEPT_CLIENT_SESSION_ESTABLISHED);
+                ACCEPT_SERVER_CHANNEL_ACCEPT_SENT);
     }
     else {
         /* The control: the same name, granted, does reach the built-in
@@ -4611,13 +4696,55 @@ static void TestAcceptDivertNeedsSftpGrant(void)
     CheckAcceptDivertNeedsSftpGrant(1);
     CheckAcceptDivertNeedsSftpGrant(0);
 }
+
+
+/* The divert's grant clause on its own. The request was granted, so the
+ * type, the command and the client state are all what the built-in server
+ * wants; only the grant is gone. The refusal above stops short of the
+ * divert on the client state, so it would pass with the clause gone. */
+static void TestAcceptDivertNeedsSftpGrantAlone(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "subsystem", 1,
+            "sftp", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, 1);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_DONE);
+    RepointHarnessInput(&harness, NULL, 0);
+
+    /* White box: as above, the grant alone taken back. */
+    channel->sessionGranted = 0;
+
+    harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->acceptState, ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    FreeChannelOpenHarness(&harness);
+}
 #endif /* WOLFSSH_SFTP */
 
 #ifdef WOLFSSH_SCP
 
-/* Same for the SCP divert, which reads the command with no grant test of
- * its own. An exec callback that refuses "scp ..." must not leave the
- * built-in SCP server holding the session it just refused. */
+/* Same for the SCP divert, which otherwise reads only the command. An
+ * exec callback that refuses "scp ..." must not leave the built-in SCP
+ * server holding the session it just refused. */
 static void CheckAcceptDivertNeedsScpGrant(int reject)
 {
     ChannelOpenHarness harness;
@@ -4647,9 +4774,10 @@ static void CheckAcceptDivertNeedsScpGrant(int reject)
 
     harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
     if (reject) {
-        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+        /* Short of CLIENT_DONE, so accept() diverts nowhere. */
+        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
         AssertIntEQ(harness.ssh->acceptState,
-                ACCEPT_CLIENT_SESSION_ESTABLISHED);
+                ACCEPT_SERVER_CHANNEL_ACCEPT_SENT);
     }
     else {
         AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SCP_INIT);
@@ -4664,6 +4792,45 @@ static void TestAcceptDivertNeedsScpGrant(void)
 {
     CheckAcceptDivertNeedsScpGrant(1);
     CheckAcceptDivertNeedsScpGrant(0);
+}
+
+
+/* Same for the SCP divert, which reads the command the exec callback
+ * granted. */
+static void TestAcceptDivertNeedsScpGrantAlone(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "scp -t /tmp/f", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, 1);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_DONE);
+    RepointHarnessInput(&harness, NULL, 0);
+
+    channel->sessionGranted = 0;
+
+    harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->acceptState, ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    FreeChannelOpenHarness(&harness);
 }
 
 #endif /* WOLFSSH_SCP */
@@ -14746,13 +14913,16 @@ int main(int argc, char** argv)
     TestSftpAcceptAppChannelsServesGrantedSftp();
     TestSftpAcceptAppChannelsRefusesEstablishedShell();
     TestSftpAcceptAppChannelsServesEstablishedSftp();
+    TestSftpAcceptAppChannelsNeedsGrantAlone();
     TestSftpAcceptAppChannelsRefusesNoCb();
     TestSftpAcceptAppChannelsRefusesRejectedCb();
     TestAcceptDivertMatchesSftpNameWhole();
     TestAcceptDivertNeedsSftpGrant();
+    TestAcceptDivertNeedsSftpGrantAlone();
 #endif
 #ifdef WOLFSSH_SCP
     TestAcceptDivertNeedsScpGrant();
+    TestAcceptDivertNeedsScpGrantAlone();
 #endif
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
@@ -14960,6 +15130,7 @@ int main(int argc, char** argv)
     TestAppChannelsAcceptStopsAtUserAuth();
     TestAppChannelsNoShellCbRejects();
     TestAppChannelsLateEnableReturns();
+    TestSessionReqRejectedKeepsAcceptWaiting();
     TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade();
     #endif
     #ifndef WOLFSSH_NO_RSA_SHA2_512

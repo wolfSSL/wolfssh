@@ -813,9 +813,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     }
                 }
 
-                /* Divert only into a granted session. The type and
-                 * command stay set on a refusal, so they do not say
-                 * what was granted. */
+                /* Divert only into a granted session; a refusal puts
+                 * the type and command back. */
 #ifdef WOLFSSH_SCP
                 if (ssh->channelList != NULL
                         && ssh->channelList->sessionGranted

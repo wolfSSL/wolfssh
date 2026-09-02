@@ -4173,6 +4173,18 @@ static void NotifyFwdLocalCleanup(WOLFSSH_CHANNEL* channel)
 #endif /* WOLFSSH_FWD */
 
 
+/* Wipe a command line, which can carry credentials, and free it. */
+static void FreeChannelCommand(void* heap, char* command, word32 commandSz)
+{
+    WOLFSSH_UNUSED(heap);
+
+    if (command != NULL) {
+        WS_FORCEZERO(command, commandSz);
+        WFREE(command, heap, DYNTYPE_STRING);
+    }
+}
+
+
 void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
 {
     WOLFSSH_UNUSED(heap);
@@ -4200,11 +4212,7 @@ void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
                  channel->channel);
         }
         ShrinkBuffer(&channel->extDataBuffer, 1);
-        /* Scrub the peer's command line, which can carry credentials. */
-        if (channel->command != NULL) {
-            WS_FORCEZERO(channel->command, channel->commandSz);
-            WFREE(channel->command, heap, DYNTYPE_STRING);
-        }
+        FreeChannelCommand(heap, channel->command, channel->commandSz);
         WFREE(channel, heap, DYNTYPE_CHANNEL);
     }
 }
@@ -13092,14 +13100,71 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
 #endif /* WOLFSSH_TERM */
 
 
-/* Wipe the old command ahead of the GetStringAlloc() that frees it, so a
- * repeat request leaves no credentials behind in the freed block. */
-static void ScrubChannelCommand(WOLFSSH_CHANNEL* channel)
+/* Answers a shell, exec, or subsystem request. Sets the session type and
+ * command for the callback to read, and keeps them only if it accepts. */
+static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
+        WOLFSSH_CHANNEL* channel, byte sessionType, WS_CallbackChannelReq cb,
+        byte* buf, word32 len, word32* idx, int* rej)
 {
-    if (channel->command != NULL) {
-        WS_FORCEZERO(channel->command, channel->commandSz);
-        channel->commandSz = 0;
+    void* heap = ssh->ctx->heap;
+    byte prevType = channel->sessionType;
+    byte hasCommand = (sessionType != WOLFSSH_SESSION_SHELL);
+    char* prevCommand = NULL;
+    word32 prevCommandSz = 0;
+    char* command = NULL;
+    word32 commandSz = 0;
+    int ret = WS_SUCCESS;
+
+    /* A shell request carries no command, so it leaves the old one alone.
+     * The others read into a local, so the old survives a refusal. */
+    if (hasCommand) {
+        prevCommand = channel->command;
+        prevCommandSz = channel->commandSz;
+
+        ret = GetStringAlloc(heap, &command, &commandSz, buf, len, idx);
+        if (ret == WS_SUCCESS)
+            WLOG(WS_LOG_DEBUG, "  command = %s", command);
+        else
+            WLOG(WS_LOG_DEBUG, "  command = %s", "<bad value>");
     }
+
+    if (ret == WS_SUCCESS) {
+        if (hasCommand) {
+            channel->command = command;
+            channel->commandSz = commandSz;
+        }
+        channel->sessionType = sessionType;
+
+        if (cb != NULL)
+            *rej = cb(channel, ssh->channelReqCtx);
+        else
+            *rej = ssh->appChannels;
+
+        /* A callback may free its own channel, so look it up again. */
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL) {
+            /* The new command went with it. */
+            FreeChannelCommand(heap, prevCommand, prevCommandSz);
+            return ret;
+        }
+    }
+
+    if (ret == WS_SUCCESS && !*rej) {
+        FreeChannelCommand(heap, prevCommand, prevCommandSz);
+        channel->sessionGranted = 1;
+        ssh->clientState = CLIENT_DONE;
+    }
+    else {
+        /* A refusal changes nothing, so an earlier grant still stands. */
+        if (hasCommand) {
+            FreeChannelCommand(heap, command, commandSz);
+            channel->command = prevCommand;
+            channel->commandSz = prevCommandSz;
+        }
+        channel->sessionType = prevType;
+    }
+
+    return ret;
 }
 
 
@@ -13112,7 +13177,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte wantReply;
-    int ret, rej = 0, sessionReq = 0;
+    int ret, rej = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
@@ -13162,59 +13227,19 @@ static int DoChannelRequest(WOLFSSH* ssh,
             }
         }
         else if (ChannelRequestIs(type, typeSz, "shell")) {
-            channel->sessionType = WOLFSSH_SESSION_SHELL;
-            if (ssh->ctx->channelReqShellCb) {
-                rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
-            }
-            else {
-                rej = ssh->appChannels;
-            }
-            sessionReq = 1;
-            ssh->clientState = CLIENT_DONE;
+            ret = DoChannelRequestSession(ssh, channelId, channel,
+                    WOLFSSH_SESSION_SHELL, ssh->ctx->channelReqShellCb,
+                    buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
-            ScrubChannelCommand(channel);
-            ret = GetStringAlloc(ssh->ctx->heap,
-                    &channel->command, &channel->commandSz,
-                    buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
-            else
-                WLOG(WS_LOG_DEBUG, "  command = %s", "<bad value>");
-            if (ret == WS_SUCCESS) {
-                channel->sessionType = WOLFSSH_SESSION_EXEC;
-                if (ssh->ctx->channelReqExecCb) {
-                    rej = ssh->ctx->channelReqExecCb(channel,
-                            ssh->channelReqCtx);
-                }
-                else {
-                    rej = ssh->appChannels;
-                }
-            }
-            sessionReq = 1;
-            ssh->clientState = CLIENT_DONE;
+            ret = DoChannelRequestSession(ssh, channelId, channel,
+                    WOLFSSH_SESSION_EXEC, ssh->ctx->channelReqExecCb,
+                    buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
-            ScrubChannelCommand(channel);
-            ret = GetStringAlloc(ssh->ctx->heap,
-                    &channel->command, &channel->commandSz,
-                    buf, len, &begin);
-            if (ret == WS_SUCCESS)
-                WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
-            else
-                WLOG(WS_LOG_DEBUG, "  subsystem = %s", "<bad value>");
-            if (ret == WS_SUCCESS) {
-                channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-                if (ssh->ctx->channelReqSubsysCb) {
-                    rej = ssh->ctx->channelReqSubsysCb(channel,
-                            ssh->channelReqCtx);
-                }
-                else {
-                    rej = ssh->appChannels;
-                }
-            }
-            sessionReq = 1;
-            ssh->clientState = CLIENT_DONE;
+            ret = DoChannelRequestSession(ssh, channelId, channel,
+                    WOLFSSH_SESSION_SUBSYSTEM, ssh->ctx->channelReqSubsysCb,
+                    buf, len, &begin, &rej);
         }
         #ifdef WOLFSSH_TERM
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
@@ -13347,20 +13372,6 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         *idx = len;
-    }
-
-    /* Record the answer, not the ask: sessionType and command are set before
-     * the reject decision and stay set on a refusal, so they cannot say
-     * whether the session was granted. Set even without a wantReply, which
-     * changes only whether the peer is told.
-     *
-     * Look the channel up again rather than reusing the pointer from
-     * before the callback. A callback may close its own channel, and
-     * wolfSSH_ChannelFree() frees it, so the old pointer can be dead. */
-    if (sessionReq) {
-        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
-        if (channel != NULL)
-            channel->sessionGranted = (ret == WS_SUCCESS && !rej);
     }
 
     if (wantReply) {
