@@ -764,52 +764,12 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
-                    WOLFSSH_AGENT_CTX* newAgent;
-                    WOLFSSH_CHANNEL* newChannel;
-
-                    WLOG(WS_LOG_AGENT, "Starting agent channel");
-
-                    newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
-                    if (newAgent == NULL) {
-                        ssh->error = WS_MEMORY_E;
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
-                        return WS_ERROR;
-                    }
-
-                    newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
-                            ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
-                    if (newChannel == NULL) {
-                        wolfSSH_AGENT_free(newAgent);
-                        ssh->error = WS_MEMORY_E;
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-
-                    ssh->error = SendChannelOpenSession(ssh, newChannel);
+                    ssh->error = wolfSSH_AGENT_ChannelOpen(ssh);
                     if (ssh->error < WS_SUCCESS) {
-                        if (ssh->error == WS_WANT_WRITE ||
-                                ssh->error == WS_WANT_READ) {
-                            ChannelAppend(ssh, newChannel);
-                        }
-                        else {
-                            ChannelDelete(newChannel, ssh->ctx->heap);
-                            wolfSSH_AGENT_free(newAgent);
-                        }
                         WLOG(WS_LOG_DEBUG, acceptError,
                             "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
                         return WS_FATAL_ERROR;
                     }
-                    ChannelAppend(ssh, newChannel);
-                    newAgent->channel = newChannel->channel;
-                    if (ssh->ctx->agentCb) {
-                        ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
-                                ssh->agentCbCtx);
-                    }
-                    if (ssh->agent != NULL)
-                        wolfSSH_AGENT_free(ssh->agent);
-                    ssh->agent = newAgent;
                 }
 #endif /* WOLFSSH_AGENT */
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;

@@ -4437,6 +4437,102 @@ static void TestAgentChannelNullAgentSendsOpenFail(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* Nothing asked for forwarding, so the open is refused rather than started.
+ * The refusal is the documented answer to a poll, so it must not land in
+ * ssh->error: wolfSSH_accept() would then abort with WS_INVALID_STATE_E. */
+static void TestAgentChannelOpenWithoutRequest(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_BAD_ARGUMENT);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    /* The handshake survives the poll: no input, so accept only wants read. */
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_WANT_READ);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A queued open publishes the agent, so the caller's next poll must finish
+ * the send rather than report a success the peer never saw, and must not
+ * open a second channel. */
+static void TestAgentChannelOpenFlushesQueuedOpen(void)
+{
+    ChannelOpenHarness harness;
+    word32 outSz;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.io.blockNext = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_WANT_WRITE);
+    AssertNotNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN);
+
+    /* The flushed open is the answer wolfSSH_accept() retries on: success,
+     * no second channel, no new packet, ssh->error untouched. */
+    outSz = harness.io.outSz;
+    harness.ssh->error = WS_SUCCESS;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.io.outSz, outSz);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A send that fails outright, rather than blocking, leaves nothing behind,
+ * so a later poll starts the open over. */
+static void TestAgentChannelOpenSendFailureCleansUp(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    /* No room, so MemSend reports a general error. */
+    harness.io.outCap = 0;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SOCKET_ERROR_E);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SOCKET_ERROR_E);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifndef NO_WOLFSSH_CLIENT
+/* Server-side call. A client has an ssh->agent of its own, so answering the
+ * poll from it would report a channel that was never opened. */
+static void TestAgentChannelOpenOnClientRefused(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarnessClient(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_BAD_ARGUMENT);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* !NO_WOLFSSH_CLIENT */
 #endif
 
 
@@ -13427,6 +13523,12 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();
+    TestAgentChannelOpenWithoutRequest();
+    TestAgentChannelOpenFlushesQueuedOpen();
+    TestAgentChannelOpenSendFailureCleansUp();
+#ifndef NO_WOLFSSH_CLIENT
+    TestAgentChannelOpenOnClientRefused();
+#endif
 #endif
 #endif /* NO_WOLFSSH_SERVER */
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \

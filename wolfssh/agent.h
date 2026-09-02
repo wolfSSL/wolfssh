@@ -181,6 +181,18 @@ WOLFSSH_API int wolfSSH_CTX_set_agent_cb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_set_agent_cb_ctx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API int wolfSSH_CTX_AGENT_enable(WOLFSSH_CTX* ctx, byte isEnabled);
 WOLFSSH_API int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled);
+/* Server side. Opens the auth-agent@openssh.com channel to the client once
+ * the peer's auth-agent-req@openssh.com asks for forwarding. wolfSSH_accept()
+ * does it on the default path; an application driving its own channels polls
+ * this instead. Opens one channel, then flushes what of the open is queued.
+ * Returns WS_SUCCESS, WS_BAD_ARGUMENT before the peer asks or on a client
+ * session, WS_WANT_READ or WS_WANT_WRITE while output is still queued,
+ * WS_SSH_NULL_E, WS_MEMORY_E, or whatever the send reports. WS_SUCCESS says
+ * the open went out, not that the peer took it; a refusal reaches the
+ * channel-open-fail callback.
+ * Only the send records in ssh->error, so a poll ahead of the peer's request
+ * leaves the session fit for wolfSSH_accept(). */
+WOLFSSH_API int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_AGENT_worker(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
         const byte* msg, word32* msgSz, byte* rsp, word32* rspSz);
