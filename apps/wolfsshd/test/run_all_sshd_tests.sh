@@ -9,6 +9,7 @@ test_cases=(
  "sshd_large_sftp_test.sh"
  "sshd_bad_sftp_test.sh"
  "sshd_sftp_idle_cpu_test.sh"
+ "sshd_bad_subsystem_test.sh"
  "sshd_scp_fail.sh"
  "sshd_term_close_test.sh"
  "sshd_stdin_eof_test.sh"
