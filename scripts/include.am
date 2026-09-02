@@ -17,3 +17,4 @@ dist_noinst_SCRIPTS+= scripts/sshclient.test
 
 dist_noinst_SCRIPTS+= scripts/fwd.test
 EXTRA_DIST += scripts/fwd.test.expect
+dist_noinst_SCRIPTS+= scripts/fwd-bulk.test
