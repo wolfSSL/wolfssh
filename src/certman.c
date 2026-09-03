@@ -115,9 +115,14 @@
 #endif
 
 
+/* side is CERTMAN_SIDE_ANY until wolfSSH_CERTMAN_SetSide() names the local
+ * endpoint; a standalone manager then accepts either SSH key purpose. */
+#define CERTMAN_SIDE_ANY (-1)
+
 struct WOLFSSH_CERTMAN {
     void* heap;
     WOLFSSL_CERT_MANAGER* cm;
+    int side;
 };
 
 
@@ -187,6 +192,7 @@ static WOLFSSH_CERTMAN* _CertMan_init(WOLFSSH_CERTMAN* cm, void* heap)
     if (ret != NULL) {
         WMEMSET(ret, 0, sizeof(WOLFSSH_CERTMAN));
         ret->heap = heap;
+        ret->side = CERTMAN_SIDE_ANY;
         ret->cm = wolfSSL_CertManagerNew_ex(heap);
         if (ret->cm == NULL) {
             ret = NULL;
@@ -246,6 +252,14 @@ WOLFSSH_CERTMAN* wolfSSH_CERTMAN_new(void* heap)
 
     WLOG_LEAVE_PTR(cm);
     return cm;
+}
+
+
+void wolfSSH_CERTMAN_SetSide(WOLFSSH_CERTMAN* cm, int side)
+{
+    if (cm != NULL) {
+        cm->side = side;
+    }
 }
 
 
@@ -343,6 +357,208 @@ static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
 
     return isCA;
 }
+
+/* Reads a DER tag and definite length at *idx. On success *idx is advanced
+ * to the content, which is *len bytes and lies within sz. */
+static int DerGetHeader(const byte* in, word32 sz, word32* idx, byte* tag,
+        word32* len)
+{
+    word32 i = *idx;
+    word32 l;
+    byte b;
+    int n;
+
+    if (i >= sz || sz - i < 2) {
+        return -1;
+    }
+    *tag = in[i++];
+    b = in[i++];
+    if (b < 0x80) {
+        l = b;
+    }
+    else {
+        n = b & 0x7F;
+        if (n == 0 || n > 4 || sz - i < (word32)n) {
+            return -1;
+        }
+        l = 0;
+        while (n-- > 0) {
+            l = (l << 8) | in[i++];
+        }
+    }
+    if (l > sz - i) {
+        return -1;
+    }
+    *idx = i;
+    *len = l;
+    return 0;
+}
+
+
+/* id-kp-secureShellClient 1.3.6.1.5.5.7.3.21 and id-kp-secureShellServer
+ * 1.3.6.1.5.5.7.3.22 (RFC 6187 section 2.2.2). wolfSSL 5.9.2 and earlier do
+ * not set DecodedCert.extExtKeyUsageSsh bits for these in the default ASN
+ * template build, so the EKU extension is walked here. Later wolfSSL versions
+ * can replace this with an extExtKeyUsageSsh bit comparison. */
+static const byte kpSecureShellClientOid[] =
+        { 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x15 };
+static const byte kpSecureShellServerOid[] =
+        { 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x16 };
+static const byte extKeyUsageExtOid[] = { 0x55, 0x1D, 0x25 };
+
+/* Returns 1 when the cert's ExtendedKeyUsage names oid, 0 when it does not
+ * (or there is no such extension), negative when the extensions do not
+ * parse. cert->extensions spans the raw Extensions SEQUENCE, in some wolfSSL
+ * versions still inside its [3] wrapper. */
+static int CertManExtKeyUsageHasOid(const DecodedCert* cert, const byte* oid,
+        word32 oidSz)
+{
+    const byte* in = cert->extensions;
+    word32 sz, idx = 0, len, end, extEnd;
+    byte tag;
+
+    if (in == NULL || cert->extensionsSz <= 0) {
+        return 0;
+    }
+    sz = (word32)cert->extensionsSz;
+
+    if (DerGetHeader(in, sz, &idx, &tag, &len) != 0) {
+        return -1;
+    }
+    if (tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | 3)) {
+        if (DerGetHeader(in, sz, &idx, &tag, &len) != 0) {
+            return -1;
+        }
+    }
+    if (tag != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+        return -1;
+    }
+    end = idx + len;
+
+    /* Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE,
+     *                          extnValue OCTET STRING } */
+    while (idx < end) {
+        if (DerGetHeader(in, end, &idx, &tag, &len) != 0 ||
+                tag != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+            return -1;
+        }
+        extEnd = idx + len;
+        if (DerGetHeader(in, extEnd, &idx, &tag, &len) != 0 ||
+                tag != ASN_OBJECT_ID) {
+            return -1;
+        }
+        if (len == sizeof(extKeyUsageExtOid) &&
+                WMEMCMP(in + idx, extKeyUsageExtOid, len) == 0) {
+            idx += len;
+            if (DerGetHeader(in, extEnd, &idx, &tag, &len) != 0) {
+                return -1;
+            }
+            if (tag == ASN_BOOLEAN) {
+                idx += len;
+                if (DerGetHeader(in, extEnd, &idx, &tag, &len) != 0) {
+                    return -1;
+                }
+            }
+            if (tag != ASN_OCTET_STRING) {
+                return -1;
+            }
+            /* ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId */
+            extEnd = idx + len;
+            if (DerGetHeader(in, extEnd, &idx, &tag, &len) != 0 ||
+                    tag != (ASN_SEQUENCE | ASN_CONSTRUCTED)) {
+                return -1;
+            }
+            extEnd = idx + len;
+            while (idx < extEnd) {
+                if (DerGetHeader(in, extEnd, &idx, &tag, &len) != 0 ||
+                        tag != ASN_OBJECT_ID) {
+                    return -1;
+                }
+                if (len == oidSz && WMEMCMP(in + idx, oid, oidSz) == 0) {
+                    return 1;
+                }
+                idx += len;
+            }
+            return 0;
+        }
+        idx = extEnd;
+    }
+
+    return 0;
+}
+
+
+/* RFC 6187 section 2.2 leaf checks, applied in every build. A KeyUsage
+ * extension must assert digitalSignature. An ExtendedKeyUsage extension must
+ * name anyExtendedKeyUsage or a purpose for the role being verified:
+ * id-kp-secureShellClient or TLS clientAuth for a user cert (verified by a
+ * server), id-kp-secureShellServer or TLS serverAuth for a host cert
+ * (verified by a client). The TLS purposes are what the FPKI profiles
+ * already require, so both build flavors accept the same certificates. */
+static int CertManHasUserAuthEku(const DecodedCert* cert)
+{
+    if ((cert->extExtKeyUsage & EXTKEYUSE_CLIENT_AUTH) != 0) {
+        return 1;
+    }
+    return CertManExtKeyUsageHasOid(cert, kpSecureShellClientOid,
+            sizeof(kpSecureShellClientOid));
+}
+
+
+static int CertManHasHostAuthEku(const DecodedCert* cert)
+{
+    if ((cert->extExtKeyUsage & EXTKEYUSE_SERVER_AUTH) != 0) {
+        return 1;
+    }
+    return CertManExtKeyUsageHasOid(cert, kpSecureShellServerOid,
+            sizeof(kpSecureShellServerOid));
+}
+
+
+static int CertManCheckLeafUsage(const DecodedCert* cert, int side)
+{
+    if (cert->extKeyUsageSet &&
+            (cert->extKeyUsage & KEYUSE_DIGITAL_SIG) == 0) {
+        WLOG(WS_LOG_CERTMAN, "leaf KeyUsage lacks digitalSignature");
+        return WS_CERT_KEY_USAGE_E;
+    }
+
+    if (!cert->extExtKeyUsageSet) {
+        return WS_SUCCESS;
+    }
+
+    if ((cert->extExtKeyUsage & EXTKEYUSE_ANY) != 0) {
+        return WS_SUCCESS;
+    }
+
+    /* A server verifies user certs, a client verifies host certs. A
+     * standalone manager has no side and accepts either. */
+    if (side == WOLFSSH_ENDPOINT_SERVER) {
+        if (CertManHasUserAuthEku(cert) == 1) {
+            return WS_SUCCESS;
+        }
+        WLOG(WS_LOG_CERTMAN, "leaf ExtendedKeyUsage has no purpose usable "
+             "for SSH user authentication");
+        return WS_CERT_KEY_USAGE_E;
+    }
+
+    if (side == WOLFSSH_ENDPOINT_CLIENT) {
+        if (CertManHasHostAuthEku(cert) == 1) {
+            return WS_SUCCESS;
+        }
+        WLOG(WS_LOG_CERTMAN, "leaf ExtendedKeyUsage has no purpose usable "
+             "for SSH host authentication");
+        return WS_CERT_KEY_USAGE_E;
+    }
+
+    if (CertManHasUserAuthEku(cert) == 1 || CertManHasHostAuthEku(cert) == 1) {
+        return WS_SUCCESS;
+    }
+    WLOG(WS_LOG_CERTMAN, "leaf ExtendedKeyUsage has no purpose usable "
+         "for SSH authentication");
+    return WS_CERT_KEY_USAGE_E;
+}
+
 
 /* if handling a chain it is expected to be the leaf cert first followed by
  * intermediates and CA last (CA may be omitted) */
@@ -480,9 +696,10 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         }
     }
 
-    /* Leaf (index 0) must be an end-entity cert; reject a CA leaf even without
-     * FPKI, and match a profile when FPKI is on. cm->cm resolves the signer
-     * (ca) that CheckProfile needs for the issuer-DN match. */
+    /* Leaf (index 0) must be an end-entity cert whose key usage permits SSH
+     * for the role being verified; reject a CA leaf even without FPKI, and
+     * match a profile when FPKI is on. cm->cm resolves the signer (ca) that
+     * CheckProfile needs for the issuer-DN match. */
     if (ret == WS_SUCCESS) {
         DecodedCert* decoded = NULL;
 #ifndef WOLFSSH_SMALL_STACK
@@ -509,14 +726,18 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
                 WLOG(WS_LOG_CERTMAN, "leaf certificate is a CA; rejecting");
                 ret = WS_CERT_PROFILE_E;
             }
+            else {
+                ret = CertManCheckLeafUsage(decoded, cm->side);
 #ifndef WOLFSSH_NO_FPKI
-            else if (!(CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_6) ||
-                       CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_10) ||
-                       CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_16))) {
-                WLOG(WS_LOG_CERTMAN, "certificate didn't match profile");
-                ret = WS_CERT_PROFILE_E;
-            }
+                if (ret == WS_SUCCESS &&
+                        !(CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_6) ||
+                          CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_10) ||
+                          CheckProfile(decoded, PROFILE_FPKI_WORKSHEET_16))) {
+                    WLOG(WS_LOG_CERTMAN, "certificate didn't match profile");
+                    ret = WS_CERT_PROFILE_E;
+                }
 #endif /* WOLFSSH_NO_FPKI */
+            }
             wc_FreeDecodedCert(decoded);
         }
 

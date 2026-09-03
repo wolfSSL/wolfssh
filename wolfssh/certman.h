@@ -78,6 +78,15 @@ WOLFSSH_API
 int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* rootCa, word32 rootCaSz);
 
+/* Verifies a leaf-first chain against the loaded roots and then applies the
+ * RFC 6187 section 2.2 leaf checks in every build: a KeyUsage extension
+ * must assert digitalSignature, and an ExtendedKeyUsage extension must name
+ * anyExtendedKeyUsage or a purpose usable for the SSH role being verified,
+ * id-kp-secureShellClient or TLS clientAuth for a user certificate and
+ * id-kp-secureShellServer or TLS serverAuth for a host certificate. Fails
+ * with WS_CERT_KEY_USAGE_E otherwise. The role comes from the CTX that owns
+ * the manager; a standalone manager accepts either. Builds with FPKI
+ * profile matching apply that on top. */
 WOLFSSH_API
 int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* cert, word32 certSz, word32 certCount);

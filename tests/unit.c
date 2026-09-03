@@ -15782,10 +15782,14 @@ static int certmanForgeChild(const byte* issuerCert, word32 issuerCertSz,
 /* Forge a cert with the given subject CN. When isCA is set the cert asserts
  * basicConstraints CA=TRUE. When keyUsage is non-NULL the cert carries a
  * KeyUsage extension with the named usage(s) (e.g. "keyCertSign" or
- * "digitalSignature"); NULL omits the extension entirely. The issuer name is
- * taken from issuerCert, the subject public key from subjectKey, and the cert
- * is signed with issuerKey. Fills der/derSz on success. */
+ * "digitalSignature"); NULL omits the extension entirely. extKeyUsage does
+ * the same for ExtendedKeyUsage, taking wc_SetExtKeyUsage() names
+ * ("serverAuth", "clientAuth", "any", ...) or, with WOLFSSL_EKU_OID, a
+ * dotted OID. The issuer name is taken from issuerCert, the subject public
+ * key from subjectKey, and the cert is signed with issuerKey. Fills
+ * der/derSz on success. */
 static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
+        const char* extKeyUsage,
         const byte* issuerCert, word32 issuerCertSz,
         ecc_key* issuerKey, ecc_key* subjectKey, byte* der, word32* derSz)
 {
@@ -15816,6 +15820,23 @@ static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
             ret = BAD_FUNC_ARG;
         #endif
         }
+    }
+    if (ret == 0 && extKeyUsage != NULL) {
+    #ifdef WOLFSSL_CERT_EXT
+        if (WSTRCHR(extKeyUsage, '.') == NULL) {
+            ret = wc_SetExtKeyUsage(&cert, extKeyUsage);
+        }
+        else {
+        #ifdef WOLFSSL_EKU_OID
+            ret = wc_SetExtKeyUsageOID(&cert, extKeyUsage,
+                    (word32)WSTRLEN(extKeyUsage), 0, NULL);
+        #else
+            ret = BAD_FUNC_ARG;
+        #endif
+        }
+    #else
+        ret = BAD_FUNC_ARG;
+    #endif
     }
     if (ret == 0)
         ret = wc_SetIssuerBuffer(&cert, issuerCert, (int)issuerCertSz);
@@ -16058,7 +16079,7 @@ static int certmanCheckIntermediate(const char* interKeyUsage,
     }
 
     /* Intermediate CA signed by the root. */
-    ret = certmanForgeCert("IntermediateCA", 1, interKeyUsage,
+    ret = certmanForgeCert("IntermediateCA", 1, interKeyUsage, NULL,
             root, rootSz, &rootKey, &interKey, inter, &interSz);
     if (ret != 0) {
         printf("CertMan: forge intermediate failed, ret=%d\n", ret);
@@ -16066,7 +16087,7 @@ static int certmanCheckIntermediate(const char* interKeyUsage,
     }
 
     /* Leaf signed by the intermediate. */
-    ret = certmanForgeCert("ValidLeaf", 0, NULL, inter, interSz,
+    ret = certmanForgeCert("ValidLeaf", 0, NULL, NULL, inter, interSz,
             &interKey, &leafKey, leaf, &leafSz);
     if (ret != 0) {
         printf("CertMan: forge leaf failed, ret=%d\n", ret);
@@ -16133,6 +16154,197 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 #endif
     return result;
 }
+
+#ifdef WOLFSSL_CERT_EXT
+
+/* The FPKI profile check runs after the RFC 6187 usage check and never
+ * matches a forged leaf, so in an FPKI build a leaf that passes the usage
+ * check surfaces as WS_CERT_PROFILE_E rather than WS_SUCCESS. Either way it
+ * is distinct from WS_CERT_KEY_USAGE_E. */
+#ifdef WOLFSSH_NO_FPKI
+    #define CERTMAN_LEAF_USAGE_OK WS_SUCCESS
+#else
+    #define CERTMAN_LEAF_USAGE_OK WS_CERT_PROFILE_E
+#endif
+
+/* Forges a leaf signed by the test root carrying the given KeyUsage and
+ * ExtendedKeyUsage (NULL omits the extension), verifies it through a manager
+ * owned by a CTX of the given endpoint, or a standalone manager when side is
+ * -1, and compares the result with expected. */
+static int certmanCheckLeafUsage(const char* keyUsage, const char* extKeyUsage,
+        int side, int expected)
+{
+    int result = 0;
+    int ret;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    word32 rootSz = 0, rootKeySz = 0;
+    byte leaf[2048];
+    word32 leafSz = sizeof(leaf);
+    byte chain[4096];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, leafKey;
+    int haveRootKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0) {
+        printf("CertMan: can't load root cert\n");
+        result = -940; goto done;
+    }
+    if (certmanLoadFile("./keys/ca-key-ecc.der",
+                        &rootKeyBuf, &rootKeySz) != 0) {
+        printf("CertMan: can't load root key\n");
+        result = -941; goto done;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        result = -942; goto done;
+    }
+    haveRng = 1;
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -943; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -944; goto done;
+    }
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -945; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -946; goto done;
+    }
+
+    ret = certmanForgeCert("UsageLeaf", 0, keyUsage, extKeyUsage,
+            root, rootSz, &rootKey, &leafKey, leaf, &leafSz);
+    if (ret != 0) {
+        printf("CertMan: forge leaf (KU %s, EKU %s) failed, ret=%d\n",
+                keyUsage ? keyUsage : "none",
+                extKeyUsage ? extKeyUsage : "none", ret);
+        result = -947; goto done;
+    }
+
+    if (side == WOLFSSH_ENDPOINT_SERVER || side == WOLFSSH_ENDPOINT_CLIENT) {
+        ctx = wolfSSH_CTX_new(side, NULL);
+        if (ctx == NULL) {
+            result = -948; goto done;
+        }
+        if (wolfSSH_CTX_AddRootCert_buffer(ctx, root, rootSz,
+                    WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+            result = -949; goto done;
+        }
+        cm = ctx->certMan;
+    }
+    else {
+        cm = wolfSSH_CERTMAN_new(NULL);
+        if (cm == NULL) {
+            result = -950; goto done;
+        }
+        if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz)
+                != WS_SUCCESS) {
+            result = -951; goto done;
+        }
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != expected) {
+        printf("CertMan: leaf KU %s, EKU %s, side %d: got %d, expected %d\n",
+                keyUsage ? keyUsage : "none",
+                extKeyUsage ? extKeyUsage : "none", side, ret, expected);
+        result = -952; goto done;
+    }
+
+done:
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    else if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    return result;
+}
+
+/* RFC 6187 section 2.2: a leaf KeyUsage must assert digitalSignature and a
+ * leaf ExtendedKeyUsage must name a purpose for the role being verified.
+ * The server side verifies user certs (client purpose), the client side host
+ * certs (server purpose), and a standalone manager accepts either. */
+static int test_CertMan_LeafKeyUsage(void)
+{
+    static const struct {
+        const char* keyUsage;
+        const char* extKeyUsage;
+        int side;
+        int expected;
+    } tv[] = {
+        { NULL, NULL, WOLFSSH_ENDPOINT_SERVER, CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", NULL, WOLFSSH_ENDPOINT_SERVER,
+            CERTMAN_LEAF_USAGE_OK },
+        { "keyEncipherment", NULL, WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+        { "keyEncipherment", NULL, WOLFSSH_ENDPOINT_CLIENT,
+            WS_CERT_KEY_USAGE_E },
+        { "keyEncipherment", "clientAuth", -1, WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "any", WOLFSSH_ENDPOINT_SERVER,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "any", WOLFSSH_ENDPOINT_CLIENT,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "clientAuth", WOLFSSH_ENDPOINT_SERVER,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "clientAuth", WOLFSSH_ENDPOINT_CLIENT,
+            WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "serverAuth", WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "serverAuth", WOLFSSH_ENDPOINT_CLIENT,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "serverAuth", -1, CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "serverAuth,clientAuth",
+            WOLFSSH_ENDPOINT_SERVER, CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "codeSigning", WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "codeSigning", WOLFSSH_ENDPOINT_CLIENT,
+            WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "codeSigning", -1, WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "emailProtection", WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+        { NULL, "emailProtection", WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+    #ifdef WOLFSSL_EKU_OID
+        /* id-kp-secureShellClient and id-kp-secureShellServer */
+        { "digitalSignature", "1.3.6.1.5.5.7.3.21", WOLFSSH_ENDPOINT_SERVER,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "1.3.6.1.5.5.7.3.21", WOLFSSH_ENDPOINT_CLIENT,
+            WS_CERT_KEY_USAGE_E },
+        { "digitalSignature", "1.3.6.1.5.5.7.3.22", WOLFSSH_ENDPOINT_CLIENT,
+            CERTMAN_LEAF_USAGE_OK },
+        { "digitalSignature", "1.3.6.1.5.5.7.3.22", WOLFSSH_ENDPOINT_SERVER,
+            WS_CERT_KEY_USAGE_E },
+    #endif
+    };
+    int result = 0;
+    word32 i;
+
+    for (i = 0; result == 0 && i < sizeof(tv) / sizeof(tv[0]); i++) {
+        result = certmanCheckLeafUsage(tv[i].keyUsage, tv[i].extKeyUsage,
+                tv[i].side, tv[i].expected);
+    }
+
+    return result;
+}
+
+#endif /* WOLFSSL_CERT_EXT */
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
 
@@ -18332,9 +18544,8 @@ static void certChainPut32(word32 v, byte* c)
  * negotiated x509v3-ecdsa-sha2-nistp384, and an id wcPrimeForId() cannot
  * map must be rejected up front with WS_INVALID_PRIME_CURVE, matching
  * ParseECCPubKey() (checked first: it needs no chain verification).
- * Skipped (returns 1) when the key files are
- * not readable or the chain does not verify in this build's profile (e.g.
- * WOLFSSL_FPKI, whose leaf checks these test certs do not meet). */
+ * Skipped (returns 1) when the key files are not readable or, in an FPKI
+ * build, when the FPKI profile rejects the test leaf. */
 static int test_ParseECCPubKeyCert(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -18402,16 +18613,24 @@ static int test_ParseECCPubKeyCert(void)
         }
     }
 
-    /* matching curve accepted; a failure here means the chain itself did
-     * not verify under this build's profile, so skip the curve vectors
-     * rather than fail on unrelated policy */
+    /* matching curve accepted. The only tolerated failure is the FPKI
+     * profile rejecting keys/server-cert.der, which carries none of the
+     * FPKI extensions; anything else is a parser or verification
+     * regression and fails the test */
     if (result == 0) {
         ssh->handshake->pubKeyId = ID_X509V3_ECDSA_SHA2_NISTP256;
         ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
-        if (ret != WS_SUCCESS) {
-            printf("ParseECCPubKeyCert: control chain did not verify "
-                   "(ret %d), skipping curve vectors\n", ret);
+    #ifndef WOLFSSH_NO_FPKI
+        if (ret == WS_CERT_PROFILE_E) {
+            printf("ParseECCPubKeyCert: SKIP, test cert does not meet the "
+                   "FPKI profile\n");
             result = 1;
+        }
+        else
+    #endif
+        if (ret != WS_SUCCESS) {
+            printf("ParseECCPubKeyCert: control chain ret %d\n", ret);
+            result = -5;
         }
     }
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
@@ -21139,6 +21358,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("CertMan_PromoteValidCaIntermediate: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSL_CERT_EXT
+    unitResult = test_CertMan_LeafKeyUsage();
+    printf("CertMan_LeafKeyUsage: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
 #ifdef WOLFSSH_KEYGEN

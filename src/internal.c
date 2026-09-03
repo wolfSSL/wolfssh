@@ -578,6 +578,9 @@ const char* GetErrorString(int err)
         case WS_ED448_E:
             return "Ed448 failure";
 
+        case WS_CERT_KEY_USAGE_E:
+            return "certificate key usage does not permit SSH use";
+
         case WS_AUTH_PENDING:
             return "userauth is still pending (callback would block)";
 
@@ -1383,6 +1386,9 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->certMan = wolfSSH_CERTMAN_new(ctx->heap);
     if (ctx->certMan == NULL)
         return NULL;
+    /* A server verifies user certs and a client host certs; the side picks
+     * which RFC 6187 key purpose the leaf must allow. */
+    wolfSSH_CERTMAN_SetSide(ctx->certMan, side);
 #endif /* WOLFSSH_CERTS */
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;

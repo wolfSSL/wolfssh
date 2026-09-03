@@ -523,6 +523,14 @@ For this example, we are disabling the FPKI checking as the included
 certificate for "fred" does not have the required FPKI extensions. If the
 flag WOLFSSH_NO_FPKI is removed, you can see the certificate get rejected.
 
+With or without FPKI, a peer certificate is held to RFC 6187 section 2.2: a
+KeyUsage extension must assert digitalSignature, and an ExtendedKeyUsage
+extension must name anyExtendedKeyUsage or a purpose for the role being
+verified (id-kp-secureShellClient or clientAuth for a user certificate,
+id-kp-secureShellServer or serverAuth for a host certificate). A certificate
+without those extensions is accepted. A mismatch fails with
+`WS_CERT_KEY_USAGE_E`.
+
 To provide a CA root certificate to validate a user's certificate, give the
 echoserver the command line option `-a`.
 
@@ -600,7 +608,8 @@ with `WOLFSSH_IGNORE_UNKNOWN_CONFIG` instead log a warning and ignore the
 directive, preserving the old behavior as a migration path.
 
 Without FPKI, a client certificate is bound to the requested account by a
-case-insensitive subject CN match only; keep the trusted CA set narrow. Note
+case-insensitive subject CN match only, after the RFC 6187 key usage check
+described under CERTIFICATE SUPPORT; keep the trusted CA set narrow. Note
 also that the config parser requires whitespace between an option name and
 its value; the OpenSSH `Keyword=value` form is rejected.
 

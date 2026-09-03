@@ -10,6 +10,9 @@ name: Windows Certificate Store Test
 #   2. If the server key comes from the store: run echoserver with -W and
 #      connect with the SFTP client.
 #   3. Run wolfsshd as a Windows service and connect with the SFTP client.
+#
+# Two builds feed the matrix: one with OPENSSL_ALL (wolfSSL FPKI, UPN
+# identity binding) and one without (subject CN binding).
 
 on:
   push:
@@ -151,6 +154,104 @@ jobs:
         path: |
           wolfssh/ide/winvs/**/Release/**
 
+  # The same build against a wolfSSL without OPENSSL_ALL, and so without
+  # WOLFSSL_FPKI to test CN match instead of UPN.
+  build-no-fpki:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: user_settings.h for sshd, x509 and cert store without OPENSSL_ALL
+      working-directory: ${{ github.workspace }}
+      shell: bash
+      run: |
+        sed -i 's/#if 0/#if 1/g' ${{env.USER_SETTINGS_H_NEW}}
+        # Drop OPENSSL_ALL so wolfSSL is built without WOLFSSL_FPKI.
+        sed -i '/OPENSSL_ALL/d' ${{env.USER_SETTINGS_H_NEW}}
+        if grep -q 'OPENSSL_ALL' ${{env.USER_SETTINGS_H_NEW}}; then
+          echo "ERROR: OPENSSL_ALL still present"
+          exit 1
+        fi
+        sed -i '/#endif \/\* _WIN_USER_SETTINGS_H_ \*\//i\
+        /* Inserted by windows-cert-store-test CI */\
+        #define WOLFSSH_WINDOWS_CERT_STORE\
+        #define WOLFSSH_NO_SHA1_SOFT_DISABLE\
+        #define WC_SIG_MIN_HASH_TYPE WC_HASH_TYPE_SHA' ${{env.USER_SETTINGS_H_NEW}}
+        grep -q '^#define WOLFSSH_WINDOWS_CERT_STORE' ${{env.USER_SETTINGS_H_NEW}}
+        cp ${{env.USER_SETTINGS_H_NEW}} ${{env.USER_SETTINGS_H}}
+
+    - name: Build wolfssl library
+      working-directory: ${{ github.workspace }}\wolfssl
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Upload wolfSSL build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfssl-windows-build-no-fpki
+        if-no-files-found: warn
+        retention-days: 1
+        path: |
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
+          wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
+
+    - name: Restore NuGet packages
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    # Fails the build unless auth.c really compiles the subject-CN branch:
+    # WOLFSSL_FPKI must be absent and the cert store defines present.
+    - name: Guard that the CN binding branch is the one compiled
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: bash
+      run: |
+        printf '\n#if defined(WOLFSSL_FPKI) || !defined(WOLFSSH_NO_FPKI)\n#error "CI: expected a non-FPKI wolfSSL for the CN binding build"\n#endif\n' >> apps/wolfsshd/auth.c
+        printf '\n#if !defined(WOLFSSH_WINDOWS_CERT_STORE) || !defined(WOLFSSH_SSHD)\n#error "CI: expected defines did not reach wolfsshd.c"\n#endif\n' >> apps/wolfsshd/wolfsshd.c
+
+    - name: Build wolfssh
+      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSH_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Run api-test and unit-test
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $false
+        $dir = "ide\winvs\${{env.WOLFSSH_BUILD_CONFIGURATION}}\${{env.BUILD_PLATFORM}}"
+        $dll = Get-ChildItem -Path "${{ github.workspace }}\wolfssl" -Recurse -Filter "wolfssl.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dll) { Copy-Item $dll.FullName $dir -Force }
+        foreach ($t in @("api-test", "unit-test")) {
+          $exe = Join-Path $dir "$t.exe"
+          if (-not (Test-Path $exe)) { throw "$exe not found" }
+          & $exe
+          if ($LASTEXITCODE -ne 0) { throw "$t failed (exit $LASTEXITCODE)" }
+        }
+
+    - name: Upload wolfSSH build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wolfssh-windows-build-no-fpki
+        if-no-files-found: error
+        path: |
+          wolfssh/ide/winvs/**/Release/**
+
   # Compile-only check of the WOLFSSL_SYS_CA_CERTS paths in wolfsshd, which
   # the functional matrix never defines and so never builds.
   build-sys-ca-certs:
@@ -281,12 +382,14 @@ jobs:
         fi
 
   test:
-    needs: build
+    needs: [build, build-no-fpki]
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # build_flavor selects the artifact pair: unset for the FPKI build,
+        # "-no-fpki" for the build without OPENSSL_ALL.
         include:
           # user_ca_source: store replaces the file-based TrustedUserCAKeys
           # with wolfSSH_TrustedUserCAStore, so the store is the only trust
@@ -326,6 +429,15 @@ jobs:
             key_algorithm: rsa
             client_key_algorithm: rsa
             test_name: "Server-File-Client-Store-RSA"
+          # The first entry again on the build without WOLFSSL_FPKI, so the
+          # identity binding step below exercises the subject-CN branch of
+          # auth.c: matching CN, case-differing account name, mismatched CN.
+          - server_key_source: file
+            client_key_source: x509
+            key_algorithm: rsa
+            user_ca_source: store
+            build_flavor: -no-fpki
+            test_name: "Server-File-Client-X509-UserCAStore-NoFPKI"
 
     steps:
     - uses: actions/checkout@v4
@@ -335,13 +447,13 @@ jobs:
     - name: Download wolfSSH build artifacts
       uses: actions/download-artifact@v4
       with:
-        name: wolfssh-windows-build
+        name: wolfssh-windows-build${{ matrix.build_flavor }}
         path: .
 
     - name: Download wolfSSL build artifacts
       uses: actions/download-artifact@v4
       with:
-        name: wolfssl-windows-build
+        name: wolfssl-windows-build${{ matrix.build_flavor }}
         path: .
 
     - name: Create testuser client certificate - ${{ matrix.test_name }}
@@ -1374,17 +1486,15 @@ jobs:
 
     # The certificate identity binding: a client certificate whose identity
     # does not match the requested account must be rejected, and the match is
-    # case-insensitive like Windows account names. This build defines
-    # OPENSSL_ALL, which turns on WOLFSSL_ASN_ALL and with it WOLFSSL_FPKI in
-    # wolfSSL's settings.h, so the binding evaluated here is the certificate
-    # UPN (renewcerts.cnf gives the test certs an msUPN altname); the
-    # subject-CN branch only compiles on non-FPKI wolfSSL builds and so has
-    # no runtime coverage here -- exercising it needs a matrix entry whose
-    # wolfSSL user_settings.h omits OPENSSL_ALL. Runs
-    # against the already-running service on the user_ca_source: store
-    # entry, whose config sets no AuthorizedKeysFile so the identity binding
-    # is what decides.
-    - name: Client certificate UPN binding is enforced (FPKI build)
+    # case-insensitive like Windows account names. On the FPKI build
+    # (OPENSSL_ALL turns on WOLFSSL_ASN_ALL and with it WOLFSSL_FPKI) the
+    # binding is the certificate UPN, which renewcerts.cnf sets to
+    # <user>@example alongside the CN; on the -no-fpki build it is the
+    # subject CN. The wronguser cert differs in both, so the same three
+    # connections cover either branch. Runs against the already-running
+    # service on the user_ca_source: store entries, whose config sets no
+    # AuthorizedKeysFile so the identity binding is what decides.
+    - name: Client certificate identity binding is enforced (UPN with FPKI, CN without)
       if: matrix.user_ca_source == 'store'
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh

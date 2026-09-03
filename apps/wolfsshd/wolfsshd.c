@@ -619,6 +619,7 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     word32 rejected = 0;
     word32 notX509 = 0;
     int    isCA;
+    DWORD  enumErr;
 
     storeNameStr = wolfSSHD_ConfigGetWinUserPvPara(conf);
     dwFlagsStr   = wolfSSHD_ConfigGetWinUserDwFlags(conf);
@@ -695,11 +696,11 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
 
 #ifdef WOLFSSH_NO_FPKI
     wolfSSH_Log(WS_LOG_WARN,
-        "[SSHD] WARNING: built without FPKI profile checking, so peer certs "
-        "need not carry a client authentication EKU.");
+        "[SSHD] WARNING: built without FPKI profile checking; peer certs are "
+        "held only to RFC 6187 key usage.");
     wolfSSH_Log(WS_LOG_WARN,
-        "[SSHD] A TLS server, S/MIME or code signing certificate with a "
-        "matching subject is accepted for login.");
+        "[SSHD] A cert with no EKU, or one naming clientAuth or "
+        "secureShellClient, whose subject matches is accepted for login.");
 #endif
 
     /* MB_ERR_INVALID_CHARS, as wolfSSH_ParseCertStoreSpec() uses, so a
@@ -736,10 +737,21 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
         return WS_FATAL_ERROR;
     }
 
-    /* Passing the previous context frees it and advances the enumeration. */
+    /* Passing the previous context frees it and advances the enumeration.
+     * NULL means either end of store or failure; only the documented end
+     * codes count as completion, anything else fails the load so a partial
+     * trust anchor set is never reported as complete. */
     for (;;) {
         pCertContext = CertEnumCertificatesInStore(hStore, pCertContext);
         if (pCertContext == NULL) {
+            enumErr = GetLastError();
+            if (enumErr != CRYPT_E_NOT_FOUND &&
+                    enumErr != ERROR_NO_MORE_FILES) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Enumerating user CA cert store '%.48s' failed, "
+                    "error 0x%08lx", storeNameStr, (unsigned long)enumErr);
+                ret = WS_FATAL_ERROR;
+            }
             break;
         }
         if (pCertContext->pbCertEncoded == NULL ||
@@ -790,7 +802,12 @@ static int LoadUserCACertsFromStore(const WOLFSSHD_CONFIG* conf,
     /* Counts and location go on their own lines: wolfSSH_Log formats into
      * a 120 byte buffer, and one line carrying the %.48s store name plus
      * the counts would be cut short right where the numbers are. */
-    if (loaded == 0) {
+    if (ret != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] %u CA certificate(s) loaded before the failure; "
+            "refusing to start on a partial trust anchor set", loaded);
+    }
+    else if (loaded == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] No usable CA certificates found in store '%.48s'",
             storeNameStr);
@@ -1222,11 +1239,11 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
             "organization's CA.");
     #ifdef WOLFSSH_NO_FPKI
         wolfSSH_Log(WS_LOG_WARN,
-            "[SSHD] WARNING: built without FPKI profile checking, so peer "
-            "certs need not carry a client authentication EKU.");
+            "[SSHD] WARNING: built without FPKI profile checking; peer certs "
+            "are held only to RFC 6187 key usage.");
         wolfSSH_Log(WS_LOG_WARN,
-            "[SSHD] A TLS server, S/MIME or code signing certificate with a "
-            "matching subject is accepted for login.");
+            "[SSHD] A cert with no EKU, or one naming clientAuth or "
+            "secureShellClient, whose subject matches is accepted for login.");
     #endif
         sslCtx = wolfSSL_CTX_new(wolfSSLv23_server_method());
         if (sslCtx == NULL) {

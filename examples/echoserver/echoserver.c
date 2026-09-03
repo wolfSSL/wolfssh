@@ -3192,20 +3192,31 @@ static void ShowUsage(void)
 }
 
 
+#define ECHOSERVER_OPTLIST "?1a:d:DefEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
- * Windows certificate store, without doing the full option parse that
+ * Windows certificate store, before the full option parse that
  * echoserver_test() does later. Used to decide whether the root directory
- * search for PEM key files should be skipped. */
+ * search for PEM key files should be skipped. Parses with the same option
+ * list rather than matching on argv: an option value could start with "-W",
+ * and "-W" may sit in a cluster such as "-NW". */
 static int EchoserverUsingCertStore(int argc, char** argv)
 {
-    int i;
+    int ch;
+    int found = 0;
     const char* spec;
 
-    for (i = 1; i < argc; i++) {
-        if (WSTRNCMP(argv[i], "-W", 2) == 0) {
-            return 1;
+    myoptind = 0;
+    while ((ch = mygetopt(argc, argv, ECHOSERVER_OPTLIST)) != -1) {
+        if (ch == 'W') {
+            found = 1;
+            break;
         }
+    }
+    myoptind = 0;
+    if (found) {
+        return 1;
     }
 
     spec = getenv("WOLFSSH_CERT_STORE");
@@ -3337,9 +3348,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (argc > 0) {
-        const char* optlist = "?1a:d:DefEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:";
         myoptind = 0;
-        while ((ch = mygetopt(argc, argv, optlist)) != -1) {
+        while ((ch = mygetopt(argc, argv, ECHOSERVER_OPTLIST)) != -1) {
             switch (ch) {
                 case '?' :
                     ShowUsage();
