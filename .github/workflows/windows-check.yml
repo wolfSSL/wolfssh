@@ -88,6 +88,12 @@ jobs:
       timeout-minutes: 2
       run: .\sshd_login_grace_test.ps1 -SshdExe "$env:SSHD_PATH"
 
+    - name: Test wolfsshd -D option parsing on Windows
+      working-directory: ${{ github.workspace }}\wolfssh\apps\wolfsshd\test
+      shell: pwsh
+      timeout-minutes: 2
+      run: .\sshd_dash_d_test.ps1 -SshdExe "$env:SSHD_PATH"
+
   # Build and run the self-contained unit tests with the MSVC AddressSanitizer.
   # This is the only job that executes wolfSSH tests under a sanitizer on
   # Windows, where the USE_WINDOWS_API console code (e.g. wolfSSH_DoOSC) is
