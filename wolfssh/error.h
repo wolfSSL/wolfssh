@@ -139,8 +139,10 @@ enum WS_ErrorCodes {
     WS_DISCONNECT           = -1098, /* peer sent disconnect */
     WS_MLDSA_E              = -1099, /* MLDSA failure */
     WS_ED448_E              = -1100, /* Ed448 failure */
+    WS_CERT_KEY_USAGE_E     = -1101, /* Cert (ext)KeyUsage not for SSH */
 
-    WS_LAST_E               = WS_ED448_E  /* Update to indicate last error */
+    WS_LAST_E               = WS_CERT_KEY_USAGE_E /* Update to indicate
+                                                   * last error */
 };
 
 

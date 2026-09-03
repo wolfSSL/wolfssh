@@ -834,6 +834,13 @@ typedef struct WOLFSSH_PVT_KEY {
 WOLFSSH_LOCAL int wolfSSH_CertStoreLocationValid(word32 dwFlags);
 #endif
 
+#ifdef WOLFSSH_CERTS
+/* Records the local endpoint (WOLFSSH_ENDPOINT_SERVER or _CLIENT) so the
+ * RFC 6187 key purpose check knows whether a user or host certificate is
+ * being verified. Unset accepts either. Defined in certman.c. */
+WOLFSSH_LOCAL void wolfSSH_CERTMAN_SetSide(WOLFSSH_CERTMAN* cm, int side);
+#endif
+
 
 /* our wolfSSH Context */
 struct WOLFSSH_CTX {
