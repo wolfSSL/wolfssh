@@ -22044,7 +22044,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 }
 
 
-#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+#if defined(WOLFSSH_TERM)
 
 /* out is always a TERMINAL_MODES_MAX_SZ buffer, and one byte is held back
  * for the terminator CreateMode() appends */

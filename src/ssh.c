@@ -1087,7 +1087,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             FALL_THROUGH;
 
         case CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT:
-        #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+        #if defined(WOLFSSH_TERM)
             if (ssh->sendTerminalRequest) {
                 if ( (ssh->error = SendChannelTerminalRequest(ssh))
                         < WS_SUCCESS) {
@@ -1853,7 +1853,7 @@ void* wolfSSH_GetPublicKeyCheckCtx(WOLFSSH* ssh)
 }
 
 
-#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+#if defined(WOLFSSH_TERM)
 /* Used to resize terminal window with shell connections
  * returns WS_SUCCESS on success */
 int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
@@ -5057,8 +5057,7 @@ void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
 }
 
 
-#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-    !defined(NO_WOLFSSH_SERVER)
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
 
 /*
  * Paths starting with a slash are absolute, rooted at "/". Any path that
