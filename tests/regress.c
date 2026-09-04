@@ -32,7 +32,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <arpa/inet.h>
+#ifndef _WIN32
+    #include <arpa/inet.h>
+#endif
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>

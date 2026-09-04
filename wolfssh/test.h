@@ -401,7 +401,7 @@ static INLINE int mygetopt(int argc, char** argv, const char* optstring)
 }
 
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && defined(_MSC_VER)
     #pragma warning(push)
     #pragma warning(disable:4996)
     /* For Windows builds, disable compiler warnings for:
@@ -563,7 +563,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 }
 #endif /* WOLFSSH_NUCLEUS */
 
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && defined(_MSC_VER)
     #pragma warning(pop)
 #endif
 
