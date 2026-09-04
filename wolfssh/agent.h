@@ -181,6 +181,14 @@ WOLFSSH_API int wolfSSH_CTX_set_agent_cb(WOLFSSH_CTX* ctx,
 WOLFSSH_API int wolfSSH_set_agent_cb_ctx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API int wolfSSH_CTX_AGENT_enable(WOLFSSH_CTX* ctx, byte isEnabled);
 WOLFSSH_API int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled);
+/* Server side. Opens the auth-agent@openssh.com channel back to the client
+ * once an auth-agent-req@openssh.com request has set the session up for it.
+ * wolfSSH_accept() does this itself on the default path; an application that
+ * drives its own channels returns from accept() before that point and calls
+ * this instead. Idempotent, so it is safe to poll while waiting for the
+ * peer's request. Returns WS_SUCCESS, or WS_BAD_ARGUMENT when the session
+ * never asked for agent forwarding. */
+WOLFSSH_API int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_AGENT_worker(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
         const byte* msg, word32* msgSz, byte* rsp, word32* rspSz);

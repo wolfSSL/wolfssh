@@ -1731,6 +1731,71 @@ int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled)
 }
 
 
+int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh)
+{
+    WOLFSSH_AGENT_CTX* newAgent = NULL;
+    WOLFSSH_CHANNEL* newChannel = NULL;
+    int ret = WS_SUCCESS;
+
+    WLOG_ENTER();
+
+    if (ssh == NULL)
+        ret = WS_SSH_NULL_E;
+    else if (!ssh->useAgent) {
+        /* Nothing asked for agent forwarding on this session. */
+        ret = WS_BAD_ARGUMENT;
+    }
+    else if (ssh->agent == NULL) {
+        /* Server side sets ssh->agent here and nowhere else, so a NULL one
+         * is the "not opened yet" test. Idempotent so a caller polling for
+         * the peer's request cannot end up with two agent channels. */
+        WLOG(WS_LOG_AGENT, "Starting agent channel");
+
+        newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
+        if (newAgent == NULL)
+            ret = WS_MEMORY_E;
+
+        if (ret == WS_SUCCESS) {
+            newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
+                    ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+            if (newChannel == NULL)
+                ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            ret = SendChannelOpenSession(ssh, newChannel);
+
+            if (ret < WS_SUCCESS
+                    && ret != WS_WANT_WRITE && ret != WS_WANT_READ) {
+                ChannelDelete(newChannel, ssh->ctx->heap);
+            }
+            else {
+                /* Publish the agent even when the open is only queued, so
+                 * a retry takes the already-open path above rather than
+                 * opening a second channel. */
+                ChannelAppend(ssh, newChannel);
+                newAgent->channel = newChannel->channel;
+                ssh->agent = newAgent;
+                newAgent = NULL;
+                if (ssh->ctx->agentCb) {
+                    ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
+                            ssh->agentCbCtx);
+                }
+            }
+        }
+
+        if (newAgent != NULL)
+            wolfSSH_AGENT_free(newAgent);
+    }
+
+    if (ssh != NULL)
+        ssh->error = ret;
+
+    WLOG_LEAVE(ret);
+    return ret;
+}
+
+
 int wolfSSH_AGENT_worker(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
