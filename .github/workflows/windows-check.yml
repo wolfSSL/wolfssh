@@ -295,9 +295,12 @@ jobs:
           CPPFLAGS="-I$HOME/wolfssl-install/include" \
           LDFLAGS="-L$HOME/wolfssl-install/lib" \
           LIBS="-lws2_32 -lcrypt32"
-        make -j$(nproc) tests/regress.test tests/unit.test
-        ./tests/regress.test
-        ./tests/unit.test
+        # MinGW's EXEEXT is ".exe", so the check_PROGRAMS targets automake
+        # generates are tests/regress.test.exe and tests/unit.test.exe, not
+        # the extension-less names make would use on a POSIX host.
+        make -j$(nproc) tests/regress.test.exe tests/unit.test.exe
+        ./tests/regress.test.exe
+        ./tests/unit.test.exe
 
     - name: Show config.log on failure
       if: failure()
