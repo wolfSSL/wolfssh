@@ -658,6 +658,10 @@ WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx, const char* newBanner);
  * MUST end with '\r\n'
  * MUST carry only printable US-ASCII (0x20 - 0x7e) in the body, which
  *     rules out an embedded '\r' or '\n'
+ * MUST NOT begin the body with a space; RFC 4253 section 4.2 reads the
+ *     body as softwareversion [SP comments], so a leading space would
+ *     make softwareversion empty. A space later in the body is accepted
+ *     and starts the optional comments field.
  * If these are not adhered to the function will return WS_BAD_ARGUMENT
  * and not load the ProtoId into the WOLFSSH_CTX struct.
  * ProtoIdStr is stored by reference and is not copied, so it must remain
