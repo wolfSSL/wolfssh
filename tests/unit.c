@@ -464,6 +464,30 @@ static const ProtoIdScriptVector protoIdScriptVectors[] = {
       WOLFSSH_ENDPOINT_CLIENT, WS_VERSION_E },
 };
 
+/* Capture-to-buffer send callback for the SendProtoId() vectors. The
+ * proto ID is the first thing on the wire, so everything the callback
+ * sees is the ID line itself. */
+typedef struct ProtoIdSendState {
+    byte   buf[WOLFSSH_PROTOID_LIMIT + 1];
+    word32 len;
+} ProtoIdSendState;
+
+static int ProtoIdCaptureSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    ProtoIdSendState* s = (ProtoIdSendState*)ctx;
+
+    WOLFSSH_UNUSED(ssh);
+
+    if (sz > sizeof(s->buf) - s->len)
+        return WS_CBIO_ERR_GENERAL;
+
+    WMEMCPY(s->buf + s->len, buf, sz);
+    s->len += sz;
+
+    return (int)sz;
+}
+
+
 /* DoProtoId() Unit Test */
 static int test_DoProtoId(void)
 {
@@ -557,6 +581,9 @@ static int test_DoProtoId(void)
         }
     }
 
+    {
+    static char tooLongProtoId[WOLFSSH_PROTOID_LIMIT + 2];
+    static char justRightProtoId[WOLFSSH_PROTOID_LIMIT + 1];
     /* Ensure a malformed local protoId cannot be loaded. */
     {
         static const struct {
@@ -564,17 +591,44 @@ static int test_DoProtoId(void)
             const char* id;
             int expectSuccess;
         } protoIds[] = {
-            { "conforming custom ID", "SSH-2.0-this_is_my_app\r\n", 1 },
-            { "wrong version prefix", "SSH-2-this_is_my_app\r\n",   0 },
-            { "LF terminator only",   "SSH-2.0-this_is_my_app\n",    0 },
-            { "CR terminator only",   "SSH-2.0-this_is_my_app\r",    0 },
-            { "empty string",         "",                            0 },
-            { "prefix with no body",  "SSH-2.0-\r\n",                0 },
-            { "missing prefix",       "hello\r\n",                   0 },
+            { "conforming custom ID",  "SSH-2.0-this_is_my_app\r\n",  1 },
+            { "shortest valid Id",     "SSH-2.0-t\r\n",               1 },
+            { "exact len custom ID",   justRightProtoId,              1 },
+            /* Pin the printable-ASCII range as inclusive at both ends: an
+             * interior 0x20 (the RFC 4253 "SP comments" suffix) and a
+             * 0x7e must both be accepted. */
+            { "body w/ SP comments",   "SSH-2.0-app comment\r\n",     1 },
+            { "body w/ tilde",         "SSH-2.0-app~1\r\n",           1 },
+            /* Failing Tests */
+            { "wrong version prefix",  "SSH-2-this_is_my_app\r\n",    0 },
+            { "bad casing prefix",     "sSH-2.0-this_is_my_app\r\n",  0 },
+            { "LF terminator only",    "SSH-2.0-this_is_my_app\n",    0 },
+            { "CR terminator only",    "SSH-2.0-this_is_my_app\r",    0 },
+            { "empty string",          "",                            0 },
+            { "prefix with no body",   "SSH-2.0-\r\n",                0 },
+            { "missing prefix",        "hello-this-is\r\n",           0 },
+            { "non ascii char",        "SSH-2.0-\x90s\r\n",           0 },
+            { "Body End in CR",        "SSH-2.0-s\r\r\n",             0 },
+            { "Body End in TAB",       "SSH-2.0-s\t\r\n",             0 },
+            { "body starts w/ space",  "SSH-2.0-\x20-a-b\r\n",        0 },
+            { "body has embedded TAB", "SSH-2.0-\x7e-a\t\r\n",        0 },
+            { "too long id",           tooLongProtoId,                0 },
+            { "null pointer",          NULL,                          0 },
         };
         int pc = (int)(sizeof(protoIds) / sizeof(protoIds[0]));
+        WMEMSET(tooLongProtoId, 'a', sizeof(tooLongProtoId));
+        WMEMCPY(tooLongProtoId, "SSH-2.0-", sizeof("SSH-2.0-") - 1);
+        tooLongProtoId[WOLFSSH_PROTOID_LIMIT + 1] = '\0';
+        tooLongProtoId[WOLFSSH_PROTOID_LIMIT]     = '\n';
+        tooLongProtoId[WOLFSSH_PROTOID_LIMIT - 1] = '\r';
+        WMEMSET(justRightProtoId, 'a', sizeof(justRightProtoId));
+        WMEMCPY(justRightProtoId, "SSH-2.0-", sizeof("SSH-2.0-") - 1);
+        justRightProtoId[WOLFSSH_PROTOID_LIMIT]     = '\0';
+        justRightProtoId[WOLFSSH_PROTOID_LIMIT - 1] = '\n';
+        justRightProtoId[WOLFSSH_PROTOID_LIMIT - 2] = '\r';
 
         for (i = 0; i < pc; i++) {
+            const char* prevId = clientCtx->sshProtoIdStr;
             ret = wolfSSH_CTX_SetSshProtoIdStr(clientCtx, protoIds[i].id);
             if ((ret == WS_SUCCESS) != protoIds[i].expectSuccess) {
                 fprintf(stderr,
@@ -584,7 +638,79 @@ static int test_DoProtoId(void)
                                                   : "WS_BAD_ARGUMENT");
                 failures++;
             }
+            if (!protoIds[i].expectSuccess &&
+                clientCtx->sshProtoIdStr != prevId) {
+                fprintf(stderr,
+                        "\t[protoId %d] \"%s\" FAIL: invalid proto id "
+                        "was stored\n",
+                        i, protoIds[i].name);
+                failures++;
+            }
+            if (clientCtx->sshProtoIdStrSz !=
+                    (word32)WSTRLEN(clientCtx->sshProtoIdStr)) {
+                fprintf(stderr,
+                        "\t[protoId %d] \"%s\" FAIL: stored sshProtoIdStrSz "
+                        "was not retained\n",
+                        i, protoIds[i].name);
+                failures++;
+            }
         }
+    }
+
+    /* A configured proto ID must reach the wire byte for byte. */
+    {
+        static const char* const sendIds[] = {
+            "SSH-2.0-this_is_my_app\r\n",
+            "SSH-2.0-t\r\n",
+            "SSH-2.0-app comment\r\n",
+            justRightProtoId,
+        };
+        int sc = (int)(sizeof(sendIds) / sizeof(sendIds[0]));
+
+        wolfSSH_SetIOSend(clientCtx, ProtoIdCaptureSend);
+
+        for (i = 0; i < sc; i++) {
+            ProtoIdSendState sendState;
+            word32 expectSz = (word32)WSTRLEN(sendIds[i]);
+
+            ret = wolfSSH_CTX_SetSshProtoIdStr(clientCtx, sendIds[i]);
+            if (ret != WS_SUCCESS) {
+                fprintf(stderr,
+                        "\t[send %d] FAIL: set proto id returned %d\n",
+                        i, ret);
+                failures++;
+                continue;
+            }
+
+            ssh = wolfSSH_new(clientCtx);
+            if (ssh == NULL) {
+                fprintf(stderr,
+                        "\t[send %d] FAIL: wolfSSH_new returned NULL\n", i);
+                failures++;
+                continue;
+            }
+
+            WMEMSET(&sendState, 0, sizeof(sendState));
+            wolfSSH_SetIOWriteCtx(ssh, &sendState);
+
+            ret = wolfSSH_TestSendProtoId(ssh);
+            if (ret != WS_SUCCESS) {
+                fprintf(stderr,
+                        "\t[send %d] FAIL: SendProtoId returned %d\n",
+                        i, ret);
+                failures++;
+            }
+            else if (sendState.len != expectSz ||
+                     WMEMCMP(sendState.buf, sendIds[i], expectSz) != 0) {
+                fprintf(stderr,
+                        "\t[send %d] FAIL: wrote %u bytes, expected the "
+                        "%u byte proto id back verbatim\n",
+                        i, sendState.len, expectSz);
+                failures++;
+            }
+            wolfSSH_free(ssh);
+        }
+    }
     }
 
     wolfSSH_CTX_free(serverCtx);
