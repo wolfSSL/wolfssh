@@ -883,6 +883,37 @@ int DoScpSource(WOLFSSH* ssh)
     return ret;
 }
 
+/* Contract is in wolfssh/wolfscp.h. */
+int wolfSSH_SCP_accept(WOLFSSH* ssh)
+{
+    int ret;
+
+    if (ssh == NULL)
+        return WS_BAD_ARGUMENT;
+
+    /* Clear a want left by the previous call so the retry starts clean,
+     * the way the other re-entrant entry points do. */
+    if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
+        ssh->error = WS_SUCCESS;
+
+    ret = DoScpRequest(ssh);
+
+    if (ret >= WS_SUCCESS) {
+        /* The tail of DoScpRequest() passes a read count through, so treat
+         * anything non-negative as done the way wolfSSH_accept() does. */
+        ret = WS_SCP_COMPLETE;
+    }
+    else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_WANT_READ) {
+        /* GetInputData() hides a read want behind WS_FATAL_ERROR. Write
+         * wants come back by value, and a stale WS_WANT_WRITE from an
+         * accepted short send can outlive a terminal result. */
+        ret = WS_WANT_READ;
+    }
+
+    return ret;
+}
+
+
 int DoScpRequest(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
