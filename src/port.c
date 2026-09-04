@@ -925,4 +925,32 @@ char* wstrncat(char* s1, const char* s2, size_t n)
     return NULL;
 }
 
+
+#ifdef USE_WINDOWS_API
+/* strsep() equivalent for platforms whose C library does not provide the
+ * BSD extension (MSVCRT/MinGW). Splits *s1 on the first character found
+ * in delim, NUL-terminates the token in place, and advances *s1 past it
+ * (NULL when no delimiter remains). Returns the start of the token, or
+ * NULL if *s1 was already NULL. */
+char* wstrsep(char** s1, const char* delim)
+{
+    char* start = *s1;
+    char* p;
+
+    if (start == NULL)
+        return NULL;
+
+    for (p = start; *p != '\0'; p++) {
+        if (WSTRCHR(delim, *p) != NULL) {
+            *p = '\0';
+            *s1 = p + 1;
+            return start;
+        }
+    }
+
+    *s1 = NULL;
+    return start;
+}
+#endif /* USE_WINDOWS_API */
+
 #endif /* WSTRING_USER */

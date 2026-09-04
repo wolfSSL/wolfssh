@@ -374,6 +374,8 @@ static int wolfSSH_DoOSC(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf,
      * not saved to escBuf and escState is never set to WS_ESC_OSC, so there is
      * no resume path. Returning WS_SUCCESS lets the caller advance past the
      * sequence and reset escState cleanly. */
+    WOLFSSH_UNUSED(handle);
+
     if (*idx >= bufSz) {
         /* missing the OSC command byte, drop the sequence */
         return WS_SUCCESS;

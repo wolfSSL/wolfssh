@@ -2622,7 +2622,6 @@ cleanup:
     word32 idx = 0;
     DWORD desiredAccess = 0;
     DWORD creationDisp = 0;
-    DWORD flagsAndAttrs = 0;
     int ret = WS_SUCCESS;
     int rc;
     int fileHandleOpened = 0;
@@ -3037,7 +3036,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         DWORD drives, mask;
         UINT driveType;
         char driveName[] = " :\\";
-        int i;
+        word32 i;
 
         WMEMSET(ssh->driveList, 0, sizeof ssh->driveList);
         ssh->driveListCount = 0;
@@ -10401,11 +10400,16 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                             break; /* either at end of file or error */
                         }
                     #else /* USE_WINDOWS_API */
+                        /* ReadFile() wants a DWORD* out param; state->rSz is
+                         * an int shared with the WFREAD() branch above. */
+                        DWORD wRSz = 0;
+
                         if (ReadFile(state->fileHandle, state->r,
-                                     WOLFSSH_MAX_SFTP_RW, &state->rSz,
+                                     WOLFSSH_MAX_SFTP_RW, &wRSz,
                                      &state->offset) == 0) {
                             break; /* either at end of file or error */
                         }
+                        state->rSz = (int)wRSz;
                     #endif /* USE_WINDOWS_API */
                     }
                     sz = wolfSSH_SFTP_SendWritePacket(ssh,

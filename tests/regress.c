@@ -11916,6 +11916,17 @@ static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
 }
 
 
+/* setenv()/unsetenv() are POSIX and have no MSVCRT equivalent; _putenv_s()
+ * matches their (name, value) shape and success/failure return closely
+ * enough for this test's own HOME juggling. */
+#ifdef USE_WINDOWS_API
+    #define TEST_SETENV(n,v)   _putenv_s((n), (v))
+    #define TEST_UNSETENV(n)   _putenv_s((n), "")
+#else
+    #define TEST_SETENV(n,v)   setenv((n), (v), 1)
+    #define TEST_UNSETENV(n)   unsetenv((n))
+#endif
+
 /* known_hosts is a text file and POSIX lets its last line end without a
  * newline, and a file written on Windows ends its lines with CRLF. Match the
  * last entry with a trailing newline, without one, and with CRLF line
@@ -11980,9 +11991,9 @@ static void TestKnownHostsLastEntry(void)
     (void)rmdir(homeDir);
 
     /* Use a single flag to avoid duplicate errors below. */
-    ready = (mkdir(homeDir, 0700) == 0)
-            && (mkdir(sshDir, 0700) == 0)
-            && (setenv("HOME", homeDir, 1) == 0);
+    ready = (WMKDIR(NULL, homeDir, 0700) == 0)
+            && (WMKDIR(NULL, sshDir, 0700) == 0)
+            && (TEST_SETENV("HOME", homeDir) == 0);
     AssertTrue(ready);
 
     /* A regression falls through to the "add it to known hosts?" prompt, so
@@ -12045,11 +12056,11 @@ static void TestKnownHostsLastEntry(void)
     }
 
     if (savedHome != NULL) {
-        AssertIntEQ(setenv("HOME", savedHome, 1), 0);
+        AssertIntEQ(TEST_SETENV("HOME", savedHome), 0);
         WFREE(savedHome, NULL, 0);
     }
     else {
-        unsetenv("HOME");
+        TEST_UNSETENV("HOME");
     }
 
     (void)remove(hostsPath);

@@ -721,7 +721,6 @@ int ClientSetEcho(int type)
 #else
     static int echoInit = 0;
     static DWORD originalTerm;
-    static CONSOLE_SCREEN_BUFFER_INFO screenOrig;
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
     if (!echoInit) {
         if (GetConsoleMode(stdinHandle, &originalTerm) == 0) {

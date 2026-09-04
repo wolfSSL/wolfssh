@@ -628,7 +628,6 @@ extern "C" {
     #define WSTRNCMP(s1,s2,n) strncmp((s1),(s2),(n))
     #define WSTRSPN(s1,s2)    strspn((s1),(s2))
     #define WSTRCSPN(s1,s2)   strcspn((s1),(s2))
-    #define WSTRSEP(s,d)      strsep((s),(d))
     #define WSTRCAT(s1,s2)    strcat((s1),(s2))
     #define WSTRCPY(s1,s2)    strcpy((s1),(s2))
 
@@ -640,6 +639,14 @@ extern "C" {
     #define WSTRNCAT(s1,s2,n) wstrncat((s1),(s2),(n))
     #define WSTRDUP(s,h,t)    wstrdup((s),(h),(t))
     #define WSTRCHR(s,c) strchr((s),(c))
+
+    #ifndef USE_WINDOWS_API
+        #define WSTRSEP(s,d)      strsep((s),(d))
+    #else
+        /* strsep() is a BSD extension not provided by MSVCRT/MinGW */
+        WOLFSSH_API char* wstrsep(char** s1, const char* delim);
+        #define WSTRSEP(s,d)      wstrsep((s),(d))
+    #endif
 
     #ifdef USE_WINDOWS_API
         #define WSTRNCPY(s1,s2,n) strncpy_s((s1),(n),(s2),(n))
