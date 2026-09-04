@@ -4208,8 +4208,8 @@ static int StartSSHD(int argc, char** argv)
      * conversion) may have set ServiceDebugCb even when -D was supplied.
      * Now that mygetopt has been processed, restore the file-based
      * callback in any case where output should go to logFile:
-     *   - isDaemon==0  → running interactively, logs to logFile (stderr)
-     *   - isDaemon==1 but -E was used → logs to the specified file
+     *   - isDaemon==0 running interactively, logs to logFile (stderr)
+     *   - isDaemon==1 but -E was used, logs to the specified file
      * This must happen BEFORE config/SetupCTX so their log messages are
      * captured in the file (or stderr) rather than lost to
      * OutputDebugString. */

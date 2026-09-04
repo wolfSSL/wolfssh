@@ -55,10 +55,6 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v1
 
-    - name: Restore wolfSSL NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssl
-      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
-
     - name: updated user_settings.h for sshd and x509
       working-directory: ${{ github.workspace }}
       shell: bash
@@ -107,10 +103,6 @@ jobs:
           wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
           wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
           wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
-
-    - name: Restore NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
-      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
 
     # Fails the build if the defines never reach wolfsshd.c (same guard as the
     # build-sys-ca-certs job).
@@ -173,10 +165,6 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v1
 
-    - name: Restore wolfSSL NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssl
-      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
-
     - name: user_settings.h for sshd, x509 and cert store without OPENSSL_ALL
       working-directory: ${{ github.workspace }}
       shell: bash
@@ -211,10 +199,6 @@ jobs:
           wolfssl/IDE/WIN/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
           wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/${{env.BUILD_PLATFORM}}/**
           wolfssl/${{env.WOLFSSL_BUILD_CONFIGURATION}}/**
-
-    - name: Restore NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
-      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
 
     # Fails the build unless auth.c really compiles the subject-CN branch:
     # WOLFSSL_FPKI must be absent and the cert store defines present.
@@ -271,10 +255,6 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v1
 
-    - name: Restore wolfSSL NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssl
-      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
-
     - name: user_settings.h with sshd, x509, cert store, and system CA certs
       working-directory: ${{ github.workspace }}
       shell: bash
@@ -291,10 +271,6 @@ jobs:
     - name: Build wolfssl library
       working-directory: ${{ github.workspace }}\wolfssl
       run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} /t:wolfssl ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
-
-    - name: Restore NuGet packages
-      working-directory: ${{ github.workspace }}\wolfssh\ide\winvs
-      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
 
     # Fails the build if the defines never reach wolfsshd.c, which otherwise
     # compiles its #else branch and silently degrades to a duplicate of build.
