@@ -34,6 +34,8 @@
 #include <stdlib.h>
 #ifndef _WIN32
     #include <arpa/inet.h>
+#else
+    #include <direct.h>
 #endif
 #include <string.h>
 #include <unistd.h>
@@ -11925,13 +11927,18 @@ static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
 
 /* setenv()/unsetenv() are POSIX and have no MSVCRT equivalent; _putenv_s()
  * matches their (name, value) shape and success/failure return closely
- * enough for this test's own HOME juggling. */
+ * enough for this test's own HOME juggling. WMKDIR is not an option here:
+ * it is only defined when wolfssh/port.h is built with SFTP, SCP, or sshd
+ * support, and this test compiles whenever WOLFSSL_BASE64_ENCODE is set,
+ * independent of those. */
 #ifdef USE_WINDOWS_API
     #define TEST_SETENV(n,v)   _putenv_s((n), (v))
     #define TEST_UNSETENV(n)   _putenv_s((n), "")
+    #define TEST_MKDIR(p,m)    _mkdir((p))
 #else
     #define TEST_SETENV(n,v)   setenv((n), (v), 1)
     #define TEST_UNSETENV(n)   unsetenv((n))
+    #define TEST_MKDIR(p,m)    mkdir((p), (m))
 #endif
 
 /* known_hosts is a text file and POSIX lets its last line end without a
@@ -11998,8 +12005,8 @@ static void TestKnownHostsLastEntry(void)
     (void)rmdir(homeDir);
 
     /* Use a single flag to avoid duplicate errors below. */
-    ready = (WMKDIR(NULL, homeDir, 0700) == 0)
-            && (WMKDIR(NULL, sshDir, 0700) == 0)
+    ready = (TEST_MKDIR(homeDir, 0700) == 0)
+            && (TEST_MKDIR(sshDir, 0700) == 0)
             && (TEST_SETENV("HOME", homeDir) == 0);
     AssertTrue(ready);
 
