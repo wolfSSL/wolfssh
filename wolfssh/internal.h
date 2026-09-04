@@ -867,6 +867,7 @@ struct WOLFSSH_CTX {
     word32 maxAuthAttempts;           /* server cap on failed userauth */
     byte side;                        /* client or server */
     byte showBanner;
+    byte appChannels;                 /* app drives channels, see ssh.h */
 #ifdef WOLFSSH_AGENT
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
@@ -1136,6 +1137,7 @@ struct WOLFSSH {
     byte serverState;
     byte processReplyState;
     byte isKeying;
+    byte appChannels;      /* app drives channels, see ssh.h */
     byte authId;           /* if using public key or password */
     byte supportedAuth[4]; /* supported auth IDs public key , password */
 

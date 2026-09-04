@@ -1672,6 +1672,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->highwaterMark = ctx->highwaterMark;
     ssh->msgHighwaterMark = ctx->msgHighwaterMark;
     ssh->maxAuthAttempts = ctx->maxAuthAttempts;
+    ssh->appChannels = ctx->appChannels;
     ssh->highwaterCtx  = (void*)ssh;
     ssh->reqSuccessCtx = (void*)ssh;
     ssh->fs            = NULL;
@@ -12630,6 +12631,61 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
 #endif /* WOLFSSH_TERM */
 
 
+/* Answers a shell, exec, or subsystem request. The session type, and the
+ * command for the two that carry one, are set for the callback to read and
+ * kept only if it accepts; a refused request leaves the channel as it was
+ * and the accept loop still waiting, so nothing serves a session the
+ * application turned down. Without a callback the request is accepted,
+ * unless the application drives its own channels. */
+static int DoChannelRequestSession(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel,
+        byte sessionType, WS_CallbackChannelReq cb,
+        byte* buf, word32 len, word32* idx, int* rej)
+{
+    char* prevCommand = NULL;
+    byte prevType = channel->sessionType;
+    byte hasCommand = (sessionType != WOLFSSH_SESSION_SHELL);
+    int ret = WS_SUCCESS;
+
+    if (hasCommand) {
+        prevCommand = channel->command;
+        channel->command = NULL;
+        ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
+                buf, len, idx);
+        if (ret == WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        channel->sessionType = sessionType;
+        if (cb != NULL) {
+            *rej = cb(channel, ssh->channelReqCtx);
+        }
+        else {
+            *rej = ssh->appChannels;
+        }
+    }
+
+    if (ret == WS_SUCCESS && !*rej) {
+        if (prevCommand != NULL) {
+            WFREE(prevCommand, ssh->ctx->heap, DYNTYPE_STRING);
+        }
+        ssh->clientState = CLIENT_DONE;
+    }
+    else {
+        if (hasCommand) {
+            if (channel->command != NULL) {
+                WFREE(channel->command, ssh->ctx->heap, DYNTYPE_STRING);
+            }
+            channel->command = prevCommand;
+        }
+        channel->sessionType = prevType;
+    }
+
+    return ret;
+}
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -12685,33 +12741,17 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
         else if (ChannelRequestIs(type, typeSz, "shell")) {
-            channel->sessionType = WOLFSSH_SESSION_SHELL;
-            if (ssh->ctx->channelReqShellCb) {
-                rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
-            }
-            ssh->clientState = CLIENT_DONE;
+            ret = DoChannelRequestSession(ssh, channel, WOLFSSH_SESSION_SHELL,
+                    ssh->ctx->channelReqShellCb, buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_EXEC;
-            if (ssh->ctx->channelReqExecCb) {
-                rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
-            }
-            ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+            ret = DoChannelRequestSession(ssh, channel, WOLFSSH_SESSION_EXEC,
+                    ssh->ctx->channelReqExecCb, buf, len, &begin, &rej);
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
-                    buf, len, &begin);
-            channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-            if (ssh->ctx->channelReqSubsysCb) {
-                rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
-            }
-            ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+            ret = DoChannelRequestSession(ssh, channel,
+                    WOLFSSH_SESSION_SUBSYSTEM, ssh->ctx->channelReqSubsysCb,
+                    buf, len, &begin, &rej);
         }
         #ifdef WOLFSSH_TERM
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
@@ -12850,7 +12890,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         int replyRet;
 
         if (rej) {
-            WLOG(WS_LOG_DEBUG, "Callback rejecting channel request.");
+            WLOG(WS_LOG_DEBUG, "Rejecting channel request.");
         }
         replyRet = SendChannelSuccess(ssh, channelId,
                 (ret == WS_SUCCESS && !rej));

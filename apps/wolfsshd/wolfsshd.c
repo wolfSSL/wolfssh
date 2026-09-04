@@ -359,6 +359,80 @@ static void CleanupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     (void)conf;
 }
 
+/* Answers a shell, exec or subsystem request as it arrives: a session this
+ * build cannot serve is refused with CHANNEL_FAILURE, rather than accepted
+ * and then dropped once the session is up. Returns 0 to accept and 1 to
+ * refuse. The command is NULL when the request carried none that fit. */
+static int SessionRequestCb(WOLFSSH_CHANNEL* channel, void* vCtx)
+{
+    WOLFSSHD_CONNECTION* conn = (WOLFSSHD_CONNECTION*)vCtx;
+    const char* cmd;
+    const char* reason = NULL;
+    int rej = 1;
+
+    if (conn == NULL || channel == NULL) {
+        return 1;
+    }
+
+    cmd = wolfSSH_ChannelGetSessionCommand(channel);
+    switch (wolfSSH_ChannelGetSessionType(channel)) {
+        case WOLFSSH_SESSION_SHELL:
+        #ifdef WOLFSSH_SHELL
+            rej = 0;
+        #else
+            reason = "shell support is disabled";
+        #endif
+            break;
+
+        case WOLFSSH_SESSION_EXEC:
+            if (cmd == NULL) {
+                reason = "exec request carried no command";
+                break;
+            }
+        #ifdef WOLFSSH_SCP
+            if (WSTRNCMP(cmd, "scp", 3) == 0) {
+                rej = 0;
+                break;
+            }
+        #endif
+        #ifdef WOLFSSH_SHELL
+            rej = 0;
+        #else
+            reason = "exec support is disabled";
+        #endif
+            break;
+
+        case WOLFSSH_SESSION_SUBSYSTEM:
+            if (cmd == NULL) {
+                reason = "subsystem request carried no name";
+            }
+        #ifdef WOLFSSH_SFTP
+            else if (WSTRCMP(cmd, "sftp") == 0) {
+                rej = 0;
+            }
+        #endif
+            else {
+                reason = "unknown or unsupported subsystem";
+            }
+            break;
+
+        case WOLFSSH_SESSION_UNKNOWN:
+        case WOLFSSH_SESSION_TERMINAL:
+        default:
+            reason = "unsupported session type";
+            break;
+    }
+
+    if (rej) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Refusing session request from %s: %s [%s]",
+            conn->ip, reason, cmd != NULL ? cmd : "");
+    }
+
+    return rej;
+}
+
+
 /* Initializes and sets up the WOLFSSH_CTX struct based on the configure options
  * return WS_SUCCESS on success
  */
@@ -386,6 +460,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
     if (ret == WS_SUCCESS) {
         wolfSSH_SetUserAuth(*ctx, DefaultUserAuth);
         wolfSSH_SetUserAuthResult(*ctx, UserAuthResult);
+        wolfSSH_CTX_SetChannelReqShellCb(*ctx, SessionRequestCb);
+        wolfSSH_CTX_SetChannelReqExecCb(*ctx, SessionRequestCb);
+        wolfSSH_CTX_SetChannelReqSubsysCb(*ctx, SessionRequestCb);
     }
 
     /* set banner to display on connection */
@@ -2545,6 +2622,7 @@ static void* HandleConnection(void* arg)
         /* let UserAuthResult reach this connection to cancel the grace timer
          * and to reach conn->auth for the cert force-command */
         wolfSSH_SetUserAuthResultCtx(ssh, conn);
+        wolfSSH_SetChannelReqCtx(ssh, conn);
     #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
         /* Unix-only: each connection is a forked child with its own copy of the
          * auth struct. Windows does not enforce OpenSSH certs. */
