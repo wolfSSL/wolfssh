@@ -22666,6 +22666,9 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz)
     byte found;
     char *path;
     void *heap = NULL;
+#if defined(WOLFSSL_NUCLEUS) || defined(USE_WINDOWS_API)
+    int  j;
+#endif
 
     if (in == NULL || inSz <= 0) {
         return WS_BAD_ARGUMENT;
@@ -22765,19 +22768,16 @@ int wolfSSH_CleanPath(WOLFSSH* ssh, char* in, int inSz)
         }
 
         /* clean up any multiple drive listed i.e. A:/A: */
-        {
-            int i,j;
-            sz = (long)WSTRLEN(path);
-            for (i = 0, j = 0; i < sz; i++) {
-                if (path[i] == ':') {
-                    if (j == 0) j = i;
-                    else {
-                        /* @TODO only checking once */
-                        WMEMMOVE(path, path + i - WS_DRIVE_SIZE,
-                                sz - i + WS_DRIVE_SIZE);
-                        path[sz - i + WS_DRIVE_SIZE] = '\0';
-                        break;
-                    }
+        sz = (long)WSTRLEN(path);
+        for (i = 0, j = 0; i < sz; i++) {
+            if (path[i] == ':') {
+                if (j == 0) j = i;
+                else {
+                    /* @TODO only checking once */
+                    WMEMMOVE(path, path + i - WS_DRIVE_SIZE,
+                            sz - i + WS_DRIVE_SIZE);
+                    path[sz - i + WS_DRIVE_SIZE] = '\0';
+                    break;
                 }
             }
         }

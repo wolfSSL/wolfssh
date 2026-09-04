@@ -88,6 +88,12 @@ jobs:
       timeout-minutes: 2
       run: .\sshd_login_grace_test.ps1 -SshdExe "$env:SSHD_PATH"
 
+    - name: Test wolfsshd -D option parsing on Windows
+      working-directory: ${{ github.workspace }}\wolfssh\apps\wolfsshd\test
+      shell: pwsh
+      timeout-minutes: 2
+      run: .\sshd_dash_d_test.ps1 -SshdExe "$env:SSHD_PATH"
+
   # Build and run the self-contained unit tests with the MSVC AddressSanitizer.
   # This is the only job that executes wolfSSH tests under a sanitizer on
   # Windows, where the USE_WINDOWS_API console code (e.g. wolfSSH_DoOSC) is
@@ -220,3 +226,83 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "$t failed under ASAN (exit $LASTEXITCODE)" }
         }
 
+  # Build and run the autotools regression tests under MSYS2 MinGW64. MinGW
+  # defines _WIN32, so wolfssh/settings.h turns on USE_WINDOWS_API and the
+  # Windows-only coverage in tests/regress.c (TestSftpWindowsOpenFlagMatrix,
+  # which walks the RecvOpen CREAT/EXCL/TRUNC/APPEND matrix against the
+  # CreateFile() disposition table) actually compiles and runs. The MSVC
+  # solution has no regress project and regress.c does not build with cl (it
+  # uses arpa/inet.h and unistd.h), so without this job that matrix runs in no
+  # CI at all. wolfsshd is left out of the build: its autotools path is not
+  # MinGW-clean and the MSVC solution already covers it.
+  mingw-regress:
+    name: MSYS2 MinGW64 regression tests
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+    - name: Set up MSYS2 MinGW64
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: false
+        install: >-
+          base-devel
+          autotools
+          git
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-pkgconf
+
+    - name: Checkout wolfssl
+      uses: actions/checkout@v4
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - name: Build and install wolfssl
+      working-directory: wolfssl
+      run: |
+        ./autogen.sh
+        # --enable-all pulls in --enable-crl-monitor, which wolfSSL's configure
+        # rejects on MinGW (it is limited to linux, OS X, and freebsd). Turn it
+        # back off explicitly; wolfSSH does not use the CRL monitor.
+        ./configure --enable-all --disable-crl-monitor \
+          --enable-static --disable-shared \
+          --prefix="$HOME/wolfssl-install"
+        make -j$(nproc)
+        make install
+
+    - name: Checkout wolfssh
+      uses: actions/checkout@v4
+      with:
+        path: wolfssh
+
+    - name: Build and run the regression tests
+      working-directory: wolfssh
+      run: |
+        # Run autoreconf directly instead of ./autogen.sh: for a git checkout
+        # autogen.sh exports WARNINGS="all,error", turning autotools warnings
+        # into errors that the MSYS2 automake can trip on.
+        autoreconf -ivf
+        # wolfssl is a static archive here, so its Windows socket (ws2_32) and
+        # certificate store (crypt32) references are only resolved when this
+        # configure's own AC_CHECK_LIB and later link steps pull them in too.
+        ./configure --enable-sftp \
+          CPPFLAGS="-I$HOME/wolfssl-install/include" \
+          LDFLAGS="-L$HOME/wolfssl-install/lib" \
+          LIBS="-lws2_32 -lcrypt32"
+        # MinGW's EXEEXT is ".exe", so the check_PROGRAMS targets automake
+        # generates are tests/regress.test.exe and tests/unit.test.exe, not
+        # the extension-less names make would use on a POSIX host.
+        make -j$(nproc) tests/regress.test.exe tests/unit.test.exe
+        ./tests/regress.test.exe
+        ./tests/unit.test.exe
+
+    - name: Show config.log on failure
+      if: failure()
+      working-directory: wolfssh
+      run: cat config.log

@@ -32,7 +32,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <arpa/inet.h>
+#ifndef _WIN32
+    #include <arpa/inet.h>
+#else
+    #include <direct.h>
+#endif
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -9188,6 +9192,13 @@ static void TestClientBuffersIdempotent(void)
 }
 #endif
 
+/* Windows has no /dev/null; the null device there is "NUL". */
+#ifdef USE_WINDOWS_API
+    #define TEST_NULL_DEVICE   "NUL"
+#else
+    #define TEST_NULL_DEVICE   "/dev/null"
+#endif
+
 /* Simulate Ctrl+D (stdin EOF) during password prompt; expect failure but no crash. */
 static void TestPasswordEofNoCrash(void)
 {
@@ -9202,7 +9213,7 @@ static void TestPasswordEofNoCrash(void)
 
     savedStdin = dup(STDIN_FILENO);
     AssertTrue(savedStdin >= 0);
-    devNull = open("/dev/null", O_RDONLY);
+    devNull = open(TEST_NULL_DEVICE, O_RDONLY);
     AssertTrue(devNull >= 0);
     AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
 
@@ -13167,6 +13178,22 @@ static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
 }
 
 
+/* setenv()/unsetenv() are POSIX and have no MSVCRT equivalent; _putenv_s()
+ * matches their (name, value) shape and success/failure return closely
+ * enough for this test's own HOME juggling. WMKDIR is not an option here:
+ * it is only defined when wolfssh/port.h is built with SFTP, SCP, or sshd
+ * support, and this test compiles whenever WOLFSSL_BASE64_ENCODE is set,
+ * independent of those. */
+#ifdef USE_WINDOWS_API
+    #define TEST_SETENV(n,v)   _putenv_s((n), (v))
+    #define TEST_UNSETENV(n)   _putenv_s((n), "")
+    #define TEST_MKDIR(p,m)    _mkdir((p))
+#else
+    #define TEST_SETENV(n,v)   setenv((n), (v), 1)
+    #define TEST_UNSETENV(n)   unsetenv((n))
+    #define TEST_MKDIR(p,m)    mkdir((p), (m))
+#endif
+
 /* known_hosts is a text file and POSIX lets its last line end without a
  * newline, and a file written on Windows ends its lines with CRLF. Match the
  * last entry with a trailing newline, without one, and with CRLF line
@@ -13231,9 +13258,9 @@ static void TestKnownHostsLastEntry(void)
     (void)rmdir(homeDir);
 
     /* Use a single flag to avoid duplicate errors below. */
-    ready = (mkdir(homeDir, 0700) == 0)
-            && (mkdir(sshDir, 0700) == 0)
-            && (setenv("HOME", homeDir, 1) == 0);
+    ready = (TEST_MKDIR(homeDir, 0700) == 0)
+            && (TEST_MKDIR(sshDir, 0700) == 0)
+            && (TEST_SETENV("HOME", homeDir) == 0);
     AssertTrue(ready);
 
     /* A regression falls through to the "add it to known hosts?" prompt, so
@@ -13241,7 +13268,7 @@ static void TestKnownHostsLastEntry(void)
      * Check each step, otherwise a failure here leaves the prompt reading
      * the real stdin. */
     savedStdin = dup(STDIN_FILENO);
-    devNull = open("/dev/null", O_RDONLY);
+    devNull = open(TEST_NULL_DEVICE, O_RDONLY);
     ready = ready && (savedStdin >= 0) && (devNull >= 0)
             && (dup2(devNull, STDIN_FILENO) >= 0);
     AssertTrue(ready);
@@ -13296,11 +13323,11 @@ static void TestKnownHostsLastEntry(void)
     }
 
     if (savedHome != NULL) {
-        AssertIntEQ(setenv("HOME", savedHome, 1), 0);
+        AssertIntEQ(TEST_SETENV("HOME", savedHome), 0);
         WFREE(savedHome, NULL, 0);
     }
     else {
-        unsetenv("HOME");
+        TEST_UNSETENV("HOME");
     }
 
     (void)remove(hostsPath);
