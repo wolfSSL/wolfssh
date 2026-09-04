@@ -294,3 +294,8 @@ jobs:
         make -j$(nproc) tests/regress.test tests/unit.test
         ./tests/regress.test
         ./tests/unit.test
+
+    - name: Show config.log on failure
+      if: failure()
+      working-directory: wolfssh
+      run: cat config.log
