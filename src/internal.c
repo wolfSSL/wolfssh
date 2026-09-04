@@ -14187,18 +14187,30 @@ int ValidateProtoId(const char* protoIdStr, word32 len)
 {
     word32 i;
 
+    /* The length check must stay first: every check below indexes into
+     * protoIdStr or subtracts from the unsigned len. The minimum is the
+     * "SSH-2.0-" prefix plus one body byte plus CRLF. */
     if (protoIdStr == NULL ||
-            len < SSH_PROTO_SZ + 1 + SSH_PROTO_EOL_SZ ||
+            len < SSH_PROTO_MIN ||
             len > WOLFSSH_PROTOID_LIMIT) {
         WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must be between %d and "
                 "%d bytes, counting the prefix and the terminator",
-                SSH_PROTO_SZ + 1 + SSH_PROTO_EOL_SZ, WOLFSSH_PROTOID_LIMIT);
+                SSH_PROTO_MIN, WOLFSSH_PROTOID_LIMIT);
         return WS_BAD_ARGUMENT;
     }
 
     if (WSTRNCMP(protoIdStr, sshProtoIdPrefix, SSH_PROTO_SZ) != 0) {
         WLOG(WS_LOG_ERROR, "Proto Id was invalid: it must start with "
                 "\"SSH-2.0-\"");
+        return WS_BAD_ARGUMENT;
+    }
+
+    /* RFC 4253 section 4.2 splits the line as "SSH-2.0-" softwareversion
+     * [SP comments] CRLF. A leading space would make softwareversion
+     * empty, so reject it. */
+    if (protoIdStr[SSH_PROTO_SZ] == ' ') {
+        WLOG(WS_LOG_ERROR, "Proto Id was invalid: the body must start with a "
+                "non-space character");
         return WS_BAD_ARGUMENT;
     }
 
@@ -14209,7 +14221,7 @@ int ValidateProtoId(const char* protoIdStr, word32 len)
 
     for (i = 0; i < len - SSH_PROTO_EOL_SZ; i++) {
         byte c = (byte)protoIdStr[i];
-
+        /* spaces are intetionally allowed */
         if (c < 0x20 || c > 0x7e) {
             WLOG(WS_LOG_ERROR, "Proto Id was invalid: byte %u is "
                     "not printable US-ASCII", i);
@@ -24266,6 +24278,11 @@ int wolfSSH_TestBuildUserAuthRequestMlDsaComposite(WOLFSSH* ssh,
 int wolfSSH_TestDoProtoId(WOLFSSH* ssh)
 {
     return DoProtoId(ssh);
+}
+
+int wolfSSH_TestSendProtoId(WOLFSSH* ssh)
+{
+    return SendProtoId(ssh);
 }
 
 int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
