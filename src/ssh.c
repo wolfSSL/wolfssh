@@ -66,6 +66,7 @@ int wolfSSH_Init(void)
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_Init()");
+    WLOG(WS_LOG_DEBUG, "DEBUGDEBUG");
     if (wolfCrypt_Init() != 0)
         ret = WS_CRYPTO_FAILED;
 
