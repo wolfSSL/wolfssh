@@ -257,7 +257,10 @@ static int AppendKeyToFile(const char* filename, const char* name,
     if (ret == WS_SUCCESS) {
         const int needsNewline = AppendNeedsNewline(filename);
 
-        ret = WFOPEN(NULL, &f, filename, "a");
+        /* Binary mode: text mode would translate '\n' to CRLF on Windows,
+         * and known_hosts is conventionally LF-terminated regardless of
+         * platform. */
+        ret = WFOPEN(NULL, &f, filename, "ab");
         if (ret == 0 && f != WBADFILE) {
             /* Check the write and the close so a failed or truncated entry
              * (for example on a full disk) is reported rather than appearing
