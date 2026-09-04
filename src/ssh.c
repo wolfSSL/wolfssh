@@ -1252,6 +1252,9 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
             /* received response */
             ret = WS_SUCCESS;
         }
+        /* A reply queued during that read has not gone out yet. */
+        if (ret == WS_SUCCESS && wolfSSH_OutputPending(ssh))
+            ret = WS_WANT_WRITE;
     }
 
     if (ssh != NULL && ssh->channelList == NULL) {
@@ -1288,8 +1291,11 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
     if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
         ret = WS_FATAL_ERROR;
 
-    if (ret == WS_SUCCESS)
-        ret = ssh->error = SendKexInit(ssh);
+    if (ret == WS_SUCCESS) {
+        ret = SendKexInit(ssh);
+        if (ret != WS_SUCCESS)
+            ssh->error = ret;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TriggerKeyExchange(), ret = %d", ret);
     return ret;
@@ -3731,6 +3737,7 @@ const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 {
     int ret = WS_SUCCESS;
+    int sendRet = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_worker()");
 
@@ -3747,58 +3754,29 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
         return WS_FATAL_ERROR;
     }
 
-#ifdef WOLFSSH_TEST_BLOCK
-    /* In forced non-blocking test mode, keep legacy ordering (send before
-     * receive) to match the harness expectations and avoid synthetic spins. */
-    if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
-            ret = wolfSSH_SendPacket(ssh);
-    }
-    if (ret == WS_SUCCESS)
-        ret = DoReceive(ssh);
-#else
     /* Always service inbound data first so window updates can unblock sends. */
     if (ret == WS_SUCCESS) {
         ret = DoReceive(ssh);
     }
 
-    /* If receive only wanted read or delivered channel data, still try to
-     * flush any pending outbound packets. */
-    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD
-            || ret == WS_EOF) {
-        int sendRet = WS_SUCCESS;
+    /* Flush queued output whatever DoReceive() made of the socket, since an
+     * idle receive reports WS_FATAL_ERROR. !ssh->disconnected gates it. */
+    if (ssh != NULL && !ssh->disconnected && ssh->outputBuffer.length != 0) {
+        int rxErr = ssh->error;
 
-        if (ssh->outputBuffer.length != 0)
-            sendRet = wolfSSH_SendPacket(ssh);
-
-        /* If send is back-pressured, immediately try another receive to pick
-         * up potential window-adjusts and then return the send status. The
-         * send status wins; a peer EOF stays latched on the channel. */
-        if (sendRet == WS_WANT_WRITE || sendRet == WS_WINDOW_FULL) {
-            int recv2 = DoReceive(ssh);
-            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD
-                    || recv2 == WS_EOF)
+        sendRet = wolfSSH_SendPacket(ssh);
+        if (sendRet != WS_SUCCESS) {
+            if (ret == WS_SUCCESS) {
                 ret = sendRet;
-            else
-                ret = recv2;
+            }
+            else if ((ret == WS_CHANNEL_CLOSED && sendRet != WS_WANT_WRITE)
+                    || (ret == WS_FATAL_ERROR && rxErr != WS_WANT_READ)) {
+                /* A failed receive outranks the flush, and so does a close
+                 * whose flush hard-failed: callers route teardown on it.
+                 * Every other status keeps the code the send set. */
+                ssh->error = rxErr;
+            }
         }
-        else {
-            /* Preserve meaningful receive status when send succeeded. */
-            if (sendRet != WS_SUCCESS)
-                ret = sendRet;
-            /* else leave ret as prior receive result (SUCCESS/WANT_READ/CHAN_RXD). */
-        }
-    }
-#endif /* WOLFSSH_TEST_BLOCK */
-
-    /* DoChannelClose() bundles the reply inside DoReceive(), and callers
-     * treat the close as terminal, so flush it here. The close stays the
-     * return value; a short flush leaves WS_WANT_WRITE latched. */
-    if (ret == WS_CHANNEL_CLOSED && ssh->outputBuffer.length != 0) {
-        int closeErr = ssh->error;
-
-        if (wolfSSH_SendPacket(ssh) == WS_SUCCESS)
-            ssh->error = closeErr;
     }
 
     /* WS_EXTDATA and WS_EOF report the channel too, so a multi-channel caller
@@ -3809,12 +3787,10 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
             *channelId = ssh->lastRxId;
         }
 
-        /* WS_EXTDATA and WS_EOF are raised once, on arrival; masking either
-         * strands the event, and the stderr window credit with it. A
-         * disconnect cannot be seen here: the gate at the top returns before
-         * this, and the DISCONNECT that sets the flag mid-pass leaves ret
-         * fatal. */
-        if (ssh->isKeying && ret != WS_EXTDATA && ret != WS_EOF) {
+        /* Report the rekey, unless it would hide a once-only WS_EXTDATA
+         * or WS_EOF, or the error from a flush that failed. */
+        if (ssh->isKeying && ret != WS_EXTDATA && ret != WS_EOF
+                && sendRet == WS_SUCCESS) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }
@@ -4252,8 +4228,9 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
         }
     }
     else {
-        /* SendPacket() records only WS_WANT_WRITE, so a hard failure has to
-         * be recorded here; rewriting WS_WANT_WRITE is deliberate. */
+        /* The adjust can fail before it reaches the transport, so the code
+         * is recorded here; the log skips a WS_WANT_WRITE, which only asks
+         * for a retry. */
         ssh->error = updateResult;
         if (updateResult != WS_WANT_WRITE) {
             WLOG(WS_LOG_ERROR,
@@ -4313,8 +4290,9 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
                 ssh->error = savedError;
         }
         else {
-            /* SendPacket() sets ssh->error only for WS_WANT_WRITE, so hard
-             * failures must be recorded here or they stay hidden. */
+            /* The adjust can fail before it reaches the transport, so the
+             * code is recorded here; the log skips a WS_WANT_WRITE, which
+             * only asks for a retry. */
             ssh->error = adjustResult;
             if (adjustResult != WS_WANT_WRITE) {
                 WLOG(WS_LOG_ERROR,

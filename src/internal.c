@@ -5142,6 +5142,7 @@ static int SendPacketFlush(WOLFSSH* ssh)
 
     if (ssh->ctx->ioSendCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Send callback is null, please set");
+        ssh->error = WS_SOCKET_ERROR_E;
         return WS_SOCKET_ERROR_E;
     }
 
@@ -5152,6 +5153,7 @@ static int SendPacketFlush(WOLFSSH* ssh)
         if (ssh->outputBuffer.length > ssh->outputBuffer.bufferSz ||
                 ssh->outputBuffer.length < ssh->outputBuffer.idx) {
             WLOG(WS_LOG_ERROR, "Bad buffer state");
+            ssh->error = WS_BUFFER_E;
             return WS_BUFFER_E;
         }
 
@@ -5190,11 +5192,13 @@ static int SendPacketFlush(WOLFSSH* ssh)
                     ssh->outputBuffer.plainSz = 0;
                     ShrinkBuffer(&ssh->outputBuffer, 1);
             }
+            ssh->error = WS_SOCKET_ERROR_E;
             return WS_SOCKET_ERROR_E;
         }
 
         if ((word32)sent > ssh->outputBuffer.length) {
             WLOG(WS_LOG_DEBUG, "wolfSSH_SendPacket() out of bounds read");
+            ssh->error = WS_SEND_OOB_READ_E;
             return WS_SEND_OOB_READ_E;
         }
 
@@ -5219,7 +5223,9 @@ static int SendPacketFlush(WOLFSSH* ssh)
 }
 
 
-/* returns WS_SUCCESS on success */
+/* returns WS_SUCCESS on success. Transport failures record their code in
+ * ssh->error, so a later write to that field on the same pass has to be
+ * conditional on this having succeeded, or it hides the dead transport. */
 int wolfSSH_SendPacket(WOLFSSH* ssh)
 {
     int ret;
@@ -14364,6 +14370,10 @@ static int BundlePacket(WOLFSSH* ssh)
     }
     else {
         WLOG(WS_LOG_DEBUG, "BP: failed to encrypt buffer");
+        if (ssh != NULL) {
+            /* Drop the aborted packet */
+            ssh->outputBuffer.length = ssh->packetStartIdx;
+        }
     }
 
     return ret;

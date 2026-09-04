@@ -1361,7 +1361,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                          * peer. Both want fixing where they can be tested. */
                         continue;
                     }
-                    else if (rc != WS_WANT_READ) {
+                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
                         break;
                     }
                 }

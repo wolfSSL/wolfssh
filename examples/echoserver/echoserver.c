@@ -1016,12 +1016,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 rc = wolfSSH_get_error(ssh);
 
                 /* The peer is done sending: hand back the backlog and answer
-                 * its EOF, or a client that half-closed waits on a server
-                 * that never finishes -- the library no longer answers for
-                 * us. Off the channel's own state, not the WS_EOF status: the
-                 * flush inside wolfSSH_worker() can supersede that, and it is
-                 * raised once. Echo mode only; a shell child on a pty is
-                 * still producing, so its EOF waits for the child to exit. */
+                 * its EOF, since the library no longer answers for us. Off
+                 * the channel's own state, not the once-only WS_EOF status.
+                 * Echo mode only; a shell child on a pty still produces. */
                 if (!eofAnswered && echoOnly) {
                     WOLFSSH_CHANNEL* eofChannel;
 
@@ -1205,7 +1202,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * above, which has already run this pass. */
                         continue;
                     }
-                    else if (rc != WS_WANT_READ) {
+                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
