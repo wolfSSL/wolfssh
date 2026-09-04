@@ -466,8 +466,9 @@ WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
  * accept() already returned, nothing is left to service it.
  *
  * Set it on the context before wolfSSH_new(), or on a session before the
- * first wolfSSH_accept() call. Turning it on once accept() has established
- * the session has no effect on that session.
+ * first wolfSSH_accept() call. Turning it on later still applies to the
+ * channel requests that follow, but it cannot move where accept() returns
+ * on a session that has already gone past the user-auth stop.
  *
  * The mode drives the session channels itself, so it does not combine with
  * the built-in wolfSSH_SFTP_accept() and WS_SCP_INIT entry points; an

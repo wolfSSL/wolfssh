@@ -1637,11 +1637,21 @@ static void TestAppChannelsCtxInherits(void)
 }
 
 /* Turning the mode on after accept() established the session must not leave
- * the accept loop hunting for a state it has already stepped past. */
+ * the accept loop hunting for a state it has already stepped past. The flag
+ * still reaches DoChannelRequest() from there, which is what ssh.h promises,
+ * so pin both halves: accept() stays put, the requests that follow flip. */
 static void TestAppChannelsLateEnableReturns(void)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
+    /* SSH_MSG_CHANNEL_REQUEST body: channel 0, "shell", wantReply. */
+    static byte payShell[] = {
+        0x00,0x00,0x00,0x00,                /* channelId = 0  */
+        0x00,0x00,0x00,0x05,                /* typeSz = 5     */
+        0x73,0x68,0x65,0x6C,0x6C,           /* "shell"        */
+        0x01                                /* wantReply = 1  */
+    };
+    word32 idx;
 
     InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
             0, NULL);
@@ -1652,10 +1662,23 @@ static void TestAppChannelsLateEnableReturns(void)
     AssertIntEQ(harness.server->acceptState,
             ACCEPT_CLIENT_SESSION_ESTABLISHED);
 
+    /* Default mode, no callback registered: the request is granted. */
+    idx = 0;
+    AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
+            (word32)sizeof(payShell), &idx), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_worker(harness.client, NULL), WS_SUCCESS);
+
     AssertIntEQ(wolfSSH_SetAppChannels(harness.server, 1), WS_SUCCESS);
     AssertIntEQ(wolfSSH_accept(harness.server), WS_SUCCESS);
     AssertIntEQ(harness.server->acceptState,
             ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    /* Same request, same session, mode now on: refused instead. */
+    idx = 0;
+    AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
+            (word32)sizeof(payShell), &idx), WS_SUCCESS);
+    AssertTrue(wolfSSH_worker(harness.client, NULL) < WS_SUCCESS);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_CHANOPEN_FAILED);
 
     FreeKexReplyHarness(&harness);
 }
