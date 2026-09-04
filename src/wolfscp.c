@@ -903,14 +903,11 @@ int wolfSSH_SCP_accept(WOLFSSH* ssh)
          * anything non-negative as done the way wolfSSH_accept() does. */
         ret = WS_SCP_COMPLETE;
     }
-    else {
-        /* A non-blocking want on a read path surfaces as a generic error
-         * with the want recorded in ssh->error (see GetInputData), so
-         * report it as the want the caller is told to retry on. */
-        int err = wolfSSH_get_error(ssh);
-
-        if (err == WS_WANT_READ || err == WS_WANT_WRITE)
-            ret = err;
+    else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_WANT_READ) {
+        /* GetInputData() hides a read want behind WS_FATAL_ERROR. Write
+         * wants come back by value, and a stale WS_WANT_WRITE from an
+         * accepted short send can outlive a terminal result. */
+        ret = WS_WANT_READ;
     }
 
     return ret;
