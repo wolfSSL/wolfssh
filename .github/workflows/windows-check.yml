@@ -288,9 +288,13 @@ jobs:
         # autogen.sh exports WARNINGS="all,error", turning autotools warnings
         # into errors that the MSYS2 automake can trip on.
         autoreconf -ivf
+        # wolfssl is a static archive here, so its Windows socket (ws2_32) and
+        # certificate store (crypt32) references are only resolved when this
+        # configure's own AC_CHECK_LIB and later link steps pull them in too.
         ./configure --enable-sftp \
           CPPFLAGS="-I$HOME/wolfssl-install/include" \
-          LDFLAGS="-L$HOME/wolfssl-install/lib"
+          LDFLAGS="-L$HOME/wolfssl-install/lib" \
+          LIBS="-lws2_32 -lcrypt32"
         make -j$(nproc) tests/regress.test tests/unit.test
         ./tests/regress.test
         ./tests/unit.test
