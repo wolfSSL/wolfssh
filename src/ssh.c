@@ -567,10 +567,6 @@ static int DoReceiveHandshake(WOLFSSH* ssh)
 #endif /* !NO_WOLFSSH_SERVER || !NO_WOLFSSH_CLIENT */
 
 
-/* Defined below, ahead of both drivers; either can be the only one built. */
-static int SendAfterDisconnect(WOLFSSH* ssh);
-
-
 #ifndef NO_WOLFSSH_SERVER
 
 const char acceptError[] = "accept error: %s, %d";
@@ -764,8 +760,13 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
-                    ssh->error = wolfSSH_AGENT_ChannelOpen(ssh);
-                    if (ssh->error < WS_SUCCESS) {
+                    int agentRet = wolfSSH_AGENT_ChannelOpen(ssh);
+
+                    if (agentRet < WS_SUCCESS) {
+                        /* WS_FATAL_ERROR is the disconnect, which already
+                         * recorded WS_DISCONNECT; keep that. */
+                        if (agentRet != WS_FATAL_ERROR)
+                            ssh->error = agentRet;
                         WLOG(WS_LOG_DEBUG, acceptError,
                             "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
                         return WS_FATAL_ERROR;
@@ -1094,11 +1095,8 @@ int wolfSSH_connect(WOLFSSH* ssh)
 #endif /* NO_WOLFSSH_CLIENT */
 
 
-/* A disconnect, sent or received, ends the session, so nothing further may
- * go out. RFC 4253 section 11.1. Reads are deliberately not gated on this:
- * channel data that arrived before the disconnect is still the caller's.
- * Call only after ssh has been checked for NULL. */
-static int SendAfterDisconnect(WOLFSSH* ssh)
+/* See wolfssh/internal.h for the contract. */
+int SendAfterDisconnect(WOLFSSH* ssh)
 {
     if (ssh->disconnected) {
         WLOG(WS_LOG_DEBUG, "Send attempted after a disconnect");

@@ -1749,6 +1749,13 @@ int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh)
          * checks below would report a channel a client never opened. */
         ret = WS_BAD_ARGUMENT;
     }
+    else if (SendAfterDisconnect(ssh)) {
+        /* The session is over, so neither a new open nor the flush of one
+         * queued before the disconnect may go out. RFC 4253 section 11.1.
+         * WS_DISCONNECT is in ssh->error, where the rest of the API puts
+         * it. */
+        ret = WS_FATAL_ERROR;
+    }
     else if (!ssh->useAgent) {
         /* Nothing asked for agent forwarding on this session. */
         ret = WS_BAD_ARGUMENT;

@@ -4459,6 +4459,48 @@ static void TestAgentChannelOpenWithoutRequest(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* A poll after the peer disconnects must not open a channel or put anything
+ * on the wire. RFC 4253 section 11.1: the session is over. */
+static void TestAgentChannelOpenAfterDisconnect(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.ssh->disconnected = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_FATAL_ERROR);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* An open queued before the disconnect is not flushed either: those bytes
+ * belong to a session that is over, the same rule wolfSSH_shutdown() applies
+ * to everything but its own queued disconnect. */
+static void TestAgentChannelOpenQueuedThenDisconnect(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.io.blockNext = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_WANT_WRITE);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    harness.ssh->disconnected = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* A queued open publishes the agent, so the caller's next poll must finish
  * the send rather than report a success the peer never saw, and must not
  * open a second channel. */
@@ -13525,6 +13567,8 @@ int main(int argc, char** argv)
     TestAgentChannelNullAgentSendsOpenFail();
     TestAgentChannelOpenWithoutRequest();
     TestAgentChannelOpenFlushesQueuedOpen();
+    TestAgentChannelOpenAfterDisconnect();
+    TestAgentChannelOpenQueuedThenDisconnect();
     TestAgentChannelOpenSendFailureCleansUp();
 #ifndef NO_WOLFSSH_CLIENT
     TestAgentChannelOpenOnClientRefused();

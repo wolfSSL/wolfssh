@@ -1643,6 +1643,12 @@ enum ChannelOpenFailReasons {
     OPEN_RESOURCE_SHORTAGE
 };
 
+/* A disconnect, sent or received, ends the session, so nothing further may
+ * go out. RFC 4253 section 11.1. Returns 1 and records WS_DISCONNECT in
+ * ssh->error when the session is over, 0 otherwise. Reads are deliberately
+ * not gated on this: channel data that arrived before the disconnect is
+ * still the caller's. Call only after ssh has been checked for NULL. */
+WOLFSSH_LOCAL int SendAfterDisconnect(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoReceive(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
