@@ -898,6 +898,7 @@ struct WOLFSSH_CTX {
     word32 maxAuthAttempts;           /* server cap on failed userauth */
     byte side;                        /* client or server */
     byte showBanner;
+    byte appChannels;                 /* app drives channels, see ssh.h */
 #ifdef WOLFSSH_AGENT
     byte agentEnabled;
 #endif /* WOLFSSH_AGENT */
@@ -1167,6 +1168,7 @@ struct WOLFSSH {
     byte serverState;
     byte processReplyState;
     byte isKeying;
+    byte appChannels;      /* app drives channels, see ssh.h */
     byte authId;           /* if using public key or password */
     byte supportedAuth[4]; /* supported auth IDs public key , password */
 
@@ -1679,6 +1681,12 @@ enum ChannelOpenFailReasons {
     OPEN_RESOURCE_SHORTAGE
 };
 
+/* A disconnect, sent or received, ends the session, so nothing further may
+ * go out. RFC 4253 section 11.1. Returns 1 and records WS_DISCONNECT in
+ * ssh->error when the session is over, 0 otherwise. Reads are deliberately
+ * not gated on this: channel data that arrived before the disconnect is
+ * still the caller's. Call only after ssh has been checked for NULL. */
+WOLFSSH_LOCAL int SendAfterDisconnect(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoReceive(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
