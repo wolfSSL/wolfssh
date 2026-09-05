@@ -479,9 +479,11 @@ WOLFSSH_API void* wolfSSH_GetChannelReqCtx(WOLFSSH* ssh);
  * channel requests that follow, but it cannot move where accept() returns
  * on a session that has already gone past the user-auth stop.
  *
- * The mode drives the session channels itself, so it does not combine with
- * the built-in wolfSSH_SFTP_accept() and WS_SCP_INIT entry points; an
- * application using those leaves this off. */
+ * accept() never reaches the built-in SCP entry point in this mode, so
+ * WS_SCP_INIT is off the table. wolfSSH_SFTP_accept() still serves, but only
+ * a session channel the subsystem callback granted sftp on; called ahead of
+ * that it returns WS_INVALID_STATE_E without recording an error. A pending
+ * want-read or want-write is still cleared, as on any other call. */
 WOLFSSH_API int wolfSSH_CTX_SetAppChannels(WOLFSSH_CTX* ctx, byte enable);
 WOLFSSH_API int wolfSSH_SetAppChannels(WOLFSSH* ssh, byte enable);
 

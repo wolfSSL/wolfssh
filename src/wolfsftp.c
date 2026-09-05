@@ -1383,12 +1383,26 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
     if (ssh->error == WS_WANT_READ || ssh->error == WS_WANT_WRITE)
         ssh->error = WS_SUCCESS;
 
-    /* check accept is done, if not call wolfSSH accept. In
-     * application-driven mode accept() parks at ACCEPT_SERVER_USERAUTH_SENT
-     * and never advances, so that state counts as done here. */
-    if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED
-            && !(ssh->appChannels
-                && ssh->acceptState >= ACCEPT_SERVER_USERAUTH_SENT)) {
+    /* The grant is what says this session may be served, so it is asked
+     * for in every accept state. Below the user-auth stop the legacy
+     * branch would run the handshake itself, which in this mode returns
+     * with no channel open at all; at the stop or past it there is no
+     * accept() left that could have checked anything. */
+    if (ssh->appChannels) {
+        /* Application-driven mode parks accept() here for good, so the
+         * sftp grant it would have checked is the application's subsystem
+         * callback: serve only a session channel it granted sftp on. Same
+         * test as wolfSSH_accept()'s divert. */
+        const char* cmd = wolfSSH_GetSessionCommand(ssh);
+
+        if (wolfSSH_GetSessionType(ssh) != WOLFSSH_SESSION_SUBSYSTEM
+                || cmd == NULL || WSTRNCMP(cmd, "sftp", 4) != 0) {
+            WLOG(WS_LOG_SFTP, "No sftp subsystem granted on the session");
+            return WS_INVALID_STATE_E;
+        }
+    }
+    /* check accept is done, if not call wolfSSH accept */
+    else if (ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
         byte name[] = "sftp";
 
         WLOG(WS_LOG_SFTP, "Trying to do SSH accept first");
