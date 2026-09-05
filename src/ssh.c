@@ -616,10 +616,6 @@ static int DoReceiveHandshake(WOLFSSH* ssh)
 #endif /* !NO_WOLFSSH_SERVER || !NO_WOLFSSH_CLIENT */
 
 
-/* Defined below, ahead of both drivers; either can be the only one built. */
-static int SendAfterDisconnect(WOLFSSH* ssh);
-
-
 #ifndef NO_WOLFSSH_SERVER
 
 const char acceptError[] = "accept error: %s, %d";
@@ -628,6 +624,8 @@ const char acceptState[] = "accept state: %s";
 
 int wolfSSH_accept(WOLFSSH* ssh)
 {
+    byte stopState;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_accept()");
 
     if (ssh == NULL)
@@ -647,6 +645,15 @@ int wolfSSH_accept(WOLFSSH* ssh)
         return WS_INVALID_STATE_E;
     }
 
+    /* In application-driven mode the state machine stops as soon as the
+     * user is authenticated; everything past that is the application's.
+     * Only stop there if the session has not already gone by: the loop
+     * below tests the stop state exactly, so a state it has stepped over
+     * would never terminate it. */
+    stopState = (ssh->appChannels
+            && ssh->acceptState <= ACCEPT_SERVER_USERAUTH_SENT) ?
+        ACCEPT_SERVER_USERAUTH_SENT : ACCEPT_CLIENT_SESSION_ESTABLISHED;
+
     /* check if data pending to be sent */
     if (ssh->outputBuffer.length > 0 &&
             ssh->acceptState < ACCEPT_CLIENT_SESSION_ESTABLISHED) {
@@ -658,7 +665,11 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState != ACCEPT_SERVER_USERAUTH_ACCEPT_SENT &&
                 ssh->acceptState != ACCEPT_SERVER_KEXINIT_SENT &&
                 ssh->acceptState != ACCEPT_KEYED &&
-                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT) {
+                ssh->acceptState != ACCEPT_SERVER_CHANNEL_ACCEPT_SENT &&
+                /* Never step over where this call is meant to stop. The
+                 * loop below tests for that state exactly, and the SCP and
+                 * SFTP re-entry states sort after it. */
+                ssh->acceptState != stopState) {
                 WLOG(WS_LOG_DEBUG, "Advancing accept state");
                 ssh->acceptState++;
             }
@@ -680,7 +691,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         }
     }
 
-    while (ssh->acceptState != ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+    while (ssh->acceptState != stopState) {
         switch (ssh->acceptState) {
 
             case ACCEPT_BEGIN:
@@ -770,6 +781,12 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 }
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
+                if (stopState == ACCEPT_SERVER_USERAUTH_SENT) {
+                    /* The application takes it from here. Tested through
+                     * stopState so a callback that changed the flag during
+                     * this call cannot half-apply it. */
+                    break;
+                }
                 FALL_THROUGH;
 
             case ACCEPT_SERVER_USERAUTH_SENT:
@@ -813,52 +830,17 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
-                    WOLFSSH_AGENT_CTX* newAgent;
-                    WOLFSSH_CHANNEL* newChannel;
+                    int agentRet = wolfSSH_AGENT_ChannelOpen(ssh);
 
-                    WLOG(WS_LOG_AGENT, "Starting agent channel");
-
-                    newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
-                    if (newAgent == NULL) {
-                        ssh->error = WS_MEMORY_E;
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
-                        return WS_ERROR;
-                    }
-
-                    newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
-                            ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
-                    if (newChannel == NULL) {
-                        wolfSSH_AGENT_free(newAgent);
-                        ssh->error = WS_MEMORY_E;
+                    if (agentRet < WS_SUCCESS) {
+                        /* WS_FATAL_ERROR is the disconnect, which already
+                         * recorded WS_DISCONNECT; keep that. */
+                        if (agentRet != WS_FATAL_ERROR)
+                            ssh->error = agentRet;
                         WLOG(WS_LOG_DEBUG, acceptError,
                             "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
                         return WS_FATAL_ERROR;
                     }
-
-                    ssh->error = SendChannelOpenSession(ssh, newChannel);
-                    if (ssh->error < WS_SUCCESS) {
-                        if (ssh->error == WS_WANT_WRITE ||
-                                ssh->error == WS_WANT_READ) {
-                            ChannelAppend(ssh, newChannel);
-                        }
-                        else {
-                            ChannelDelete(newChannel, ssh->ctx->heap);
-                            wolfSSH_AGENT_free(newAgent);
-                        }
-                        WLOG(WS_LOG_DEBUG, acceptError,
-                            "SERVER_USERAUTH_ACCEPT_DONE", ssh->error);
-                        return WS_FATAL_ERROR;
-                    }
-                    ChannelAppend(ssh, newChannel);
-                    newAgent->channel = newChannel->channel;
-                    if (ssh->ctx->agentCb) {
-                        ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
-                                ssh->agentCbCtx);
-                    }
-                    if (ssh->agent != NULL)
-                        wolfSSH_AGENT_free(ssh->agent);
-                    ssh->agent = newAgent;
                 }
 #endif /* WOLFSSH_AGENT */
                 ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
@@ -1183,11 +1165,8 @@ int wolfSSH_connect(WOLFSSH* ssh)
 #endif /* NO_WOLFSSH_CLIENT */
 
 
-/* A disconnect, sent or received, ends the session, so nothing further may
- * go out. RFC 4253 section 11.1. Reads are deliberately not gated on this:
- * channel data that arrived before the disconnect is still the caller's.
- * Call only after ssh has been checked for NULL. */
-static int SendAfterDisconnect(WOLFSSH* ssh)
+/* See wolfssh/internal.h for the contract. */
+int SendAfterDisconnect(WOLFSSH* ssh)
 {
     if (ssh->disconnected) {
         WLOG(WS_LOG_DEBUG, "Send attempted after a disconnect");
@@ -4814,7 +4793,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
             newChannel, ret);
     return newChannel;
 }
@@ -5801,6 +5781,32 @@ int wolfSSH_CTX_SetChannelReqSubsysCb(WOLFSSH_CTX* ctx,
 
     if (ctx != NULL) {
         ctx->channelReqSubsysCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetAppChannels(WOLFSSH_CTX* ctx, byte enable)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    if (ctx != NULL) {
+        ctx->appChannels = (enable != 0);
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetAppChannels(WOLFSSH* ssh, byte enable)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh != NULL) {
+        ssh->appChannels = (enable != 0);
         ret = WS_SUCCESS;
     }
 

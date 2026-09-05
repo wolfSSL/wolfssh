@@ -1731,6 +1731,91 @@ int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled)
 }
 
 
+int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh)
+{
+    WOLFSSH_AGENT_CTX* newAgent = NULL;
+    WOLFSSH_CHANNEL* newChannel = NULL;
+    int ret = WS_SUCCESS;
+    /* wolfSSH_accept() clears only want-read/want-write/auth-pending, so a
+     * WS_BAD_ARGUMENT latched by a poll kills the handshake. */
+    int recordError = 0;
+
+    WLOG_ENTER();
+
+    if (ssh == NULL)
+        ret = WS_SSH_NULL_E;
+    else if (ssh->ctx->side != WOLFSSH_ENDPOINT_SERVER) {
+        /* Server side only. wolfSSH_connect() sets ssh->agent too, so the
+         * checks below would report a channel a client never opened. */
+        ret = WS_BAD_ARGUMENT;
+    }
+    else if (SendAfterDisconnect(ssh)) {
+        /* The session is over, so neither a new open nor the flush of one
+         * queued before the disconnect may go out. RFC 4253 section 11.1.
+         * WS_DISCONNECT is in ssh->error, where the rest of the API puts
+         * it. */
+        ret = WS_FATAL_ERROR;
+    }
+    else if (!ssh->useAgent) {
+        /* Nothing asked for agent forwarding on this session. */
+        ret = WS_BAD_ARGUMENT;
+    }
+    else if (ssh->agent == NULL) {
+        /* Nothing else sets ssh->agent, so a NULL one means "not opened
+         * yet". Idempotent, so a poll cannot open a second channel. */
+        WLOG(WS_LOG_AGENT, "Starting agent channel");
+
+        newAgent = wolfSSH_AGENT_new(ssh->ctx->heap);
+        if (newAgent == NULL)
+            ret = WS_MEMORY_E;
+
+        if (ret == WS_SUCCESS) {
+            newChannel = ChannelNew(ssh, ID_CHANTYPE_AUTH_AGENT,
+                    ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
+            if (newChannel == NULL)
+                ret = WS_MEMORY_E;
+        }
+
+        if (ret == WS_SUCCESS) {
+            recordError = 1;
+            ret = SendChannelOpenSession(ssh, newChannel);
+
+            if (ret < WS_SUCCESS
+                    && ret != WS_WANT_WRITE && ret != WS_WANT_READ) {
+                ChannelDelete(newChannel, ssh->ctx->heap);
+            }
+            else {
+                /* Publish on a queued open too, so a retry takes the
+                 * already-open path rather than opening a second. */
+                ChannelAppend(ssh, newChannel);
+                newAgent->channel = newChannel->channel;
+                ssh->agent = newAgent;
+                newAgent = NULL;
+                if (ssh->ctx->agentCb) {
+                    ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP,
+                            ssh->agentCbCtx);
+                }
+            }
+        }
+
+        if (newAgent != NULL)
+            wolfSSH_AGENT_free(newAgent);
+    }
+    else if (wolfSSH_OutputPending(ssh)) {
+        /* Any queued output, not just this open. Flush it rather than
+         * report a success the peer hasn't seen. */
+        recordError = 1;
+        ret = wolfSSH_SendPacket(ssh);
+    }
+
+    if (recordError)
+        ssh->error = ret;
+
+    WLOG_LEAVE(ret);
+    return ret;
+}
+
+
 int wolfSSH_AGENT_worker(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;

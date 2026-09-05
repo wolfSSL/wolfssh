@@ -1486,6 +1486,255 @@ static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo,
 }
 
 #ifndef WOLFSSH_NO_RSA_SHA2_256
+/* Counts the shell requests the application-driven server answered. */
+static int appChannelsShellReqCount;
+
+static int AppChannelsShellCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+    appChannelsShellReqCount++;
+    return 0;
+}
+
+/* Drive an application-driven server: wolfSSH_accept() is expected to return
+ * at userauth, so the channel open and the shell request are answered by
+ * wolfSSH_worker() calls the application makes itself. */
+static void RunAppChannelsHandshake(KexReplyHarness* harness,
+        KexReplyRunResult* result)
+{
+    word32 step;
+
+    WMEMSET(result, 0, sizeof(*result));
+    result->clientRet = WS_FATAL_ERROR;
+    result->serverRet = WS_FATAL_ERROR;
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        if (!result->clientSuccess) {
+            result->clientRet = wolfSSH_connect(harness->client);
+            result->clientErr = wolfSSH_get_error(harness->client);
+            if (result->clientRet == WS_SUCCESS) {
+                result->clientSuccess = 1;
+            }
+            else if (!IsHandshakeRetryable(result->clientErr)) {
+                result->steps = step + 1;
+                return;
+            }
+        }
+
+        if (!result->serverSuccess) {
+            result->serverRet = wolfSSH_accept(harness->server);
+            result->serverErr = wolfSSH_get_error(harness->server);
+            if (result->serverRet == WS_SUCCESS) {
+                result->serverSuccess = 1;
+            }
+            else if (!IsHandshakeRetryable(result->serverErr)) {
+                result->steps = step + 1;
+                return;
+            }
+        }
+        else if (harness->server->clientState < CLIENT_DONE) {
+            result->serverRet = wolfSSH_worker(harness->server, NULL);
+            result->serverErr = wolfSSH_get_error(harness->server);
+            if (result->serverRet < WS_SUCCESS
+                    && result->serverErr != WS_CHAN_RXD
+                    && !IsHandshakeRetryable(result->serverErr)) {
+                result->steps = step + 1;
+                return;
+            }
+        }
+
+        if (result->clientSuccess && result->serverSuccess
+                && harness->server->clientState >= CLIENT_DONE) {
+            result->steps = step + 1;
+            return;
+        }
+    }
+
+    result->steps = REGRESS_MAX_HANDSHAKE_STEPS;
+}
+
+/* With wolfSSH_SetAppChannels() on, accept() stops once the user is
+ * authenticated and the shell request lands on the callback instead. */
+static void TestAppChannelsAcceptStopsAtUserAuth(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    appChannelsShellReqCount = 0;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.serverCtx,
+            AppChannelsShellCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.server, 1), WS_SUCCESS);
+
+    RunAppChannelsHandshake(&harness, &result);
+
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState, ACCEPT_SERVER_USERAUTH_SENT);
+    AssertIntEQ(harness.server->clientState, CLIENT_DONE);
+    AssertIntEQ(appChannelsShellReqCount, 1);
+    AssertIntEQ(harness.client->connectState,
+            CONNECT_SERVER_CHANNEL_REQUEST_DONE);
+    AssertFalse(harness.clientIo.sawDisconnect);
+    AssertFalse(harness.serverIo.sawDisconnect);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* Same mode, no callback registered: nothing can start the shell once
+ * accept() has returned, so the request is refused. The default mode
+ * accepts it, which AssertHandshakeSucceeds() covers. */
+static void TestAppChannelsNoShellCbRejects(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.server, 1), WS_SUCCESS);
+
+    RunAppChannelsHandshake(&harness, &result);
+
+    AssertFalse(result.clientSuccess);
+    AssertTrue(harness.client->connectState <
+            CONNECT_SERVER_CHANNEL_REQUEST_DONE);
+    AssertIntEQ(harness.server->acceptState, ACCEPT_SERVER_USERAUTH_SENT);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* The flag is documented as a context setting first, so pin the setter
+ * returns and the inheritance wolfSSH_new() does. */
+static void TestAppChannelsCtxInherits(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    AssertIntEQ(wolfSSH_CTX_SetAppChannels(NULL, 1), WS_SSH_CTX_NULL_E);
+    AssertIntEQ(wolfSSH_SetAppChannels(NULL, 1), WS_SSH_NULL_E);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(ssh->appChannels, 0);
+    wolfSSH_free(ssh);
+
+    AssertIntEQ(wolfSSH_CTX_SetAppChannels(ctx, 1), WS_SUCCESS);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(ssh->appChannels, 1);
+    AssertIntEQ(wolfSSH_SetAppChannels(ssh, 0), WS_SUCCESS);
+    AssertIntEQ(ssh->appChannels, 0);
+    wolfSSH_free(ssh);
+
+    wolfSSH_CTX_free(ctx);
+}
+
+/* Turning the mode on after accept() established the session must not leave
+ * the accept loop hunting for a state it has already stepped past. The flag
+ * still reaches DoChannelRequest() from there, which is what ssh.h promises,
+ * so pin both halves: accept() stays put, the requests that follow flip. */
+static void TestAppChannelsLateEnableReturns(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    /* SSH_MSG_CHANNEL_REQUEST body: channel 0, "shell", wantReply. */
+    static byte payShell[] = {
+        0x00,0x00,0x00,0x00,                /* channelId = 0  */
+        0x00,0x00,0x00,0x05,                /* typeSz = 5     */
+        0x73,0x68,0x65,0x6C,0x6C,           /* "shell"        */
+        0x01                                /* wantReply = 1  */
+    };
+    word32 idx;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    /* Default mode, no callback registered: the request is granted. */
+    idx = 0;
+    AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
+            (word32)sizeof(payShell), &idx), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_worker(harness.client, NULL), WS_SUCCESS);
+
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.server, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_accept(harness.server), WS_SUCCESS);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_CLIENT_SESSION_ESTABLISHED);
+
+    /* Same request, same session, mode now on: refused instead. */
+    idx = 0;
+    AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
+            (word32)sizeof(payShell), &idx), WS_SUCCESS);
+    AssertTrue(wolfSSH_worker(harness.client, NULL) < WS_SUCCESS);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_CHANOPEN_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* Refuses the session request, and records what the channel showed. */
+static int rejectShellReqCalls;
+static WS_SessionType rejectShellReqType;
+
+static int RejectShellReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    rejectShellReqCalls++;
+    rejectShellReqType = wolfSSH_ChannelGetSessionType(channel);
+    return 1;
+}
+
+/* A shell request the callback refuses gets CHANNEL_FAILURE and nothing
+ * more: the channel keeps no session type, and accept() stays where it was,
+ * waiting on a request it can grant, rather than reporting an established
+ * session it just refused. */
+static void TestSessionReqRejectedKeepsAcceptWaiting(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    WS_SessionType sessionType;
+
+    rejectShellReqCalls = 0;
+    rejectShellReqType = WOLFSSH_SESSION_UNKNOWN;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_PATH,
+            0, NULL);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.serverCtx,
+            RejectShellReqCb), WS_SUCCESS);
+
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(rejectShellReqCalls, 1);
+    AssertIntEQ(rejectShellReqType, WOLFSSH_SESSION_SHELL);
+    AssertFalse(result.clientSuccess);
+    AssertIntEQ(result.clientErr, WS_CHANOPEN_FAILED);
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_SERVER_CHANNEL_ACCEPT_SENT);
+    AssertTrue(harness.server->clientState < CLIENT_DONE);
+    sessionType = wolfSSH_GetSessionType(harness.server);
+    AssertIntEQ(sessionType, WOLFSSH_SESSION_UNKNOWN);
+    channel = wolfSSH_ChannelNext(harness.server, NULL);
+    AssertNotNull(channel);
+    AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+    AssertFalse(harness.clientIo.sawDisconnect);
+    AssertFalse(harness.serverIo.sawDisconnect);
+
+    FreeKexReplyHarness(&harness);
+}
+
 static void TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade(void)
 {
     AssertHandshakeSucceeds("rsa-sha2-256", REGRESS_SERVER_KEY_PATH);
@@ -4437,6 +4686,144 @@ static void TestAgentChannelNullAgentSendsOpenFail(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* Nothing asked for forwarding, so the open is refused rather than started.
+ * The refusal is the documented answer to a poll, so it must not land in
+ * ssh->error: wolfSSH_accept() would then abort with WS_INVALID_STATE_E. */
+static void TestAgentChannelOpenWithoutRequest(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_BAD_ARGUMENT);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    /* The handshake survives the poll: no input, so accept only wants read. */
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_WANT_READ);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A poll after the peer disconnects must not open a channel or put anything
+ * on the wire. RFC 4253 section 11.1: the session is over. */
+static void TestAgentChannelOpenAfterDisconnect(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.ssh->disconnected = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_FATAL_ERROR);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* An open queued before the disconnect is not flushed either: those bytes
+ * belong to a session that is over, the same rule wolfSSH_shutdown() applies
+ * to everything but its own queued disconnect. */
+static void TestAgentChannelOpenQueuedThenDisconnect(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.io.blockNext = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_WANT_WRITE);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    harness.ssh->disconnected = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A queued open publishes the agent, so the caller's next poll must finish
+ * the send rather than report a success the peer never saw, and must not
+ * open a second channel. */
+static void TestAgentChannelOpenFlushesQueuedOpen(void)
+{
+    ChannelOpenHarness harness;
+    word32 outSz;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    harness.io.blockNext = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_WANT_WRITE);
+    AssertNotNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN);
+
+    /* The flushed open is the answer wolfSSH_accept() retries on: success,
+     * no second channel, no new packet, ssh->error untouched. */
+    outSz = harness.io.outSz;
+    harness.ssh->error = WS_SUCCESS;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.io.outSz, outSz);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A send that fails outright, rather than blocking, leaves nothing behind,
+ * so a later poll starts the open over. */
+static void TestAgentChannelOpenSendFailureCleansUp(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+    /* No room, so MemSend reports a general error. */
+    harness.io.outCap = 0;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SOCKET_ERROR_E);
+    AssertNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SOCKET_ERROR_E);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+#ifndef NO_WOLFSSH_CLIENT
+/* Server-side call. A client has an ssh->agent of its own, so answering the
+ * poll from it would report a channel that was never opened. */
+static void TestAgentChannelOpenOnClientRefused(void)
+{
+    ChannelOpenHarness harness;
+
+    InitChannelOpenHarnessClient(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_BAD_ARGUMENT);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* !NO_WOLFSSH_CLIENT */
 #endif
 
 
@@ -13427,6 +13814,14 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFSSH_AGENT
     TestAgentChannelNullAgentSendsOpenFail();
+    TestAgentChannelOpenWithoutRequest();
+    TestAgentChannelOpenFlushesQueuedOpen();
+    TestAgentChannelOpenAfterDisconnect();
+    TestAgentChannelOpenQueuedThenDisconnect();
+    TestAgentChannelOpenSendFailureCleansUp();
+#ifndef NO_WOLFSSH_CLIENT
+    TestAgentChannelOpenOnClientRefused();
+#endif
 #endif
 #endif /* NO_WOLFSSH_SERVER */
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
@@ -13583,6 +13978,11 @@ int main(int argc, char** argv)
 
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
     #ifndef WOLFSSH_NO_RSA_SHA2_256
+    TestAppChannelsCtxInherits();
+    TestAppChannelsAcceptStopsAtUserAuth();
+    TestAppChannelsNoShellCbRejects();
+    TestAppChannelsLateEnableReturns();
+    TestSessionReqRejectedKeepsAcceptWaiting();
     TestKexDhReplyRejectsRsaSha2_256SigNameDowngrade();
     #endif
     #ifndef WOLFSSH_NO_RSA_SHA2_512
