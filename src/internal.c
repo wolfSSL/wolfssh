@@ -12379,7 +12379,22 @@ static int DoChannelOpen(WOLFSSH* ssh,
         #ifdef WOLFSSH_AGENT
             case ID_CHANTYPE_AUTH_AGENT:
                 WLOG(WS_LOG_INFO, "agent = %p", ssh->agent);
-                if (ssh->agent != NULL)
+                /* An auth-agent open answers a client's auth-agent-req, so
+                 * only a client takes one */
+                if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
+                    WLOG(WS_LOG_DEBUG, "Rejecting auth-agent channel open "
+                            "received by a server (wrong direction)");
+                    ret = WS_INVALID_CHANTYPE;
+                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                }
+                else if (!ssh->agentEnabled || ssh->connectState
+                        < CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT) {
+                    WLOG(WS_LOG_DEBUG, "Rejecting auth-agent channel open "
+                            "before requesting agent forwarding");
+                    ret = WS_ERROR;
+                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                }
+                else if (ssh->agent != NULL)
                     ssh->agent->channel = peerChannelId;
                 else
                     ret = WS_AGENT_NULL_E;

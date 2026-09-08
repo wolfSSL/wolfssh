@@ -2525,7 +2525,174 @@ static void TestSessionOnClientBeatsOpenCb(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+#ifdef WOLFSSH_AGENT
+/* ssh->agent is allocated during userauth for agent-backed publickey, so its
+ * presence alone must not admit the channel. */
+static void TestAgentOpenBeforeRequestFails(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 9, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertNotNull(harness.ssh->agent =
+            wolfSSH_AGENT_new(harness.ctx->heap));
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 1), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The request check runs ahead of the open policy hook, so a registered
+ * channelOpenCb cannot accept an unrequested agent channel. */
+static void TestAgentOpenBeforeRequestBeatsOpenCb(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 9, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertNotNull(harness.ssh->agent =
+            wolfSSH_AGENT_new(harness.ctx->heap));
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx, AcceptChannelOpenCb),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A client that never allocated an agent has nothing to hand the channel to,
+ * so the open fails on the agent check past the request state. */
+static void TestAgentChannelNullAgentSendsOpenFail(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 11, 0x4000,
+            0x8000, NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 1), WS_SUCCESS);
+    harness.ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+    AssertTrue(harness.ssh->agent == NULL);
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* wolfSSH_AGENT_enable(ssh, 0) clears the flag and leaves ssh->agent
+ * allocated, and connectState advances whether or not the request went out. */
+static void TestAgentOpenWithAgentDisabledFails(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 9, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertNotNull(harness.ssh->agent =
+            wolfSSH_AGENT_new(harness.ctx->heap));
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 0), WS_SUCCESS);
+    harness.ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Once the request has gone out, the open is confirmed and the agent takes
+ * the peer's channel id. */
+static void TestAgentOpenAfterRequestSucceeds(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 9, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    AssertNotNull(harness.ssh->agent =
+            wolfSSH_AGENT_new(harness.ctx->heap));
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 1), WS_SUCCESS);
+    harness.ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+
+    ret = DoReceive(harness.ssh);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN_CONF);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.ssh->agent->channel, 9);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_AGENT */
 #endif /* !NO_WOLFSSH_CLIENT */
+
+
+#if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_SERVER)
+/* A server sets ssh->agent when a client asks for agent forwarding. Setting
+ * connectState too leaves the endpoint side as the only reason to refuse. */
+static void TestAgentOpenOnServerFails(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 9, 0x4000, 0x8000,
+            NULL, 0, in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertNotNull(harness.ssh->agent =
+            wolfSSH_AGENT_new(harness.ctx->heap));
+    AssertIntEQ(wolfSSH_AGENT_enable(harness.ssh, 1), WS_SUCCESS);
+    harness.ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+
+    ret = DoReceive(harness.ssh);
+    AssertChannelOpenFailResponse(&harness, ret);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_AGENT && !NO_WOLFSSH_SERVER */
 
 
 #ifndef NO_WOLFSSH_SERVER
@@ -4419,25 +4586,6 @@ static void TestRequestSuccessWithPortParsesCorrectly(void)
 #endif
 
 #ifdef WOLFSSH_AGENT
-static void TestAgentChannelNullAgentSendsOpenFail(void)
-{
-    ChannelOpenHarness harness;
-    byte in[128];
-    word32 inSz;
-    int ret;
-
-    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", 11, 0x4000,
-            0x8000, NULL, 0, in, sizeof(in));
-
-    InitChannelOpenHarness(&harness, in, inSz);
-    AssertTrue(harness.ssh->agent == NULL);
-
-    ret = DoReceive(harness.ssh);
-    AssertChannelOpenFailResponse(&harness, ret);
-
-    FreeChannelOpenHarness(&harness);
-}
-
 /* Nothing asked for forwarding, so the open is refused rather than started.
  * The refusal is the documented answer to a poll, so it must not land in
  * ssh->error: wolfSSH_accept() would then abort with WS_INVALID_STATE_E. */
@@ -13552,6 +13700,16 @@ int main(int argc, char** argv)
 #ifndef NO_WOLFSSH_CLIENT
     TestSessionOnClientSendsOpenFail();
     TestSessionOnClientBeatsOpenCb();
+#ifdef WOLFSSH_AGENT
+    TestAgentOpenBeforeRequestFails();
+    TestAgentOpenBeforeRequestBeatsOpenCb();
+    TestAgentChannelNullAgentSendsOpenFail();
+    TestAgentOpenWithAgentDisabledFails();
+    TestAgentOpenAfterRequestSucceeds();
+#endif
+#endif
+#if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_SERVER)
+    TestAgentOpenOnServerFails();
 #endif
 #ifndef NO_WOLFSSH_SERVER
     TestServerChannelBlockedBeforeAuth(serverSsh);
@@ -13614,7 +13772,6 @@ int main(int argc, char** argv)
     TestRequestSuccessWithPortParsesCorrectly();
 #endif
 #ifdef WOLFSSH_AGENT
-    TestAgentChannelNullAgentSendsOpenFail();
     TestAgentChannelOpenWithoutRequest();
     TestAgentChannelOpenFlushesQueuedOpen();
     TestAgentChannelOpenAfterDisconnect();
