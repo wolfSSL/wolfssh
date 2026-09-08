@@ -4557,6 +4557,56 @@ static void TestAgentChannelOpenSendFailureCleansUp(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* Fails the session's first highwater check, and counts its calls. */
+static int AgentOpenHighwaterCb(byte side, void* ctx)
+{
+    int* calls = (int*)ctx;
+
+    WOLFSSH_UNUSED(side);
+
+    (*calls)++;
+    return WS_FATAL_ERROR;
+}
+
+/* The highwater callback fails after the open is out, so its error arrives as
+ * the send's return. Rolling back on that deletes a channel the peer has, and
+ * its confirmation then names nothing. */
+static void TestAgentChannelOpenHighwaterErrorKeepsChannel(void)
+{
+    ChannelOpenHarness harness;
+    int calls = 0;
+    word32 outSz;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    harness.ssh->useAgent = 1;
+
+    wolfSSH_SetHighwaterCb(harness.ctx, 1, AgentOpenHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.ssh, &calls);
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->txCount = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(calls, 1);
+    AssertIntEQ(harness.ssh->error, WS_FATAL_ERROR);
+
+    /* The open went out, so the channel and the agent stand. */
+    AssertNotNull(harness.ssh->agent);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_OPEN);
+
+    /* The mark has fired, so the next poll is the idempotent one. */
+    outSz = harness.io.outSz;
+
+    AssertIntEQ(wolfSSH_AGENT_ChannelOpen(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(calls, 1);
+    AssertIntEQ(harness.ssh->channelListSz, 1);
+    AssertIntEQ(harness.io.outSz, outSz);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 #ifndef NO_WOLFSSH_CLIENT
 /* Server-side call. A client has an ssh->agent of its own, so answering the
  * poll from it would report a channel that was never opened. */
@@ -13570,6 +13620,7 @@ int main(int argc, char** argv)
     TestAgentChannelOpenAfterDisconnect();
     TestAgentChannelOpenQueuedThenDisconnect();
     TestAgentChannelOpenSendFailureCleansUp();
+    TestAgentChannelOpenHighwaterErrorKeepsChannel();
 #ifndef NO_WOLFSSH_CLIENT
     TestAgentChannelOpenOnClientRefused();
 #endif

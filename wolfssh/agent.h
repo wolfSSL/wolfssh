@@ -190,7 +190,9 @@ WOLFSSH_API int wolfSSH_AGENT_enable(WOLFSSH* ssh, byte isEnabled);
  * WS_FATAL_ERROR with WS_DISCONNECT in ssh->error once the session is over,
  * WS_SSH_NULL_E, WS_MEMORY_E, or whatever the send reports. WS_SUCCESS says
  * the open went out, not that the peer took it; a refusal reaches the
- * channel-open-fail callback.
+ * channel-open-fail callback. An error raised after the open is on the wire,
+ * a failing highwater callback, leaves the channel open and the next poll
+ * answers WS_SUCCESS.
  * Only that and the send record in ssh->error, so a poll ahead of the peer's
  * request leaves the session fit for wolfSSH_accept(). */
 WOLFSSH_API int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh);

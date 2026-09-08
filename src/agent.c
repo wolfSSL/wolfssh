@@ -1777,11 +1777,15 @@ int wolfSSH_AGENT_ChannelOpen(WOLFSSH* ssh)
         }
 
         if (ret == WS_SUCCESS) {
+            word32 flushes = ssh->txFlushCount;
+
             recordError = 1;
             ret = SendChannelOpenSession(ssh, newChannel);
 
-            if (ret < WS_SUCCESS
-                    && ret != WS_WANT_WRITE && ret != WS_WANT_READ) {
+            /* What commits is the open reaching the peer, not the return:
+             * a highwater callback failing after the flush is not a send
+             * that never left. */
+            if (!SendPacketDelivered(ssh, flushes, ret)) {
                 ChannelDelete(newChannel, ssh->ctx->heap);
             }
             else {

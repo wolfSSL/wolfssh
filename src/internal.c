@@ -18059,19 +18059,8 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     return ret;
 }
 
-/* Will the packet just framed reach the peer? A completed flush says so; the
- * return does not, since the highwater callback runs after the last byte goes
- * out and the rekey it starts fails with the same codes a lost send does.
- * Comparing the flush count across the send tells those apart.
- *
- * Short of a flush, WS_WANT_WRITE is the one outcome that keeps the packet
- * framed for the next one; an interrupted send is retried inside
- * wolfSSH_SendPacket() rather than reported. Anything else counts as not sent,
- * which at worst leaves the peer holding a request this side did not register;
- * guessing the other way would desync the reply queue for the life of the
- * session. Call before anything else runs, since a later send flushes this
- * packet and would read as this one's. */
-static INLINE int SendPacketDelivered(WOLFSSH* ssh, word32 flushes, int ret)
+/* Contract in internal.h. */
+int SendPacketDelivered(WOLFSSH* ssh, word32 flushes, int ret)
 {
     return ssh->txFlushCount != flushes || ret == WS_WANT_WRITE;
 }

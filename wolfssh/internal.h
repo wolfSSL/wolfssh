@@ -1653,6 +1653,18 @@ WOLFSSH_LOCAL int DoReceive(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH* ssh);
+/* Will the packet just framed reach the peer? A completed flush says so; the
+ * return does not, since the highwater callback runs after the last byte is
+ * out and fails with the same codes a lost send does. Take flushes from
+ * ssh->txFlushCount before the send, and call this before anything else runs:
+ * a later send flushes this packet and would read as this one's.
+ *
+ * Short of a flush, only WS_WANT_WRITE keeps the packet framed for the next
+ * one; an interrupt is retried inside wolfSSH_SendPacket(), not reported.
+ * Anything else counts as not sent, which at worst leaves the peer holding a
+ * request this side did not register; the other guess desyncs the reply queue
+ * for the life of the session. */
+WOLFSSH_LOCAL int SendPacketDelivered(WOLFSSH* ssh, word32 flushes, int ret);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int ValidateProtoId(const char* protoIdStr, word32 len);
 WOLFSSH_LOCAL int SendKexInit(WOLFSSH* ssh);
