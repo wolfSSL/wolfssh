@@ -5,6 +5,8 @@ name: Windows wolfsshd SFTP Test
 # 2. Recursive SCP test: pull a directory tree with "scp -O -r"
 # 3. Large file test: WOLFSSH_NO_SFTP_TIMEOUT, WOLFSSH_MAX_SFTP_RW=10485760,
 #    WOLFSSH_MAX_CHN_NAMESZ=4200 - get and put a 3GB file
+# 3. No-profile test: a user with no Windows profile at all, so wolfsshd has to
+#    build one with LoadUserProfileW instead of reading ProfileList
 
 on:
   push:
@@ -120,6 +122,8 @@ jobs:
             artifact_name: wolfssh-windows-build
           - test_type: large_rw
             artifact_name: wolfssh-windows-build-large-rw
+          - test_type: no_profile
+            artifact_name: wolfssh-windows-build
 
     steps:
     - uses: actions/checkout@v6
@@ -139,6 +143,7 @@ jobs:
         path: .
 
     - name: Create Windows user testuser and authorized_keys
+      if: matrix.test_type != 'no_profile'
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh
       run: |
@@ -146,9 +151,6 @@ jobs:
         $sshDir = "$homeDir\.ssh"
         $authKeysFile = "$sshDir\authorized_keys"
         $pw = 'T3stP@ss!xY9'
-
-        New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
-        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
 
         $o = net user testuser $pw /add /homedir:$homeDir 2>&1
         if ($LASTEXITCODE -ne 0) {
@@ -161,20 +163,38 @@ jobs:
         }
         Add-Content -Path $env:GITHUB_ENV -Value "TESTUSER_PASSWORD=$pw"
 
-        "" | Out-File -FilePath $authKeysFile -Encoding ASCII -NoNewline
-        icacls $authKeysFile /grant "testuser:R" /q
+        # Log the user on once so Windows builds a real profile: a directory
+        # with NTUSER.DAT plus the matching ProfileList entry.
+        $sec = ConvertTo-SecureString $pw -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("testuser", $sec)
+        # -WorkingDirectory has to be readable by testuser.
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "exit" `
+          -Credential $cred -WorkingDirectory "C:\" -Wait -ErrorAction Stop
 
-        # Grant testuser full control of their home directory.
-        # New-Item creates the directory owned by the runner account; Windows
-        # only sets correct user ACLs during the normal profile-creation flow.
-        # Without this, ImpersonateLoggedOnUser succeeds but CreateFile fails
-        # with ACCESS_DENIED when wolfsshd tries to write files as testuser.
-        icacls $homeDir /grant "testuser:(OI)(CI)F" /T /q
+        foreach ($i in 1..120) {
+          if (Test-Path "$homeDir\NTUSER.DAT") { break }
+          Start-Sleep -Milliseconds 500
+        }
+        if (-not (Test-Path "$homeDir\NTUSER.DAT")) {
+          Write-Host "ERROR: no profile was built for testuser"
+          Get-ChildItem -Path "C:\Users"
+          exit 1
+        }
 
+        # Later steps use $homeDir literally, so the profile has to be there.
         $sid = (New-Object System.Security.Principal.NTAccount("testuser")).Translate([System.Security.Principal.SecurityIdentifier]).Value
         $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
-        if (-not (Test-Path $profKey)) { New-Item -Path $profKey -Force | Out-Null }
-        Set-ItemProperty -Path $profKey -Name "ProfileImagePath" -Value $homeDir -Force
+        $imagePath = (Get-ItemProperty -Path $profKey -Name ProfileImagePath -ErrorAction SilentlyContinue).ProfileImagePath
+        if ($imagePath -ne $homeDir) {
+          Write-Host "ERROR: testuser's profile is at '$imagePath', expected '$homeDir'"
+          exit 1
+        }
+        Write-Host "testuser profile built at $imagePath"
+
+        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+
+        "" | Out-File -FilePath $authKeysFile -Encoding ASCII -NoNewline
+        icacls $authKeysFile /grant "testuser:R" /q
 
     - name: Create SCP test key and directory tree
       if: matrix.test_type == 'basic'
@@ -199,6 +219,44 @@ jobs:
         Set-Content -Path "$src\beta.txt"         -Value "beta contents"
         Set-Content -Path "$src\nested\gamma.txt" -Value "gamma contents"
         icacls $src /grant "testuser:(OI)(CI)F" /T /q
+
+    # No home directory, no ACL grant and no ProfileList entry, which is what a
+    # user that has never logged on to the machine looks like.
+    - name: Create Windows user testuser with no profile
+      if: matrix.test_type == 'no_profile'
+      shell: pwsh
+      run: |
+        $pw = 'T3stP@ss!xY9'
+        Add-Content -Path $env:GITHUB_ENV -Value "TESTUSER_PASSWORD=$pw"
+
+        # testuser2 is for the concurrent-session test, which needs a user
+        # whose profile no earlier step has built.
+        foreach ($u in @('testuser', 'testuser2')) {
+          $o = net user $u $pw /add 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "net user $u failed: $o"
+            exit 1
+          }
+
+          $sid = (New-Object System.Security.Principal.NTAccount($u)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+          $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+          if (Test-Path $profKey) {
+            Write-Host "ERROR: $u already has a ProfileList entry"
+            exit 1
+          }
+          if (Test-Path "C:\Users\$u") {
+            Write-Host "ERROR: C:\Users\$u already exists"
+            exit 1
+          }
+          Write-Host "$u created with no profile, SID $sid"
+
+          if ($u -eq 'testuser') {
+            Add-Content -Path $env:GITHUB_ENV -Value "TESTUSER_SID=$sid"
+          }
+          else {
+            Add-Content -Path $env:GITHUB_ENV -Value "TESTUSER2_SID=$sid"
+          }
+        }
 
     - name: Create wolfSSHd config file
       working-directory: ${{ github.workspace }}\wolfssh
@@ -241,6 +299,12 @@ jobs:
         } else {
             Write-Host "ERROR: SFTP client exe not found"
             exit 1
+        }
+
+        $clientExe = Get-ChildItem -Path $searchRoot -Recurse -Filter "client.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Release*" } | Select-Object -First 1
+        if ($clientExe) {
+            Add-Content -Path $env:GITHUB_ENV -Value "CLIENT_PATH=$($clientExe.FullName)"
         }
 
     - name: Copy wolfSSL DLL to executable directory
@@ -290,6 +354,7 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "SSHD_SERVICE_NAME=$serviceName"
 
     - name: Test SFTP get non-existent file (no hang, correct error)
+      if: matrix.test_type != 'no_profile'
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh
       timeout-minutes: 1
@@ -327,8 +392,219 @@ jobs:
         }
         Write-Host "PASS: SFTP get non-existent file did not create file, reported error correctly, did not hang"
 
+    # First connection for this user, so it is the one that builds the profile.
+    # An exec session goes through the shell subsystem, whose cleanup unloads
+    # it.
+    - name: Test exec session (no profile)
+      if: matrix.test_type == 'no_profile'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      timeout-minutes: 2
+      run: |
+        if (-not $env:CLIENT_PATH) {
+          Write-Host "ERROR: client.exe not found"
+          exit 1
+        }
+        "" | Out-File -FilePath exec_stdin.txt -Encoding ASCII
+
+        # Nothing may have built the profile before this connection, or the
+        # checks below would not be about the exec session.
+        if (Test-Path "C:\Users\testuser\NTUSER.DAT") {
+          Write-Host "ERROR: testuser already has a profile before the exec session"
+          exit 1
+        }
+
+        $proc = Start-Process -FilePath $env:CLIENT_PATH `
+          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}", "-c", "whoami" `
+          -RedirectStandardInput "exec_stdin.txt" `
+          -RedirectStandardOutput "exec_out.txt" `
+          -RedirectStandardError "exec_err.txt" `
+          -Wait -NoNewWindow -PassThru
+
+        Write-Host "=== exec output ==="
+        if (Test-Path exec_out.txt) { Get-Content exec_out.txt }
+        Write-Host "=== exec error ==="
+        if (Test-Path exec_err.txt) { Get-Content exec_err.txt }
+
+        if ($proc.ExitCode -ne 0) {
+          Write-Host "ERROR: exec session failed with exit $($proc.ExitCode)"
+          exit 1
+        }
+        if ((Get-Content exec_out.txt -Raw) -notmatch "testuser") {
+          Write-Host "ERROR: exec output does not name testuser"
+          exit 1
+        }
+
+        # NTUSER.DAT only exists if a real profile was built for the user.
+        if (-not (Test-Path "C:\Users\testuser\NTUSER.DAT")) {
+          Write-Host "ERROR: the exec session did not build a profile"
+          Get-ChildItem -Path "C:\Users"
+          exit 1
+        }
+
+        # The server thread tears the connection down after the client exits.
+        $loaded = $true
+        foreach ($i in 1..120) {
+          if (-not (Test-Path "Registry::HKEY_USERS\$env:TESTUSER_SID")) {
+            $loaded = $false
+            break
+          }
+          Start-Sleep -Milliseconds 500
+        }
+        if ($loaded) {
+          Write-Host "ERROR: testuser's hive is still loaded after the exec session"
+          exit 1
+        }
+        Write-Host "PASS: exec session built the profile and released the hive"
+
+    # Session A builds the profile and holds the only handle to the hive,
+    # session B finds the profile already there. Ending A must not unmount the
+    # hive while B is still running against it.
+    - name: Test concurrent sessions for one profile-less user
+      if: matrix.test_type == 'no_profile'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      timeout-minutes: 5
+      run: |
+        if (-not $env:CLIENT_PATH) {
+          Write-Host "ERROR: client.exe not found"
+          exit 1
+        }
+
+        # Each session holds itself open by pinging. No spaces in the paths, so
+        # -c stays a single argument. The commands end on their own, which
+        # leaves no child process holding the hive open.
+        $bMark = "C:\Users\Public\b_started.txt"
+        Remove-Item $bMark -Force -ErrorAction SilentlyContinue
+        Set-Content -Path "C:\Users\Public\hold_a.cmd" -Value "ping -n 25 127.0.0.1 > nul" -Encoding ASCII
+        Set-Content -Path "C:\Users\Public\hold_b.cmd" -Value @(
+            "echo started > $bMark", "ping -n 60 127.0.0.1 > nul") -Encoding ASCII
+        "" | Out-File -FilePath hold_stdin.txt -Encoding ASCII
+
+        $hive = "Registry::HKEY_USERS\$env:TESTUSER2_SID"
+
+        function Show-Hives($why) {
+          Write-Host "--- $why"
+          Write-Host "loaded hives:"
+          (Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue).Name
+          Write-Host "profile dir: $(Test-Path 'C:\Users\testuser2\NTUSER.DAT')"
+        }
+        if (Test-Path "C:\Users\testuser2\NTUSER.DAT") {
+          Write-Host "ERROR: testuser2 already has a profile"
+          exit 1
+        }
+
+        function Test-Running($proc) {
+          return $null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)
+        }
+
+        function Start-Hold($script, $tag) {
+          return Start-Process -FilePath $env:CLIENT_PATH -ArgumentList @(
+              "-u", "testuser2", "-P", $env:TESTUSER_PASSWORD,
+              "-h", "localhost", "-p", "${{env.TEST_PORT}}", "-c", $script) `
+            -RedirectStandardInput "hold_stdin.txt" `
+            -RedirectStandardOutput "hold_${tag}_out.txt" `
+            -RedirectStandardError "hold_${tag}_err.txt" `
+            -NoNewWindow -PassThru
+        }
+
+        $procA = Start-Hold "C:\Users\Public\hold_a.cmd" "a"
+
+        # Watch from the start: the hive can appear and go away again inside a
+        # fixed sleep, which reads the same as never appearing.
+        $sawHive = $false
+        foreach ($i in 1..40) {
+          if (Test-Path $hive) {
+            $sawHive = $true
+            Write-Host "hive appeared after $($i * 500) ms"
+            break
+          }
+          Start-Sleep -Milliseconds 500
+        }
+        if (-not (Test-Path "C:\Users\testuser2\NTUSER.DAT")) {
+          Write-Host "ERROR: session A did not build the profile"
+          Show-Hives "no profile"
+          Get-Content hold_a_out.txt, hold_a_err.txt -ErrorAction SilentlyContinue
+          exit 1
+        }
+        if (-not $sawHive) {
+          Write-Host "ERROR: testuser2's hive never appeared during session A"
+          Show-Hives "hive never seen"
+          Get-Content hold_a_out.txt, hold_a_err.txt -ErrorAction SilentlyContinue
+          exit 1
+        }
+        if (-not (Test-Running $procA)) {
+          Write-Host "ERROR: session A ended before the hive check"
+          Show-Hives "A gone"
+          Get-Content hold_a_out.txt, hold_a_err.txt -ErrorAction SilentlyContinue
+          exit 1
+        }
+        if (-not (Test-Path $hive)) {
+          Write-Host "ERROR: testuser2's hive went away while session A was live"
+          Show-Hives "hive dropped under A"
+          exit 1
+        }
+        Write-Host "session A built the profile and holds the hive"
+
+        $procB = Start-Hold "C:\Users\Public\hold_b.cmd" "b"
+        foreach ($i in 1..60) {
+          if (Test-Path $bMark) { break }
+          Start-Sleep -Milliseconds 500
+        }
+        if (-not (Test-Path $bMark)) {
+          Write-Host "ERROR: session B's command never ran"
+          Get-Content hold_b_out.txt, hold_b_err.txt -ErrorAction SilentlyContinue
+          exit 1
+        }
+        if (-not (Test-Running $procB)) {
+          Write-Host "ERROR: session B ended early"
+          Get-Content hold_b_out.txt, hold_b_err.txt
+          exit 1
+        }
+        Write-Host "session B is running alongside session A"
+
+        Wait-Process -Id $procA.Id -Timeout 120 -ErrorAction SilentlyContinue
+        if (Test-Running $procA) {
+          Write-Host "ERROR: session A did not end"
+          exit 1
+        }
+        # This asserts the hive does not go away, so settle rather than poll.
+        Start-Sleep -Seconds 15
+
+        if (-not (Test-Running $procB)) {
+          Write-Host "ERROR: session B ended before the hive check"
+          Get-Content hold_b_out.txt, hold_b_err.txt
+          exit 1
+        }
+        if (-not (Test-Path $hive)) {
+          Write-Host "ERROR: ending session A unmounted the hive under session B"
+          Show-Hives "hive dropped under B"
+          exit 1
+        }
+        Write-Host "hive survived session A ending"
+
+        Wait-Process -Id $procB.Id -Timeout 240 -ErrorAction SilentlyContinue
+        if (Test-Running $procB) {
+          Write-Host "ERROR: session B did not end"
+          exit 1
+        }
+        $loaded = $true
+        foreach ($i in 1..120) {
+          if (-not (Test-Path $hive)) {
+            $loaded = $false
+            break
+          }
+          Start-Sleep -Milliseconds 500
+        }
+        if ($loaded) {
+          Write-Host "ERROR: testuser2's hive is still loaded after both sessions ended"
+          Show-Hives "hive still loaded"
+          exit 1
+        }
+        Write-Host "PASS: the hive outlived session A and went away with session B"
+
     - name: Test SFTP connection (basic)
-      if: matrix.test_type == 'basic'
+      if: matrix.test_type == 'basic' || matrix.test_type == 'no_profile'
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh
       run: |
@@ -399,6 +675,40 @@ jobs:
           exit 1
         }
         Write-Host "Recursive SCP test passed"
+
+    - name: Verify the SFTP session used and released testuser's profile
+      if: matrix.test_type == 'no_profile'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        $output = Get-Content sftp_output.txt -Raw
+
+        if ($output -match "systemprofile") {
+          Write-Host "ERROR: session landed in the service account's profile"
+          Write-Host $output
+          exit 1
+        }
+        if ($output -notmatch "testuser") {
+          Write-Host "ERROR: 'testuser' missing from pwd output"
+          Write-Host $output
+          exit 1
+        }
+        # An SFTP session reaches the unload through wolfSSHD_AuthFreeUser at
+        # connection teardown rather than through the shell subsystem.
+        $loaded = $true
+        foreach ($i in 1..120) {
+          if (-not (Test-Path "Registry::HKEY_USERS\$env:TESTUSER_SID")) {
+            $loaded = $false
+            break
+          }
+          Start-Sleep -Milliseconds 500
+        }
+        if ($loaded) {
+          Write-Host "ERROR: testuser's hive is still loaded after the SFTP session"
+          (Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue).Name
+          exit 1
+        }
+        Write-Host "PASS: SFTP session used testuser's own home directory and released the hive"
 
     - name: Create 3GB test file and run SFTP get/put
       if: matrix.test_type == 'large_rw'

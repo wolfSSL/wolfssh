@@ -671,9 +671,6 @@ jobs:
         # This is a test user and not a sensitive password.
         $pw = 'T3stP@ss!xY9'
 
-        New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
-        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
-
         # Create local user testuser (net user avoids New-LocalUser password policy issues in CI)
         $o = net user testuser $pw /add /homedir:$homeDir 2>&1
         if ($LASTEXITCODE -ne 0) {
@@ -684,6 +681,36 @@ jobs:
             exit 1
           }
         }
+
+        # Log the user on once so Windows builds a real profile: a directory
+        # with NTUSER.DAT plus the matching ProfileList entry.
+        $sec = ConvertTo-SecureString $pw -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("testuser", $sec)
+        # -WorkingDirectory has to be readable by testuser.
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "exit" `
+          -Credential $cred -WorkingDirectory "C:\" -Wait -ErrorAction Stop
+
+        foreach ($i in 1..120) {
+          if (Test-Path "$homeDir\NTUSER.DAT") { break }
+          Start-Sleep -Milliseconds 500
+        }
+        if (-not (Test-Path "$homeDir\NTUSER.DAT")) {
+          Write-Host "ERROR: no profile was built for testuser"
+          Get-ChildItem -Path "C:\Users"
+          exit 1
+        }
+
+        # Later steps use $homeDir literally, so the profile has to be there.
+        $sid = (New-Object System.Security.Principal.NTAccount("testuser")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+        $imagePath = (Get-ItemProperty -Path $profKey -Name ProfileImagePath -ErrorAction SilentlyContinue).ProfileImagePath
+        if ($imagePath -ne $homeDir) {
+          Write-Host "ERROR: testuser's profile is at '$imagePath', expected '$homeDir'"
+          exit 1
+        }
+        Write-Host "testuser profile built at $imagePath"
+
+        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
 
         # X509 auth verifies the client cert against the CA; authorized_keys
         # is not used but the file should exist.
@@ -697,18 +724,6 @@ jobs:
         # wolfsshd serves SFTP from the home directory while impersonating
         # testuser; the SFTP tests assert this name appears in the listing.
         "marker" | Out-File -FilePath "$homeDir\wolfssh_sftp_marker.txt" -Encoding ASCII
-        icacls $homeDir /grant "testuser:(OI)(CI)RX" /T /q
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "ERROR: icacls failed on $homeDir"
-          exit 1
-        }
-
-        # Set ProfileImagePath so SHGetKnownFolderPath(FOLDERID_Profile) returns $homeDir
-        # for testuser (GetHomeDirectory in wolfsshd uses that; otherwise it can fail for new users).
-        $sid = (New-Object System.Security.Principal.NTAccount("testuser")).Translate([System.Security.Principal.SecurityIdentifier]).Value
-        $profKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
-        if (-not (Test-Path $profKey)) { New-Item -Path $profKey -Force | Out-Null }
-        Set-ItemProperty -Path $profKey -Name "ProfileImagePath" -Value $homeDir -Force
 
     - name: Create wolfSSHd config file
       working-directory: ${{ github.workspace }}\wolfssh

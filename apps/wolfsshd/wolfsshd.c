@@ -2388,6 +2388,8 @@ cleanup:
     if (ptyOut != NULL) {
         CloseHandle(ptyOut);
     }
+    /* back to the service account, unloading the profile needs its privileges */
+    RevertToSelf();
     if (processCreated) {
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
@@ -2396,7 +2398,6 @@ cleanup:
     if (cmd != NULL) {
         WFREE(cmd, NULL, DYNTYPE_SSHD);
     }
-    RevertToSelf();
     return ret;
 }
 #else

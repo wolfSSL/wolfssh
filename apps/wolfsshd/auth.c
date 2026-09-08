@@ -143,6 +143,7 @@ struct WOLFSSHD_AUTH {
     const WOLFSSHD_CONFIG* conf;
 #if defined(_WIN32)
     HANDLE token; /* a users token */
+    HANDLE profile; /* hive */
 #endif
     int gid;
     int uid;
@@ -2022,27 +2023,40 @@ extern BOOL WINAPI LogonUserExExW(LPTSTR usr,
 
 #define MAX_USERNAME 256
 
-static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, int outSz)
+static int _GetProfileDirectory(WOLFSSHD_AUTH* auth, const char* usr,
+    WCHAR* out, int outSz)
+{
+    int ret = WS_SUCCESS;
+    DWORD outSzW = (DWORD)outSz;
+
+    if (GetUserProfileDirectoryW(wolfSSHD_GetAuthToken(auth), out,
+            &outSzW) != TRUE) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Error %lu getting user %s's home path",
+            (unsigned long)GetLastError(), usr);
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
+/* Home directory of an authenticated user, building the profile when the user
+ * has none yet. The hive is machine wide, so every session takes its own
+ * handle on it. */
+static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out,
+    int outSz)
 {
     int ret = WS_SUCCESS;
     WCHAR usrW[MAX_USERNAME];
-    wchar_t* homeDir;
-    HRESULT hr;
     size_t wr;
+    PROFILEINFO pInfo = { 0 };
 
     /* convert user name to Windows wchar type */
     mbstowcs_s(&wr, usrW, MAX_USERNAME, usr, MAX_USERNAME-1);
 
-    hr = SHGetKnownFolderPath((REFKNOWNFOLDERID)&FOLDERID_Profile,
-        0, wolfSSHD_GetAuthToken(auth), &homeDir);
-    if (SUCCEEDED(hr)) {
-        wcscpy_s(out, outSz, homeDir);
-        CoTaskMemFree(homeDir);
-    }
-    else {
-        PROFILEINFO pInfo = { 0 };
-
-        /* failed with get known folder path, try with loading the user profile */
+    if (auth->profile == NULL) {
+        pInfo.dwSize = sizeof(pInfo);
         pInfo.dwFlags = PI_NOUI;
         pInfo.lpUserName = usrW;
         if (LoadUserProfileW(wolfSSHD_GetAuthToken(auth), &pInfo) != TRUE) {
@@ -2051,18 +2065,14 @@ static int _GetHomeDirectory(WOLFSSHD_AUTH* auth, const char* usr, WCHAR* out, i
                 (unsigned long)GetLastError(), usr);
             ret = WS_FATAL_ERROR;
         }
-
-        /* get home directory env. for user */
-        if (ret == WS_SUCCESS &&
-            ExpandEnvironmentStringsW(L"%USERPROFILE%", out, outSz) == 0) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Error getting user %s's home path", usr);
-            ret = WS_FATAL_ERROR;
+        else {
+            /* keep loaded for the session */
+            auth->profile = pInfo.hProfile;
         }
+    }
 
-        /* @TODO is unload of user needed here?
-           UnloadUserProfileW(wolfSSHD_GetAuthToken(conn->auth), pInfo.hProfile);
-         */
+    if (ret == WS_SUCCESS) {
+        ret = _GetProfileDirectory(auth, usr, out, outSz);
     }
 
     return ret;
@@ -2083,11 +2093,21 @@ HANDLE wolfSSHD_GetAuthToken(const WOLFSSHD_AUTH* auth)
     return auth->token;
 }
 
-/* Close and clear the impersonation token. Safe to call more than once. */
+/* Unload the profile and close the token. Safe to call more than once. */
 void wolfSSHD_AuthCloseToken(WOLFSSHD_AUTH* auth)
 {
     if (auth != NULL && auth->token != NULL &&
             auth->token != INVALID_HANDLE_VALUE) {
+        if (auth->profile != NULL) {
+            if (UnloadUserProfile(auth->token, auth->profile) != TRUE) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error %lu unloading user profile",
+                    (unsigned long)GetLastError());
+                RegCloseKey((HKEY)auth->profile);
+            }
+            /* drop it even when the unload fails */
+            auth->profile = NULL;
+        }
         CloseHandle(auth->token);
         auth->token = NULL;
     }
@@ -2355,7 +2375,7 @@ static int CheckPublicKeyWIN(const char* usr,
     if (ret == WSSHD_AUTH_SUCCESS) {
         WCHAR h[MAX_PATH];
 
-        if (_GetHomeDirectory(authCtx, usr, h, MAX_PATH) == WS_SUCCESS) {
+        if (_GetProfileDirectory(authCtx, usr, h, MAX_PATH) == WS_SUCCESS) {
             CHAR r[MAX_PATH];
             size_t rSz;
 
