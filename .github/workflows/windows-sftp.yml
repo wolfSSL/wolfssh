@@ -1,8 +1,9 @@
 name: Windows wolfsshd SFTP Test
 
-# This workflow tests wolfsshd and SFTP on Windows with:
+# This workflow tests wolfsshd, SFTP, and SCP on Windows with:
 # 1. Basic test: wolfsshd + SFTP client (pwd, ls, put/get small file)
-# 2. Large file test: WOLFSSH_NO_SFTP_TIMEOUT, WOLFSSH_MAX_SFTP_RW=10485760,
+# 2. Recursive SCP test: pull a directory tree with "scp -O -r"
+# 3. Large file test: WOLFSSH_NO_SFTP_TIMEOUT, WOLFSSH_MAX_SFTP_RW=10485760,
 #    WOLFSSH_MAX_CHN_NAMESZ=4200 - get and put a 3GB file
 
 on:
@@ -175,6 +176,30 @@ jobs:
         if (-not (Test-Path $profKey)) { New-Item -Path $profKey -Force | Out-Null }
         Set-ItemProperty -Path $profKey -Name "ProfileImagePath" -Value $homeDir -Force
 
+    - name: Create SCP test key and directory tree
+      if: matrix.test_type == 'basic'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      run: |
+        # scp cannot supply a password non-interactively, so the recursive
+        # SCP test authenticates with a key.
+        $keyFile = Join-Path $env:RUNNER_TEMP "scp_id_ecdsa"
+        ssh-keygen -q -t ecdsa -b 256 -f $keyFile -N ""
+        Get-Content "$keyFile.pub" |
+          Add-Content -Path "C:\Users\testuser\.ssh\authorized_keys" -Encoding ASCII
+        icacls $keyFile /inheritance:r /grant:r "$($env:USERNAME):R" /q
+        Add-Content -Path $env:GITHUB_ENV -Value "SCP_KEY=$keyFile"
+
+        # A nested subdirectory and an empty one. The empty directory is the
+        # case where "." and ".." are the only entries.
+        $src = "C:\Users\testuser\scp_src"
+        New-Item -ItemType Directory -Path "$src\nested"   -Force | Out-Null
+        New-Item -ItemType Directory -Path "$src\emptydir" -Force | Out-Null
+        Set-Content -Path "$src\alpha.txt"        -Value "alpha contents"
+        Set-Content -Path "$src\beta.txt"         -Value "beta contents"
+        Set-Content -Path "$src\nested\gamma.txt" -Value "gamma contents"
+        icacls $src /grant "testuser:(OI)(CI)F" /T /q
+
     - name: Create wolfSSHd config file
       working-directory: ${{ github.workspace }}\wolfssh
       shell: pwsh
@@ -325,6 +350,55 @@ jobs:
           exit 1
         }
         Write-Host "Basic SFTP test passed"
+
+    - name: Test SCP recursive directory pull
+      if: matrix.test_type == 'basic'
+      working-directory: ${{ github.workspace }}\wolfssh
+      shell: pwsh
+      timeout-minutes: 2
+      run: |
+        $scp = Get-Command scp.exe -ErrorAction SilentlyContinue
+        if (-not $scp) {
+          Write-Host "ERROR: scp.exe not found on runner image"
+          exit 1
+        }
+
+        $out = Join-Path $env:RUNNER_TEMP "scp_out"
+        New-Item -ItemType Directory -Path $out -Force | Out-Null
+
+        # -O forces the legacy SCP protocol. Without it OpenSSH 9 and later
+        # run the transfer over SFTP and never reach the SCP server code.
+        $scpArgs = @(
+          "-O", "-r", "-P", "${{env.TEST_PORT}}", "-i", $env:SCP_KEY,
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL",
+          "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+          "testuser@localhost:C:/Users/testuser/scp_src", $out
+        )
+        $process = Start-Process -FilePath $scp.Source -ArgumentList $scpArgs `
+          -RedirectStandardOutput "scp_output.txt" `
+          -RedirectStandardError "scp_error.txt" `
+          -Wait -NoNewWindow -PassThru
+
+        Get-Content scp_output.txt
+        Get-Content scp_error.txt
+        if ($process.ExitCode -ne 0) {
+          Write-Host "ERROR: SCP recursive test failed with exit $($process.ExitCode)"
+          exit 1
+        }
+
+        # The whole tree must arrive. A server that treats end of directory as
+        # fatal aborts partway and leaves nested entries behind.
+        $expected = @(
+          "scp_src\alpha.txt", "scp_src\beta.txt",
+          "scp_src\nested", "scp_src\nested\gamma.txt", "scp_src\emptydir"
+        )
+        $missing = $expected | Where-Object { -not (Test-Path (Join-Path $out $_)) }
+        Get-ChildItem -Recurse $out | ForEach-Object { $_.FullName }
+        if ($missing) {
+          Write-Host "ERROR: missing from transfer: $($missing -join ', ')"
+          exit 1
+        }
+        Write-Host "Recursive SCP test passed"
 
     - name: Create 3GB test file and run SFTP get/put
       if: matrix.test_type == 'large_rw'
