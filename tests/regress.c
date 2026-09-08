@@ -4134,6 +4134,9 @@ static void CheckSftpAcceptRefusesUngranted(int rejectVia)
             "sftp", in, sizeof(in));
     RepointHarnessInput(&harness, in, inSz);
     AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    /* With a callback registered, it did the refusing, not app channels
+     * standing in for a missing one. */
+    AssertIntEQ(sessionReqCbCalls, (rejectVia == 0) ? 0 : 1);
     /* Either way the peer is told the subsystem was refused. */
     AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
             MSGID_CHANNEL_FAILURE);
