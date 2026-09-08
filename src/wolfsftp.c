@@ -1391,12 +1391,16 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
     if (ssh->appChannels) {
         /* Application-driven mode parks accept() here for good, so the
          * sftp grant it would have checked is the application's subsystem
-         * callback: serve only a session channel it granted sftp on. Same
-         * test as wolfSSH_accept()'s divert. */
-        const char* cmd = wolfSSH_GetSessionCommand(ssh);
+         * callback: serve only a session channel it granted sftp on. The
+         * request having named sftp is not enough, so this asks for the
+         * grant as well -- unlike wolfSSH_accept()'s divert, which reads
+         * only the type and command. */
+        const WOLFSSH_CHANNEL* channel = ssh->channelList;
 
-        if (wolfSSH_GetSessionType(ssh) != WOLFSSH_SESSION_SUBSYSTEM
-                || cmd == NULL || WSTRNCMP(cmd, "sftp", 4) != 0) {
+        if (channel == NULL || !channel->sessionGranted
+                || channel->sessionType != WOLFSSH_SESSION_SUBSYSTEM
+                || channel->command == NULL
+                || WSTRNCMP(channel->command, "sftp", 4) != 0) {
             WLOG(WS_LOG_SFTP, "No sftp subsystem granted on the session");
             return WS_INVALID_STATE_E;
         }

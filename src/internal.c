@@ -13081,7 +13081,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     word32 typeSz;
     char type[32];
     byte wantReply;
-    int ret, rej = 0;
+    int ret, rej = 0, sessionReq = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering DoChannelRequest()");
 
@@ -13121,10 +13121,15 @@ static int DoChannelRequest(WOLFSSH* ssh,
             nameSz = (word32)sizeof(name);
             valueSz = (word32)sizeof(value);
             ret = GetString(name, &nameSz, buf, len, &begin);
-            if (ret == WS_SUCCESS)
+            if (ret != WS_SUCCESS)
+                WLOG(WS_LOG_DEBUG, "  name = %s", "<bad name>");
+            else {
                 ret = GetString(value, &valueSz, buf, len, &begin);
-
-            WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
+                if (ret != WS_SUCCESS)
+                    WLOG(WS_LOG_DEBUG, "  %s = %s", name, "<bad value>");
+                else
+                    WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
+            }
         }
         else if (ChannelRequestIs(type, typeSz, "shell")) {
             channel->sessionType = WOLFSSH_SESSION_SHELL;
@@ -13134,11 +13139,16 @@ static int DoChannelRequest(WOLFSSH* ssh,
             else {
                 rej = ssh->appChannels;
             }
+            sessionReq = 1;
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
+            else
+                WLOG(WS_LOG_DEBUG, "  command = %s", "<bad value>");
             channel->sessionType = WOLFSSH_SESSION_EXEC;
             if (ssh->ctx->channelReqExecCb) {
                 rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
@@ -13146,13 +13156,16 @@ static int DoChannelRequest(WOLFSSH* ssh,
             else {
                 rej = ssh->appChannels;
             }
+            sessionReq = 1;
             ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
+            if (ret == WS_SUCCESS)
+                WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
+            else
+                WLOG(WS_LOG_DEBUG, "  subsystem = %s", "<bad value>");
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
             if (ssh->ctx->channelReqSubsysCb) {
                 rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
@@ -13160,9 +13173,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             else {
                 rej = ssh->appChannels;
             }
+            sessionReq = 1;
             ssh->clientState = CLIENT_DONE;
-
-            WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
         }
         #ifdef WOLFSSH_TERM
         else if (ChannelRequestIs(type, typeSz, "pty-req")) {
@@ -13295,6 +13307,20 @@ static int DoChannelRequest(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS) {
         *idx = len;
+    }
+
+    /* Record the answer, not the ask: sessionType and command are set before
+     * the reject decision and stay set on a refusal, so they cannot say
+     * whether the session was granted. Set even without a wantReply, which
+     * changes only whether the peer is told.
+     *
+     * Look the channel up again rather than reusing the pointer from
+     * before the callback. A callback may close its own channel, and
+     * wolfSSH_ChannelFree() frees it, so the old pointer can be dead. */
+    if (sessionReq) {
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel != NULL)
+            channel->sessionGranted = (ret == WS_SUCCESS && !rej);
     }
 
     if (wantReply) {

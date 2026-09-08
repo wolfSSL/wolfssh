@@ -3735,6 +3735,53 @@ static void TestChannelReqSubsysCallbackRuns(void)
                 WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
 }
 
+/* A request callback owns its channel and may close it. The grant is
+ * recorded after the callback returns, so it has to find the channel
+ * again: wolfSSH_ChannelFree() frees it, and writing through the old
+ * pointer would touch freed memory. */
+static int freeChannelCbCalls;
+
+static int FreeingSessionReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    freeChannelCbCalls++;
+    AssertIntEQ(wolfSSH_ChannelFree(channel), WS_SUCCESS);
+    return 0;
+}
+
+static void TestSessionReqCallbackMayFreeChannel(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    freeChannelCbCalls = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.ctx,
+                FreeingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "shell", 1,
+            NULL, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+
+    AssertIntEQ(freeChannelCbCalls, 1);
+    /* The channel the grant would have been recorded on is gone, so the
+     * reply cannot be sent either and the session says why. */
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+    AssertNull(harness.ssh->channelList);
+    AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_INVALID_CHANID);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* accept() re-entered while it is already parked, with a reply still
  * queued, has to flush and stay put. Stepping the state on from here
  * would put the stop behind it, and the loop tests for that state
@@ -3918,6 +3965,7 @@ static void TestSftpAcceptAppChannelsServesGrantedSftp(void)
     FreeChannelOpenHarness(&harness);
 }
 
+
 /* An established session is gated too. A server that turns the mode on
  * late is past everything accept() would have checked, so the grant is
  * the only thing left saying what the channel is: a granted shell is not
@@ -3962,6 +4010,62 @@ static void TestSftpAcceptAppChannelsServesEstablishedSftp(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* A refused "subsystem sftp" still leaves sessionType/command set on the
+ * channel, so check wolfSSH_SFTP_accept() looks at the grant, not the
+ * leftovers. rejectVia 0 registers no callback at all (app channels alone
+ * refuse); 1 registers one that rejects. */
+static void CheckSftpAcceptRefusesUngranted(int rejectVia)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = (rejectVia == 0) ? 0 : 1;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.ssh, 1), WS_SUCCESS);
+    if (rejectVia != 0) {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                    RecordingSessionReqCb), WS_SUCCESS);
+    }
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "subsystem", 1,
+            "sftp", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    /* Either way the peer is told the subsystem was refused. */
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_FAILURE);
+
+    inSz = BuildSftpInitDataPacket(channel->channel, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(wolfSSH_SFTP_accept(harness.ssh), WS_INVALID_STATE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
+static void TestSftpAcceptAppChannelsRefusesNoCb(void)
+{
+    CheckSftpAcceptRefusesUngranted(0);
+}
+
+
+static void TestSftpAcceptAppChannelsRefusesRejectedCb(void)
+{
+    CheckSftpAcceptRefusesUngranted(1);
+}
+
+
 #endif /* WOLFSSH_SFTP */
 
 /* A username change after the first userauth request must end the session. */
@@ -14009,6 +14113,7 @@ int main(int argc, char** argv)
     TestChannelCloseCallbackReturnIgnored();
     TestChannelReqExecCallbackRuns();
     TestChannelReqSubsysCallbackRuns();
+    TestSessionReqCallbackMayFreeChannel();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();
 #ifdef WOLFSSH_SFTP
     TestSftpAcceptAppChannelsNeedsSession();
@@ -14017,6 +14122,8 @@ int main(int argc, char** argv)
     TestSftpAcceptAppChannelsServesGrantedSftp();
     TestSftpAcceptAppChannelsRefusesEstablishedShell();
     TestSftpAcceptAppChannelsServesEstablishedSftp();
+    TestSftpAcceptAppChannelsRefusesNoCb();
+    TestSftpAcceptAppChannelsRefusesRejectedCb();
 #endif
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();

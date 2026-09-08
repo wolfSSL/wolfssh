@@ -1413,6 +1413,11 @@ struct WOLFSSH_CHANNEL {
     byte openConfirmed : 1;
     byte ptyReq : 1; /* flag for if interactive pty request was received */
     byte fwdSetupTxd : 1; /* a LOCAL_SETUP succeeded, a cleanup is owed */
+    byte sessionGranted : 1; /* a shell, exec or subsystem request was
+                              * answered CHANNEL_SUCCESS. sessionType and
+                              * command are recorded before that answer is
+                              * decided and stay set on a refusal, so they
+                              * do not say whether anything was granted. */
     word32 channel;
     word32 windowSz;
     word32 maxPacketSz;
