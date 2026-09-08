@@ -7939,8 +7939,10 @@ static void TestClientBuffersIdempotent(void)
 }
 #endif
 
-/* Windows has no /dev/null; the null device there is "NUL". */
-#ifdef USE_WINDOWS_API
+/* Windows has no /dev/null; the null device there is "NUL". Keyed on
+ * _WIN32, like the arpa/inet.h/direct.h include guard above: this is a
+ * libc-availability question, not a wolfSSH API-selection one. */
+#ifdef _WIN32
     #define TEST_NULL_DEVICE   "NUL"
 #else
     #define TEST_NULL_DEVICE   "/dev/null"
@@ -11930,8 +11932,10 @@ static int KnownHostsCheckCapture(const byte* pubKey, word32 pubKeySz,
  * enough for this test's own HOME juggling. WMKDIR is not an option here:
  * it is only defined when wolfssh/port.h is built with SFTP, SCP, or sshd
  * support, and this test compiles whenever WOLFSSL_BASE64_ENCODE is set,
- * independent of those. */
-#ifdef USE_WINDOWS_API
+ * independent of those. Keyed on _WIN32 rather than USE_WINDOWS_API for
+ * the same reason as TEST_NULL_DEVICE above: mkdir()/setenv() availability
+ * is a libc question. */
+#ifdef _WIN32
     #define TEST_SETENV(n,v)   _putenv_s((n), (v))
     #define TEST_UNSETENV(n)   _putenv_s((n), "")
     #define TEST_MKDIR(p,m)    _mkdir((p))
