@@ -263,7 +263,28 @@ jobs:
           mingw-w64-x86_64-gcc
           mingw-w64-x86_64-pkgconf
 
+    # The msys2 shell's $HOME isn't a stable path across runner images (it
+    # lives under setup-msys2's temp install dir), so build to a
+    # workspace-relative path instead: actions/cache resolves a relative
+    # `path:` against GITHUB_WORKSPACE, and that same directory is what the
+    # rest of this job's msys2 steps read back through $WOLFSSL_INSTALL.
+    - name: Resolve wolfssl install prefix
+      run: echo "WOLFSSL_INSTALL=$(cygpath -u "$GITHUB_WORKSPACE")/wolfssl-install" >> "$GITHUB_ENV"
+
+    # A single job, unlike the build_wolfssl/build_wolfssh split
+    # singlethread-check.yml and x509-interop.yml use: no lookup-only here,
+    # since there is no downstream job for a second cache step to restore
+    # into. This one restores on a hit and saves automatically post-job on
+    # a miss.
+    - name: Cache wolfssl build
+      uses: actions/cache@v5
+      id: cache-wolfssl
+      with:
+        path: wolfssl-install
+        key: wolfssh-mingw-regress-wolfssl-${{ env.WOLFSSL_REF }}-windows-latest
+
     - name: Checkout wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       uses: actions/checkout@v4
       with:
         repository: wolfssl/wolfssl
@@ -271,6 +292,7 @@ jobs:
         path: wolfssl
 
     - name: Build and install wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: wolfssl
       run: |
         ./autogen.sh
@@ -279,7 +301,7 @@ jobs:
         # back off explicitly; wolfSSH does not use the CRL monitor.
         ./configure --enable-all --disable-crl-monitor \
           --enable-static --disable-shared \
-          --prefix="$HOME/wolfssl-install"
+          --prefix="$WOLFSSL_INSTALL"
         make -j$(nproc)
         make install
 
@@ -299,8 +321,8 @@ jobs:
         # certificate store (crypt32) references are only resolved when this
         # configure's own AC_CHECK_LIB and later link steps pull them in too.
         ./configure --enable-sftp \
-          CPPFLAGS="-I$HOME/wolfssl-install/include" \
-          LDFLAGS="-L$HOME/wolfssl-install/lib" \
+          CPPFLAGS="-I$WOLFSSL_INSTALL/include" \
+          LDFLAGS="-L$WOLFSSL_INSTALL/lib" \
           LIBS="-lws2_32 -lcrypt32"
         # MinGW's EXEEXT is ".exe", so the check_PROGRAMS targets automake
         # generates are tests/regress.test.exe and tests/unit.test.exe, not
