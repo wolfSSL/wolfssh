@@ -2755,6 +2755,100 @@ static void test_wolfSSH_SCP_SendSymlinkReject(void)
 static void test_wolfSSH_SCP_SendSymlinkReject(void) { ; }
 #endif
 
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSH_DIR)
+
+static int scpStageRecurFile(const char* name, const byte* buf, word32 sz)
+{
+    WFILE* fp = NULL;
+    int ret = 0;
+
+    if (WFOPEN(NULL, &fp, name, "wb") != 0 || fp == NULL)
+        return -1;
+
+    if (WFWRITE(NULL, buf, 1, sz, fp) != sz)
+        ret = -1;
+
+    WFCLOSE(NULL, fp);
+    return ret;
+}
+
+/* A recursive send must hand back the directory's entries instead of going
+ * straight to the final exit.  The example client cannot issue "scp -r -f",
+ * so drive the walk through wsScpSendCallback() at the callback level. */
+static void test_wolfSSH_SCP_SendRecursiveEntry(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpSendCtx   sendCtx;
+    char   fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    char   filePath[DEFAULT_SCP_FILE_NAME_SZ];
+    char   entryName[] = "a.txt";
+#ifdef WOLFSSH_ZEPHYR
+    char   dirPath[] = CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/scp_recur_entry";
+#else
+    char   dirPath[] = "./scp_recur_entry";
+#endif
+    byte   data[64];
+    byte   buf[256];
+    word64 mTime = 0;
+    word64 aTime = 0;
+    word32 totalSz = 0;
+    word32 i;
+    int    fileMode = 0;
+
+    for (i = 0; i < (word32)sizeof(data); i++)
+        data[i] = (byte)((i * 7 + 3) & 0xff);
+
+    WSNPRINTF(filePath, sizeof(filePath), "%s/%s", dirPath, entryName);
+
+    /* full teardown first: a run that aborted mid-test leaves these behind,
+     * and then WMKDIR below fails with EEXIST, masking the real failure with
+     * a setup error */
+    WREMOVE(NULL, filePath);
+    WRMDIR(NULL, dirPath);
+
+    AssertIntEQ(WMKDIR(NULL, dirPath, 0700), 0);
+    AssertIntEQ(scpStageRecurFile(filePath, data, sizeof(data)), 0);
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    WMEMSET(&sendCtx, 0, sizeof(sendCtx));
+    WMEMSET(fileName, 0, sizeof(fileName));
+
+    /* the first call opens the root and reports the directory itself */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_SCP_ENTER_DIR);
+
+    /* the second call must produce the staged entry, skipping "." and ".." to
+     * reach it; the return is the number of file bytes placed in buf */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            (int)sizeof(data));
+    AssertStrEQ(fileName, entryName);
+    AssertIntEQ(totalSz, (word32)sizeof(data));
+    AssertIntEQ(XMEMCMP(buf, data, sizeof(data)), 0);
+
+    /* the third call exhausts the directory and pops the only stack entry */
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_SCP_EXIT_DIR_FINAL);
+    AssertNull(sendCtx.currentDir);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    WREMOVE(NULL, filePath);
+    WRMDIR(NULL, dirPath);
+}
+#else
+static void test_wolfSSH_SCP_SendRecursiveEntry(void) { ; }
+#endif
+
 #ifdef WOLFSSH_AGENT
 /* Room for an add-identity message carrying a 3072-bit RSA key. */
 #define AGENT_TEST_BUF_SZ 2048
@@ -8143,6 +8237,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     /* SCP tests */
     test_wolfSSH_SCP_CB();
     test_wolfSSH_SCP_SendSymlinkReject();
+    test_wolfSSH_SCP_SendRecursiveEntry();
     test_wolfSSH_SCP_ReKey();
     test_wolfSSH_SCP_ReKey_NonBlock();
     test_wolfSSH_SCP_ReKey_ToServer();

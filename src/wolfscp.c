@@ -3058,7 +3058,10 @@ static int FindNextDirEntry(void *fs, ScpSendCtx* ctx)
             return WS_FATAL_ERROR;
         if (ctx->entry.name[0] == 0) /* Reached end-of-dir */
             return WS_NEXT_ERROR;
-    } while (1);
+    } while (((WSTRLEN(ctx->entry.name) == 1) &&
+              (WSTRNCMP(ctx->entry.name, ".", 1) == 0)) ||
+             ((WSTRLEN(ctx->entry.name) == 2) &&
+              (WSTRNCMP(ctx->entry.name, "..", 2) == 0)));
 #else
     do {
         ctx->entry = WREADDIR(fs, &ctx->currentDir->dir);
