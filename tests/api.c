@@ -2615,6 +2615,8 @@ static void test_wolfSSH_SCP_CB(void)
     AssertIntEQ(wolfSSH_SetScpErrorMsg(NULL, err), WS_BAD_ARGUMENT);
     AssertIntEQ(wolfSSH_SetScpErrorMsg(ssh, NULL), WS_BAD_ARGUMENT);
 
+    AssertIntEQ(wolfSSH_SCP_accept(NULL), WS_BAD_ARGUMENT);
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
