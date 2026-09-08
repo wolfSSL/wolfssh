@@ -580,6 +580,10 @@ extern "C" {
                     void* heap);
             WOLFSSH_API int WS_FindNextFileA(void* findHandle,
                     char* realFileName, size_t realFileNameSz);
+            /* lastError is set on every return, 0 on success */
+            WOLFSSH_LOCAL int WS_FindNextFileA_ex(void* findHandle,
+                    char* realFileName, size_t realFileNameSz,
+                    unsigned long* lastError);
             WOLFSSH_LOCAL int WS_GetFileAttributesExA(const char* fileName,
                     void* fileInfo, void* heap);
             WOLFSSH_LOCAL int WS_RemoveDirectoryA(const char* dirName,

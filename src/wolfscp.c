@@ -2990,10 +2990,20 @@ static int FindNextDirEntry(void *fs, ScpSendCtx* ctx)
     do {
         char realFileName[MAX_PATH];
         int  sz;
+        unsigned long lastError;
 
-        if (WS_FindNextFileA(ctx->currentDir->dir,
-            realFileName, sizeof(realFileName)) == 0) {
-            return WS_FATAL_ERROR;
+        if (WS_FindNextFileA_ex(ctx->currentDir->dir,
+            realFileName, sizeof(realFileName), &lastError) == 0) {
+            if (lastError != ERROR_NO_MORE_FILES) {
+                return WS_FATAL_ERROR;
+            }
+
+            /* end of directory, leave entry NULL so the caller pops it */
+            if (ctx->entry != NULL) {
+                WFREE(ctx->entry, NULL, DYNTYPE_SCPDIR);
+                ctx->entry = NULL;
+            }
+            return WS_NEXT_ERROR;
         }
 
         sz = (int)WSTRLEN(realFileName);

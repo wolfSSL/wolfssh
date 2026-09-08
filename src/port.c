@@ -326,21 +326,35 @@ void* WS_FindFirstFileA(const char* fileName,
 }
 
 
-int WS_FindNextFileA(void* findHandle,
-        char* realFileName, size_t realFileNameSz)
+int WS_FindNextFileA_ex(void* findHandle,
+        char* realFileName, size_t realFileNameSz, unsigned long* lastError)
 {
     BOOL success;
     WIN32_FIND_DATAW findFileData;
-    errno_t error = 0;
+    unsigned long err = 0;
 
     success = FindNextFileW((HANDLE)findHandle, &findFileData);
 
     if (success) {
-        error = wcstombs_s(NULL, realFileName, realFileNameSz,
-            findFileData.cFileName, realFileNameSz);
+        if (wcstombs_s(NULL, realFileName, realFileNameSz,
+                findFileData.cFileName, realFileNameSz) != 0)
+            err = (unsigned long)ERROR_NO_UNICODE_TRANSLATION;
+    }
+    else {
+        err = (unsigned long)GetLastError();
     }
 
-    return (success != 0) && (error == 0);
+    if (lastError != NULL)
+        *lastError = err;
+
+    return (success != 0) && (err == 0);
+}
+
+
+int WS_FindNextFileA(void* findHandle,
+        char* realFileName, size_t realFileNameSz)
+{
+    return WS_FindNextFileA_ex(findHandle, realFileName, realFileNameSz, NULL);
 }
 
 
