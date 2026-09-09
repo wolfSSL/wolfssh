@@ -1166,33 +1166,28 @@ static int test_MlDsaKeyGen(void)
 #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
 static int test_MlDsaCompositeKeyGen(void)
 {
-    /* NULL-terminated so the table is never empty if ECDSA and
-     * Ed25519/Ed448 are all disabled while ML-DSA is enabled */
+    /* NULL-terminated sentinel bounds the loop. */
     static const struct {
         word32 level;
         word32 tradType;
         const char* name;
     } params[] = {
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-            !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA44_ED25519
         { WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ED25519, "44+Ed25519" },
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    #ifndef WOLFSSH_NO_MLDSA44_ES256
         { WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ECDSA, "44+ES256" },
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-            !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA65_ED25519
         { WOLFSSH_MLDSAKEY_65, WOLFSSH_COMPOSITE_TRAD_ED25519, "65+Ed25519" },
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA65) && \
-            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA65_ES256
         { WOLFSSH_MLDSAKEY_65, WOLFSSH_COMPOSITE_TRAD_ECDSA, "65+ES256" },
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    #ifndef WOLFSSH_NO_MLDSA87_ED448
         { WOLFSSH_MLDSAKEY_87, WOLFSSH_COMPOSITE_TRAD_ED448, "87+Ed448" },
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA87) && \
-            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA87_ES384
         { WOLFSSH_MLDSAKEY_87, WOLFSSH_COMPOSITE_TRAD_ECDSA, "87+ES384" },
     #endif
         { 0, 0, NULL }
@@ -1220,7 +1215,7 @@ static int test_MlDsaCompositeKeyGen(void)
 
         sz = wolfSSH_MakeMlDsaCompositeKey(buf, bufSz, params[i].level,
                 params[i].tradType);
-        if (sz < 0) {
+        if (sz <= 0) {
             printf("MlDsaCompositeKeyGen: MakeMlDsaCompositeKey %s "
                    "failed (%d)\n", params[i].name, sz);
             WFREE(buf, NULL, DYNTYPE_BUFFER);
@@ -1291,7 +1286,34 @@ static int test_MlDsaCompositeKeyGen(void)
         }
     }
 
-    /* Skip undersize check if no algorithms enabled. */
+    /* A gated-off pair must report WS_NOT_COMPILED, not WS_BAD_ARGUMENT. */
+#if defined(WOLFSSH_NO_MLDSA44_ES256) && !defined(WOLFSSH_NO_MLDSA44) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    if (result == 0) {
+        byte dummy[1];
+        int sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy),
+                WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ECDSA);
+        if (sz != WS_NOT_COMPILED) {
+            printf("MlDsaCompositeKeyGen: gated-off composite wrong "
+                   "result %d\n", sz);
+            result = -129;
+        }
+    }
+#endif
+    /* Same, for a derived gate rather than a user-set one. */
+#if defined(WOLFSSH_NO_MLDSA87_ED448) && !defined(WOLFSSH_NO_MLDSA87)
+    if (result == 0) {
+        byte dummy[1];
+        int sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy),
+                WOLFSSH_MLDSAKEY_87, WOLFSSH_COMPOSITE_TRAD_ED448);
+        if (sz != WS_NOT_COMPILED) {
+            printf("MlDsaCompositeKeyGen: derived gated-off composite wrong "
+                   "result %d\n", sz);
+            result = -130;
+        }
+    }
+#endif
+
     if (result == 0 && firstSz > 0) {
         byte* buf = (byte*)WMALLOC(firstSz, NULL, DYNTYPE_BUFFER);
 
@@ -1315,6 +1337,35 @@ static int test_MlDsaCompositeKeyGen(void)
     return result;
 }
 #endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
+
+/* With every composite off the entry point stays compiled: a valid pair must
+ * report WS_NOT_COMPILED, a bad one still WS_BAD_ARGUMENT. */
+#if defined(WOLFSSH_NO_MLDSA_COMPOSITES) && !defined(WOLFSSH_NO_MLDSA)
+static int test_MlDsaCompositesDisabled(void)
+{
+    byte dummy[1];
+    int result = 0;
+    int sz;
+
+    sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy),
+            WOLFSSH_MLDSAKEY_44, WOLFSSH_COMPOSITE_TRAD_ECDSA);
+    if (sz != WS_NOT_COMPILED) {
+        printf("MlDsaCompositesDisabled: valid pair wrong result %d\n", sz);
+        result = -131;
+    }
+
+    if (result == 0) {
+        sz = wolfSSH_MakeMlDsaCompositeKey(dummy, sizeof(dummy), 9999, 9999);
+        if (sz != WS_BAD_ARGUMENT) {
+            printf("MlDsaCompositesDisabled: invalid pair wrong result %d\n",
+                    sz);
+            result = -132;
+        }
+    }
+
+    return result;
+}
+#endif
 
 #endif /* WOLFSSH_NO_MLDSA */
 
@@ -14816,7 +14867,7 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
     ed25519_key ed25519Key;
     int ed25519Init = 0;
 #endif
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
     ed448_key ed448Key;
     int ed448Init = 0;
 #endif
@@ -14885,7 +14936,7 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ED448) {
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         if (wc_ed448_init(&ed448Key) != 0) { result = -710; goto done; }
         ed448Init = 1;
         if (wc_ed448_make_key(&rng, 57,
@@ -14923,7 +14974,7 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ED448) {
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         word32 sz = params.tradPubSz;
         if (wc_ed448_export_public(&ed448Key, tradPub,
             &sz) != 0 || sz != params.tradPubSz) { result = -720; goto done; }
@@ -15018,7 +15069,7 @@ static int test_DoUserAuthRequestMlDsaComposite_Params(const char* keyTypeName,
 #endif
     }
     else if (params.tradType == TRAD_TYPE_ED448) {
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         tradSigSz = 114;
         if (wc_ed448_sign_msg(m_prime, m_prime_len, tradSig, &tradSigSz,
             &ed448Key, NULL, 0) != 0) { result = -730; goto done; }
@@ -15154,7 +15205,7 @@ done:
 #ifndef WOLFSSH_NO_ED25519
     if (ed25519Init) wc_ed25519_free(&ed25519Key);
 #endif
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
     if (ed448Init) wc_ed448_free(&ed448Key);
 #endif
     if (rngInit) wc_FreeRng(&rng);
@@ -15243,36 +15294,32 @@ done:
 static int test_SignHMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
             ID_MLDSA44_ES256);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
             ID_MLDSA65_ES256);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
             ID_MLDSA87_ES384);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa44-ed25519@openssh.com",
         ID_MLDSA44_ED25519);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
         ID_MLDSA65_ED25519);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     ret = test_SignHMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
             ID_MLDSA87_ED448);
     if (ret != 0) return ret;
@@ -15280,8 +15327,7 @@ static int test_SignHMlDsaComposite(void)
     return 0;
 }
 
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
 /* Reset a WS_KeySignature to a clean slate before (re)using it as an
  * ID_MLDSA44_ED25519 decode target. */
 static void MlDsaTest_ResetKeySig(WS_KeySignature* keySig)
@@ -15295,8 +15341,7 @@ static void MlDsaTest_ResetKeySig(WS_KeySignature* keySig)
 /* E2E parser test with minimal OpenSSH-key-v1 envelope. */
 static int test_PrepareUserAuthRequestMlDsaComposite_OpenSshEnvelope(void)
 {
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     static const char keyTypeName[] = "ssh-mldsa44-ed25519@openssh.com";
     static const char magic[] = "openssh-key-v1";
     static const char none[] = "none";
@@ -15753,41 +15798,37 @@ done:
 static int test_BuildUserAuthRequestMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa44-es256@wolfssl.com", WOLFSSH_MLDSAKEY_44,
             WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA44_ES256);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa65-es256@wolfssl.com", WOLFSSH_MLDSAKEY_65,
             WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA65_ES256);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa87-es384@wolfssl.com", WOLFSSH_MLDSAKEY_87,
             WOLFSSH_COMPOSITE_TRAD_ECDSA, ID_MLDSA87_ES384);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa44-ed25519@openssh.com", WOLFSSH_MLDSAKEY_44,
             WOLFSSH_COMPOSITE_TRAD_ED25519, ID_MLDSA44_ED25519);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa65-ed25519@wolfssl.com", WOLFSSH_MLDSAKEY_65,
             WOLFSSH_COMPOSITE_TRAD_ED25519, ID_MLDSA65_ED25519);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     ret = test_BuildUserAuthRequestMlDsaComposite_Params(
             "ssh-mldsa87-ed448@wolfssl.com", WOLFSSH_MLDSAKEY_87,
             WOLFSSH_COMPOSITE_TRAD_ED448, ID_MLDSA87_ED448);
@@ -15802,7 +15843,7 @@ static int test_BuildUserAuthRequestMlDsaComposite(void)
 static int test_DoUserAuthRequestMlDsaComposite(void)
 {
     int ret = 0;
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa44-es256@wolfssl.com",
         ID_MLDSA44_ES256, 0);
     if (ret != 0) return ret;
@@ -15819,8 +15860,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
         ID_MLDSA44_ES256, 4);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-es256@wolfssl.com",
         ID_MLDSA65_ES256, 0);
     if (ret != 0) return ret;
@@ -15837,8 +15877,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
         ID_MLDSA65_ES256, 4);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-es384@wolfssl.com",
         ID_MLDSA87_ES384, 0);
     if (ret != 0) return ret;
@@ -15855,8 +15894,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
         ID_MLDSA87_ES384, 4);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     ret = test_DoUserAuthRequestMlDsaComposite_Params(
         "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 0);
     if (ret != 0) return ret;
@@ -15873,8 +15911,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
         "ssh-mldsa44-ed25519@openssh.com", ID_MLDSA44_ED25519, 4);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa65-ed25519@wolfssl.com",
         ID_MLDSA65_ED25519, 0);
     if (ret != 0) return ret;
@@ -15891,7 +15928,7 @@ static int test_DoUserAuthRequestMlDsaComposite(void)
         ID_MLDSA65_ED25519, 4);
     if (ret != 0) return ret;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     ret = test_DoUserAuthRequestMlDsaComposite_Params("ssh-mldsa87-ed448@wolfssl.com",
         ID_MLDSA87_ED448, 0);
     if (ret != 0) return ret;
@@ -23485,6 +23522,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     unitResult = test_MlDsaCompositeKeyGen();
     printf("MlDsaCompositeKeyGen: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#else
+    unitResult = test_MlDsaCompositesDisabled();
+    printf("MlDsaCompositesDisabled: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* WOLFSSH_NO_MLDSA_COMPOSITES */

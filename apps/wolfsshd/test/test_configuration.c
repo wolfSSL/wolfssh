@@ -3082,26 +3082,22 @@ static int test_CheckAuthKeysLineTypes(void)
         #endif
         #endif
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    #ifndef WOLFSSH_NO_MLDSA44_ES256
         "ssh-mldsa44-es256@wolfssl.com",
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA65) && \
-            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA65_ES256
         "ssh-mldsa65-es256@wolfssl.com",
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA87) && \
-            !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA87_ES384
         "ssh-mldsa87-es384@wolfssl.com",
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-            !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA44_ED25519
         "ssh-mldsa44-ed25519@openssh.com",
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-            !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA65_ED25519
         "ssh-mldsa65-ed25519@wolfssl.com",
     #endif
-    #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+    #ifndef WOLFSSH_NO_MLDSA87_ED448
         "ssh-mldsa87-ed448@wolfssl.com",
     #endif
     };
@@ -3264,9 +3260,9 @@ static int test_CheckAuthKeysLineMaxSz(void)
 
 #if !defined(WOLFSSH_NO_MLDSA87)
     keySz = WC_MLDSA_87_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
-    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA87_ES384
         type = "ssh-mldsa87-es384@wolfssl.com";
-    #elif defined(HAVE_ED448)
+    #elif !defined(WOLFSSH_NO_MLDSA87_ED448)
         type = "ssh-mldsa87-ed448@wolfssl.com";
     #else
         type = "ssh-mldsa-87";
@@ -3274,9 +3270,9 @@ static int test_CheckAuthKeysLineMaxSz(void)
     #endif
 #elif !defined(WOLFSSH_NO_MLDSA65)
     keySz = WC_MLDSA_65_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
-    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+    #ifndef WOLFSSH_NO_MLDSA65_ES256
         type = "ssh-mldsa65-es256@wolfssl.com";
-    #elif !defined(WOLFSSH_NO_ED25519) && !defined(NO_SHA512)
+    #elif !defined(WOLFSSH_NO_MLDSA65_ED25519)
         type = "ssh-mldsa65-ed25519@wolfssl.com";
     #else
         type = "ssh-mldsa-65";
@@ -3284,9 +3280,9 @@ static int test_CheckAuthKeysLineMaxSz(void)
     #endif
 #else
     keySz = WC_MLDSA_44_PUB_KEY_SIZE + COMPOSITE_MAX_TRAD_PUB_SZ;
-    #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    #ifndef WOLFSSH_NO_MLDSA44_ES256
         type = "ssh-mldsa44-es256@wolfssl.com";
-    #elif !defined(WOLFSSH_NO_ED25519) && !defined(NO_SHA512)
+    #elif !defined(WOLFSSH_NO_MLDSA44_ED25519)
         type = "ssh-mldsa44-ed25519@openssh.com";
     #else
         type = "ssh-mldsa-44";
