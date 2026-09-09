@@ -17977,7 +17977,7 @@ static int SignHEcdsa(WOLFSSH* ssh, byte* sig, word32* sigSz,
     }
 
     if (ret == WS_SUCCESS) {
-        word32 written;
+        word32 written = 0;
 
         rPad = (r[0] & 0x80) ? 1 : 0;
         sPad = (s[0] & 0x80) ? 1 : 0;
@@ -20936,44 +20936,23 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
         }
         else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
-        {
-        #if 0
-        #ifdef WOLFSSH_AGENT
-            if (ssh->agentEnabled) {
-                word32 sz;
-                const byte* c =
-                        (const byte*)authData->sf.publicKey.publicKey;
-
-                ato32(c + idx, &sz);
-                idx += LENGTH_SZ + sz;
-                ato32(c + idx, &sz);
-                idx += LENGTH_SZ + sz;
-                ato32(c + idx, &sz);
-                idx += LENGTH_SZ;
-                c += idx;
-                idx = 0;
-
-                ret = wc_ecc_import_x963(c, sz, &keySig->ks.ecc.key);
-            }
-            else
-        #endif
-        #endif
-                if (authData->sf.publicKey.privateKey == NULL ||
-                        authData->sf.publicKey.privateKeySz == 0) {
-                    /* A cert-store-only client has no in-memory key; a
-                     * decode of the empty buffer would report a misleading
-                     * wolfCrypt ASN error. */
-                    WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestEccCert: No "
-                         "private key; the offered certificate matched no "
-                         "cert-store slot");
-                    ret = WS_BAD_ARGUMENT;
-                }
-                else {
-                    ret = wc_EccPrivateKeyDecode(
-                            authData->sf.publicKey.privateKey,
-                            &idx, &keySig->ks.ecc.key,
-                            authData->sf.publicKey.privateKeySz);
-                }
+        /* No WOLFSSH_AGENT branch: among the certificate key types,
+         * only RSA implements agent signing. Plain ECDSA keys do use
+         * the agent, in the non-certificate ECC path. */
+        if (authData->sf.publicKey.privateKey == NULL ||
+                authData->sf.publicKey.privateKeySz == 0) {
+            /* Avoid misleading ASN error for cert-store-only clients
+             * without an in-memory key. */
+            WLOG(WS_LOG_DEBUG, "PrepareUserAuthRequestEccCert: No "
+                 "private key available for the offered ECC "
+                 "certificate");
+            ret = WS_BAD_ARGUMENT;
+        }
+        else {
+            ret = wc_EccPrivateKeyDecode(
+                    authData->sf.publicKey.privateKey,
+                    &idx, &keySig->ks.ecc.key,
+                    authData->sf.publicKey.privateKeySz);
         }
     }
 
@@ -21055,31 +21034,7 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         WMEMCPY(checkData + i, sigStart, begin - sigStartIdx);
     }
 
-    #if 0
-    #ifdef WOLFSSH_AGENT
-    if (ssh->agentEnabled) {
-        if (ret == WS_SUCCESS)
-            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
-                    sig, &sigSz,
-                    authData->sf.publicKey.publicKey,
-                    authData->sf.publicKey.publicKeySz, 0);
-        if (ret == WS_SUCCESS) {
-            /* begin indexes into output, whose capacity is outputSz. */
-            if (outputSz <= begin || outputSz - begin < LENGTH_SZ + sigSz) {
-                WLOG(WS_LOG_DEBUG, "SUAR: ECDSA agent sig doesn't fit output");
-                ret = WS_BUFFER_E;
-            }
-        }
-        if (ret == WS_SUCCESS) {
-            c32toa(sigSz, output + begin);
-            begin += LENGTH_SZ;
-            XMEMCPY(output + begin, sig, sigSz);
-            begin += sigSz;
-        }
-    }
-    else
-    #endif
-    #endif
+    /* Scope for cert-store pvtKey */
     {
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
         const WOLFSSH_PVT_KEY* pvtKey;
@@ -21138,6 +21093,9 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
         }
         else
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
+        /* No WOLFSSH_AGENT branch: among the certificate key types,
+         * only RSA implements agent signing. Plain ECDSA keys do use
+         * the agent, in the non-certificate ECC path. */
         {
             if (ret == WS_SUCCESS) {
                 ret = wc_ecc_sign_hash(digest, digestSz, sig, &sigSz,
@@ -24634,7 +24592,7 @@ static int CompositeEccSign(void* key, WC_RNG* rng, void* heap,
             /* RFC 5656 3.1.2: mpints with the top bit set need a zero pad. */
             byte rPad = (rBuf[0] & 0x80) ? 1 : 0;
             byte sPad = (sBuf[0] & 0x80) ? 1 : 0;
-            word32 written;
+            word32 written = 0;
 
             if (EncodeEcdsaRsToMpints(wireSig, *wireSigSz, rBuf, rSz, rPad,
                     sBuf, sSz, sPad, &written) != WS_SUCCESS) {

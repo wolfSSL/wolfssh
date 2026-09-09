@@ -4091,18 +4091,33 @@ static void wolfSSHD_ServiceCb(DWORD CtrlCode)
 }
 
 
-static char* _convertHelper(WCHAR* in, void* heap) {
-    int retSz;
-    char* ret;
-    
-    retSz = (int)wcslen(in) * 2;
-    ret   = (char*)WMALLOC(retSz + 1, heap, DYNTYPE_SSHD);
-    if (ret != NULL) {
-        size_t numConv = 0;
-        if (wcstombs_s(&numConv, ret, retSz, in, retSz) != 0) {
-            WFREE(ret, heap, DYNTYPE_SSHD);
-            ret = NULL;
+/* *err is only meaningful when NULL is returned: WS_MEMORY_E on alloc
+ * failure, WS_FATAL_ERROR on conversion failure. */
+static char* _convertHelper(WCHAR* in, void* heap, int* err)
+{
+    char* ret = NULL;
+    size_t needed = 0;
+
+    *err = WS_SUCCESS;
+
+    /* Query the exact size, including the null. An empty argument sized
+     * the buffer at 0, which made the convert below fail with EINVAL. */
+    if (wcstombs_s(&needed, NULL, 0, in, 0) == 0 && needed > 0) {
+        ret = (char*)WMALLOC(needed, heap, DYNTYPE_SSHD);
+        if (ret == NULL) {
+            *err = WS_MEMORY_E;
         }
+        else {
+            size_t numConv = 0;
+            if (wcstombs_s(&numConv, ret, needed, in, needed) != 0) {
+                WFREE(ret, heap, DYNTYPE_SSHD);
+                ret = NULL;
+                *err = WS_FATAL_ERROR;
+            }
+        }
+    }
+    else {
+        *err = WS_FATAL_ERROR;
     }
     return ret;
 }
@@ -4192,10 +4207,15 @@ static int StartSSHD(int argc, char** argv)
             /* Zero first: _freeWinArgs() walks all argc slots. */
             WMEMSET(argv, 0, argc * sizeof(char*));
             for (z = 0; z < argc; z++) {
-                argv[z] = _convertHelper(cmdArgs[z], NULL);
+                int convErr = WS_FATAL_ERROR;
+
+                argv[z] = _convertHelper(cmdArgs[z], NULL, &convErr);
                 if (argv[z] == NULL) {
                     /* mygetopt() dereferences every entry it walks. */
-                    ret = WS_MEMORY_E;
+                    wolfSSH_Log(WS_LOG_ERROR,
+                        "[SSHD] Unable to convert argument %u, ret = %d.",
+                        z, convErr);
+                    ret = convErr;
                     break;
                 }
             }
