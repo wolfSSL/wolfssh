@@ -3831,6 +3831,67 @@ static void TestSessionReqCallbackSeesCommandSz(void)
     AssertIntEQ(wolfSSH_GetSessionCommandSz(NULL), 0);
 }
 
+/* Drives one session request whose command string runs past the end of the
+ * packet, and returns the message id the server answered with. */
+static byte RunMalformedSessionRequest(const char* type)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte payload[128];
+    byte in[128];
+    word32 idx = 0;
+    word32 inSz;
+    byte replyId;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    if (WSTRCMP(type, "exec") == 0) {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                    RecordingSessionReqCb), WS_SUCCESS);
+    }
+    else {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                    RecordingSessionReqCb), WS_SUCCESS);
+    }
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    /* The command's length header claims more than the packet holds. */
+    idx = AppendUint32(payload, sizeof(payload), idx, channel->channel);
+    idx = AppendString(payload, sizeof(payload), idx, type);
+    idx = AppendByte(payload, sizeof(payload), idx, 1);
+    idx = AppendUint32(payload, sizeof(payload), idx, 64);
+    idx = AppendData(payload, sizeof(payload), idx, (const byte*)"ls", 2);
+    inSz = WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    /* A malformed packet ends the connection, but the refusal goes out
+     * first. */
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_BUFFER_E);
+    AssertIntEQ(sessionReqCbCalls, 0);
+    AssertIntEQ(channel->sessionGranted, 0);
+
+    replyId = ParseMsgId(harness.io.out, harness.io.outSz);
+    FreeChannelOpenHarness(&harness);
+
+    return replyId;
+}
+
+/* A command that failed to parse is refused without asking the callback:
+ * there is nothing to vet, and channel->command still holds whatever an
+ * earlier request on the channel left behind. */
+static void TestMalformedSessionRequestSkipsCallback(void)
+{
+    AssertIntEQ(RunMalformedSessionRequest("exec"), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(RunMalformedSessionRequest("subsystem"),
+            MSGID_CHANNEL_FAILURE);
+}
+
 /* A request callback owns its channel and may close it. The grant is
  * recorded after the callback returns, so it has to find the channel
  * again: wolfSSH_ChannelFree() frees it, and writing through the old
@@ -14370,6 +14431,7 @@ int main(int argc, char** argv)
     TestChannelReqExecCallbackRuns();
     TestChannelReqSubsysCallbackRuns();
     TestSessionReqCallbackSeesCommandSz();
+    TestMalformedSessionRequestSkipsCallback();
     TestSessionReqCallbackMayFreeChannel();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();
 #ifdef WOLFSSH_SFTP
