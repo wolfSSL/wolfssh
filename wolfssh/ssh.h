@@ -436,6 +436,8 @@ WOLFSSH_API WS_SessionType wolfSSH_ChannelGetSessionType(
         const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API const char* wolfSSH_ChannelGetSessionCommand(
         const WOLFSSH_CHANNEL* channel);
+WOLFSSH_API word32 wolfSSH_ChannelGetSessionCommandSz(
+        const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelIsPty(const WOLFSSH_CHANNEL* channel);
 
 /* Channel callbacks */
@@ -889,6 +891,7 @@ WOLFSSH_API int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle,
 WOLFSSH_API int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd);
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh);
+WOLFSSH_API word32 wolfSSH_GetSessionCommandSz(const WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name,
         word32 nameSz);
 WOLFSSH_API int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns,

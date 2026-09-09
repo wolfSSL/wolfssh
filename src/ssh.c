@@ -822,8 +822,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
                     if (cmd != NULL &&
                         WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
-                        && ssh->channelList->commandSz ==
-                                (word32)WSTRLEN("sftp")
+                        && wolfSSH_GetSessionCommandSz(ssh)
+                                == (word32)WSTRLEN("sftp")
                         && (WSTRCMP(cmd, "sftp") == 0)) {
                         ssh->acceptState = ACCEPT_INIT_SFTP;
                         return wolfSSH_SFTP_accept(ssh);
@@ -4551,12 +4551,29 @@ WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh)
 
 const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh)
 {
+    const char* cmd = NULL;
+
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommand()");
 
-    if (ssh && ssh->channelList)
-        return ssh->channelList->command;
+    if (ssh) {
+        cmd = wolfSSH_ChannelGetSessionCommand(ssh->channelList);
+    }
 
-    return NULL;
+    return cmd;
+}
+
+
+word32 wolfSSH_GetSessionCommandSz(const WOLFSSH* ssh)
+{
+    word32 commandSz = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_GetSessionCommandSz()");
+
+    if (ssh) {
+        commandSz = wolfSSH_ChannelGetSessionCommandSz(ssh->channelList);
+    }
+
+    return commandSz;
 }
 
 
@@ -5710,13 +5727,27 @@ const char* wolfSSH_ChannelGetSessionCommand(const WOLFSSH_CHANNEL* channel)
 {
     const char* cmd = NULL;
 
-    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetCommand()");
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetSessionCommand()");
 
     if (channel) {
         cmd = channel->command;
     }
 
     return cmd;
+}
+
+
+word32 wolfSSH_ChannelGetSessionCommandSz(const WOLFSSH_CHANNEL* channel)
+{
+    word32 commandSz = 0;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelGetSessionCommandSz()");
+
+    if (channel) {
+        commandSz = channel->commandSz;
+    }
+
+    return commandSz;
 }
 
 

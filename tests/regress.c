@@ -3735,6 +3735,102 @@ static void TestChannelReqSubsysCallbackRuns(void)
                 WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
 }
 
+/* What a length-aware session request callback saw. */
+static word32 sessionReqCbCommandSz;
+static word32 sessionReqCbCommandStrLen;
+
+static int LengthRecordingSessionReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    const char* command;
+
+    (void)ctx;
+
+    sessionReqCbCalls++;
+    sessionReqCbCommandSz = wolfSSH_ChannelGetSessionCommandSz(channel);
+    command = wolfSSH_ChannelGetSessionCommand(channel);
+    sessionReqCbCommandStrLen = (command == NULL) ?
+            0 : (word32)WSTRLEN(command);
+
+    return 0;
+}
+
+/* Drives one session request carrying a command that the C string alone
+ * cannot describe, and checks what the callback could see of it. */
+static void CheckSessionReqCbSeesCommandSz(const char* type,
+        const byte* command, word32 commandSz, word32 expectStrLen)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte payload[128];
+    byte in[128];
+    word32 idx = 0;
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbCommandSz = 0;
+    sessionReqCbCommandStrLen = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    if (WSTRCMP(type, "exec") == 0) {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                    LengthRecordingSessionReqCb), WS_SUCCESS);
+    }
+    else {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                    LengthRecordingSessionReqCb), WS_SUCCESS);
+    }
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    /* Built here rather than with BuildChannelStringRequestPacket(): that
+     * takes the command as a C string, which cannot carry the NUL. */
+    idx = AppendUint32(payload, sizeof(payload), idx, channel->channel);
+    idx = AppendString(payload, sizeof(payload), idx, type);
+    idx = AppendByte(payload, sizeof(payload), idx, 1);
+    idx = AppendUint32(payload, sizeof(payload), idx, commandSz);
+    idx = AppendData(payload, sizeof(payload), idx, command, commandSz);
+    inSz = WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(sessionReqCbCommandSz, commandSz);
+    AssertIntEQ(sessionReqCbCommandStrLen, expectStrLen);
+
+    /* The session-wide accessor reports the same channel's command. */
+    AssertIntEQ(wolfSSH_GetSessionCommandSz(harness.ssh), commandSz);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* An application vetting a command in its callback needs the wire length.
+ * The string it is handed stops at an embedded NUL, so "sftp\0evil" reads
+ * there as "sftp" and passes a name check the whole name has to fail; the
+ * length is what tells the two apart. */
+static void TestSessionReqCallbackSeesCommandSz(void)
+{
+    static const byte nulCommand[] = {
+        's', 'f', 't', 'p', 0, 'e', 'v', 'i', 'l'
+    };
+    static const byte plainCommand[] = { 'l', 's' };
+
+    /* The control: with no NUL in it, length and C string agree, so the
+     * cases below are the NUL and not the accessor reporting anything it
+     * likes. */
+    CheckSessionReqCbSeesCommandSz("exec", plainCommand,
+            (word32)sizeof(plainCommand), (word32)sizeof(plainCommand));
+    CheckSessionReqCbSeesCommandSz("exec", nulCommand,
+            (word32)sizeof(nulCommand), 4);
+    CheckSessionReqCbSeesCommandSz("subsystem", nulCommand,
+            (word32)sizeof(nulCommand), 4);
+
+    /* Nothing to report is zero, not a read through a NULL. */
+    AssertIntEQ(wolfSSH_ChannelGetSessionCommandSz(NULL), 0);
+    AssertIntEQ(wolfSSH_GetSessionCommandSz(NULL), 0);
+}
+
 /* A request callback owns its channel and may close it. The grant is
  * recorded after the callback returns, so it has to find the channel
  * again: wolfSSH_ChannelFree() frees it, and writing through the old
@@ -14273,6 +14369,7 @@ int main(int argc, char** argv)
     TestChannelCloseCallbackReturnIgnored();
     TestChannelReqExecCallbackRuns();
     TestChannelReqSubsysCallbackRuns();
+    TestSessionReqCallbackSeesCommandSz();
     TestSessionReqCallbackMayFreeChannel();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();
 #ifdef WOLFSSH_SFTP
