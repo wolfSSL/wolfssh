@@ -1394,13 +1394,16 @@ int wolfSSH_SFTP_accept(WOLFSSH* ssh)
          * callback: serve only a session channel it granted sftp on. The
          * request having named sftp is not enough, so this asks for the
          * grant as well -- unlike wolfSSH_accept()'s divert, which reads
-         * only the type and command. */
+         * only the type and command. The name matches whole, length
+         * and bytes: sftpx, or sftp with an embedded NUL, is some
+         * other subsystem. */
         const WOLFSSH_CHANNEL* channel = ssh->channelList;
 
         if (channel == NULL || !channel->sessionGranted
                 || channel->sessionType != WOLFSSH_SESSION_SUBSYSTEM
                 || channel->command == NULL
-                || WSTRNCMP(channel->command, "sftp", 4) != 0) {
+                || channel->commandSz != (word32)WSTRLEN("sftp")
+                || WSTRCMP(channel->command, "sftp") != 0) {
             WLOG(WS_LOG_SFTP, "No sftp subsystem granted on the session");
             return WS_INVALID_STATE_E;
         }

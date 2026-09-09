@@ -13143,7 +13143,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
+            ret = GetStringAlloc(ssh->ctx->heap,
+                    &channel->command, &channel->commandSz,
                     buf, len, &begin);
             if (ret == WS_SUCCESS)
                 WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
@@ -13160,7 +13161,8 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
-            ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
+            ret = GetStringAlloc(ssh->ctx->heap,
+                    &channel->command, &channel->commandSz,
                     buf, len, &begin);
             if (ret == WS_SUCCESS)
                 WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);

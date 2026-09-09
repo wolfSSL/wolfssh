@@ -3937,6 +3937,100 @@ static void TestSftpAcceptAppChannelsRefusesShell(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* A name that only starts with sftp is not an sftp grant. */
+static void TestSftpAcceptAppChannelsRefusesPrefixName(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+
+    channel = SeedAppChannelsSession(&harness, "subsystem", "sftpx");
+    inSz = BuildSftpInitDataPacket(channel->channel, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(wolfSSH_SFTP_accept(harness.ssh), WS_INVALID_STATE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.io.inOff, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A granted name whose wire length runs past an embedded NUL is not an
+ * sftp grant: the four bytes ahead of the NUL match, the name does not. */
+static void TestSftpAcceptAppChannelsRefusesNulName(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    static const byte nulName[] = {
+        's', 'f', 't', 'p', 0, 'e', 'v', 'i', 'l'
+    };
+    byte payload[128];
+    byte in[128];
+    word32 idx = 0;
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_SetAppChannels(harness.ssh, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    /* Built here rather than with BuildChannelStringRequestPacket(): that
+     * takes the name as a C string, which cannot carry the NUL. */
+    idx = AppendUint32(payload, sizeof(payload), idx, channel->channel);
+    idx = AppendString(payload, sizeof(payload), idx, "subsystem");
+    idx = AppendByte(payload, sizeof(payload), idx, 1);
+    idx = AppendUint32(payload, sizeof(payload), idx, (word32)sizeof(nulName));
+    idx = AppendData(payload, sizeof(payload), idx, nulName, sizeof(nulName));
+    inSz = WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    /* The callback reads a C string, so it sees sftp and grants it. */
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(WSTRCMP(sessionReqCbCommand, "sftp"), 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_CHANNEL_SUCCESS);
+
+    inSz = BuildSftpInitDataPacket(channel->channel, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(wolfSSH_SFTP_accept(harness.ssh), WS_INVALID_STATE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.io.inOff, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Four bytes that are not sftp are not an sftp grant. */
+static void TestSftpAcceptAppChannelsRefusesSameLengthName(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[64];
+    word32 inSz;
+
+    channel = SeedAppChannelsSession(&harness, "subsystem", "sfxp");
+    inSz = BuildSftpInitDataPacket(channel->channel, in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(wolfSSH_SFTP_accept(harness.ssh), WS_INVALID_STATE_E);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertIntEQ(harness.io.inOff, 0);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 /* The grant the mode relies on: the subsystem callback took sftp, so the
  * INIT is answered with a VERSION and accept() stays parked. */
 static void TestSftpAcceptAppChannelsServesGrantedSftp(void)
@@ -4065,6 +4159,69 @@ static void TestSftpAcceptAppChannelsRefusesRejectedCb(void)
     CheckSftpAcceptRefusesUngranted(1);
 }
 
+
+/* wolfSSH_accept()'s divert to the built-in server matches the subsystem
+ * name whole, by length as well as bytes. The last case is the control:
+ * with no name that does divert, a harness that never reached the check
+ * would pass every refusal above it. */
+static void TestAcceptDivertMatchesSftpNameWhole(void)
+{
+    static const struct {
+        const char* name;
+        word32 nameSz;
+        byte divert;
+    } cases[] = {
+        { "sftpx",     5, 0 },  /* longer than sftp */
+        { "sfxp",      4, 0 },  /* the length of sftp, other bytes */
+        { "sftp\0evil", 9, 0 }, /* sftp up to an embedded NUL */
+        { "sftp",      4, 1 },
+    };
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte payload[128];
+    byte in[128];
+    word32 idx;
+    word32 inSz;
+    word32 i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        InitChannelOpenHarness(&harness, NULL, 0);
+        channel = SeedUnconfirmedChannel(&harness);
+        AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+        channel->openConfirmed = 1;
+
+        idx = 0;
+        idx = AppendUint32(payload, sizeof(payload), idx, channel->channel);
+        idx = AppendString(payload, sizeof(payload), idx, "subsystem");
+        idx = AppendByte(payload, sizeof(payload), idx, 1);
+        idx = AppendUint32(payload, sizeof(payload), idx, cases[i].nameSz);
+        idx = AppendData(payload, sizeof(payload), idx,
+                (const byte*)cases[i].name, cases[i].nameSz);
+        inSz = WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, in, sizeof(in));
+        RepointHarnessInput(&harness, in, inSz);
+
+        /* Neither app-channels nor a callback, so the request is granted
+         * and the session is the one wolfSSH_accept() goes on to serve. */
+        AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(channel->commandSz, cases[i].nameSz);
+        RepointHarnessInput(&harness, NULL, 0);
+
+        harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+        if (cases[i].divert) {
+            /* The built-in server has the session, and stops on the INIT
+             * the empty input cannot supply. */
+            wolfSSH_accept(harness.ssh);
+            AssertIntEQ(harness.ssh->acceptState, ACCEPT_INIT_SFTP);
+        }
+        else {
+            AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+            AssertIntEQ(harness.ssh->acceptState,
+                    ACCEPT_CLIENT_SESSION_ESTABLISHED);
+        }
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
 
 #endif /* WOLFSSH_SFTP */
 
@@ -14119,11 +14276,15 @@ int main(int argc, char** argv)
     TestSftpAcceptAppChannelsNeedsSession();
     TestSftpAcceptAppChannelsRefusesPreAccept();
     TestSftpAcceptAppChannelsRefusesShell();
+    TestSftpAcceptAppChannelsRefusesPrefixName();
+    TestSftpAcceptAppChannelsRefusesNulName();
+    TestSftpAcceptAppChannelsRefusesSameLengthName();
     TestSftpAcceptAppChannelsServesGrantedSftp();
     TestSftpAcceptAppChannelsRefusesEstablishedShell();
     TestSftpAcceptAppChannelsServesEstablishedSftp();
     TestSftpAcceptAppChannelsRefusesNoCb();
     TestSftpAcceptAppChannelsRefusesRejectedCb();
+    TestAcceptDivertMatchesSftpNameWhole();
 #endif
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();

@@ -822,7 +822,9 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
                     if (cmd != NULL &&
                         WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
-                        && (WSTRNCMP(cmd, "sftp", 4) == 0)) {
+                        && ssh->channelList->commandSz ==
+                                (word32)WSTRLEN("sftp")
+                        && (WSTRCMP(cmd, "sftp") == 0)) {
                         ssh->acceptState = ACCEPT_INIT_SFTP;
                         return wolfSSH_SFTP_accept(ssh);
                     }

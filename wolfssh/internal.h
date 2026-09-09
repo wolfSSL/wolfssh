@@ -1447,6 +1447,7 @@ struct WOLFSSH_CHANNEL {
                                    * Accumulates unread data, does not overwrite
                                    * it. */
     char* command;
+    word32 commandSz;
     struct WOLFSSH* ssh;
     struct WOLFSSH_CHANNEL* next;
 };
