@@ -2440,39 +2440,32 @@ typedef struct {
     const char* label;
 } MlDsaCompositeEntry;
 
-/* NULL-terminated so the table is never empty if composites are compiled
- * out or ECDSA and Ed25519/Ed448 are both disabled */
+/* NULL-terminated so the table is never empty. */
 static const MlDsaCompositeEntry mldsaCompositeEntries[] = {
-#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     { "mldsa44-ed25519", "./keys/server-key-mldsa44ed25519",
         "ML-DSA-44+Ed25519" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     { "mldsa44-es256", "./keys/server-key-mldsa44es256",
         "ML-DSA-44+ES256" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     { "mldsa65-ed25519", "./keys/server-key-mldsa65ed25519",
         "ML-DSA-65+Ed25519" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     { "mldsa65-es256", "./keys/server-key-mldsa65es256",
         "ML-DSA-65+ES256" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     { "mldsa87-ed448", "./keys/server-key-mldsa87ed448",
         "ML-DSA-87+Ed448" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     { "mldsa87-es384", "./keys/server-key-mldsa87es384",
         "ML-DSA-87+ES384" },
 #endif
-#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
     { NULL, NULL, NULL }
 };
 

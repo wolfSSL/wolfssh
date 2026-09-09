@@ -153,6 +153,8 @@ extern "C" {
 #endif
 
 #if !defined(HAVE_ED25519) \
+    || !defined(HAVE_ED25519_SIGN) \
+    || !defined(HAVE_ED25519_VERIFY) \
     || !defined(WOLFSSL_ED25519_STREAMING_VERIFY) \
     || !defined(HAVE_ED25519_KEY_IMPORT) \
     || !defined(HAVE_ED25519_KEY_EXPORT)
@@ -381,11 +383,53 @@ extern "C" {
     #undef WOLFSSH_NO_PUBKEY_AUTH
     #define WOLFSSH_NO_PUBKEY_AUTH
 #endif
-/* A composite needs an ML-DSA level and a traditional algorithm. */
-#if (defined(WOLFSSH_NO_MLDSA44) && defined(WOLFSSH_NO_MLDSA65) && \
-     defined(WOLFSSH_NO_MLDSA87)) || \
-    (defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_NO_ED25519) && \
-     !defined(HAVE_ED448))
+/* Ed448 composites need the sub-feature macros and the SHAKE-256 prehash,
+ * not just HAVE_ED448. Every composite Ed448 site keys off this one, so the
+ * copies can't drift. Derived, so clear any supplied definition first. */
+#undef WOLFSSH_HAVE_COMPOSITE_ED448
+#if defined(HAVE_ED448) && defined(WOLFSSL_SHAKE256) && \
+    defined(HAVE_ED448_SIGN) && \
+    defined(HAVE_ED448_VERIFY) && defined(HAVE_ED448_KEY_IMPORT) && \
+    defined(HAVE_ED448_KEY_EXPORT)
+    #define WOLFSSH_HAVE_COMPOSITE_ED448
+#endif
+/* One gate per ML-DSA composite, so the pairing rules live here only.
+ * WOLFSSH_NO_MLDSA_COMPOSITES turns them all off and is set when none are
+ * left. Governs negotiation and key loading, not code size. */
+#if defined(WOLFSSH_NO_MLDSA44) || defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA44_ES256
+    #define WOLFSSH_NO_MLDSA44_ES256
+#endif
+#if defined(WOLFSSH_NO_MLDSA65) || defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
+    !defined(WOLFSSL_SHA512) || defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA65_ES256
+    #define WOLFSSH_NO_MLDSA65_ES256
+#endif
+#if defined(WOLFSSH_NO_MLDSA87) || defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
+    !defined(WOLFSSL_SHA512) || defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA87_ES384
+    #define WOLFSSH_NO_MLDSA87_ES384
+#endif
+#if defined(WOLFSSH_NO_MLDSA44) || defined(WOLFSSH_NO_ED25519) || \
+    !defined(WOLFSSL_SHA512) || defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA44_ED25519
+    #define WOLFSSH_NO_MLDSA44_ED25519
+#endif
+#if defined(WOLFSSH_NO_MLDSA65) || defined(WOLFSSH_NO_ED25519) || \
+    !defined(WOLFSSL_SHA512) || defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA65_ED25519
+    #define WOLFSSH_NO_MLDSA65_ED25519
+#endif
+#if defined(WOLFSSH_NO_MLDSA87) || !defined(WOLFSSH_HAVE_COMPOSITE_ED448) || \
+    defined(WOLFSSH_NO_MLDSA_COMPOSITES)
+    #undef WOLFSSH_NO_MLDSA87_ED448
+    #define WOLFSSH_NO_MLDSA87_ED448
+#endif
+#if defined(WOLFSSH_NO_MLDSA44_ES256) && defined(WOLFSSH_NO_MLDSA65_ES256) && \
+    defined(WOLFSSH_NO_MLDSA87_ES384) && \
+    defined(WOLFSSH_NO_MLDSA44_ED25519) && \
+    defined(WOLFSSH_NO_MLDSA65_ED25519) && defined(WOLFSSH_NO_MLDSA87_ED448)
     #undef WOLFSSH_NO_MLDSA_COMPOSITES
     #define WOLFSSH_NO_MLDSA_COMPOSITES
 #endif
@@ -1504,11 +1548,11 @@ typedef struct WS_MlDsaCompositeBody {
 #ifndef WOLFSSH_NO_ED25519
         ed25519_key ed25519;
 #endif
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         ed448_key ed448;
 #endif
 #if defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_NO_ED25519) && \
-        !defined(HAVE_ED448)
+        !defined(WOLFSSH_HAVE_COMPOSITE_ED448)
         /* keep union non-empty */
         byte placeholder;
 #endif
@@ -1575,13 +1619,13 @@ typedef struct WS_KeySignature {
 /* max trad pubkey size */
 #define COMPOSITE_MAX_TRAD_PUB_SZ      (1 + (2 * ECC_P384_COORD_SZ))
 /* max trad privkey size */
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
 #define COMPOSITE_MAX_TRAD_PRIV_SZ     ED448_KEY_SIZE
 #else
 #define COMPOSITE_MAX_TRAD_PRIV_SZ     ECC_P384_COORD_SZ
 #endif
 /* max trad sig size */
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
 #define COMPOSITE_MAX_TRAD_SIG_SZ      ED448_SIG_SIZE
 #else
 #define COMPOSITE_MAX_TRAD_SIG_SZ      (2 * (LENGTH_SZ + ECC_P384_COORD_SZ + 1))

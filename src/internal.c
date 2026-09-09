@@ -205,6 +205,11 @@ Flags:
   WOLFSSH_NO_SSH_RSA_SHA1
     Set when RSA or SHA1 are disabled. Set to disable use of RSA server
     authentication.
+  WOLFSSH_NO_ED25519
+    Set unless HAVE_ED25519, HAVE_ED25519_SIGN, HAVE_ED25519_VERIFY,
+    WOLFSSL_ED25519_STREAMING_VERIFY, HAVE_ED25519_KEY_IMPORT and
+    HAVE_ED25519_KEY_EXPORT are all set. Disables ssh-ed25519 server and
+    user authentication as well as the ML-DSA+Ed25519 composites.
   WOLFSSH_NO_MLDSA
     Set when MLDSA is disabled and/or not included in wolfssl downloaded.
   WOLFSSH_NO_MLDSA44
@@ -213,6 +218,19 @@ Flags:
     Set for ML-DSA-65.
   WOLFSSH_NO_MLDSA87
     Set for ML-DSA-87.
+  WOLFSSH_NO_MLDSA44_ES256, WOLFSSH_NO_MLDSA65_ES256,
+  WOLFSSH_NO_MLDSA87_ES384, WOLFSSH_NO_MLDSA44_ED25519,
+  WOLFSSH_NO_MLDSA65_ED25519, WOLFSSH_NO_MLDSA87_ED448
+    Set when the ML-DSA level or the traditional algorithm it pairs with is
+    disabled. Set to disable that one composite. The four prehashing with
+    SHA-512 (MLDSA65_ES256, MLDSA87_ES384, MLDSA44_ED25519, MLDSA65_ED25519)
+    also need WOLFSSL_SHA512, not merely the absence of NO_SHA512.
+  WOLFSSH_NO_MLDSA_COMPOSITES
+    Set when every composite above is disabled. Set to disable them all.
+  WOLFSSH_HAVE_COMPOSITE_ED448
+    Derived, not user-settable. Set when HAVE_ED448, the four Ed448
+    sub-feature macros, and WOLFSSL_SHAKE256 (the combo's prehash) are set.
+    WOLFSSH_NO_MLDSA87_ED448 follows from it.
   WOLFSSH_NO_ECDSA
     Set when ECC is disabled. Set to disable use of ECDSA server and user
     authentication.
@@ -1121,30 +1139,24 @@ static const char cannedKexAlgoNames[] =
 
 /* ML-DSA listed first (post-quantum priority), then ECDSA, ED25519, RSA. */
 static const char cannedKeyAlgoNames[] =
-#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     "ssh-mldsa87-es384@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     "ssh-mldsa65-ed25519@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     "ssh-mldsa65-es256@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     "ssh-mldsa44-ed25519@openssh.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
-#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -1230,30 +1242,24 @@ static const char cannedKeyAlgoNames[] =
  * ("*-cert-v01@openssh.com") names: host-cert verification is unimplemented, so
  * a client must not advertise them as host keys. Keep plain/X.509 in sync. */
 static const char cannedKeyAlgoNamesHostKey[] =
-#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     "ssh-mldsa87-ed448@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     "ssh-mldsa87-es384@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     "ssh-mldsa65-ed25519@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     "ssh-mldsa65-es256@wolfssl.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     "ssh-mldsa44-ed25519@openssh.com,"
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     "ssh-mldsa44-es256@wolfssl.com,"
 #endif
-#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     "ssh-mldsa-87,"
 #endif
@@ -3811,30 +3817,24 @@ static const NameIdPair NameIdMap[] = {
 #ifndef WOLFSSH_NO_MLDSA44
     { ID_MLDSA44, TYPE_KEY, "ssh-mldsa-44" },
 #endif
-#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     { ID_MLDSA44_ES256, TYPE_KEY, "ssh-mldsa44-es256@wolfssl.com" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     { ID_MLDSA65_ES256, TYPE_KEY, "ssh-mldsa65-es256@wolfssl.com" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     { ID_MLDSA87_ES384, TYPE_KEY, "ssh-mldsa87-es384@wolfssl.com" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     { ID_MLDSA44_ED25519, TYPE_KEY, "ssh-mldsa44-ed25519@openssh.com" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     { ID_MLDSA65_ED25519, TYPE_KEY, "ssh-mldsa65-ed25519@wolfssl.com" },
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     { ID_MLDSA87_ED448, TYPE_KEY, "ssh-mldsa87-ed448@wolfssl.com" },
 #endif
-#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA65
     { ID_MLDSA65, TYPE_KEY, "ssh-mldsa-65" },
 #endif
@@ -5983,30 +5983,24 @@ static const byte  cannedKeyAlgoClient[] = {
         #endif /* WOLFSSH_NO_SSH_RSA_SHA1 */
     #endif /* WOLFSSH_NO_SHA1_SOFT_DISABLE */
 #endif /* WOLFSSH_CERTS */
-#ifndef WOLFSSH_NO_MLDSA_COMPOSITES
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
     ID_MLDSA87_ED448,
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
     ID_MLDSA87_ES384,
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
     ID_MLDSA65_ED25519,
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
     ID_MLDSA65_ES256,
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
     ID_MLDSA44_ED25519,
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
     ID_MLDSA44_ES256,
 #endif
-#endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
 #ifndef WOLFSSH_NO_MLDSA87
     ID_MLDSA87,
 #endif
@@ -24390,7 +24384,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
     return WS_NOT_COMPILED;
 #else
     switch (keyId) {
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#ifndef WOLFSSH_NO_MLDSA44_ES256
         case ID_MLDSA44_ES256:
             params->mldsaLevel = WC_ML_DSA_44;
             params->mldsaSigSz = WC_MLDSA_44_SIG_SIZE;
@@ -24408,8 +24402,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
             params->eccCurveId = ECC_SECP256R1;
             break;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ES256
         case ID_MLDSA65_ES256:
             params->mldsaLevel = WC_ML_DSA_65;
             params->mldsaSigSz = WC_MLDSA_65_SIG_SIZE;
@@ -24427,8 +24420,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
             params->eccCurveId = ECC_SECP256R1;
             break;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && \
-        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) && !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA87_ES384
         case ID_MLDSA87_ES384:
             params->mldsaLevel = WC_ML_DSA_87;
             params->mldsaSigSz = WC_MLDSA_87_SIG_SIZE;
@@ -24446,8 +24438,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
             params->eccCurveId = ECC_SECP384R1;
             break;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA44_ED25519
         case ID_MLDSA44_ED25519:
             params->mldsaLevel = WC_ML_DSA_44;
             params->mldsaSigSz = WC_MLDSA_44_SIG_SIZE;
@@ -24462,8 +24453,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
             params->tradPrivSz = ED25519_KEY_SIZE;
             break;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA65) && !defined(WOLFSSH_NO_ED25519) && \
-        !defined(NO_SHA512)
+#ifndef WOLFSSH_NO_MLDSA65_ED25519
         case ID_MLDSA65_ED25519:
             params->mldsaLevel = WC_ML_DSA_65;
             params->mldsaSigSz = WC_MLDSA_65_SIG_SIZE;
@@ -24478,7 +24468,7 @@ int WS_GetCompositeParams(byte keyId, CompositeParams* params)
             params->tradPrivSz = ED25519_KEY_SIZE;
             break;
 #endif
-#if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
+#ifndef WOLFSSH_NO_MLDSA87_ED448
         case ID_MLDSA87_ED448:
             params->mldsaLevel = WC_ML_DSA_87;
             params->mldsaSigSz = WC_MLDSA_87_SIG_SIZE;
@@ -24865,7 +24855,7 @@ static const CompositeTradOps compositeEd25519Ops = {
 };
 #endif /* !WOLFSSH_NO_ED25519 */
 
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
 /* returns 0 on success, negative wc_ed448_init_ex() code on failure */
 static int CompositeEd448Init(void* key, void* heap)
 {
@@ -24972,7 +24962,7 @@ static const CompositeTradOps compositeEd448Ops = {
     CompositeEd448Sign, CompositeEd448Verify,
     TRAD_TYPE_ED448
 };
-#endif /* HAVE_ED448 */
+#endif /* WOLFSSH_HAVE_COMPOSITE_ED448 */
 
 /* returns matching CompositeTradOps for tradType, NULL if unsupported */
 const CompositeTradOps* WS_GetTradOps(byte tradType)
@@ -24986,7 +24976,7 @@ const CompositeTradOps* WS_GetTradOps(byte tradType)
         case TRAD_TYPE_ED25519:
             return &compositeEd25519Ops;
 #endif
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         case TRAD_TYPE_ED448:
             return &compositeEd448Ops;
 #endif
