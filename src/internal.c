@@ -4199,8 +4199,11 @@ void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
                  channel->channel);
         }
         ShrinkBuffer(&channel->extDataBuffer, 1);
-        if (channel->command)
+        /* Scrub the peer's command line, which can carry credentials. */
+        if (channel->command != NULL) {
+            WS_FORCEZERO(channel->command, channel->commandSz);
             WFREE(channel->command, heap, DYNTYPE_STRING);
+        }
         WFREE(channel, heap, DYNTYPE_CHANNEL);
     }
 }
@@ -13072,6 +13075,17 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
 #endif /* WOLFSSH_TERM */
 
 
+/* Wipe the old command ahead of the GetStringAlloc() that frees it, so a
+ * repeat request leaves no credentials behind in the freed block. */
+static void ScrubChannelCommand(WOLFSSH_CHANNEL* channel)
+{
+    if (channel->command != NULL) {
+        WS_FORCEZERO(channel->command, channel->commandSz);
+        channel->commandSz = 0;
+    }
+}
+
+
 static int DoChannelRequest(WOLFSSH* ssh,
                             byte* buf, word32 len, word32* idx)
 {
@@ -13143,6 +13157,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "exec")) {
+            ScrubChannelCommand(channel);
             ret = GetStringAlloc(ssh->ctx->heap,
                     &channel->command, &channel->commandSz,
                     buf, len, &begin);
@@ -13164,6 +13179,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (ChannelRequestIs(type, typeSz, "subsystem")) {
+            ScrubChannelCommand(channel);
             ret = GetStringAlloc(ssh->ctx->heap,
                     &channel->command, &channel->commandSz,
                     buf, len, &begin);

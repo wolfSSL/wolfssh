@@ -16910,6 +16910,230 @@ out:
     return result;
 }
 
+
+/* Verify ChannelDelete wipes the peer's exec/subsystem command line before
+ * releasing it. A command can carry a password or token in its arguments,
+ * and the buffer sits right below the inputBuffer this function already
+ * scrubs. The retain-on-free allocator is installed just around
+ * ChannelDelete so the freed bytes can be read back without touching
+ * freed memory. */
+static int test_ChannelDelete_zeroesCommand(void)
+{
+    static const char command[] = "sh -c 'login --password hunter2'";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WOLFSSH_CHANNEL* channel = NULL;
+    const byte* commandBytes;
+    word32 commandSz;
+    word32 i;
+    int result = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -710;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -711;
+        goto out;
+    }
+
+    channel = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+            DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (channel == NULL) {
+        result = -712;
+        goto out;
+    }
+
+    commandSz = (word32)WSTRLEN(command);
+    channel->command = (char*)WMALLOC(commandSz + 1, NULL, DYNTYPE_STRING);
+    if (channel->command == NULL) {
+        result = -713;
+        goto out;
+    }
+    WMEMCPY(channel->command, command, commandSz + 1);
+    channel->commandSz = commandSz;
+    commandBytes = (const byte*)channel->command;
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    /* Allocators unchanged on failure; nothing to restore. */
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -714;
+        goto out;
+    }
+    ChannelDelete(channel, NULL);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    channel = NULL;
+
+    if (!IsRetained((void*)commandBytes)) {
+        result = -715;
+        goto out;
+    }
+
+    for (i = 0; i < commandSz; i++) {
+        if (commandBytes[i] != 0) {
+            result = -716;
+            goto out;
+        }
+    }
+
+out:
+    DrainRetained();
+    /* Only the setup-failure paths reach here with a channel; it is never
+     * on ssh->channelList, so wolfSSH_free() would not release it. */
+    if (channel != NULL)
+        ChannelDelete(channel, ssh->ctx->heap);
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#ifdef WOLFSSH_TEST_INTERNAL
+
+/* [uint32 channelId][string "exec"][byte wantReply][string command] */
+static word32 BuildExecRequestPayload(byte* out, word32 outSz,
+        const char* command)
+{
+    word32 commandSz = (word32)WSTRLEN(command);
+    word32 idx = 0;
+
+    if (outSz < 17 + commandSz)
+        return 0;
+
+    PutU32BE(out + idx, 0);                 idx += UINT32_SZ;
+    PutU32BE(out + idx, 4);                 idx += UINT32_SZ;
+    WMEMCPY(out + idx, "exec", 4);          idx += 4;
+    out[idx++] = 1;
+    PutU32BE(out + idx, commandSz);         idx += UINT32_SZ;
+    WMEMCPY(out + idx, command, commandSz); idx += commandSz;
+
+    return idx;
+}
+
+
+/* Verify a repeat exec request wipes the command line it replaces.
+ * GetStringAlloc() frees the old buffer to take the new one, so without
+ * the scrub the earlier command, credentials and all, stays readable in
+ * the freed block. Only the last one ever reaches ChannelDelete(). The
+ * retain-on-free allocator is installed just around the second request
+ * so the freed bytes can be read back. */
+static int test_DoChannelRequest_zeroesReplacedCommand(void)
+{
+    static const char first[] = "sh -c 'login --password hunter2'";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WOLFSSH_CHANNEL* ch = NULL;
+    const byte* commandBytes;
+    byte payload[128];
+    word32 payloadSz;
+    word32 commandSz;
+    word32 idx;
+    word32 i;
+    int result = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -720;
+    wolfSSH_SetIOSend(ctx, CaptureIoSendChanReq);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -721;
+        goto out;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+            DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) {
+        result = -722;
+        goto out;
+    }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -723;
+        goto out;
+    }
+
+    idx = 0;
+    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), first);
+    if (payloadSz == 0) {
+        result = -724;
+        goto out;
+    }
+    if (wolfSSH_TestDoChannelRequest(ssh, payload, payloadSz, &idx)
+            != WS_SUCCESS) {
+        result = -725;
+        goto out;
+    }
+
+    commandSz = ch->commandSz;
+    commandBytes = (const byte*)ch->command;
+    if (commandBytes == NULL || commandSz != (word32)WSTRLEN(first)) {
+        result = -726;
+        goto out;
+    }
+
+    idx = 0;
+    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), "ls");
+    if (payloadSz == 0) {
+        result = -727;
+        goto out;
+    }
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    /* Allocators unchanged on failure; nothing to restore. */
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -728;
+        goto out;
+    }
+    result = wolfSSH_TestDoChannelRequest(ssh, payload, payloadSz, &idx);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    if (result != WS_SUCCESS) {
+        result = -729;
+        goto out;
+    }
+    result = 0;
+
+    if (!IsRetained((void*)commandBytes)) {
+        result = -730;
+        goto out;
+    }
+
+    for (i = 0; i < commandSz; i++) {
+        if (commandBytes[i] != 0) {
+            result = -731;
+            goto out;
+        }
+    }
+
+    /* The replacement arrived whole, so the scrub hit the old buffer
+     * rather than the one in use. */
+    if (ch->command == NULL || WSTRCMP(ch->command, "ls") != 0
+            || ch->commandSz != 2) {
+        result = -732;
+        goto out;
+    }
+
+out:
+    DrainRetained();
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_INTERNAL */
+
 #endif /* WOLFSSH_TEST_CAPTURING_ALLOCATOR */
 
 #ifndef WOLFSSH_NO_DH
@@ -21338,6 +21562,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("SshResourceFree_zeroesSecrets: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+    unitResult = test_ChannelDelete_zeroesCommand();
+    printf("ChannelDelete_zeroesCommand: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoChannelRequest_zeroesReplacedCommand();
+    printf("DoChannelRequest_zeroesReplacedCommand: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 
 #ifndef WOLFSSH_NO_DH
