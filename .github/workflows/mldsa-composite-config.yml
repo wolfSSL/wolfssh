@@ -1,0 +1,188 @@
+name: ML-DSA Composite Configs
+
+# Builds wolfSSH with ML-DSA on but traditional halves off, exercising the
+# per-composite gates in wolfssh/internal.h in states the all-on and all-off
+# builds never reach.
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wolfssl:
+    name: Build wolfSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout wolfSSL
+        uses: actions/checkout@v6
+        with:
+          repository: wolfssl/wolfssl
+          ref: master
+          path: wolfssl
+
+      - name: Build wolfSSL
+        working-directory: ./wolfssl
+        run: |
+          ./autogen.sh
+          ./configure --enable-all --enable-mldsa --enable-ed25519-stream \
+            --enable-ed448-stream
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: tar build-dir
+        run: tar -zcf wolfssl-install.tgz /usr/local/lib/libwolfssl* /usr/local/include/wolfssl
+
+      - name: Upload built lib
+        uses: actions/upload-artifact@v7
+        with:
+          name: wolfssl-mldsa-composite
+          path: wolfssl-install.tgz
+          retention-days: 5
+
+  partial_config:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Only the Ed448 half is left, so exactly one composite survives.
+          - name: ed448-only
+            defines: -DWOLFSSH_NO_ECDSA_SHA2_NISTP256 -DWOLFSSH_NO_ECDSA_SHA2_NISTP384 -DWOLFSSH_NO_ED25519
+            expect: ssh-mldsa87-ed448@wolfssl.com
+            exclude_tests: tests/api.test tests/testsuite.test
+          # Nothing pairs with ML-DSA, so WOLFSSH_NO_MLDSA_COMPOSITES must
+          # be derived rather than given.
+          - name: no-pairing
+            defines: -DWOLFSSH_NO_ECDSA_SHA2_NISTP256 -DWOLFSSH_NO_ECDSA_SHA2_NISTP384 -DWOLFSSH_NO_ED25519 -DWOLFSSH_NO_MLDSA87
+            expect: ''
+            exclude_tests: tests/api.test tests/testsuite.test
+          # Sets one gate directly rather than deriving it, the rest left on
+          # to expose a missed site. Only row with --enable-ossh-certs.
+          - name: single-composite-gate
+            defines: -DWOLFSSH_NO_MLDSA44_ES256
+            configure_flags: --enable-ossh-certs
+            expect: ssh-mldsa44-ed25519@openssh.com ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          # Every composite off while ML-DSA and the traditional halves stay
+          # on; the six gates must follow.
+          - name: composites-off
+            defines: -DWOLFSSH_NO_MLDSA_COMPOSITES
+            expect: ''
+          # HAVE_ED448 stays set but WOLFSSH_HAVE_COMPOSITE_ED448 does not,
+          # the state that macro exists for. settings.h is re-processed per
+          # translation unit, so no second wolfSSL build is needed.
+          - name: no-ed448-sign
+            defines: -DNO_ED448_SIGN
+            expect: ssh-mldsa44-ed25519@openssh.com ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          # Same for the widened WOLFSSH_NO_ED25519 gate. NO_ED25519_VERIFY
+          # also suppresses WOLFSSL_ED25519_PERSISTENT_SHA, a member of
+          # struct ed25519_key, so it is re-defined to keep the layout
+          # matching the installed library's.
+          - name: no-ed25519-verify
+            defines: -DNO_ED25519_VERIFY -DWOLFSSL_ED25519_PERSISTENT_SHA
+            expect: ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          # The remaining Ed conjuncts. Both are layout-neutral, so neither
+          # needs a compensating define the way no-ed25519-verify does.
+          - name: no-ed25519-sign
+            defines: -DNO_ED25519_SIGN
+            expect: ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          - name: no-ed448-key-export
+            defines: -DNO_ED448_KEY_EXPORT
+            expect: ssh-mldsa44-ed25519@openssh.com ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          # The last four conjuncts, so all eight the two derivations rest on
+          # are covered. NO_ED448_VERIFY needs the same layout compensation
+          # as no-ed25519-verify, since the wolfSSL build enables both
+          # streams rather than leaving either to --enable-all.
+          - name: no-ed448-verify
+            defines: -DNO_ED448_VERIFY -DWOLFSSL_ED448_PERSISTENT_SHA
+            expect: ssh-mldsa44-ed25519@openssh.com ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          - name: no-ed448-key-import
+            defines: -DNO_ED448_KEY_IMPORT
+            expect: ssh-mldsa44-ed25519@openssh.com ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          - name: no-ed25519-key-import
+            defines: -DNO_ED25519_KEY_IMPORT
+            expect: ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+          - name: no-ed25519-key-export
+            defines: -DNO_ED25519_KEY_EXPORT
+            expect: ssh-mldsa44-es256@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
+    steps:
+      - name: Checkout wolfSSH
+        uses: actions/checkout@v6
+
+      - name: Download wolfSSL
+        uses: actions/download-artifact@v8
+        with:
+          name: wolfssl-mldsa-composite
+
+      - name: Install wolfSSL
+        run: |
+          sudo tar -zxf wolfssl-install.tgz -C /
+          sudo ldconfig
+
+      - name: Build wolfSSH
+        run: |
+          ./autogen.sh
+          ./configure --enable-all ${{ matrix.configure_flags }} CPPFLAGS="${{ matrix.defines }}"
+          make -j$(nproc)
+
+      # The -E list must hold exactly the composites the gates leave on.
+      - name: Check negotiated composites
+        run: |
+          out=$(./examples/client/client -E -u "${USER:-runner}" 2>&1)
+          # A crash must not pass vacuously with an empty list.
+          echo "$out" | grep -q '^Set Key: '
+          keys=$(echo "$out" | sed -n 's/^Set Key: //p')
+          # ML-DSA itself must be on, or an empty composite list proves nothing.
+          echo "$keys" | grep -q 'ssh-mldsa-44'
+          got=$(echo "$keys" | tr ',' '\n' | { grep -o 'ssh-mldsa[0-9][0-9]-.*' || true; } | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+          echo "composites offered: '$got'"
+          test "$got" = "${{ matrix.expect }}"
+          # Second table, gated in parallel with the host-key one.
+          echo "$out" | grep -q '^Set Key Accepted: '
+          acc=$(echo "$out" | sed -n 's/^Set Key Accepted: //p')
+          gotAcc=$(echo "$acc" | tr ',' '\n' | { grep -o 'ssh-mldsa[0-9][0-9]-.*' || true; } | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+          echo "composites accepted: '$gotAcc'"
+          test "$gotAcc" = "${{ matrix.expect }}"
+
+      # api and testsuite are the only suites needing the NISTP256 sample
+      # keys and certs. Subtract them from the TESTS the Makefile computes,
+      # so suites added later still run.
+      - name: Run tests
+        run: |
+          if [ -n '${{ matrix.exclude_tests }}' ]; then
+              printf 'include Makefile\nprint-tests:\n\t@echo $(TESTS)\n' \
+                  > "$RUNNER_TEMP/print-tests.mk"
+              excl=""
+              for t in ${{ matrix.exclude_tests }}; do
+                  excl="$excl -e $t"
+              done
+              keep=$(make -s -f "$RUNNER_TEMP/print-tests.mk" print-tests \
+                  | tr ' ' '\n' \
+                  | grep -vxF $excl \
+                  | tr '\n' ' ')
+              echo "running: $keep"
+              test -n "$keep"
+              timeout -k 30 1200 make check TESTS="$keep"
+          else
+              timeout -k 30 1200 make check
+          fi
+
+      - name: Print test logs on failure
+        if: failure()
+        run: |
+          echo "=== test-suite.log ==="
+          cat test-suite.log || true
+          for f in tests/*.log apps/wolfsshd/test/*.log; do
+              echo "=== $f ==="; cat "$f" || true
+          done
