@@ -12174,11 +12174,14 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
 
     if (wantReply) {
         if (ret == WS_SUCCESS) {
-            if (isCancel) {
-                ret = SendRequestSuccess(ssh, 1);
+            /* RFC 4254 7.1 gives the success a trailing bound-port field only
+             * for a port-0 (dynamic) request. An explicit port, and a cancel,
+             * get a bare success with no response-specific data. */
+            if (!isCancel && requestedPort == 0) {
+                ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
             }
             else {
-                ret = SendGlobalRequestFwdSuccess(ssh, 1, bindPort);
+                ret = SendRequestSuccess(ssh, 1);
             }
         }
         else {
