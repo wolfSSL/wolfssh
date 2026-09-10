@@ -714,7 +714,8 @@ enum {
     WS_SELECT_FAIL,
     WS_SELECT_TIMEOUT,
     WS_SELECT_RECV_READY,
-    WS_SELECT_ERROR_READY
+    WS_SELECT_ERROR_READY,
+    WS_SELECT_SEND_READY
 };
 
 #if (defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)) && !defined(FREESCALE_MQX)
@@ -789,6 +790,35 @@ static INLINE int tcp_select(SOCKET_T socketfd, int to_sec)
         if (WFD_ISSET(socketfd, &recvfds))
             return WS_SELECT_RECV_READY;
         else if(WFD_ISSET(socketfd, &errfds))
+            return WS_SELECT_ERROR_READY;
+    }
+
+    return WS_SELECT_FAIL;
+}
+
+
+/* tcp_select() waits on the read side. This is the write side, for a caller
+ * holding output the socket would not take. */
+static INLINE int tcp_select_write(SOCKET_T socketfd, int to_sec)
+{
+    WFD_SET_TYPE sendfds, errfds;
+    int nfds = (int)socketfd + 1;
+    struct timeval timeout = {(to_sec > 0) ? to_sec : 0, 100};
+    int result;
+
+    WFD_ZERO(&sendfds);
+    WFD_SET(socketfd, &sendfds);
+    WFD_ZERO(&errfds);
+    WFD_SET(socketfd, &errfds);
+
+    result = wSelect(nfds, NULL, &sendfds, &errfds, &timeout);
+
+    if (result == 0)
+        return WS_SELECT_TIMEOUT;
+    else if (result > 0) {
+        if (WFD_ISSET(socketfd, &sendfds))
+            return WS_SELECT_SEND_READY;
+        else if (WFD_ISSET(socketfd, &errfds))
             return WS_SELECT_ERROR_READY;
     }
 

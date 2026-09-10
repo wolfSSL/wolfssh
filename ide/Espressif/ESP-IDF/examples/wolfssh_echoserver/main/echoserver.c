@@ -995,9 +995,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
-                /* Take the worker's status before the drain below: its
-                 * reads and sends latch their own into ssh->error. */
                 rc = wolfSSH_get_error(ssh);
+                if (cnt_r == WS_CHAN_RXD || cnt_r == WS_REKEYING
+                        || cnt_r == WS_CHANNEL_CLOSED || cnt_r == WS_EOF) {
+                    rc = cnt_r;
+                }
 
                 /* The peer is done sending: hand back the backlog and answer
                  * its EOF, since the library no longer answers for us. Off

@@ -1035,9 +1035,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
-                /* Take the worker's status before the drain below: its
-                 * reads and sends latch their own into ssh->error. */
                 rc = wolfSSH_get_error(ssh);
+                if (cnt_r == WS_CHAN_RXD || cnt_r == WS_REKEYING
+                        || cnt_r == WS_CHANNEL_CLOSED || cnt_r == WS_EOF) {
+                    rc = cnt_r;
+                }
 
                 /* The peer is done sending: hand back the backlog and answer
                  * its EOF, since the library no longer answers for us. Off
@@ -1530,8 +1532,12 @@ static int sftp_worker(thread_ctx_t* threadCtx)
     ret = error = wolfSSH_get_error(ssh);
 
     /* there is an edge case where the last SFTP handshake message sent got a
-     * WANT_WRITE case, keep trying to send it here. */
+     * WANT_WRITE case, keep trying to send it here. Waits for the socket to
+     * take bytes again rather than retrying into a full one. */
     while (error == WS_WANT_WRITE) {
+        selected = tcp_select_write(s, TEST_SFTP_TIMEOUT);
+        if (selected != WS_SELECT_SEND_READY)
+            break;
         ret = wolfSSH_worker(ssh, NULL);
         error = wolfSSH_get_error(ssh);
     }

@@ -332,14 +332,20 @@ static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
         if (lock != NULL) {
             wc_UnLockMutex(lock);
         }
-    } while (ret == WS_WANT_WRITE && WTIME(NULL) < deadline);
 
-    /* The queue is out. Whatever the worker made of the peer's end of the
-     * conversation is for the reader to sort out. A rekey started on the way
-     * through is the reader's as well, the send itself went out. */
-    if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
-            || ret == WS_REKEYING || ret == WS_EOF) {
-        ret = WS_SUCCESS;
+        /* None of these is a failure for the flush. */
+        if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+                || ret == WS_REKEYING || ret == WS_EOF
+                || ret == WS_WANT_WRITE) {
+            ret = WS_SUCCESS;
+        }
+    } while (ret == WS_SUCCESS
+            && wolfSSH_get_error(ssh) == WS_WANT_WRITE
+            && WTIME(NULL) < deadline);
+
+    /* The deadline can run out with the packet still queued. */
+    if (ret == WS_SUCCESS && wolfSSH_get_error(ssh) == WS_WANT_WRITE) {
+        ret = WS_WANT_WRITE;
     }
 
     return ret;
