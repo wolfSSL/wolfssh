@@ -2056,6 +2056,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* read in case a window-change packet might be queued */
                 {
                     int rc;
+                    int selected = WS_SELECT_SEND_READY;
+                    WS_SOCKET_T fd = wolfSSH_get_fd(ssh);
                     word32 lastChannel = 0;
 
                     do {
@@ -2063,7 +2065,20 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                         if (rc < 0) {
                             rc = wolfSSH_get_error(ssh);
                         }
-                    } while (rc == WS_WANT_WRITE);
+                        if (rc == WS_WANT_WRITE) {
+                            selected = tcp_select_write(fd, 1);
+                        }
+                    } while (rc == WS_WANT_WRITE
+                            && selected == WS_SELECT_SEND_READY);
+
+                    /* A dead socket ends the session */
+                    if (ret == WS_SUCCESS
+                            && (selected == WS_SELECT_ERROR_READY
+                                || selected == WS_SELECT_FAIL
+                                || rc == WS_SOCKET_ERROR_E
+                                || rc == WS_DISCONNECT)) {
+                        ret = WS_FATAL_ERROR;
+                    }
                 }
             }
         }
@@ -2263,6 +2278,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
                 if (cnt_r < 0) {
                     rc = wolfSSH_get_error(ssh);
+                    if (cnt_r == WS_CHAN_RXD || cnt_r == WS_CHANNEL_CLOSED
+                            || cnt_r == WS_EOF) {
+                        rc = cnt_r;
+                    }
                     if (rc == WS_CHAN_RXD) {
                         if (lastChannel == shellChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
@@ -2962,6 +2981,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             cnt_r = wolfSSH_worker(ssh, NULL);
             if (cnt_r < 0) {
                 rc = wolfSSH_get_error(ssh);
+                /* Take the owed write before the event overwrites rc. */
+                if (rc == WS_WANT_WRITE) {
+                    wantWrite = 1;
+                }
+                if (cnt_r == WS_CHAN_RXD || cnt_r == WS_CHANNEL_CLOSED
+                        || cnt_r == WS_EOF) {
+                    rc = cnt_r;
+                }
                 if (rc == WS_CHAN_RXD) {
                     /* Arrival only; the drain below owns the read. */
                 }
@@ -2984,8 +3011,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     /* Half-close, handled below. */
                 }
                 else if (rc == WS_WANT_WRITE) {
-                    wantWrite = 1;
-                    continue;
+                    /* Recorded above; the channel drain below still runs. */
                 }
                 else if (rc == WS_REKEYING) {
                     wantWrite = 1;
@@ -3018,6 +3044,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     channelBuffer, sizeof channelBuffer);
                 if (cnt_r <= 0)
                     break;
+
+                /* The credit that read issued may still be queued. */
+                if (wolfSSH_get_error(ssh) == WS_WANT_WRITE)
+                    wantWrite = 1;
 
                 childInIdx = 0;
                 childInSz = cnt_r;
