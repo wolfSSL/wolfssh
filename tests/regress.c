@@ -4383,7 +4383,119 @@ static void TestAcceptDivertMatchesSftpNameWhole(void)
     }
 }
 
+
+
+/* The divert asks for the grant, not just the name. A subsystem callback
+ * that refuses sftp answers CHANNEL_FAILURE, yet sessionType and command
+ * are recorded ahead of that answer and stay set, so the name alone would
+ * hand the refused session to the built-in server. */
+static void CheckAcceptDivertNeedsSftpGrant(int reject)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = reject;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "subsystem", 1,
+            "sftp", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, reject ? 0 : 1);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            reject ? MSGID_CHANNEL_FAILURE : MSGID_CHANNEL_SUCCESS);
+    RepointHarnessInput(&harness, NULL, 0);
+
+    harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+    if (reject) {
+        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(harness.ssh->acceptState,
+                ACCEPT_CLIENT_SESSION_ESTABLISHED);
+    }
+    else {
+        /* The control: the same name, granted, does reach the built-in
+         * server, which stops on the INIT the empty input cannot supply. */
+        wolfSSH_accept(harness.ssh);
+        AssertIntEQ(harness.ssh->acceptState, ACCEPT_INIT_SFTP);
+    }
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
+static void TestAcceptDivertNeedsSftpGrant(void)
+{
+    CheckAcceptDivertNeedsSftpGrant(1);
+    CheckAcceptDivertNeedsSftpGrant(0);
+}
 #endif /* WOLFSSH_SFTP */
+
+#ifdef WOLFSSH_SCP
+
+/* Same for the SCP divert, which reads the command with no grant test of
+ * its own. An exec callback that refuses "scp ..." must not leave the
+ * built-in SCP server holding the session it just refused. */
+static void CheckAcceptDivertNeedsScpGrant(int reject)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = reject;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "scp -t /tmp/f", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, reject ? 0 : 1);
+    RepointHarnessInput(&harness, NULL, 0);
+
+    harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+    if (reject) {
+        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(harness.ssh->acceptState,
+                ACCEPT_CLIENT_SESSION_ESTABLISHED);
+    }
+    else {
+        AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SCP_INIT);
+        AssertIntEQ(harness.ssh->acceptState, ACCEPT_INIT_SCP_TRANSFER);
+    }
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
+static void TestAcceptDivertNeedsScpGrant(void)
+{
+    CheckAcceptDivertNeedsScpGrant(1);
+    CheckAcceptDivertNeedsScpGrant(0);
+}
+
+#endif /* WOLFSSH_SCP */
 
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
@@ -14447,6 +14559,10 @@ int main(int argc, char** argv)
     TestSftpAcceptAppChannelsRefusesNoCb();
     TestSftpAcceptAppChannelsRefusesRejectedCb();
     TestAcceptDivertMatchesSftpNameWhole();
+    TestAcceptDivertNeedsSftpGrant();
+#endif
+#ifdef WOLFSSH_SCP
+    TestAcceptDivertNeedsScpGrant();
 #endif
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();

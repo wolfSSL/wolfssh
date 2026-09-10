@@ -810,8 +810,13 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     }
                 }
 
+                /* Divert only into a granted session. The type and
+                 * command stay set on a refusal, so they do not say
+                 * what was granted. */
 #ifdef WOLFSSH_SCP
-                if (ChannelCommandIsScp(ssh)) {
+                if (ssh->channelList != NULL
+                        && ssh->channelList->sessionGranted
+                        && ChannelCommandIsScp(ssh)) {
                     ssh->acceptState = ACCEPT_INIT_SCP_TRANSFER;
                     WLOG(WS_LOG_DEBUG, acceptState, "ACCEPT_INIT_SCP_TRANSFER");
                     return WS_SCP_INIT;
@@ -820,8 +825,10 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
                 {
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
-                    if (cmd != NULL &&
-                        WOLFSSH_SESSION_SUBSYSTEM == wolfSSH_GetSessionType(ssh)
+                    if (cmd != NULL
+                        && ssh->channelList->sessionGranted
+                        && WOLFSSH_SESSION_SUBSYSTEM
+                                == wolfSSH_GetSessionType(ssh)
                         && wolfSSH_GetSessionCommandSz(ssh)
                                 == (word32)WSTRLEN("sftp")
                         && (WSTRCMP(cmd, "sftp") == 0)) {
