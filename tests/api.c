@@ -461,6 +461,14 @@ static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
 #endif
 #endif
 
+/* ./keys/server-key-ed25519.der */
+#ifndef WOLFSSH_NO_ED25519
+static const char serverKeyEd25519Der[] =
+    "3050020100300506032b6570042204206a67f30e64ea52fef4ad654d45606138"
+    "58110784f0039493147b7b331abaf61981200f560c9f7d7a6287f026161931e4"
+    "b21de9bdee4a7f55ae262da125e4ee4a5100";
+#endif
+
 #ifndef WOLFSSH_NO_RSA
 static const char serverKeyRsaDer[] =
     "308204a30201000282010100da5dad2514761559f340fd3cb86230b36dc0f9ec"
@@ -516,6 +524,11 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     byte* rsaKey;
     word32 rsaKeySz;
 #endif
+#ifndef WOLFSSH_NO_ED25519
+    byte* ed25519Key;
+    word32 ed25519KeySz;
+    word32 ed25519Idx;
+#endif
     const byte* lastKey = NULL;
     word32 lastKeySz = 0;
     int i;
@@ -530,6 +543,13 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 #ifndef WOLFSSH_NO_RSA
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyRsaDer, &rsaKey, &rsaKeySz,
+                    NULL, NULL, NULL,
+                    NULL, NULL, NULL,
+                    NULL, NULL, NULL));
+#endif
+#ifndef WOLFSSH_NO_ED25519
+    AssertIntEQ(0,
+            ConvertHexToBin(serverKeyEd25519Der, &ed25519Key, &ed25519KeySz,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL,
                     NULL, NULL, NULL));
@@ -618,6 +638,26 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     AssertIntNE(lastKeySz, ctx->privateKey[0].keySz);
 #endif
 
+#ifndef WOLFSSH_NO_ED25519
+    /* Ed25519 may land in any slot, so track the index rather than
+     * assuming 0. In an Ed25519-only build this is the only key the test
+     * loads successfully. */
+    ed25519Idx = ctx->privateKeyCount;
+    lastKey = ctx->privateKey[ed25519Idx].key;
+    lastKeySz = ctx->privateKey[ed25519Idx].keySz;
+
+    AssertIntEQ(WS_SUCCESS,
+        wolfSSH_CTX_UsePrivateKey_buffer(ctx, ed25519Key, ed25519KeySz,
+                                         TEST_GOOD_FORMAT_ASN1));
+    AssertIntEQ(ed25519Idx + 1, ctx->privateKeyCount);
+    AssertNotNull(ctx->privateKey[ed25519Idx].key);
+    AssertIntNE(0, ctx->privateKey[ed25519Idx].keySz);
+    AssertIntEQ(ID_ED25519, ctx->privateKey[ed25519Idx].publicKeyFmt);
+
+    AssertIntEQ(0, (lastKey == ctx->privateKey[ed25519Idx].key));
+    AssertIntNE(lastKeySz, ctx->privateKey[ed25519Idx].keySz);
+#endif
+
     /* Add the same keys again. This should succeed. */
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384) || \
@@ -631,6 +671,11 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
         wolfSSH_CTX_UsePrivateKey_buffer(ctx, rsaKey, rsaKeySz,
                                          TEST_GOOD_FORMAT_ASN1));
 #endif
+#ifndef WOLFSSH_NO_ED25519
+    AssertIntEQ(WS_SUCCESS,
+        wolfSSH_CTX_UsePrivateKey_buffer(ctx, ed25519Key, ed25519KeySz,
+                                         TEST_GOOD_FORMAT_ASN1));
+#endif
 
     wolfSSH_CTX_free(ctx);
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) || \
@@ -640,6 +685,9 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
 #endif
 #ifndef WOLFSSH_NO_RSA
     FreeBins(rsaKey, NULL, NULL, NULL);
+#endif
+#ifndef WOLFSSH_NO_ED25519
+    FreeBins(ed25519Key, NULL, NULL, NULL);
 #endif
 #endif /* NO_WOLFSSH_SERVER */
 }
@@ -7489,6 +7537,8 @@ static void test_wolfSSH_SetAlgoList(void)
     rawKey = serverKeyEccDer;
 #elif !defined(WOLFSSH_NO_RSA)
     rawKey = serverKeyRsaDer;
+#elif !defined(WOLFSSH_NO_ED25519)
+    rawKey = serverKeyEd25519Der;
 #endif
     AssertNotNull(rawKey);
     AssertIntEQ(0,
