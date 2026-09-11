@@ -112,6 +112,41 @@ if [ $RESULT -ne 0 ]; then
     exit 1
 fi
 
+# With -A the echoserver answers the subsystem request in its own callback
+# and serves the session through wolfSSH_SFTP_accept(); the cases above take
+# the accept() re-entry instead.
+if [ "$nonblockingOnly" = 0 ]; then
+    echo "Test connection to an app-driven server"
+    ./examples/echoserver/echoserver -A -1 -R "$ready_file" &
+    server_pid=$!
+    create_port
+    echo "exit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$port"
+    RESULT=$?
+    remove_ready_file
+    if [ $RESULT -ne 0 ]; then
+        echo
+        echo "failed to connect to app-driven server"
+        do_cleanup
+        exit 1
+    fi
+fi
+
+# The same handoff on a non-blocking server, which reaches the accept call's
+# want-read and want-write retries.
+echo "Test non blocking connection to an app-driven server"
+./examples/echoserver/echoserver -A -N -1 -R "$ready_file" &
+server_pid=$!
+create_port
+echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
+RESULT=$?
+remove_ready_file
+if [ $RESULT -ne 0 ]; then
+    echo
+    echo "failed to connect to non blocking app-driven server"
+    do_cleanup
+    exit 1
+fi
+
 # Test want write return from highwater callback
 if [ "$nonblockingOnly" = 0 ]; then
     echo "Test want write return from highwater callback"
