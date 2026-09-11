@@ -1178,6 +1178,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
     {
         /* Parent process */
+        int wantWrite = 0;
 #ifdef WOLFSSH_AGENT
         WS_SOCKET_T agentFd = -1;
         word32 agentChannelId = -1;
@@ -1191,6 +1192,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
         while (ChildRunning) {
             fd_set readFds;
+            fd_set writeFds;
+            int writable;
             WS_SOCKET_T maxFd;
             int cnt_r;
             int cnt_w;
@@ -1203,12 +1206,23 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             /* The peer's auth-agent-req lands after wolfSSH_accept() has
              * already returned in application-driven mode, so the channel
              * answering it is opened here rather than inside accept(). The
-             * call reports WS_BAD_ARGUMENT until the request arrives. */
-            if (!agentOpened
-                    && wolfSSH_AGENT_ChannelOpen(ssh) == WS_SUCCESS) {
-                agentOpened = 1;
+             * call reports WS_BAD_ARGUMENT until the request arrives. It
+             * runs ahead of the write set: an open the socket would not
+             * take has to reach that set this pass, or the wait below is
+             * for readability alone and the peer is waiting on the open. */
+            if (!agentOpened) {
+                int agentRc = wolfSSH_AGENT_ChannelOpen(ssh);
+
+                if (agentRc == WS_SUCCESS)
+                    agentOpened = 1;
+                else if (agentRc == WS_WANT_WRITE)
+                    wantWrite = 1;
             }
             #endif
+
+            FD_ZERO(&writeFds);
+            if (wantWrite)
+                FD_SET(sshFd, &writeFds);
 
             #ifdef WOLFSSH_SHELL
             if (threadCtx->shellCtx.state == APP_STATE_CONNECTED
@@ -1251,12 +1265,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
             #endif /* WOLFSSH_FWD */
 
-            rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+            rc = select((int)maxFd + 1, &readFds,
+                    wantWrite ? &writeFds : NULL, NULL, NULL);
             if (rc == -1) {
                 break;
             }
+            writable = wantWrite && FD_ISSET(sshFd, &writeFds);
+            wantWrite = 0;
 
-            if (FD_ISSET(sshFd, &readFds)) {
+            if (FD_ISSET(sshFd, &readFds) || writable) {
                 word32 lastChannel = 0;
 
                 /* The following tries to read from the first channel inside
@@ -1489,7 +1506,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         continue;
                     }
                     else if (rc == WS_WANT_WRITE) {
-                        /* Transient; the queue drives the write side. */
+                        /* The send is owed, not lost: wait for the socket to
+                         * take it. Application-driven mode answers session
+                         * requests here, so a blocked reply would otherwise
+                         * end a session accept() used to carry through. */
+                        wantWrite = 1;
+                        continue;
                     }
                     else if (rc != WS_FATAL_ERROR
                             || (wolfSSH_get_error(ssh) != WS_WANT_READ
