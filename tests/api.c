@@ -238,7 +238,11 @@ static void test_wolfSSH_set_fd(void)
 
     AssertIntNE(WS_SUCCESS, wolfSSH_set_fd(NULL, fd));
     check = wolfSSH_get_fd(NULL);
-    AssertFalse(WS_SUCCESS == check);
+#ifdef USE_WINDOWS_API
+    AssertTrue(INVALID_SOCKET == check);
+#else
+    AssertTrue(-1 == check);
+#endif
 
     AssertIntEQ(WS_SUCCESS, wolfSSH_set_fd(ssh, fd));
     check = wolfSSH_get_fd(ssh);
