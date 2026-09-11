@@ -83,6 +83,7 @@ trap do_trap INT TERM
 # -f keeps the server in echo mode. Without it a build with shell support
 # tries to fork a login shell for the user, which fails since jill isn't a
 # real account, and the session ends before anything crosses the channel.
+# Any arguments are passed on to the echoserver.
 start_server() {
     # The -1 server exits after its connection, but a client run that failed
     # before connecting leaves one listening. Reap it, server_pid is about
@@ -95,7 +96,7 @@ start_server() {
     fi
 
     rm -f "$ready_file"
-    ./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+    ./examples/echoserver/echoserver -1 -f "$@" -R "$ready_file" \
         > "$work_dir/server.log" 2>&1 &
     server_pid=$!
 
@@ -281,6 +282,25 @@ if [ -s "$work_dir/terminal.log" ]; then
     grep -q "  command = " "$work_dir/terminal.log" \
         && fail "the client sent a command it wasn't given"
 fi
+
+# -A hands the session requests to the echoserver's own callbacks: the shell
+# callback claims the channel the worker echoes on, and an exec request that
+# is not a transfer runs as a session through the same callback.
+echo "Test terminal session, app-driven server"
+start_server -A
+run_client "" -E "$work_dir/appterm.log" -p $port jill@127.0.0.1
+[ $? -ne 0 ] && fail "failed to open the terminal session on an app-driven server"
+
+grep -q "hello" "$client_out" \
+    || fail "the app-driven echoserver's reply didn't make it back"
+
+echo "Test a session given a command, app-driven server"
+start_server -A
+run_client "" -E "$work_dir/appcommand.log" -p $port jill@127.0.0.1 "echo three"
+[ $? -ne 0 ] && fail "failed to open the session on an app-driven server"
+
+grep -q "hello" "$client_out" \
+    || fail "the app-driven echoserver's reply didn't make it back"
 
 echo "Test the usage message"
 ./apps/wolfssh/wolfssh -Z 2>&1 | grep -q "usage:" \
