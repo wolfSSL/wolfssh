@@ -1984,7 +1984,7 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
     msgSz = ScpStreamRead(ssh, msg, DEFAULT_SCP_MSG_SZ);
 
     if (msgSz < 0) {
-        if (wolfSSH_get_error(ssh) == WS_EXTDATA)
+        if (msgSz == WS_EXTDATA || wolfSSH_get_error(ssh) == WS_EXTDATA)
             _DumpExtendedData(ssh);
         else
             ret = msgSz;
