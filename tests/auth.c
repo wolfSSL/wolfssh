@@ -365,7 +365,7 @@ static const unsigned int hanselPrivateRsaSz = (unsigned int)sizeof(hanselPrivat
 #endif /* WOLFSSH_NO_RSA */
 
 /* Hansel's ECC keypair */
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char* hanselPublicEcc =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
@@ -438,7 +438,7 @@ static const unsigned int hanselPrivateEccSz = (unsigned int)sizeof(hanselPrivat
 #else
     #error "Enable nistp256, nistp384, nistp521, or disable ECC."
 #endif
-#endif /* WOLFSSH_NO_ECC */
+#endif /* WOLFSSH_NO_ECDSA */
 
 /* Server context: SHA256 hash of the authorized key/cert, and optional CA
  * cert for cert-based auth (NULL/0 for plain pubkey tests). */
@@ -1222,7 +1222,7 @@ static void test_pubkey_auth_rsacert_bad_sig(void)
 #endif /* WOLFSSH_CERTS && !WOLFSSH_NO_RSA && WOLFSSH_NO_SHA1_SOFT_DISABLE &&
           !WOLFSSH_NO_SSH_RSA_SHA1 */
 
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
 static void test_pubkey_auth_ecc(void)
 {
     PubkeyServerCtx sCtx = {0};
@@ -1320,9 +1320,9 @@ static void test_pubkey_auth_ecc_bad_sig(void)
 
     run_pubkey_test(&sCtx, &cCtx, WS_FATAL_ERROR);
 }
-#endif /* WOLFSSH_NO_ECC */
+#endif /* WOLFSSH_NO_ECDSA */
 
-#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECDSA)
 /* Negative test: server authorises the RSA key but client presents the ECC key.
  * The unauthorised key must be rejected.
  */
@@ -1376,7 +1376,7 @@ static void test_pubkey_auth_wrong_key(void)
      * wrap inner errors as WS_FATAL_ERROR at the API boundary */
     run_pubkey_test(&sCtx, &cCtx, WS_FATAL_ERROR);
 }
-#endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_ECC */
+#endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_ECDSA */
 
 #if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
@@ -2445,11 +2445,11 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_pubkey_auth_rsacert_bad_sig();
 #endif
 #endif
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
     test_pubkey_auth_ecc();
     test_pubkey_auth_ecc_bad_sig();
 #endif
-#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECDSA)
     test_pubkey_auth_wrong_key();
 #endif
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \

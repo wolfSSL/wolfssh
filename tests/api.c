@@ -520,7 +520,7 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer(void)
     word32 lastKeySz = 0;
     int i;
 
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
     AssertIntEQ(0,
             ConvertHexToBin(serverKeyEccDer, &eccKey, &eccKeySz,
                     NULL, NULL, NULL,
