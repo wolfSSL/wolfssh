@@ -461,6 +461,17 @@ static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
 #endif
 #endif
 
+/* ./keys/server-key-ed25519.der. Only the host-key fallback in
+ * test_wolfSSH_SetAlgoList() wants it, and only when it is the last
+ * signing algorithm left. */
+#if defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_NO_RSA) && \
+    !defined(WOLFSSH_NO_ED25519)
+static const char serverKeyEd25519Der[] =
+    "3050020100300506032b6570042204206a67f30e64ea52fef4ad654d45606138"
+    "58110784f0039493147b7b331abaf61981200f560c9f7d7a6287f026161931e4"
+    "b21de9bdee4a7f55ae262da125e4ee4a5100";
+#endif
+
 #ifndef WOLFSSH_NO_RSA
 static const char serverKeyRsaDer[] =
     "308204a30201000282010100da5dad2514761559f340fd3cb86230b36dc0f9ec"
@@ -7489,6 +7500,8 @@ static void test_wolfSSH_SetAlgoList(void)
     rawKey = serverKeyEccDer;
 #elif !defined(WOLFSSH_NO_RSA)
     rawKey = serverKeyRsaDer;
+#elif !defined(WOLFSSH_NO_ED25519)
+    rawKey = serverKeyEd25519Der;
 #endif
     AssertNotNull(rawKey);
     AssertIntEQ(0,
