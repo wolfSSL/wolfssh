@@ -9228,10 +9228,14 @@ static int ValidateKexDhGexGroup(const byte* primeGroup, word32 primeGroupSz,
         }
     }
 
-    /* Safe prime check: q = (p - 1) / 2 must also be prime. */
+    /* Safe prime check: q = (p - 1) / 2 must also be prime. mp_rshb() rather
+     * than mp_div_2(): the latter is an ECC-only entry point in SP math, and
+     * q is positive here, so the shift is the same operation. */
     if (ret == WS_SUCCESS) {
-        if (mp_sub_d(&p, 1, &q) != MP_OKAY || mp_div_2(&q, &q) != MP_OKAY)
+        if (mp_sub_d(&p, 1, &q) != MP_OKAY)
             ret = WS_CRYPTO_FAILED;
+        else
+            mp_rshb(&q, 1);
     }
     if (ret == WS_SUCCESS) {
         isPrime = MP_NO;
