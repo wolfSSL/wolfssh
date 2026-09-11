@@ -86,6 +86,7 @@
     #endif
 #ifndef USE_WINDOWS_API
     #include <pwd.h>
+    #include <sys/wait.h>
 #endif
     #include <signal.h>
 #if defined(__QNX__) || defined(__QNXNTO__)
@@ -221,6 +222,11 @@ typedef struct {
     WS_FwdCbActionCtx fwdCbCtx;
 #endif
     WS_AppCtx shellCtx;
+#ifdef WOLFSSH_SHELL
+    /* The forked shell. Held here because the callback that forks is gone
+     * by the time the session ends. */
+    pid_t shellPid;
+#endif
 #ifdef WOLFSSH_SFTP
     int doSftp;
 #endif
@@ -692,6 +698,29 @@ static void ChildSig(int sig)
 }
 
 
+/* End a forked shell and its pty. A shell left behind runs on behind a pty
+ * nothing reads, and its exit clears ChildRunning out from under a worker
+ * loop -- this connection's, or another's, since the flag is shared. */
+static void ShellChildCleanup(thread_ctx_t* threadCtx)
+{
+    if (threadCtx->shellCtx.appFd >= 0) {
+        WCLOSESOCKET(threadCtx->shellCtx.appFd);
+        threadCtx->shellCtx.appFd = -1;
+    }
+
+    if (threadCtx->shellPid > 0) {
+        void (*prevSig)(int);
+
+        /* This exit is ours, not the session's. */
+        prevSig = signal(SIGCHLD, SIG_DFL);
+        kill(threadCtx->shellPid, SIGKILL);
+        waitpid(threadCtx->shellPid, NULL, 0);
+        signal(SIGCHLD, prevSig);
+        threadCtx->shellPid = -1;
+    }
+}
+
+
 #ifdef SHELL_DEBUG
 static int termios_show(int fd)
 {
@@ -717,6 +746,28 @@ static int termios_show(int fd)
 #endif /* WOLFSSH_SHELL */
 
 
+/* One program start per connection, as RFC 4254 section 6.5 allows. A
+ * second start would fork a shell over the running one, or hand the
+ * session to sftp or scp, whose divert closes the pty. */
+static int SessionInUse(const thread_ctx_t* threadCtx)
+{
+    int inUse;
+
+    /* WS_SOCKET_T is unsigned on Windows, so the unset fd is -1 rather
+     * than anything below zero. */
+    inUse = threadCtx->shellCtx.state == APP_STATE_CONNECTED
+            || threadCtx->shellCtx.appFd != (WS_SOCKET_T)-1;
+#ifdef WOLFSSH_SFTP
+    inUse = inUse || threadCtx->doSftp;
+#endif
+#ifdef WOLFSSH_SCP
+    inUse = inUse || threadCtx->doScp;
+#endif
+
+    return inUse;
+}
+
+
 /* Registered in every build, in both modes: with no shell the echoserver
  * still has to take the channel to mark it connected, so ssh_worker() will
  * echo on it. Returns WS_SUCCESS to accept the request, 1 to reject it. */
@@ -729,11 +780,7 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         return 1;
     }
 
-    /* One session per connection. Nothing stops a peer asking a second
-     * time, and taking it would fork a second shell over the first and
-     * lose the fd of the one already running. */
-    if (threadCtx->shellCtx.state == APP_STATE_CONNECTED
-            || threadCtx->shellCtx.appFd >= 0) {
+    if (SessionInUse(threadCtx)) {
         return 1;
     }
 
@@ -769,8 +816,7 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         childPid = forkpty(&threadCtx->shellCtx.appFd, NULL, NULL, NULL);
 
         if (childPid < 0) {
-            /* forkpty failed, so return */
-            ChildRunning = 0;
+            /* Refuse the request; the connection carries on without it. */
             return 1;
         }
         else if (childPid == 0) {
@@ -799,18 +845,25 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         #ifdef SHELL_DEBUG
             printf("In childPid > 0; getpid=%d\n", (int)getpid());
         #endif
-        signal(SIGCHLD, ChildSig);
+        /* The child is the connection's from here, so every exit below can
+         * end it. */
+        threadCtx->shellPid = childPid;
 
         rc = tcgetattr(threadCtx->shellCtx.appFd, &tios);
         if (rc != 0) {
             printf("tcgetattr failed: rc =%d,errno=%x\n", rc, errno);
+            ShellChildCleanup(threadCtx);
             return 1;
         }
         rc = tcsetattr(threadCtx->shellCtx.appFd, TCSAFLUSH, &tios);
         if (rc != 0) {
             printf("tcsetattr failed: rc =%d,errno=%x\n", rc, errno);
+            ShellChildCleanup(threadCtx);
             return 1;
         }
+
+        /* Installed only now: the refusals above reap their own child. */
+        signal(SIGCHLD, ChildSig);
 
         #ifdef SHELL_DEBUG
             termios_show(threadCtx->shellCtx.appFd);
@@ -857,6 +910,11 @@ static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         WS_SessionType type;
 
         threadCtx = (thread_ctx_t*)vCtx;
+
+        if (SessionInUse(threadCtx)) {
+            return 1;
+        }
+
         cmd = wolfSSH_ChannelGetSessionCommand(channel);
         type = wolfSSH_ChannelGetSessionType(channel);
 
@@ -882,6 +940,10 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
 
     if (vCtx && channel) {
         const char* cmd = wolfSSH_ChannelGetSessionCommand(channel);
+
+        if (SessionInUse((thread_ctx_t*)vCtx)) {
+            return 1;
+        }
 
 #ifdef WOLFSSH_SCP
         if (cmd != NULL && WSTRNCMP(cmd, "scp ", 4) == 0) {
@@ -1061,13 +1123,22 @@ static int ssh_worker(thread_ctx_t* threadCtx)
     sshFd = wolfSSH_get_fd(ssh);
 
     if (threadCtx->shellCtx.state != APP_STATE_CONNECTED) {
-        /* The legacy path: wolfSSH_accept() answered the session request
-         * itself, so no channel-request callback ran to claim the channel.
-         * Claim it here, on the session accept() established. */
+        /* The legacy path: accept() answered the session request itself,
+         * with no callback registered to claim the channel. Take it when
+         * it was granted and there is somewhere to put the data: nothing
+         * started a shell, so a shell build serves it only in echo mode.
+         * The grant is read from internal.h; the library has no public
+         * accessor for it yet. */
         WOLFSSH_CHANNEL* sessionChannel;
+        int canServe = 1;
+
+#ifdef WOLFSSH_SHELL
+        canServe = echoOnly || threadCtx->shellCtx.appFd >= 0;
+#endif
 
         sessionChannel = wolfSSH_ChannelNext(ssh, NULL);
-        if (sessionChannel != NULL) {
+        if (canServe && sessionChannel != NULL
+                && sessionChannel->sessionGranted) {
             threadCtx->shellCtx.state = APP_STATE_CONNECTED;
             wolfSSH_ChannelGetId(sessionChannel,
                     &threadCtx->shellCtx.channelId, WS_CHANNEL_ID_SELF);
@@ -1190,8 +1261,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 /* The peer is done sending: hand back the backlog and answer
                  * its EOF, since the library no longer answers for us. Off
                  * the channel's own state, not the once-only WS_EOF status.
-                 * Echo mode only; a shell child on a pty still produces. */
-                if (!eofAnswered && echoOnly) {
+                 * Echo mode only; a shell child on a pty still produces.
+                 * A claimed session only: unclaimed, shellCtx.channelId is
+                 * still 0, which is the first channel the peer is given. */
+                if (!eofAnswered && echoOnly
+                        && threadCtx->shellCtx.state == APP_STATE_CONNECTED) {
                     WOLFSSH_CHANNEL* eofChannel;
 
                     eofChannel = wolfSSH_ChannelFind(ssh,
@@ -1649,10 +1723,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             #endif /* WOLFSSH_FWD */
         }
 #ifdef WOLFSSH_SHELL
-        if (threadCtx->shellCtx.appFd >= 0) {
-            WCLOSESOCKET(threadCtx->shellCtx.appFd);
-            threadCtx->shellCtx.appFd = -1;
-        }
+        ShellChildCleanup(threadCtx);
 #endif
     }
 
@@ -1664,7 +1735,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 }
 
 
-/* Seconds to wait on the socket between subsystem-accept attempts. */
+/* Seconds to wait on the socket between sftp and scp accept attempts. */
 #define ES_ACCEPT_TIMEOUT 1
 
 #ifdef WOLFSSH_SFTP
@@ -1989,6 +2060,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             #endif
             break;
     }
+
+#ifdef WOLFSSH_SHELL
+    /* The session request is answered inside wolfSSH_accept(), so a reply
+     * that fails leaves a forked shell with no ssh_worker() to end it. */
+    ShellChildCleanup(threadCtx);
+#endif
 
     if (ret == WS_FATAL_ERROR) {
         const char* errorStr;
@@ -4349,6 +4426,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->shellCtx.listenFd = -1;
         threadCtx->shellCtx.appFd = -1;
         threadCtx->shellCtx.state = APP_STATE_INIT;
+#ifdef WOLFSSH_SHELL
+        threadCtx->shellPid = -1;
+#endif
 #ifdef WOLFSSH_AGENT
         threadCtx->agentCtx.privateData = &threadCtx->agentCbCtx;
         threadCtx->agentCtx.listenFd = -1;
