@@ -15897,6 +15897,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                             sigKeyBlock_ptr->sk.ecc.qSz);
             }
             break;
+        #endif /* WOLFSSH_NO_ECDSA */
 
         #ifndef WOLFSSH_NO_ED25519
         case ID_ED25519:
@@ -15965,8 +15966,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                                     sigKeyBlock_ptr->sk.ed.q,
                                     sigKeyBlock_ptr->sk.ed.qSz);
             break;
-        #endif
-        #endif
+        #endif /* WOLFSSH_NO_ED25519 */
 
         #ifndef WOLFSSH_NO_MLDSA
         #ifdef WOLFSSH_CERTS
