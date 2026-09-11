@@ -768,6 +768,19 @@ static int SessionInUse(const thread_ctx_t* threadCtx)
 }
 
 
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
+/* wolfSSH_SFTP_accept() and wolfSSH_SCP_accept() work from the head of the
+ * channel list, so a transfer granted on any other channel answers the peer
+ * success and then runs against the wrong one. The shell has no such limit:
+ * its callback keeps the channel id. */
+static int TransferChannel(const thread_ctx_t* threadCtx,
+        WOLFSSH_CHANNEL* channel)
+{
+    return channel == wolfSSH_ChannelNext(threadCtx->ssh, NULL);
+}
+#endif /* WOLFSSH_SFTP || WOLFSSH_SCP */
+
+
 /* Registered in every build, in both modes: with no shell the echoserver
  * still has to take the channel to mark it connected, so ssh_worker() will
  * echo on it. Returns WS_SUCCESS to accept the request, 1 to reject it. */
@@ -919,9 +932,15 @@ static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         type = wolfSSH_ChannelGetSessionType(channel);
 
         /* A truncated subsystem string leaves the command NULL, and this
-         * runs before anything else has looked at it. */
+         * runs before anything else has looked at it. The name matches
+         * whole, length and bytes, as wolfSSH_SFTP_accept() asks: granting
+         * sftp with an embedded NUL answers success on a session it then
+         * refuses. */
         if (type == WOLFSSH_SESSION_SUBSYSTEM && cmd != NULL
-                && WSTRCMP(cmd, "sftp") == 0) {
+                && wolfSSH_ChannelGetSessionCommandSz(channel)
+                        == (word32)WSTRLEN("sftp")
+                && WSTRCMP(cmd, "sftp") == 0
+                && TransferChannel(threadCtx, channel)) {
             threadCtx->doSftp = 1;
             rej = WS_SUCCESS;
         }
@@ -946,9 +965,14 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         }
 
 #ifdef WOLFSSH_SCP
-        if (cmd != NULL && WSTRNCMP(cmd, "scp ", 4) == 0) {
-            ((thread_ctx_t*)vCtx)->doScp = 1;
-            rej = WS_SUCCESS;
+        /* The prefix ChannelCommandIsScp() matches, so both modes agree. */
+        if (cmd != NULL && WSTRNCMP(cmd, "scp", 3) == 0) {
+            /* An scp command the transfer cannot be run for is refused
+             * rather than served as a session. */
+            if (TransferChannel((thread_ctx_t*)vCtx, channel)) {
+                ((thread_ctx_t*)vCtx)->doScp = 1;
+                rej = WS_SUCCESS;
+            }
         }
         else
 #endif /* WOLFSSH_SCP */
