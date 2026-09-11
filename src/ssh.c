@@ -5480,6 +5480,8 @@ static const char* CurveNameForId(byte id)
             return "Curve25519";
 #endif
     }
+#else
+    WOLFSSH_UNUSED(id);
 #endif
     return "";
 }

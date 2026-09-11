@@ -11648,6 +11648,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     }
                 }
 
+                /* Only the RSA and ECDSA arms above read the digest size;
+                 * with both compiled out the switch is just the default. */
+                WOLFSSH_UNUSED(digestSz);
                 WS_FORCEZERO(digest, sizeof(digest));
             }
 
@@ -15584,6 +15587,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
 
     heap = ssh->ctx->heap;
+    /* Only the RSA, ECDSA and ML-DSA arms allocate; Ed25519 does not. */
+    WOLFSSH_UNUSED(heap);
 
 #ifdef WOLFSSH_TPM
     ssh->handshake->useTpm = ssh->ctx->privateKey[keyIdx].isTpm;
