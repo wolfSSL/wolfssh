@@ -510,16 +510,23 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         ctx->state = FWD_STATE_DIRECT;
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
-        WCLOSESOCKET(ctx->appFd);
-        if (ctx->hostName) {
-            WFREE(ctx->hostName, NULL, 0);
-            ctx->hostName = NULL;
+        /* Channel id rides in port. Only its holder may tear the slot down. */
+        if (port == ctx->channelId) {
+            /* The open can fail after setup, before anything connected. */
+            if (ctx->appFd != (WS_SOCKET_T)-1) {
+                WCLOSESOCKET(ctx->appFd);
+                ctx->appFd = -1;
+            }
+            if (ctx->hostName) {
+                WFREE(ctx->hostName, NULL, 0);
+                ctx->hostName = NULL;
+            }
+            if (ctx->originName) {
+                WFREE(ctx->originName, NULL, 0);
+                ctx->originName = NULL;
+            }
+            ctx->state = FWD_STATE_INIT;
         }
-        if (ctx->originName) {
-            WFREE(ctx->originName, NULL, 0);
-            ctx->originName = NULL;
-        }
-        ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
