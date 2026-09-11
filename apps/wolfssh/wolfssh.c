@@ -307,6 +307,16 @@ static void PauseForSocket(void)
 #define FLUSH_QUEUE_TIMEOUT 10
 
 
+/* Statuses that are not the flush's failure: an event the worker reported,
+ * or the owed write itself. Anything else came from the send. */
+static int FlushEventOk(int code)
+{
+    return code == WS_SUCCESS || code == WS_WANT_READ || code == WS_CHAN_RXD
+        || code == WS_EXTDATA || code == WS_REKEYING || code == WS_EOF
+        || code == WS_WANT_WRITE;
+}
+
+
 /* A packet the socket wasn't ready for stays queued in the session, and the
  * send that queued it still reports the data as taken. The peer can't answer
  * a message it never received, so push the queue out here rather than go
@@ -329,24 +339,26 @@ static int FlushQueuedSend(WOLFSSH* ssh, wolfSSL_Mutex* lock)
             /* the session holds the detail behind a fatal error */
             ret = wolfSSH_get_error(ssh);
         }
+
+        /* Sample the owed write under the lock the worker ran under, since
+         * another thread writes ssh->error too. */
+        if (FlushEventOk(ret)) {
+            int err = wolfSSH_get_error(ssh);
+
+            if (!FlushEventOk(err)) {
+                ret = err;
+            }
+            else {
+                ret = (err == WS_WANT_WRITE) ? WS_WANT_WRITE : WS_SUCCESS;
+            }
+        }
+
         if (lock != NULL) {
             wc_UnLockMutex(lock);
         }
 
-        /* None of these is a failure for the flush. */
-        if (ret == WS_WANT_READ || ret == WS_CHAN_RXD || ret == WS_EXTDATA
-                || ret == WS_REKEYING || ret == WS_EOF
-                || ret == WS_WANT_WRITE) {
-            ret = WS_SUCCESS;
-        }
-    } while (ret == WS_SUCCESS
-            && wolfSSH_get_error(ssh) == WS_WANT_WRITE
-            && WTIME(NULL) < deadline);
-
-    /* The deadline can run out with the packet still queued. */
-    if (ret == WS_SUCCESS && wolfSSH_get_error(ssh) == WS_WANT_WRITE) {
-        ret = WS_WANT_WRITE;
-    }
+        /* The deadline can run out with the packet still queued. */
+    } while (ret == WS_WANT_WRITE && WTIME(NULL) < deadline);
 
     return ret;
 }
