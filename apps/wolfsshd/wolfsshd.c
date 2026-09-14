@@ -2277,12 +2277,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
                 if (cnt_r < 0) {
-                    rc = wolfSSH_get_error(ssh);
-                    if (cnt_r == WS_CHAN_RXD || cnt_r == WS_CHANNEL_CLOSED
-                            || cnt_r == WS_EOF) {
-                        rc = cnt_r;
-                    }
-                    if (rc == WS_CHAN_RXD) {
+                    if (cnt_r == WS_CHAN_RXD) {
                         if (lastChannel == shellChannelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
                                 shellChannelId, shellBuffer,
@@ -2299,10 +2294,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             }
                         }
                     }
-                    else if (rc == WS_CHANNEL_CLOSED) {
+                    else if (cnt_r == WS_CHANNEL_CLOSED) {
                         continue;
                     }
-                    else if (rc == WS_EOF) {
+                    else if (cnt_r == WS_EOF) {
                         /* The peer is done sending. No EOF of ours here: it
                          * latches eofTxd and the child's remaining console
                          * output would then be refused, which both send sites
@@ -2315,7 +2310,12 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                          * peer. Both want fixing where they can be tested. */
                         continue;
                     }
-                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
+                    else if (cnt_r == WS_WANT_WRITE) {
+                        /* Transient; the queue drives the write side. */
+                    }
+                    else if (cnt_r != WS_FATAL_ERROR
+                            || (wolfSSH_get_error(ssh) != WS_WANT_READ
+                                && wolfSSH_get_error(ssh) != WS_WANT_WRITE)) {
                         break;
                     }
                 }
@@ -2979,20 +2979,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                the channel itself, so the id the worker would report here is
                not needed. */
             cnt_r = wolfSSH_worker(ssh, NULL);
+            if (wolfSSH_OutputPending(ssh)) {
+                wantWrite = 1;
+            }
             if (cnt_r < 0) {
-                rc = wolfSSH_get_error(ssh);
-                /* Take the owed write before the event overwrites rc. */
-                if (rc == WS_WANT_WRITE) {
-                    wantWrite = 1;
-                }
-                if (cnt_r == WS_CHAN_RXD || cnt_r == WS_CHANNEL_CLOSED
-                        || cnt_r == WS_EOF) {
-                    rc = cnt_r;
-                }
-                if (rc == WS_CHAN_RXD) {
+                if (cnt_r == WS_CHAN_RXD) {
                     /* Arrival only; the drain below owns the read. */
                 }
-                else if (rc == WS_CHANNEL_CLOSED) {
+                else if (cnt_r == WS_CHANNEL_CLOSED) {
                     /* The channel is retired, so nothing more can reach the
                      * child and the drain below is skipped on this pass.
                      * Close its stdin here or it blocks forever on input
@@ -3007,17 +3001,18 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     peerConnected = 0;
                     continue;
                 }
-                else if (rc == WS_EOF) {
+                else if (cnt_r == WS_EOF) {
                     /* Half-close, handled below. */
                 }
-                else if (rc == WS_WANT_WRITE) {
-                    /* Recorded above; the channel drain below still runs. */
-                }
-                else if (rc == WS_REKEYING) {
-                    wantWrite = 1;
+                else if (cnt_r == WS_REKEYING) {
                     continue;
                 }
-                else if (rc != WS_WANT_READ) {
+                else if (cnt_r == WS_WANT_WRITE) {
+                    /* Transient; the queue drives the write side. */
+                }
+                else if (cnt_r != WS_FATAL_ERROR
+                        || (wolfSSH_get_error(ssh) != WS_WANT_READ
+                            && wolfSSH_get_error(ssh) != WS_WANT_WRITE)) {
                     /* unexpected error, kill off child process */
                     kill(childPid, SIGKILL);
                     break;
@@ -3046,7 +3041,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     break;
 
                 /* The credit that read issued may still be queued. */
-                if (wolfSSH_get_error(ssh) == WS_WANT_WRITE)
+                if (wolfSSH_OutputPending(ssh))
                     wantWrite = 1;
 
                 childInIdx = 0;
