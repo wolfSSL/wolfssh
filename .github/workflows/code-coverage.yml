@@ -99,9 +99,14 @@ jobs:
             ./run_all_sshd_tests.sh
           sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/prof"
 
+      # A server SIGKILLed by a test's cleanup trap can leave a truncated
+      # raw profile behind, and the default --failure-mode=any makes that
+      # one file fatal to the merge. 'all' keeps it a warning while still
+      # failing when nothing usable ran.
       - name: Report coverage
         run: |
-          llvm-profdata-18 merge -sparse prof/*.profraw -o wolfssh.profdata
+          llvm-profdata-18 merge -sparse --failure-mode=all \
+            prof/*.profraw -o wolfssh.profdata
           # llvm-cov takes one binary positionally and the rest via -object.
           # Programs linking the shared library are libtool wrapper scripts, so
           # take the real binary from .libs when one is there. The apps are
