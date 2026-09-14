@@ -1799,6 +1799,7 @@ extern "C" {
 #if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
     #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
         #include <termios.h>
+        #include <unistd.h>
         #define WOLFSSH_TERMIOS struct termios
     #elif defined(USE_WINDOWS_API)
         #define WOLFSSH_TERMIOS DWORD
