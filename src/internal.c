@@ -13321,6 +13321,16 @@ static int DoChannelRequest(WOLFSSH* ssh,
             else if (decision == WOLFSSH_REQ_ACCEPT) {
                 granted = 1;
             }
+
+            /* A callback may free its own channel, so look it up again
+             * before the handling below reads it. Gone, the request ends
+             * here, and a wanted reply fails on the missing channel the
+             * way one after a typed callback does. */
+            channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+            if (channel == NULL) {
+                WLOG(WS_LOG_DEBUG,
+                        "  channel request callback freed the channel.");
+            }
         }
     }
 
@@ -13342,7 +13352,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
     }
 #endif
 
-    if (ret == WS_SUCCESS && !rej) {
+    if (ret == WS_SUCCESS && !rej && channel != NULL) {
         if (ChannelRequestIs(type, typeSz, "env")) {
             char name[WOLFSSH_MAX_NAMESZ];
             word32 nameSz;

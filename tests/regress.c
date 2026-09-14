@@ -4345,6 +4345,106 @@ static void TestChannelReqCallbackGrantOverridesAppChannels(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* A generic channel request callback that frees the channel it was handed,
+ * the way a policy that tears the channel down in place does, and answers
+ * anyReqCbReturn. */
+static int FreeingChannelReqAnyCb(WOLFSSH_CHANNEL* channel, const byte* type,
+        word32 typeSz, const byte* data, word32 dataSz, int wantReply,
+        void* ctx)
+{
+    RecordAnyReq(type, typeSz, data, dataSz, ctx);
+    anyReqCbWantReply = wantReply;
+    AssertIntEQ(wolfSSH_ChannelFree(channel), WS_SUCCESS);
+
+    return anyReqCbReturn;
+}
+
+/* Runs one request through a fresh harness whose generic callback frees the
+ * channel and answers anyReturn, and returns what DoReceive() made of it.
+ * The channel id is handed back, since the channel itself is gone. */
+static int RunRequestThroughFreeingCb(ChannelOpenHarness* harness,
+        word32* channelId, const char* type, byte wantReply,
+        const byte* tail, word32 tailSz, int anyReturn)
+{
+    WOLFSSH_CHANNEL* channel;
+    byte in[192];
+    word32 inSz;
+
+    ResetAnyReqCb(anyReturn);
+    typedReqCbCalls = 0;
+    InitChannelOpenHarness(harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness->ctx,
+                FreeingChannelReqAnyCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness->ctx,
+                CountingSessionReqCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(harness);
+    *channelId = channel->channel;
+
+    inSz = BuildChannelRequestPacket(*channelId, type, wantReply,
+            tail, tailSz, in, sizeof(in));
+    RepointHarnessInput(harness, in, inSz);
+
+    return DoReceive(harness->ssh);
+}
+
+/* The generic callback may free the channel it was called on. Nothing below
+ * it reads the channel again after that, and the request ends there: the
+ * type is not handled, no typed callback runs, and a wanted reply fails on
+ * the channel that is gone. */
+static void TestChannelReqCallbackMayFreeChannel(void)
+{
+    ChannelOpenHarness harness;
+    word32 channelId;
+    byte tail[32];
+    word32 tailSz;
+
+    /* Left unhandled, the exec handling would read the channel next. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "ls");
+    AssertIntEQ(RunRequestThroughFreeingCb(&harness, &channelId, "exec", 1,
+                tail, tailSz, WOLFSSH_REQ_UNHANDLED), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_CHANID);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(typedReqCbCalls, 0);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertNull(ChannelFind(harness.ssh, channelId, WS_CHANNEL_ID_SELF));
+    FreeChannelOpenHarness(&harness);
+
+    /* Granted, the same request would have committed the session on it. */
+    AssertIntEQ(RunRequestThroughFreeingCb(&harness, &channelId, "exec", 1,
+                tail, tailSz, WOLFSSH_REQ_ACCEPT), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_CHANID);
+    AssertIntEQ(typedReqCbCalls, 0);
+    AssertTrue(harness.ssh->clientState < CLIENT_DONE);
+    AssertNull(ChannelFind(harness.ssh, channelId, WS_CHANNEL_ID_SELF));
+    FreeChannelOpenHarness(&harness);
+
+    /* Refused, the handling was skipped whatever the channel did. */
+    AssertIntEQ(RunRequestThroughFreeingCb(&harness, &channelId, "exec", 1,
+                tail, tailSz, WOLFSSH_REQ_REJECT), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_CHANID);
+    AssertIntEQ(typedReqCbCalls, 0);
+    FreeChannelOpenHarness(&harness);
+
+#ifdef WOLFSSH_TERM
+    /* With no reply wanted there is nothing left to fail, so the packet is
+     * taken and the session carries on. A pty-req is the case that wrote to
+     * the channel outside a session request. */
+    tailSz = AppendString(tail, sizeof(tail), 0, "vt100");
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 80);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 24);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    tailSz = AppendUint32(tail, sizeof(tail), tailSz, 0);
+    tailSz = AppendString(tail, sizeof(tail), tailSz, "");
+    AssertIntEQ(RunRequestThroughFreeingCb(&harness, &channelId, "pty-req", 0,
+                tail, tailSz, WOLFSSH_REQ_UNHANDLED), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->error, WS_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(harness.io.outSz, 0);
+    AssertNull(ChannelFind(harness.ssh, channelId, WS_CHANNEL_ID_SELF));
+    FreeChannelOpenHarness(&harness);
+#endif /* WOLFSSH_TERM */
+}
+
 /* Both setters answer a NULL context, the only error either has. */
 static void TestReqAnyCallbackSettersRejectNullCtx(void)
 {
@@ -15809,6 +15909,7 @@ int main(int argc, char** argv)
     TestChannelReqCallbackSeesWholeType();
     TestChannelReqCallbackSettlesSessionRequest();
     TestChannelReqCallbackGrantOverridesAppChannels();
+    TestChannelReqCallbackMayFreeChannel();
     TestReqAnyCallbackSettersRejectNullCtx();
 #ifdef WOLFSSH_TERM
     TestChannelReqCallbackKeepsTypeChecks();
