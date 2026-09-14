@@ -507,7 +507,19 @@ typedef enum WS_ReqCbResult {
  * kept; a request that does not fit its type is refused whatever the
  * callback said. A type the library does not know is answered
  * CHANNEL_SUCCESS on ACCEPT, where it is otherwise refused. Shares the
- * channel request context. */
+ * channel request context.
+ *
+ * The callback may free the channel it was handed, with
+ * wolfSSH_ChannelFree(). The request ends there whatever the answer: the
+ * type is not handled, and a request wanting a reply has nothing left to
+ * answer on, so it fails with WS_INVALID_CHANID.
+ *
+ * type and data point into the session's input buffer and are good only
+ * for the length of the call, so a callback keeping either copies it.
+ * The packet is still being parsed, so the callback must not re-enter
+ * the receive side of the library on this session -- wolfSSH_worker(),
+ * wolfSSH_stream_read(), wolfSSH_accept(), the SFTP calls -- which may
+ * grow or compact that buffer and leave both pointers behind. */
 typedef int (*WS_CallbackChannelReqAny)(WOLFSSH_CHANNEL* channel,
         const byte* type, word32 typeSz, const byte* data, word32 dataSz,
         int wantReply, void* ctx);
