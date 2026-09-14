@@ -24062,8 +24062,7 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 }
 
 
-#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-    !defined(NO_WOLFSSH_SERVER)
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
 /* Checks if 'in' is absolute path, if not the returns the concat. of
  * 'defaultPath' | 'in'. This leaves 'in' as-is and does not handle
  * simplification of the path, such as removing ../

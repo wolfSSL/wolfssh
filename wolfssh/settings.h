@@ -65,10 +65,6 @@ extern "C" {
     #endif
 #endif
 
-#if defined(WOLFSSH_SCP) && defined(NO_WOLFSSH_SERVER)
-    #error only SCP server side supported
-#endif
-
 /* Detect if ECC needs RNG */
 #if !defined(HAVE_WC_ECC_SET_RNG) && \
     defined(ECC_TIMING_RESISTANT) && (!defined(HAVE_FIPS) || \
