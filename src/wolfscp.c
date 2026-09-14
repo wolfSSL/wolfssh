@@ -1793,12 +1793,7 @@ int ReceiveScpMessage(WOLFSSH* ssh)
         if (err < 0) {
             int rc;
 
-            rc = wolfSSH_get_error(ssh);
-            if (err == WS_CHAN_RXD || err == WS_EXTDATA
-                    || err == WS_CHANNEL_CLOSED) {
-                rc = err;
-            }
-            switch (rc) {
+            switch (err) {
                 case WS_CHAN_RXD:
                     sz = wolfSSH_ChannelIdRead(ssh, lastChannel,
                         buf + ssh->scpRecvMsgSz,

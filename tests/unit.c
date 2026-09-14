@@ -6769,9 +6769,9 @@ done:
     return result;
 }
 
-/* Channel data arrives and the flush fails on the same call. ret carries
- * WS_CHAN_RXD so the caller reads the data, and ssh->error carries the send
- * failure, which is the rule wolfssh/ssh.h states for wolfSSH_worker(). */
+/* Channel data arrives and the flush fails on the same call. The send's
+ * code takes ret, since the data is still buffered but the transport is
+ * gone. */
 static int test_WorkerChanRxdSurfacesSendError(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -6811,7 +6811,7 @@ static int test_WorkerChanRxdSurfacesSendError(void)
     wolfSSH_SetIOSend(ctx, ConnResetIoSend);
 
     ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_CHAN_RXD) { result = -1755; goto done; }
+    if (ret != WS_SOCKET_ERROR_E) { result = -1755; goto done; }
     if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
         result = -1756;
         goto done;
@@ -6895,9 +6895,8 @@ done:
 }
 
 
-/* Extended data arrives and the flush fails on the same call. Neither the
- * close nor the receive-failure rule applies, so ret keeps WS_EXTDATA and
- * ssh->error carries the send failure. */
+/* Extended data arrives and the flush fails on the same call. The send's
+ * code takes ret, and channelId is left alone with it. */
 static int test_WorkerExtDataSurfacesSendError(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -6938,8 +6937,8 @@ static int test_WorkerExtDataSurfacesSendError(void)
     wolfSSH_SetIOSend(ctx, ConnResetIoSend);
 
     ret = wolfSSH_worker(ssh, &reportedId);
-    if (ret != WS_EXTDATA) { result = -1835; goto done; }
-    if (reportedId != ch->channel) { result = -1836; goto done; }
+    if (ret != WS_SOCKET_ERROR_E) { result = -1835; goto done; }
+    if (reportedId != 0xFFFFFFFF) { result = -1836; goto done; }
     if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
         result = -1837;
         goto done;
@@ -6947,7 +6946,7 @@ static int test_WorkerExtDataSurfacesSendError(void)
     /* A reset does not discard, so the bytes stay owed. */
     if (ssh->outputBuffer.length == 0) { result = -1838; goto done; }
 
-    /* The stderr is still there to drain, which is why ret kept it. */
+    /* The stderr is still there to drain, off the channel rather than ret. */
     if (ch->extDataBuffer.length - ch->extDataBuffer.idx != 10) {
         result = -1839;
         goto done;
@@ -6963,8 +6962,8 @@ done:
 }
 
 
-/* The peer half-closes and the flush fails on the same call. ret keeps
- * WS_EOF and ssh->error carries the send failure. */
+/* The peer half-closes and the flush fails on the same call. The send's
+ * code takes ret; the half-close is read off the channel instead. */
 static int test_WorkerEofSurfacesSendError(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -7005,8 +7004,8 @@ static int test_WorkerEofSurfacesSendError(void)
     wolfSSH_SetIOSend(ctx, ConnResetIoSend);
 
     ret = wolfSSH_worker(ssh, &reportedId);
-    if (ret != WS_EOF) { result = -1845; goto done; }
-    if (reportedId != ch->channel) { result = -1846; goto done; }
+    if (ret != WS_SOCKET_ERROR_E) { result = -1845; goto done; }
+    if (reportedId != 0xFFFFFFFF) { result = -1846; goto done; }
     if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
         result = -1847;
         goto done;
@@ -7083,8 +7082,8 @@ done:
 
 
 /* The same pass with a rekey in flight. WS_REKEYING would tell the caller to
- * keep turning the crank, so a flush that hard-failed keeps ssh->error and
- * the rekey mask stands down. */
+ * keep turning the crank, so a flush that hard-failed takes ret and the rekey
+ * mask stands down. */
 static int test_WorkerKeyingSurfacesSendError(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -7124,7 +7123,7 @@ static int test_WorkerKeyingSurfacesSendError(void)
     ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
 
     ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_CHAN_RXD) { result = -1805; goto done; }
+    if (ret != WS_SOCKET_ERROR_E) { result = -1805; goto done; }
     if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
         result = -1806;
         goto done;
@@ -7201,7 +7200,7 @@ done:
 }
 
 /* A send that fails with WS_CBIO_ERR_GENERAL discards the output buffer, so
- * no later call retries the flush. ssh->error has to keep the send failure
+ * no later call retries the flush. The send failure has to reach the caller
  * even though the receive reported channel data. */
 static int test_WorkerDiscardedFlushKeepsError(void)
 {
@@ -7242,7 +7241,7 @@ static int test_WorkerDiscardedFlushKeepsError(void)
     wolfSSH_SetIOSend(ctx, FailIoSend);
 
     ret = wolfSSH_worker(ssh, NULL);
-    if (ret != WS_CHAN_RXD) { result = -1765; goto done; }
+    if (ret != WS_SOCKET_ERROR_E) { result = -1765; goto done; }
     /* Nothing is left to flush, so this is the only report there will be. */
     if (ssh->outputBuffer.length != 0) { result = -1766; goto done; }
     if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {

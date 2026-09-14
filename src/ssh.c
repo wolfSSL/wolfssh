@@ -4631,12 +4631,17 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 
     /* Flush queued output whatever DoReceive() made of the socket, since an
      * idle receive reports WS_FATAL_ERROR. !ssh->disconnected gates it. */
-    if (ssh != NULL && !ssh->disconnected && ssh->outputBuffer.length != 0) {
+    if (wolfSSH_OutputPending(ssh) && !ssh->disconnected) {
         int rxErr = ssh->error;
 
         sendRet = wolfSSH_SendPacket(ssh);
         if (sendRet != WS_SUCCESS) {
             if (ret == WS_SUCCESS) {
+                ret = sendRet;
+            }
+            else if (sendRet != WS_WANT_WRITE && ret != WS_CHANNEL_CLOSED
+                    && ret != WS_FATAL_ERROR) {
+                /* The transport is gone, so the event it came with is moot. */
                 ret = sendRet;
             }
             else if ((ret == WS_CHANNEL_CLOSED && sendRet != WS_WANT_WRITE)
@@ -4688,6 +4693,12 @@ int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId)
         *channelId = ssh->lastRxId;
 
     return ret;
+}
+
+
+int wolfSSH_OutputPending(const WOLFSSH* ssh)
+{
+    return (ssh != NULL && ssh->outputBuffer.length > ssh->outputBuffer.idx);
 }
 
 

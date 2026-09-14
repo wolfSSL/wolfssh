@@ -96,10 +96,14 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  * neither as a substitute for the other.
  * A want is transient either way: call again. A caller that tolerates only
  * WS_WANT_READ drops live sessions, since a queued write reports
- * WS_WANT_WRITE.
- * Any other code is an error: WS_BAD_ARGUMENT, or WS_FATAL_ERROR with the
- * cause in wolfSSH_get_error() -- WS_DISCONNECT for the peer's disconnect,
- * which is how most sessions end.
+ * WS_WANT_WRITE. A send that fails outright takes the return instead, since
+ * the event it arrived with is moot once the transport is gone; only a
+ * WS_CHANNEL_CLOSED keeps the return there.
+ * Any other code is an error, either in the return itself or as
+ * WS_FATAL_ERROR with the cause in wolfSSH_get_error() -- WS_DISCONNECT for
+ * the peer's disconnect, which is how most sessions end.
+ * To ask whether a write is still owed, call wolfSSH_OutputPending() rather
+ * than reading a status: it answers after any return, including a success.
  *
  * For WS_CHAN_RXD, WS_EXTDATA, WS_EOF, WS_SUCCESS and a WS_REKEYING that
  * displaced one of those, channelId (when not NULL) names the channel the
@@ -110,6 +114,9 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  * library latches only the EOF it sends, not the one it receives. */
 WOLFSSH_API int wolfSSH_worker(WOLFSSH* ssh, word32* channelId);
 WOLFSSH_API int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId);
+
+/* Returns nonzero if a write is still owed. Session state */
+WOLFSSH_API int wolfSSH_OutputPending(const WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_set_fd(WOLFSSH* ssh, WS_SOCKET_T fd);
 WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh);

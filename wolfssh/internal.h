@@ -1701,7 +1701,6 @@ WOLFSSH_LOCAL int SendAfterDisconnect(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoReceive(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH* ssh);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH* ssh);
-WOLFSSH_LOCAL int wolfSSH_OutputPending(WOLFSSH* ssh);
 /* Will the packet just framed reach the peer? A completed flush says so; the
  * return does not, since the highwater callback runs after the last byte is
  * out and fails with the same codes a lost send does. Take flushes from

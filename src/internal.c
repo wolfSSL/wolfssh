@@ -5578,10 +5578,6 @@ int wolfSSH_SendPacket(WOLFSSH* ssh)
 }
 
 
-int wolfSSH_OutputPending(WOLFSSH* ssh)
-{
-    return (ssh != NULL && ssh->outputBuffer.length > ssh->outputBuffer.idx);
-}
 
 
 static int GetInputData(WOLFSSH* ssh, word32 size)
