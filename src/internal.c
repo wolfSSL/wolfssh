@@ -23546,7 +23546,7 @@ int SendChannelRequest(WOLFSSH* ssh, byte* name, word32 nameSz)
 }
 
 
-#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+#ifdef WOLFSSH_TERM
 
 /* out is always a TERMINAL_MODES_MAX_SZ buffer, and one byte is held back
  * for the terminator CreateMode() appends */
@@ -23804,6 +23804,7 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
 
 #ifdef HAVE_SYS_IOCTL_H
     #include <sys/ioctl.h>
+    #include <unistd.h>
 #endif
 
 static void GetTerminalInfo(word32* width, word32* height,
