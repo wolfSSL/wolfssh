@@ -195,7 +195,13 @@ static int ScpStreamRead(WOLFSSH* ssh, byte* data, word32 sz)
         }
 
         ret = wolfSSH_stream_read(ssh, data, sz);
-        if (ret < 0 && wolfSSH_get_error(ssh) == WS_REKEYING) {
+        if (ret == WS_EXTDATA) {
+            /* Drain the peer's stderr, then read what it precedes. */
+            ret = _DumpExtendedData(ssh);
+            if (ret != WS_SUCCESS)
+                done = 1;
+        }
+        else if (ret < 0 && wolfSSH_get_error(ssh) == WS_REKEYING) {
             /* Drive the rekey to completion, then retry the read. A worker
              * status that is not rekey or channel data means the rekey stalled
              * or a non-blocking want occurred, so return it rather than
@@ -1805,7 +1811,9 @@ int ReceiveScpMessage(WOLFSSH* ssh)
                     break;
 
                 case WS_EXTDATA:
-                    _DumpExtendedData(ssh);
+                    rc = _DumpExtendedData(ssh);
+                    if (rc != WS_SUCCESS)
+                        return rc;
                     break;
 
                 case WS_WINDOW_FULL:
@@ -1984,10 +1992,7 @@ int ReceiveScpConfirmation(WOLFSSH* ssh)
     msgSz = ScpStreamRead(ssh, msg, DEFAULT_SCP_MSG_SZ);
 
     if (msgSz < 0) {
-        if (msgSz == WS_EXTDATA || wolfSSH_get_error(ssh) == WS_EXTDATA)
-            _DumpExtendedData(ssh);
-        else
-            ret = msgSz;
+        ret = msgSz;
     } else if (msgSz > 1) {
         /* null terminate */
         msg[msgSz] = 0x00;
