@@ -171,13 +171,11 @@ static int ScpStreamSend(WOLFSSH* ssh, byte* data, word32 sz)
 
 /* Reads up to sz bytes into data, completing any rekey that fires mid-read.
  *
- * Flushes queued output before reading so a KEXINIT enqueued by a receive-side
- * highwater rekey is actually sent, otherwise the peer can wait for our KEXINIT
- * while we block on the read. On a read that fails with WS_REKEYING the worker
- * is driven to finish the rekey and the read is retried. The helper is
- * error-code transparent: every other status (WS_EOF, WS_EXTDATA,
- * WS_CHANNEL_CLOSED, WS_SOCKET_ERROR_E, WS_WANT_READ/WS_WANT_WRITE, byte count)
- * is returned unchanged so each caller keeps its existing branch handling.
+ * Flushes queued output first, or a KEXINIT from a receive-side highwater
+ * rekey sits unsent while both ends block on a read. A WS_REKEYING is driven
+ * to completion and a WS_EXTDATA is drained, then the read retries; every
+ * other status passes through unchanged, so callers keep their branch
+ * handling.
  */
 static int ScpStreamRead(WOLFSSH* ssh, byte* data, word32 sz)
 {
