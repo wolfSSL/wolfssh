@@ -10574,7 +10574,7 @@ static int test_DoChannelRequest(void)
         if (wolfSSH_TestDoChannelRequest(ssh, (byte*)payShell,
                 (word32)sizeof(payShell), &idxShell) != WS_SUCCESS) {
             printf("DoChannelRequest[shell-after-exec]: failed\n");
-            result = -500;
+            result = -512;
             goto done;
         }
         cmd = wolfSSH_ChannelGetSessionCommand(ch);

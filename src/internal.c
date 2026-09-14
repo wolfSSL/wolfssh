@@ -13218,9 +13218,13 @@ static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
 
         ret = GetStringAlloc(heap, &command, &commandSz, buf, len, idx);
         if (ret == WS_SUCCESS)
-            WLOG(WS_LOG_DEBUG, "  command = %s", command);
+            WLOG(WS_LOG_DEBUG, "  %s = %s",
+                    sessionType == WOLFSSH_SESSION_SUBSYSTEM
+                        ? "subsystem" : "command", command);
         else
-            WLOG(WS_LOG_DEBUG, "  command = %s", "<bad value>");
+            WLOG(WS_LOG_DEBUG, "  %s = %s",
+                    sessionType == WOLFSSH_SESSION_SUBSYSTEM
+                        ? "subsystem" : "command", "<bad value>");
     }
 
     if (ret == WS_SUCCESS) {
