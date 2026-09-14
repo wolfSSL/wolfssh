@@ -112,12 +112,14 @@
     #define SOCKET_ECONNRESET ECONNRESET
     #define SOCKET_ECONNABORTED ECONNABORTED
     #define SOCKET_EWOULDBLOCK EWOULDBLOCK
+    #define SOCKET_EINTR EINTR
 #else
     #include <WS2tcpip.h>
     #define SOCKET_ERRNO WSAGetLastError()
     #define SOCKET_ECONNRESET WSAECONNRESET
     #define SOCKET_ECONNABORTED WSAECONNABORTED
     #define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
+    #define SOCKET_EINTR WSAEINTR
 #endif
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
@@ -1567,6 +1569,16 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                 error == WS_WINDOW_FULL)
                 ret = error;
             if (error == WS_WANT_WRITE || wolfSSH_SFTP_PendingSend(ssh)) {
+                /* The tcp_select() this skips watches reads only. */
+                if (error == WS_WANT_WRITE) {
+                    selected = tcp_select_write(s, TEST_SFTP_TIMEOUT);
+                    /* An interrupted select() is not a dead socket. */
+                    if (selected == WS_SELECT_ERROR_READY
+                            || (selected == WS_SELECT_FAIL
+                                && SOCKET_ERRNO != SOCKET_EINTR)) {
+                        break;
+                    }
+                }
                 continue; /* no need to spend time attempting to pull data
                             * if there is still pending sends */
             }
