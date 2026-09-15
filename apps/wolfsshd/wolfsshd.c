@@ -1968,6 +1968,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     /* default to try and read max packet size */
     #define WOLFSSHD_SHELL_BUFFER_SZ 32768
 #endif
+#ifndef WOLFSSHD_SHELL_POLL_WAIT_US
+    /* the child's console pipe is a handle, not a socket, so select() cannot
+     * watch it; wake this often to poll it with PeekNamedPipe() instead */
+    #define WOLFSSHD_SHELL_POLL_WAIT_US 800
+#endif
+#ifndef WOLFSSHD_SHELL_BLOCKED_WAIT_SEC
+    /* cap on the wait taken when only the socket can make progress */
+    #define WOLFSSHD_SHELL_BLOCKED_WAIT_SEC 1
+#endif
     byte shellBuffer[WOLFSSHD_SHELL_BUFFER_SZ];
     int cnt_r, cnt_w;
     int windowFull = 0; /* bytes left in shellBuffer that a prior send could
@@ -2197,24 +2206,40 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         SOCKET sshFd;
         byte tmp[2];
         fd_set readFds;
+        fd_set writeFds;
+        fd_set* writeFdsPtr;
         WS_SOCKET_T maxFd;
         int pending = 0;
         int readPending = 0;
+        int wantWrite = 0;
         int rc = 0;
-        DWORD processState;
+        DWORD processState = 0;
         DWORD ava;
         struct timeval t;
-
-        t.tv_sec = 0;
-        t.tv_usec = 800;
 
         sshFd = wolfSSH_get_fd(ssh);
         maxFd = sshFd;
 
-        FD_ZERO(&readFds);
-        FD_SET(sshFd, &readFds);
+        /* a send before the loop can leave output queued */
+        if (wolfSSH_OutputPending(ssh)) {
+            wantWrite = 1;
+        }
 
         do {
+            FD_ZERO(&readFds);
+            FD_SET(sshFd, &readFds);
+
+            /* Winsock rejects a non-NULL descriptor set holding no socket,
+             * so the write set is passed as NULL until a write is owed. */
+            FD_ZERO(&writeFds);
+            writeFdsPtr = NULL;
+            if (wantWrite) {
+                FD_SET(sshFd, &writeFds);
+                writeFdsPtr = &writeFds;
+            }
+
+            pending = 0;
+
             /* @TODO currently not blocking till data comes in */
             if (PeekNamedPipe(ptyOut, NULL, 0, NULL, &ava, NULL) == TRUE) {
                 if (ava > 0) {
@@ -2247,27 +2272,40 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                             break;
                     }
                 }
-                if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
-                    rc = select((int)maxFd + 1, &readFds, NULL, NULL, &t);
-                    if (rc == -1) {
-                        wolfSSH_Log(WS_LOG_INFO,
-                            "[SSHD] select call waiting on socket failed");
-                        break;
-                    }
-                    /* when select times out and no socket is set as ready
-                       Windows overwrites readFds with 0. Reset the fd here
-                       for next select call */
-                    if (rc == 0) {
-                        FD_SET(sshFd, &readFds);
-                    }
-                }
-                else {
-                    pending = 1;
-                }
             }
 
-            if (rc != 0 && (pending || FD_ISSET(sshFd, &readFds))) {
+            if (wolfSSH_stream_peek(ssh, tmp, 1) > 0) {
+                pending = 1;
+            }
+
+            if (windowFull) {
+                /* only the socket can clear windowFull, so block on it */
+                t.tv_sec = WOLFSSHD_SHELL_BLOCKED_WAIT_SEC;
+                t.tv_usec = 0;
+            }
+            else if (readPending) {
+                /* the child's output is in hand, so do not wait */
+                t.tv_sec = 0;
+                t.tv_usec = 0;
+            }
+            else {
+                /* select() cannot watch the pipe, so wake and poll it */
+                t.tv_sec = 0;
+                t.tv_usec = WOLFSSHD_SHELL_POLL_WAIT_US;
+            }
+
+            rc = select((int)maxFd + 1, &readFds, writeFdsPtr, NULL, &t);
+            if (rc == -1) {
+                wolfSSH_Log(WS_LOG_INFO,
+                    "[SSHD] select call waiting on socket failed");
+                break;
+            }
+
+            if (FD_ISSET(sshFd, &writeFds) || windowFull || pending
+                    || FD_ISSET(sshFd, &readFds)) {
                 word32 lastChannel = 0;
+
+                wantWrite = 0;
 
                 /* The following tries to read from the first channel inside
                    the stream. If the pending data in the socket is for
@@ -2276,6 +2314,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
+                if (wolfSSH_OutputPending(ssh)) {
+                    wantWrite = 1;
+                }
                 if (cnt_r < 0) {
                     if (cnt_r == WS_CHAN_RXD) {
                         if (lastChannel == shellChannelId) {
@@ -2284,6 +2325,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                                 sizeof shellBuffer);
                             if (cnt_r <= 0)
                                 break;
+                            /* the window adjust that read issued may itself
+                             * still be queued */
+                            if (wolfSSH_OutputPending(ssh)) {
+                                wantWrite = 1;
+                            }
                             pending = 0;
                             if (WriteFile(ptyIn, shellBuffer, cnt_r, &cnt_r,
                                 NULL) != TRUE) {
@@ -2326,6 +2372,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (windowFull) {
                 cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                     shellBuffer, windowFull);
+                if (wolfSSH_OutputPending(ssh)) {
+                    wantWrite = 1;
+                }
                 if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING ||
                     cnt_w == WS_WANT_WRITE) {
                     continue;
@@ -2358,6 +2407,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                             shellBuffer, cnt_r);
+                        if (wolfSSH_OutputPending(ssh)) {
+                            wantWrite = 1;
+                        }
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
                             WMEMMOVE(shellBuffer, shellBuffer + cnt_w,
@@ -2895,7 +2947,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         maxFd = sshFd;
 
         FD_ZERO(&writeFds);
-        if (windowFull || wantWrite) {
+        /* Only queued output waits on writability. */
+        if (wantWrite) {
             FD_SET(sshFd, &writeFds);
         }
 
@@ -2947,12 +3000,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             struct timeval noWait;
             struct timeval* timeout = NULL;
 
-            /* Work already in hand must not wait on the descriptors, but the
-             * poll still runs so this pass sees the child's output too. Data
-             * the child has not taken yet is not in hand: nothing can be
-             * pulled off the channel until it drains, so a zero timeout
-             * would spin. Its stdin is in the write set, so wait there. */
-            if (pending && childInIdx == childInSz) {
+            /* Buffered input is handed over with no wait, but only when
+             * nothing is owed: unwritten child stdin and a full window
+             * both block that drain, so they wait on a descriptor. */
+            if (pending && childInIdx == childInSz && !windowFull) {
                 noWait.tv_sec = 0;
                 noWait.tv_usec = 0;
                 timeout = &noWait;
@@ -3119,6 +3170,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                         shellBuffer, windowFull);
             }
+            if (wolfSSH_OutputPending(ssh)) {
+                wantWrite = 1;
+            }
             if (cnt_w == WS_WINDOW_FULL || cnt_w == WS_REKEYING) {
                 continue;
             }
@@ -3157,6 +3211,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
+                        if (wolfSSH_OutputPending(ssh)) {
+                            wantWrite = 1;
+                        }
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
                             windowFullExt = 1;
@@ -3202,6 +3259,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
+                        if (wolfSSH_OutputPending(ssh)) {
+                            wantWrite = 1;
+                        }
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
                             windowFullExt = 0;
@@ -3245,6 +3305,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     if (cnt_r > 0) {
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
+                        if (wolfSSH_OutputPending(ssh)) {
+                            wantWrite = 1;
+                        }
                         if (cnt_w > 0 && cnt_w < cnt_r) { /* partial send */
                             windowFull = cnt_r - cnt_w;
                             windowFullExt = 0;
