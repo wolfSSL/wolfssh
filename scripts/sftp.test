@@ -37,7 +37,7 @@ create_port() {
     # counted per server start, so a slow first start cannot eat the wait
     # the later ones need
     counter=0
-    while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
         echo "waiting for ready file..."
         sleep 0.1
         counter=$((counter+ 1))
