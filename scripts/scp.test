@@ -25,13 +25,15 @@ fi
 create_port() {
     # each server gets its own wait budget, the count must not carry over
     counter=0
-    while [ ! -s "$ready_file" ] && [ "$counter" -lt 20 ]; do
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
         echo -e "waiting for ready file..."
         sleep 0.1
         counter=$((counter+ 1))
     done
 
-    if test -e $ready_file; then
+    # -s, not -e: the echoserver creates the file empty and writes the
+    # port afterward, so -e can catch it mid-write and yield no port
+    if [ -s "$ready_file" ]; then
         echo -e "found ready file, starting client..."
 
         # get created port 0 ephemeral port

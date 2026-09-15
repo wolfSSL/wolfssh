@@ -64,6 +64,116 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
+# Ports for this run, not for this host. Every listener the suite starts used
+# to be on a fixed port -- 22222 for the shared daemon and one constant apiece
+# for the private daemons -- so two runs on one machine collided on the bind
+# and each failed somewhere unrelated to its own change. Take a block of
+# consecutive ports instead, starting at a pid-derived offset so two runs
+# rarely probe the same candidate, and step past a block already in use:
+#
+#   +0  shared wolfSSHd (TEST_PORT)    +3  host key ownership/symlink gate
+#   +1  StrictModes negative test      +4  OpenSSH certificate test
+#   +2  AuthorizedUPNDomains negative  +5  privilege-drop test
+#
+# The range deliberately starts above 22226: other CI steps in this repo bind
+# 22222, 22225 and 22226 while the suite is not running, and a daemon this
+# suite leaks must not be able to sit on one of them.
+#
+# Not yet per run: sshd_term_close_test.sh counts "pgrep wolfsshd" before and
+# after its connection, sshd_sftp_idle_cpu_test.sh picks the first wolfsshd
+# that is new since its connection, and sshd_stdin_stall_test.sh sums CPU
+# ticks over every wolfsshd on the machine. All three read the whole process
+# table, so a second run's connection children can perturb them. Two runs at
+# once otherwise pass; these are the remaining single-run-per-host tests.
+PORT_BLOCK_FIRST=22300
+PORT_BLOCK_SIZE=8
+PORT_BLOCK_COUNT=64
+
+# True when something is already listening. A shell built without /dev/tcp
+# fails here exactly as a refused connection does, which degrades to taking
+# the pid-derived block unprobed -- still per run, just unverified.
+port_in_use() {
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+find_port_block() {
+    local start i n base busy
+    start=$(( $$ % PORT_BLOCK_COUNT ))
+    for (( i = 0; i < PORT_BLOCK_COUNT; i++ )); do
+        base=$(( PORT_BLOCK_FIRST \
+            + ((start + i) % PORT_BLOCK_COUNT) * PORT_BLOCK_SIZE ))
+        busy=0
+        for (( n = 0; n < PORT_BLOCK_SIZE; n++ )); do
+            if port_in_use $(( base + n )); then
+                busy=1
+                break
+            fi
+        done
+        if [ "$busy" -eq 0 ]; then
+            printf '%s' "$base"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PORT_BASE=`find_port_block`
+if [ -z "$PORT_BASE" ]; then
+    echo "Error: no free block of $PORT_BLOCK_SIZE ports found starting at" \
+        "$PORT_BLOCK_FIRST."
+    exit 1
+fi
+
+# The port the local daemon binds and the generated configs carry. A caller
+# who passed --port gets that port: the local branch below used to overwrite
+# it with the constant, so the only option that looked like a way out of a
+# collision was silently discarded.
+LOCAL_PORT="${TEST_PORT:-$PORT_BASE}"
+STRICTMODES_PORT=$((PORT_BASE + 1))
+UPN_PORT=$((PORT_BASE + 2))
+HOSTKEY_PERM_PORT=$((PORT_BASE + 3))
+# Read by the two tests that start a daemon of their own. They are exported
+# rather than derived from the port passed to the test, so they stay inside the
+# probed block even when --port moves the shared daemon off it.
+export WOLFSSHD_TEST_PORT=$((PORT_BASE + 4))
+export WOLFSSHD_PRIVDROP_PORT=$((PORT_BASE + 5))
+
+# Registry of the daemons started during this run, appended to by
+# start_wolfsshd in every test script that sources start_sshd.sh. The exit
+# teardown at the bottom kills what is left in it, which is what makes the
+# teardown specific to this run.
+WOLFSSHD_TEST_PIDFILE=`mktemp 2>/dev/null` \
+    || WOLFSSHD_TEST_PIDFILE=`mktemp -t sshdpids`
+export WOLFSSHD_TEST_PIDFILE
+
+# Teardown safety net: the start/stop pairs below stop each daemon they start,
+# but background test daemons survive across CI steps that share this runner,
+# and a later step (the valgrind "memory after close down" check) binds a port
+# of its own. Make sure no daemon this run started lingers when the script
+# exits, and that the registry does not outlive it either.
+#
+# It is a trap, not a block at the bottom of the file, because the script exits
+# early on a bad --match, a setup failure, a daemon that will not start and
+# every test failure -- none of which would reach the bottom.
+#
+# Scoped to the pids in the registry, not to the wolfsshd name: "pkill -x
+# wolfsshd" here matched every other run's daemon too, so on a shared runner
+# whichever job finished first took down the other's. A port-matched pkill is
+# not an option for the shared daemon -- its port comes from its config file,
+# so it never appears on the command line to match against.
+#
+# USING_LOCAL_HOST is unset on the early exits that precede "source
+# ./start_sshd.sh", so stop_all_wolfsshd is never called before it is defined.
+# Every step ends in "|| true": a failing command in an EXIT trap becomes the
+# script's exit status, which would turn a passing run red.
+run_teardown() {
+    if [ "$USING_LOCAL_HOST" == 1 ]; then
+        stop_all_wolfsshd || true
+    fi
+    rm -f "$WOLFSSHD_TEST_PIDFILE" || true
+}
+trap run_teardown EXIT
+
 TOTAL=0
 SKIPPED=0
 # Set as the last statement of each branch that runs tests, and checked before
@@ -96,7 +206,7 @@ fi
 # setup
 set -e
 ./create_authorized_test_file.sh
-./create_sshd_config.sh $USER
+./create_sshd_config.sh "$USER" "$LOCAL_PORT"
 set +e
 
 if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
@@ -105,9 +215,9 @@ if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
 else
     USING_LOCAL_HOST=1
     source ./start_sshd.sh
-    echo "Starting up local wolfSSHd for tests on 127.0.0.1:22222"
     TEST_HOST="127.0.0.1"
-    TEST_PORT="22222"
+    TEST_PORT="$LOCAL_PORT"
+    echo "Starting up local wolfSSHd for tests on $TEST_HOST:$TEST_PORT"
     start_wolfsshd "sshd_config_test"
     if [ -z "$PID" ]; then
         echo "Issue starting up wolfSSHd"
@@ -156,7 +266,7 @@ run_strictmodes_negative_test() {
     cp ../../../keys/server-key.pem strictmodes_hostkey.pem
     chmod 644 strictmodes_hostkey.pem
     cat <<EOF > sshd_config_test_strictmodes
-Port 22622
+Port $STRICTMODES_PORT
 StrictModes no
 UsePrivilegeSeparation no
 HostKey strictmodes_hostkey.pem
@@ -202,7 +312,7 @@ run_upn_unenforceable_negative_test() {
     cp ../../../keys/server-key.pem upn_hostkey.pem
     chmod 600 upn_hostkey.pem
     cat <<EOF > sshd_config_test_upn_nofpki
-Port 22623
+Port $UPN_PORT
 UsePrivilegeSeparation no
 HostKey upn_hostkey.pem
 Match User $USER
@@ -308,7 +418,7 @@ run_hostkey_perm_check() {
 
     HK_SSHD=../wolfsshd
     HK_KEY=../../../keys/server-key.pem
-    HK_PORT=22399
+    HK_PORT=$HOSTKEY_PERM_PORT
     if [ ! -x "$HK_SSHD" ] || [ ! -f "$HK_KEY" ]; then
         printf "SKIPPED\n"
         SKIPPED=$((SKIPPED+1))
@@ -544,18 +654,6 @@ else
         run_test "sshd_ossh_cert_test.sh"
     fi
     RUN_COMPLETE=1
-fi
-
-# Teardown safety net: the start/stop pairs above stop each daemon they start,
-# but background test daemons survive across CI steps that share this runner,
-# and a later step (the valgrind "memory after close down" check) binds the same
-# port 22222. Make sure no test daemon lingers when this script exits so that
-# step does not fail with "tcp bind failed". Harmless when nothing is running.
-# Match the process name, not the whole command line: "-f wolfsshd" also matches
-# this script when it is invoked by a path holding "wolfsshd", killing the run
-# before the check below and losing the summary.
-if [ "$USING_LOCAL_HOST" == 1 ]; then
-    sudo pkill -x wolfsshd 2>/dev/null || true
 fi
 
 if [ "$RUN_COMPLETE" != 1 ]; then
