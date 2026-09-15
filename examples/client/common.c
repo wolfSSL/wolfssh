@@ -222,7 +222,7 @@ static const unsigned int hanselPrivateRsaSz = 1191;
 #endif
 
 
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char* hanselPublicEcc =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
@@ -1008,7 +1008,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
     (void)tpmKeyAuth; /* Not used */
 
     if (privKeyName == NULL) {
-    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECC)
+    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
         /* No built-in key to load. Leave the client to authenticate
          * some other way rather than failing here. */
         userPrivateKeySz = 0;
@@ -1017,7 +1017,7 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
         (void)heap;
     #else
         if (userEcc) {
-        #ifndef WOLFSSH_NO_ECC
+        #ifndef WOLFSSH_NO_ECDSA
             userPrivateKeySz = sizeof(userPrivateKeyBuf);
             ret = wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
                     WOLFSSH_FORMAT_ASN1, &userPrivateKey, &userPrivateKeySz,
@@ -1080,7 +1080,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
     int ret = 0;
 
     if (pubKeyName == NULL) {
-    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECC)
+    #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
         /* No built-in key to load. Leave the client to authenticate
          * some other way rather than failing here. */
         userPublicKeySz = 0;
@@ -1092,7 +1092,7 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
         userPublicKeySz = sizeof(userPublicKeyBuf);
 
         if (userEcc) {
-        #ifndef WOLFSSH_NO_ECC
+        #ifndef WOLFSSH_NO_ECDSA
             ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
                     (word32)strlen(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
                     &p, &userPublicKeySz,

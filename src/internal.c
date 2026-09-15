@@ -6400,7 +6400,10 @@ int wcPrimeForId(byte id)
             return ECC_CURVE_INVALID;
     }
 }
+#endif /* !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ECDH */
 
+
+#ifndef WOLFSSH_NO_ECDSA
 static INLINE const char *PrimeNameForId(byte id)
 {
     switch (id) {
@@ -9228,10 +9231,14 @@ static int ValidateKexDhGexGroup(const byte* primeGroup, word32 primeGroupSz,
         }
     }
 
-    /* Safe prime check: q = (p - 1) / 2 must also be prime. */
+    /* Safe prime check: q = (p - 1) / 2 must also be prime. mp_rshb() rather
+     * than mp_div_2(): the latter is an ECC-only entry point in SP math, and
+     * q is positive here, so the shift is the same operation. */
     if (ret == WS_SUCCESS) {
-        if (mp_sub_d(&p, 1, &q) != MP_OKAY || mp_div_2(&q, &q) != MP_OKAY)
+        if (mp_sub_d(&p, 1, &q) != MP_OKAY)
             ret = WS_CRYPTO_FAILED;
+        else
+            mp_rshb(&q, 1);
     }
     if (ret == WS_SUCCESS) {
         isPrime = MP_NO;
@@ -11644,6 +11651,9 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     }
                 }
 
+                /* Only the RSA and ECDSA arms above read the digest size;
+                 * with both compiled out the switch is just the default. */
+                WOLFSSH_UNUSED(digestSz);
                 WS_FORCEZERO(digest, sizeof(digest));
             }
 
@@ -15728,6 +15738,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
 
     heap = ssh->ctx->heap;
+    /* Only the RSA, ECDSA and ML-DSA arms allocate; Ed25519 does not. */
+    WOLFSSH_UNUSED(heap);
 
 #ifdef WOLFSSH_TPM
     ssh->handshake->useTpm = ssh->ctx->privateKey[keyIdx].isTpm;
@@ -16045,6 +16057,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                             sigKeyBlock_ptr->sk.ecc.qSz);
             }
             break;
+        #endif /* WOLFSSH_NO_ECDSA */
 
         #ifndef WOLFSSH_NO_ED25519
         case ID_ED25519:
@@ -16113,8 +16126,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                                     sigKeyBlock_ptr->sk.ed.q,
                                     sigKeyBlock_ptr->sk.ed.qSz);
             break;
-        #endif
-        #endif
+        #endif /* WOLFSSH_NO_ED25519 */
 
         #ifndef WOLFSSH_NO_MLDSA
         #ifdef WOLFSSH_CERTS
@@ -21281,9 +21293,34 @@ static int PrepareUserAuthRequestEd25519(WOLFSSH* ssh, word32* payloadSz,
         else
         #endif
         {
-            ret = GetOpenSshKey(keySig,
-                    authData->sf.publicKey.privateKey,
-                    authData->sf.publicKey.privateKeySz, &idx);
+            /* As in the RSA and ECDSA paths, try DER first and fall back to
+             * the OpenSSH container. */
+            ret = wc_Ed25519PrivateKeyDecode(
+                    authData->sf.publicKey.privateKey, &idx,
+                    &keySig->ks.ed25519.key,
+                    authData->sf.publicKey.privateKeySz);
+        #ifdef HAVE_ED25519_MAKE_KEY
+            if (ret == 0 && !keySig->ks.ed25519.key.pubKeySet) {
+                /* Priv-only DER: derive the public key from the seed, the
+                 * way SendKexGetSigningKey() does for a host key. */
+                byte q[ED25519_PUB_KEY_SIZE];
+
+                ret = wc_ed25519_make_public(&keySig->ks.ed25519.key,
+                        q, (word32)sizeof(q));
+                if (ret == 0) {
+                    /* trusted=1: q came from this key's own scalar. */
+                    ret = wc_ed25519_import_public_ex(q,
+                            ED25519_PUB_KEY_SIZE,
+                            &keySig->ks.ed25519.key, 1);
+                }
+            }
+        #endif /* HAVE_ED25519_MAKE_KEY */
+            if (ret != 0) {
+                idx = 0;
+                ret = GetOpenSshKey(keySig,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+            }
         }
     }
 

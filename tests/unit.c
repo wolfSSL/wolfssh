@@ -42,6 +42,9 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #endif
+/* The Ed25519 key DER helpers arrive with asn.h, but that include is RSA-only
+ * and the Ed25519 tests do not need RSA. */
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 #define WOLFSSH_TEST_HEX2BIN
 #include <wolfssh/test.h>
@@ -56,7 +59,6 @@
     defined(WOLFSSL_CERT_GEN) && !defined(WOLFSSH_NO_ECDSA) && \
     !defined(NO_FILESYSTEM)
     #define WOLFSSH_TEST_CERTMAN_PROMOTE
-    #include <wolfssl/wolfcrypt/asn_public.h>
     #include <wolfssl/wolfcrypt/ecc.h>
 #endif
 

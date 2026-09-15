@@ -2278,6 +2278,7 @@ static int load_file(const char* fileName, byte* buf, word32* bufSz)
     #define ECC_PATH "./keys/server-key-ecc.der"
 #endif
 
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 /* returns buffer size on success */
 static int load_key(byte isEcc, byte* buf, word32 bufSz)
 {
@@ -2307,6 +2308,7 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 
     return sz;
 }
+#endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA */
 
 #ifndef WOLFSSH_NO_ED25519
 /* returns buffer size on success */
@@ -2647,7 +2649,7 @@ static const char samplePasswordBuffer[] =
     "jack:fetchapail\n";
 
 
-#ifndef WOLFSSH_NO_ECC
+#ifndef WOLFSSH_NO_ECDSA
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
 static const char samplePublicKeyEccBuffer[] =
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAA"
@@ -2690,6 +2692,17 @@ static const char samplePublicKeyEccBuffer[] =
         "nIf7dO0B8EblgWt+ud+JI8wrAhfE4x hansel\n";
 #endif /* WOLFSSH_TPM */
 #endif /* WOLFSSH_NO_RSA */
+
+/* Ed25519 is the only signing algorithm left when neither RSA nor ECDSA
+ * is compiled in, so the server needs sample keys of its own. */
+#if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+    !defined(WOLFSSH_NO_ED25519)
+static const char samplePublicKeyEd25519Buffer[] =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHTSoBZIJBO2V0Jb2OWyMWNbkD"
+    "d6ReDfKxnrAPlbPuCe hansel\n"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFD8Bwir++gzNJmif9ooAZdaRi"
+    "sFZjlp9XU2seaec7/m gretel\n";
+#endif
 
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 
@@ -3870,12 +3883,14 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     userEcc = 1;
     peerEcc = 1;
 #endif
-#ifdef WOLFSSH_NO_ECC
-    /* If wolfCrypt isn't built with ECC, force ECC off. */
+#ifdef WOLFSSH_NO_ECDSA
+    /* If wolfCrypt isn't built with ECDSA, force ECC off. */
     userEcc = 0;
     peerEcc = 0;
 #endif
     (void)userEcc;
+    /* Only load_key() reads it, and that is RSA/ECDSA only. */
+    (void)peerEcc;
 
     if (wolfSSH_Init() != WS_SUCCESS) {
         ES_ERROR("Couldn't initialize wolfSSH.\n");
@@ -4118,6 +4133,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     #endif
 
         if (loadDefaultHostKeys) {
+        #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
             bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
             if (bufSz == 0) {
                 #ifdef WOLFSSH_SMALL_STACK
@@ -4135,7 +4151,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 ES_ERROR("Couldn't use first key buffer.\n");
             }
 
-        #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECC)
+        #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_ECDSA)
             peerEcc = !peerEcc;
             bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
 
@@ -4156,6 +4172,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 ES_ERROR("Couldn't use second key buffer.\n");
             }
         #endif
+        #endif /* !WOLFSSH_NO_RSA || !WOLFSSH_NO_ECDSA */
 
         #ifndef WOLFSSH_NO_ED25519
             bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
@@ -4289,7 +4306,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
         if (userEcc) {
-        #ifndef WOLFSSH_NO_ECC
+        #ifndef WOLFSSH_NO_ECDSA
             bufName = samplePublicKeyEccBuffer;
         #endif
         }
@@ -4302,6 +4319,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             #endif
         #endif
         }
+        #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+            !defined(WOLFSSH_NO_ED25519)
+        /* Neither branch above has a key in this build, and -e has nothing
+         * to pick between, so use the Ed25519 sample keys. */
+        bufName = samplePublicKeyEd25519Buffer;
+        #endif
         if (bufName != NULL) {
             bufSz = (word32)WSTRLEN(bufName);
             WMEMCPY(keyLoadBuf, bufName, bufSz);
