@@ -21297,9 +21297,46 @@ static int PrepareUserAuthRequestEd25519(WOLFSSH* ssh, word32* payloadSz,
         else
         #endif
         {
-            ret = GetOpenSshKey(keySig,
-                    authData->sf.publicKey.privateKey,
-                    authData->sf.publicKey.privateKeySz, &idx);
+            int derRet;
+
+            /* As in the RSA and ECDSA paths, try DER first and fall back to
+             * the OpenSSH container. Only a decode failure falls back; a
+             * derive failure keeps its own error. */
+            derRet = wc_Ed25519PrivateKeyDecode(
+                    authData->sf.publicKey.privateKey, &idx,
+                    &keySig->ks.ed25519.key,
+                    authData->sf.publicKey.privateKeySz);
+
+            if (derRet != 0) {
+                idx = 0;
+                ret = GetOpenSshKey(keySig,
+                        authData->sf.publicKey.privateKey,
+                        authData->sf.publicKey.privateKeySz, &idx);
+            }
+            else {
+                ret = WS_SUCCESS;
+
+                if (!keySig->ks.ed25519.key.pubKeySet) {
+        #ifdef HAVE_ED25519_MAKE_KEY
+                    /* Priv-only DER: derive the public key from the seed,
+                     * the way SendKexGetSigningKey() does for a host key. */
+                    byte q[ED25519_PUB_KEY_SIZE];
+
+                    ret = wc_ed25519_make_public(&keySig->ks.ed25519.key,
+                            q, (word32)sizeof(q));
+                    if (ret == 0) {
+                        /* trusted=1: q came from this key's own scalar. */
+                        ret = wc_ed25519_import_public_ex(q,
+                                ED25519_PUB_KEY_SIZE,
+                                &keySig->ks.ed25519.key, 1);
+                    }
+        #else
+                    /* Nothing to derive it with; reject here rather than
+                     * failing inside wc_ed25519_sign_msg(). */
+                    ret = WS_KEY_FORMAT_E;
+        #endif /* HAVE_ED25519_MAKE_KEY */
+                }
+            }
         }
     }
 
