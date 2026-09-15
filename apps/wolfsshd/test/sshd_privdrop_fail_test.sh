@@ -7,8 +7,9 @@
 # Drives all three dropping subsystems: exec/shell, sftp, scp.
 
 if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "expecting host and port as arguments"
-    echo "./sshd_privdrop_fail_test.sh 127.0.0.1 22222"
+    echo "expecting host and the runner's shared port as arguments;"
+    echo "this test binds WOLFSSHD_PRIVDROP_PORT, or that port + 5"
+    echo "./sshd_privdrop_fail_test.sh 127.0.0.1 22300"
     exit 1
 fi
 
@@ -19,10 +20,10 @@ USER=`whoami`
 TEST_HOST="$1"
 
 # Own daemon on a dedicated port for isolation from the runner's shared daemon.
-# Offset from the port passed in rather than a constant, so the isolation holds
-# against another run of the suite on the same host and not just against this
-# run's shared daemon. The runner reserves the offset as part of its block.
-TEST_PORT=$(( $2 + 5 ))
+# The runner reserves this port as part of the block it probed and exports it,
+# so the isolation holds against another run of the suite on the same host.
+# Standalone, fall back to an offset from the port passed in.
+TEST_PORT="${WOLFSSHD_PRIVDROP_PORT:-$(( $2 + 5 ))}"
 
 SSHD_BIN="../wolfsshd"
 if [ ! -x "$SSHD_BIN" ]; then

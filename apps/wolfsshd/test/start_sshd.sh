@@ -185,6 +185,18 @@ stop_wolfsshd() {
             sleep 0.1
         done
 
+        # Drop it from the run registry now that it is stopped. Left there, it
+        # would still be a candidate for the end-of-run sweep, which can only
+        # ask whether some wolfsshd holds that pid today -- and a concurrent
+        # run forks one per connection, so a recycled pid would be that run's
+        # daemon. A run accumulates about nine of these, all dead but one.
+        if [ -n "$WOLFSSHD_TEST_PIDFILE" ] && [ -f "$WOLFSSHD_TEST_PIDFILE" ]; then
+            grep -vx -- "$PID" "$WOLFSSHD_TEST_PIDFILE" \
+                > "$WOLFSSHD_TEST_PIDFILE.new" 2>/dev/null || true
+            mv -f "$WOLFSSHD_TEST_PIDFILE.new" "$WOLFSSHD_TEST_PIDFILE" \
+                2>/dev/null || rm -f "$WOLFSSHD_TEST_PIDFILE.new"
+        fi
+
         # Cleared so a second call -- an EXIT trap after an explicit stop -- is
         # a no-op rather than a kill of whatever pid has since been recycled.
         PID=""
