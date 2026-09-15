@@ -80,15 +80,13 @@ stall_limit=15
 ./examples/portfwd/portfwd '-?' 2>&1 | grep -q "does not exist" \
     && { echo "forwarding not compiled in, skipping"; exit 77; }
 
-# A WOLFSSH_TEST_BLOCK build fails writes at random, which stalls the
-# echoserver regardless of what the peer does. The other echoserver scripts
-# skip it for the same reason.
 WOLFSSH_OPTIONS=`./apps/wolfssh-options` || {
     echo "fail: could not run ./apps/wolfssh-options"
     exit 1
 }
 echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK" \
-    && { echo "macro WOLFSSH_TEST_BLOCK was used, skipping"; exit 77; }
+    && { echo "portfwd does not support non-blocking mode, skipping test"
+         exit 77; }
 
 do_cleanup() {
     for pid in $nc_client_pid $portfwd_pid $server_pid $nc_server_pid \
