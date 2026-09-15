@@ -6400,7 +6400,10 @@ int wcPrimeForId(byte id)
             return ECC_CURVE_INVALID;
     }
 }
+#endif /* !WOLFSSH_NO_ECDSA || !WOLFSSH_NO_ECDH */
 
+
+#ifndef WOLFSSH_NO_ECDSA
 static INLINE const char *PrimeNameForId(byte id)
 {
     switch (id) {
