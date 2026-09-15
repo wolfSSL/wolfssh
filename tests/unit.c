@@ -9334,6 +9334,150 @@ done:
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+/* Disconnects from inside the EOF dispatch. DoChannelEof() discards what
+ * this returns, so the refused send's status is not an error to report. */
+static int EofDisconnectCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    WOLFSSH* ssh = (WOLFSSH*)ctx;
+
+    (void)channel;
+
+    (void)wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    return WS_SUCCESS;
+}
+
+/* The queued DISCONNECT sets ssh->disconnected, so wolfSSH_worker() skips its
+ * flush and the pass returns WS_EOF with output still owed. The write outranks
+ * that event: the teardown reports WS_WANT_WRITE and the retry sends it. */
+static int test_ShutdownOwedWriteAfterEofDisconnect(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1900;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+    if (wolfSSH_CTX_SetChannelEofCb(ctx, EofDisconnectCb) != WS_SUCCESS) {
+        result = -1901;
+        goto done;
+    }
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1902; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+    if (wolfSSH_SetChannelEofCtx(ssh, ssh) != WS_SUCCESS) {
+        result = -1903;
+        goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1904; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1905;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The teardown sends are already done, so the read is all that is left
+     * and the output buffer is empty going into it. */
+    ch->eofTxd = 1;
+    ch->closeTxd = 1;
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelEofPacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_WANT_WRITE) { result = -1906; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1907; goto done; }
+
+    /* And the disconnect really does go out once the socket takes bytes. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SUCCESS) { result = -1908; goto done; }
+    if (wolfSSH_OutputPending(ssh)) { result = -1909; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The owed write is what the first call reports even when the disconnect's
+ * send failed outright, and the retry's flush surfaces the transport error. */
+static int test_ShutdownHardEofDisconnectSurfacesOnRetry(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    byte             pkt[16];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1910;
+    wolfSSH_SetIOSend(ctx, ConnResetIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+    if (wolfSSH_CTX_SetChannelEofCb(ctx, EofDisconnectCb) != WS_SUCCESS) {
+        result = -1911;
+        goto done;
+    }
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1912; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+    if (wolfSSH_SetChannelEofCtx(ssh, ssh) != WS_SUCCESS) {
+        result = -1913;
+        goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1914; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1915;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+    ch->eofTxd = 1;
+    ch->closeTxd = 1;
+
+    s_recvPkt = pkt;
+    s_recvPktSz = BuildChannelEofPacket(pkt, ch->channel);
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_WANT_WRITE) { result = -1916; goto done; }
+    if (!wolfSSH_OutputPending(ssh)) { result = -1917; goto done; }
+
+    /* The reset is not lost: it takes the return one call later. */
+    ret = wolfSSH_shutdown(ssh);
+    if (ret != WS_SOCKET_ERROR_E) { result = -1918; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 #endif /* NO_WOLFSSH_SERVER */
 
 
@@ -22850,6 +22994,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef NO_WOLFSSH_SERVER
     unitResult = test_ChannelEofCallback();
     printf("ChannelEofCallback: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ShutdownOwedWriteAfterEofDisconnect();
+    printf("ShutdownOwedWriteAfterEofDisconnect: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ShutdownHardEofDisconnectSurfacesOnRetry();
+    printf("ShutdownHardEofDisconnectSurfacesOnRetry: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_SERVER */

@@ -1305,15 +1305,9 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
             /* received response */
             ret = WS_SUCCESS;
         }
-        /* Report a write still owed, or the send's own error if it failed. */
+        /* The worker left output queued, so a write is still owed. */
         if (ret == WS_SUCCESS && wolfSSH_OutputPending(ssh)) {
-            int sendErr = wolfSSH_get_error(ssh);
-
-            if (sendErr == WS_WANT_WRITE || sendErr == WS_WANT_READ
-                    || sendErr == WS_SUCCESS)
-                ret = WS_WANT_WRITE;
-            else
-                ret = sendErr;
+            ret = WS_WANT_WRITE;
         }
     }
 
