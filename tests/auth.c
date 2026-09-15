@@ -216,7 +216,21 @@ static int load_key(byte isEcc, byte* buf, word32 bufSz)
 {
     word32 sz = 0;
 
+#if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+    !defined(WOLFSSH_NO_ED25519)
+    /* Neither key this picks between is compiled in; Ed25519 is what is
+     * left, and the server threads need some host key to offer. */
+    (void)isEcc;
 #ifndef NO_FILESYSTEM
+    sz = load_file("./keys/server-key-ed25519.der", buf, &bufSz);
+#else
+    if ((word32)sizeof_ed25519_key_der_ssh > bufSz) {
+        return 0;
+    }
+    WMEMCPY(buf, ed25519_key_der_ssh, sizeof_ed25519_key_der_ssh);
+    sz = (word32)sizeof_ed25519_key_der_ssh;
+#endif
+#elif !defined(NO_FILESYSTEM)
     const char* bufName;
     bufName = isEcc ? ECC_PATH : "./keys/server-key-rsa.der";
     sz = load_file(bufName, buf, &bufSz);
@@ -439,6 +453,22 @@ static const unsigned int hanselPrivateEccSz = (unsigned int)sizeof(hanselPrivat
     #error "Enable nistp256, nistp384, nistp521, or disable ECC."
 #endif
 #endif /* WOLFSSH_NO_ECDSA */
+
+#ifndef WOLFSSH_NO_ED25519
+static const char* hanselPublicEd25519 =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHTSoBZIJBO2V0Jb2OWyMWNbkD"
+    "d6ReDfKxnrAPlbPuCe hansel";
+/* PKCS#8 Ed25519 private key with no public key attribute, the pair to
+ * hanselPublicEd25519. */
+static const byte hanselPrivateEd25519[] = {
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+  0x04, 0x22, 0x04, 0x20, 0x28, 0xc6, 0xe9, 0xd8, 0x37, 0x4d, 0x0c, 0x52,
+  0x7e, 0x5f, 0xb3, 0x4c, 0x81, 0xe8, 0x68, 0xee, 0xc9, 0x7c, 0xad, 0x00,
+  0xad, 0xa0, 0xe3, 0xe2, 0x13, 0x06, 0x55, 0xf1, 0x17, 0xf1, 0x0a, 0xf0
+};
+static const unsigned int hanselPrivateEd25519Sz =
+        (unsigned int)sizeof(hanselPrivateEd25519);
+#endif /* WOLFSSH_NO_ED25519 */
 
 /* Server context: SHA256 hash of the authorized key/cert, and optional CA
  * cert for cert-based auth (NULL/0 for plain pubkey tests). */
@@ -677,12 +707,15 @@ static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
     return WS_SUCCESS;
 }
 
-/* Existing callers all want the default fixture host key. */
+/* Existing callers all want the default fixture host key, and every one of
+ * them is an RSA or ECDSA test. */
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
 static int run_pubkey_test(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
                            int expect)
 {
     return run_pubkey_test_ex(sCtx, cCtx, expect, NULL, 0);
 }
+#endif
 
 #ifndef WOLFSSH_NO_RSA
 static void test_pubkey_auth_rsa(void)
@@ -1420,11 +1453,12 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
         * && !WOLFSSL_MLDSA_NO_ASN1 && !WOLFSSL_MLDSA_NO_MAKE_KEY */
 
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
-    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT) && \
-    !defined(WOLFSSH_NO_ECDSA)
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
 /* End-to-end regression test for ID_ED25519 derive-fallback in
  * SendKexGetSigningKey. Tests a real handshake using a private-only
- * Ed25519 host key to ensure wolfSSH correctly derives the public key. */
+ * Ed25519 host key to ensure wolfSSH correctly derives the public key.
+ * The user key is Ed25519 as well, so the whole exchange runs on a build
+ * with neither RSA nor ECDSA compiled in. */
 static void test_pubkey_auth_ed25519_privonly_hostkey(void)
 {
     PubkeyServerCtx sCtx = {0};
@@ -1457,14 +1491,14 @@ static void test_pubkey_auth_ed25519_privonly_hostkey(void)
     wc_ed25519_free(&edKey);
     AssertIntGT(hostKeyDerSz, 0);
 
-    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
-            (word32)WSTRLEN(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEd25519,
+            (word32)WSTRLEN(hanselPublicEd25519), WOLFSSH_FORMAT_SSH,
             &p, &pubKeySz, &pubKeyType, &pubKeyTypeSz, NULL), WS_SUCCESS);
 
     AssertIntEQ(wc_Sha256Hash(pubKeyBuf, pubKeySz, sCtx.hash), 0);
 
-    AssertIntEQ(wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
-            WOLFSSH_FORMAT_ASN1,
+    AssertIntEQ(wolfSSH_ReadKey_buffer(hanselPrivateEd25519,
+            hanselPrivateEd25519Sz, WOLFSSH_FORMAT_ASN1,
             &privKeyPtr, &privKeySz, &privKeyType, &privKeyTypeSz, NULL),
             WS_SUCCESS);
 
@@ -1478,7 +1512,7 @@ static void test_pubkey_auth_ed25519_privonly_hostkey(void)
     run_pubkey_test_ex(&sCtx, &cCtx, WS_SUCCESS, hostKeyDer,
             (word32)hostKeyDerSz);
 }
-#endif /* !WOLFSSH_NO_ED25519 && HAVE_ED25519_MAKE_KEY && !WOLFSSH_NO_ECDSA */
+#endif /* !WOLFSSH_NO_ED25519 && HAVE_ED25519_MAKE_KEY */
 
 #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_RSA) && \
     defined(HAVE_ECC_KEY_EXPORT)
@@ -2453,8 +2487,7 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_pubkey_auth_wrong_key();
 #endif
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
-    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT) && \
-    !defined(WOLFSSH_NO_ECDSA)
+    defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
     test_pubkey_auth_ed25519_privonly_hostkey();
 #endif
 #if !defined(WOLFSSH_NO_ECDSA) && !defined(WOLFSSH_NO_RSA) && \
