@@ -45,12 +45,14 @@ READY_COUNTER=0
 
 
 wait_for_server() {
-    while [ ! -s "$READY_FILE" ] && [ "$READY_COUNTER" -lt 20 ]; do
+    while [ ! -s "$READY_FILE" ] && [ "$READY_COUNTER" -lt 100 ]; do
         sleep 0.1
         READY_COUNTER=$((READY_COUNTER+ 1))
     done
 
-    if test -e "$READY_FILE"
+    # -s, not -e: the echoserver creates the file empty and writes the
+    # port afterward, so -e can catch it mid-write and yield no port
+    if [ -s "$READY_FILE" ]
     then
         # get created port 0 ephemeral port
         PORT=$(cat "$READY_FILE")
