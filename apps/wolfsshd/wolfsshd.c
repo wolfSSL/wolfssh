@@ -2339,7 +2339,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         int readPending = 0;
         int wantWrite = 0;
         int rc = 0;
-        DWORD processState;
+        DWORD processState = 0;
         DWORD ava;
         struct timeval t;
 
