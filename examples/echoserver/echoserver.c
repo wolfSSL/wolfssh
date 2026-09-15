@@ -2705,6 +2705,17 @@ static const char samplePublicKeyEccBuffer[] =
 #endif /* WOLFSSH_TPM */
 #endif /* WOLFSSH_NO_RSA */
 
+/* Ed25519 is the only signing algorithm left when neither RSA nor ECDSA
+ * is compiled in, so the server needs sample keys of its own. */
+#if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+    !defined(WOLFSSH_NO_ED25519)
+static const char samplePublicKeyEd25519Buffer[] =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHTSoBZIJBO2V0Jb2OWyMWNbkD"
+    "d6ReDfKxnrAPlbPuCe hansel\n"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFD8Bwir++gzNJmif9ooAZdaRi"
+    "sFZjlp9XU2seaec7/m gretel\n";
+#endif
+
 #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
 
 static const char sampleNoneBuffer[] =
@@ -4306,6 +4317,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         keyLoadBuf[bufSz] = 0;
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
+        #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
+        /* Ed25519 is the only sample key left, so -e has nothing to pick
+         * between and is ignored. */
+        #ifndef WOLFSSH_NO_ED25519
+            bufName = samplePublicKeyEd25519Buffer;
+        #endif
+        #else
         if (userEcc) {
         #ifndef WOLFSSH_NO_ECDSA
             bufName = samplePublicKeyEccBuffer;
@@ -4320,6 +4338,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             #endif
         #endif
         }
+        #endif
         if (bufName != NULL) {
             bufSz = (word32)WSTRLEN(bufName);
             WMEMCPY(keyLoadBuf, bufName, bufSz);
