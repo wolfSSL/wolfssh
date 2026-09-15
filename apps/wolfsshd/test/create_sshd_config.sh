@@ -2,8 +2,14 @@
 
 PWD=`pwd`
 
+# $1 is the user to renew certificates for, $2 the port the daemon binds. The
+# port used to be written into all four configs as a literal, so even a caller
+# who set TEST_PORT could not move the daemon. Default it so a direct
+# invocation still produces a usable config.
+PORT=${2:-22222}
+
 cat <<EOF > sshd_config_test
-Port 22222
+Port $PORT
 Protocol 2
 LoginGraceTime 600
 PermitRootLogin yes
@@ -17,7 +23,7 @@ AuthorizedKeysFile $PWD/authorized_keys_test
 EOF
 
 cat <<EOF > sshd_config_test_mldsa
-Port 22222
+Port $PORT
 Protocol 2
 LoginGraceTime 600
 PermitRootLogin yes
@@ -43,7 +49,7 @@ if wolfssh_has FPKI; then
 fi
 
 cat <<EOF > sshd_config_test_x509
-Port 22222
+Port $PORT
 Protocol 2
 LoginGraceTime 600
 PermitRootLogin yes
@@ -60,7 +66,7 @@ $UPN_DOMAIN_GOOD
 EOF
 
 cat <<EOF > sshd_config_test_x509_upn_bad
-Port 22222
+Port $PORT
 Protocol 2
 LoginGraceTime 600
 PermitRootLogin yes

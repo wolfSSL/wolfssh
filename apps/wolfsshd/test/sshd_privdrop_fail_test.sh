@@ -19,7 +19,10 @@ USER=`whoami`
 TEST_HOST="$1"
 
 # Own daemon on a dedicated port for isolation from the runner's shared daemon.
-TEST_PORT="22822"
+# Offset from the port passed in rather than a constant, so the isolation holds
+# against another run of the suite on the same host and not just against this
+# run's shared daemon. The runner reserves the offset as part of its block.
+TEST_PORT=$(( $2 + 5 ))
 
 SSHD_BIN="../wolfsshd"
 if [ ! -x "$SSHD_BIN" ]; then
