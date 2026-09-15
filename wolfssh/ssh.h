@@ -97,8 +97,8 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  * A want is transient either way: call again. A caller that tolerates only
  * WS_WANT_READ drops live sessions, since a queued write reports
  * WS_WANT_WRITE. A send that fails outright takes the return instead, since
- * the event it arrived with is moot once the transport is gone; only a
- * WS_CHANNEL_CLOSED keeps the return there.
+ * the event it arrived with is moot once the transport is gone.
+ * WS_CHANNEL_CLOSED and WS_FATAL_ERROR keep the return there.
  * Any other code is an error, either in the return itself or as
  * WS_FATAL_ERROR with the cause in wolfSSH_get_error() -- WS_DISCONNECT for
  * the peer's disconnect, which is how most sessions end.
@@ -106,8 +106,8 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  * than reading a status: it answers after any return, including a success.
  *
  * For WS_CHAN_RXD, WS_EXTDATA, WS_EOF, WS_SUCCESS and a WS_REKEYING that
- * displaced one of those, channelId (when not NULL) names the channel the
- * event belongs to. It is left alone for every other status,
+ * displaced WS_SUCCESS or WS_CHAN_RXD, channelId (when not NULL) names the
+ * channel the event belongs to. It is left alone for every other status,
  * WS_CHANNEL_CLOSED included; use wolfSSH_GetLastRxId() there.
  *
  * Note that after a peer half-close wolfSSH_stream_send() keeps working: the
@@ -895,9 +895,11 @@ WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
  * USERAUTH_FAILURE, and a CHANNEL_CLOSE whose channel was retired the
  * moment it was bundled, have nothing else left to carry the retry. That
  * flush can be short too, so a WS_WANT_WRITE from here may be owed to it
- * rather than to the teardown sends; either way the caller retries. Once
- * the peer has disconnected, only our own queued disconnect still goes
- * out, per the comment below. */
+ * rather than to the teardown sends; either way the caller retries.
+ * The read for the peer's close reply can leave output queued behind it,
+ * which reports WS_WANT_WRITE as well; a send that failed outright there
+ * takes the return on the next call. Once the peer has disconnected, only
+ * our own queued disconnect still goes out, per the comment below. */
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
  * wolfSSH_shutdown() above this comment, and every send call below it,
