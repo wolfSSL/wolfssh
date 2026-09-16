@@ -143,6 +143,11 @@ export WOLFSSHD_TEST_PIDFILE
 # script's exit status, which would turn a passing run red.
 run_teardown() {
     if [ "$USING_LOCAL_HOST" == 1 ]; then
+        # Before the sweep, and idempotent: this is what removes $SSHD_KEYDIR,
+        # the temp dir holding the rewritten config and the root-owned copies
+        # of the trust anchors. The early exits -- a daemon that will not
+        # start, a failed test -- never reach a stop of their own.
+        stop_wolfsshd || true
         stop_all_wolfsshd || true
     fi
     rm -f "$WOLFSSHD_TEST_PIDFILE" || true
