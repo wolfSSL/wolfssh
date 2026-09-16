@@ -38,23 +38,32 @@ if [ -z "$HOME_DIR" ] || [ "$HOME_DIR" = "/" ]; then
     echo "could not resolve a usable home directory for user '$USER'"
     exit 1
 fi
-REMOTE_FILE="$HOME_DIR/large-random-2.txt"
+# Both names carry this test's pid. The remote one has to: it lands in the
+# daemon user's home, which is one directory for the whole host however many
+# checkouts are running, so two runs uploaded to the same path and each then
+# compared its own local file against the other's upload -- "differ: byte 1"
+# on a pair of files that were both transferred correctly. The local name
+# follows for the same reason one checkout down.
+LOCAL_FILE="`pwd`/large-random.$$.txt"
+REMOTE_FILE="$HOME_DIR/large-random-2.$$.txt"
+
+# 4.4G apiece, so do not leave them behind on the paths that do not reach the
+# removals below: the transfer runs under "set -e" and the comparison can fail.
+trap 'rm -f "$LOCAL_FILE" "$REMOTE_FILE"' EXIT
 
 # create a large file with random data (larger than word32 max value)
-head -c 4400000010 < /dev/random > large-random.txt
+head -c 4400000010 < /dev/random > "$LOCAL_FILE"
 
 set -e
-echo "$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l large-random.txt -r $REMOTE_FILE -h \"$1\" -p \"$2\""
-$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l large-random.txt -r "$REMOTE_FILE" -h "$1" -p "$2"
+echo "$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l $LOCAL_FILE -r $REMOTE_FILE -h \"$1\" -p \"$2\""
+$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l "$LOCAL_FILE" -r "$REMOTE_FILE" -h "$1" -p "$2"
 
-cmp large-random.txt "$REMOTE_FILE"
+cmp "$LOCAL_FILE" "$REMOTE_FILE"
 RESULT=$?
 if [ "$RESULT" != "0" ]; then
     echo "files did not match when compared"
     exit 1
 fi
-rm -f large-random.txt
-rm -f "$REMOTE_FILE"
 
 set +e
 
