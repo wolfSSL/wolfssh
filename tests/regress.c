@@ -2199,6 +2199,44 @@ static const byte* ParseGlobalRequestName(const byte* packet, word32 packetSz,
     return payload + 1 + sizeof(word32);
 }
 
+/* Bind port of a tcpip-forward global request. Past the request name and the
+ * want-reply byte come the bind address and then the port. */
+static word32 ParseGlobalRequestFwdBindPort(const byte* packet,
+        word32 packetSz)
+{
+    const byte* payload;
+    const byte* reqName;
+    word32 reqNameSz;
+    word32 payloadLen;
+    word32 idx;
+    word32 strSz;
+    word32 port;
+
+    reqName = ParseGlobalRequestName(packet, packetSz, &reqNameSz);
+    payload = packet + 5;
+    payloadLen = ParsePayloadLen(packet, packetSz);
+    idx = (word32)(reqName - payload) + reqNameSz;
+
+    /* ParseGlobalRequestName() bounded the name, so idx is within payloadLen.
+     * Bound every step from here with a subtraction: adding a length out of
+     * the packet to idx wraps word32 and leaves the guard passing against a
+     * wrapped index. */
+    AssertTrue(payloadLen - idx >= 1 + sizeof(word32));
+    idx += 1;
+
+    WMEMCPY(&strSz, payload + idx, sizeof(strSz));
+    strSz = ntohl(strSz);
+    idx += (word32)sizeof(word32);
+
+    AssertTrue(payloadLen - idx >= strSz);
+    idx += strSz;
+
+    AssertTrue(payloadLen - idx >= sizeof(word32));
+    WMEMCPY(&port, payload + idx, sizeof(port));
+
+    return ntohl(port);
+}
+
 static void AssertGlobalRequestReply(const ChannelOpenHarness* harness,
         byte expectedMsgId)
 {
@@ -2223,7 +2261,14 @@ static void AssertGlobalRequestReply(const ChannelOpenHarness* harness,
         if (reqNameSz == sizeof("tcpip-forward") - 1 &&
                 WMEMCMP(reqName, "tcpip-forward",
                 sizeof("tcpip-forward") - 1) == 0) {
-            AssertIntEQ(payloadLen, 5);
+            /* The bound port trails the success only for a port-0 request. */
+            if (ParseGlobalRequestFwdBindPort(harness->io.in,
+                    harness->io.inSz) == 0) {
+                AssertIntEQ(payloadLen, 5);
+            }
+            else {
+                AssertIntEQ(payloadLen, 1);
+            }
         }
         else if (reqNameSz == sizeof("cancel-tcpip-forward") - 1 &&
                 WMEMCMP(reqName, "cancel-tcpip-forward",
@@ -2361,6 +2406,21 @@ static int AllocatePortFwdCb(WS_FwdCbAction action, void* ctx,
     /* A return at or above WS_FWD_PORT_CHECK reports the allocated port for a
      * port-0 request; WS_FWD_SUCCESS (0) otherwise. */
     if (action == WOLFSSH_FWD_REMOTE_SETUP && port == 0)
+        return REGRESS_FWD_ALLOC_PORT;
+
+    return WS_SUCCESS;
+}
+
+/* Reports an allocated port for every remote setup, including the explicit
+ * port request where the value has to be ignored. */
+static int AlwaysAllocPortFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    if (action == WOLFSSH_FWD_REMOTE_SETUP)
         return REGRESS_FWD_ALLOC_PORT;
 
     return WS_SUCCESS;
@@ -6538,6 +6598,54 @@ static void TestGlobalRequestFwdPort0ReturnsAllocatedPort(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* RFC 4254 7.1 defines the trailing bound-port field only for a port-0
+ * request. An explicit port must be answered with a bare success. */
+static void TestGlobalRequestFwdExplicitPortReplyHasNoPort(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 8022, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParsePayloadLen(harness.io.out, harness.io.outSz), 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* For an explicit port a callback return at or above WS_FWD_PORT_CHECK is
+ * ignored and the requested port stands, so the reply still carries none. */
+static void TestGlobalRequestFwdExplicitPortIgnoresAllocCb(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 8022, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AlwaysAllocPortFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParsePayloadLen(harness.io.out, harness.io.outSz), 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestGlobalRequestFwdPort0NoAllocSendsFailure(void)
 {
     ChannelOpenHarness harness;
@@ -6649,6 +6757,29 @@ static void TestGlobalRequestFwdCancelWithCbSendsSuccess(void)
 
     AssertIntEQ(ret, WS_SUCCESS);
     AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A cancel reports no allocated port whatever its bind port, so a port-0
+ * cancel is answered bare as well. */
+static void TestGlobalRequestFwdCancelPort0ReplyHasNoPort(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 0, 1, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParsePayloadLen(harness.io.out, harness.io.outSz), 1);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -15989,11 +16120,14 @@ int main(int argc, char** argv)
     TestGlobalRequestFwdNoCbNoReplyKeepsConnection();
     TestGlobalRequestFwdWithCbSendsSuccess();
     TestGlobalRequestFwdPort0ReturnsAllocatedPort();
+    TestGlobalRequestFwdExplicitPortReplyHasNoPort();
+    TestGlobalRequestFwdExplicitPortIgnoresAllocCb();
     TestGlobalRequestFwdPort0NoAllocSendsFailure();
     TestGlobalRequestFwdRemoteSetupErrorSendsFailure();
     TestGlobalRequestFwdPort0NoAllocNoReplyKeepsConnection();
     TestGlobalRequestFwdCancelNoCbSendsFailure();
     TestGlobalRequestFwdCancelWithCbSendsSuccess();
+    TestGlobalRequestFwdCancelPort0ReplyHasNoPort();
     TestRequestSuccessWithPortParsesCorrectly();
 #endif
 #ifdef WOLFSSH_AGENT
