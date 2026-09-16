@@ -2217,16 +2217,17 @@ static word32 ParseGlobalRequestFwdBindPort(const byte* packet,
     payloadLen = ParsePayloadLen(packet, packetSz);
     idx = (word32)(reqName - payload) + reqNameSz;
 
-    AssertTrue(payloadLen >= idx + 1 + sizeof(word32));
+    /* ParseGlobalRequestName() bounded the name, so idx is within payloadLen.
+     * Bound every step from here with a subtraction: adding a length out of
+     * the packet to idx wraps word32 and leaves the guard passing against a
+     * wrapped index. */
+    AssertTrue(payloadLen - idx >= 1 + sizeof(word32));
     idx += 1;
 
     WMEMCPY(&strSz, payload + idx, sizeof(strSz));
     strSz = ntohl(strSz);
     idx += (word32)sizeof(word32);
 
-    /* Bound each step with a subtraction. idx + strSz is word32 arithmetic on
-     * a length out of the packet and wraps, which would leave the guard
-     * passing against a wrapped index. */
     AssertTrue(payloadLen - idx >= strSz);
     idx += strSz;
 
