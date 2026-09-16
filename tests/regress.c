@@ -2222,9 +2222,15 @@ static word32 ParseGlobalRequestFwdBindPort(const byte* packet,
 
     WMEMCPY(&strSz, payload + idx, sizeof(strSz));
     strSz = ntohl(strSz);
-    idx += (word32)sizeof(word32) + strSz;
+    idx += (word32)sizeof(word32);
 
-    AssertTrue(payloadLen >= idx + sizeof(word32));
+    /* Bound each step with a subtraction. idx + strSz is word32 arithmetic on
+     * a length out of the packet and wraps, which would leave the guard
+     * passing against a wrapped index. */
+    AssertTrue(payloadLen - idx >= strSz);
+    idx += strSz;
+
+    AssertTrue(payloadLen - idx >= sizeof(word32));
     WMEMCPY(&port, payload + idx, sizeof(port));
 
     return ntohl(port);
@@ -2399,6 +2405,21 @@ static int AllocatePortFwdCb(WS_FwdCbAction action, void* ctx,
     /* A return at or above WS_FWD_PORT_CHECK reports the allocated port for a
      * port-0 request; WS_FWD_SUCCESS (0) otherwise. */
     if (action == WOLFSSH_FWD_REMOTE_SETUP && port == 0)
+        return REGRESS_FWD_ALLOC_PORT;
+
+    return WS_SUCCESS;
+}
+
+/* Reports an allocated port for every remote setup, including the explicit
+ * port request where the value has to be ignored. */
+static int AlwaysAllocPortFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    (void)ctx;
+    (void)host;
+    (void)port;
+
+    if (action == WOLFSSH_FWD_REMOTE_SETUP)
         return REGRESS_FWD_ALLOC_PORT;
 
     return WS_SUCCESS;
@@ -6703,6 +6724,30 @@ static void TestGlobalRequestFwdExplicitPortReplyHasNoPort(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* For an explicit port a callback return at or above WS_FWD_PORT_CHECK is
+ * ignored and the requested port stands, so the reply still carries none. */
+static void TestGlobalRequestFwdExplicitPortIgnoresAllocCb(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 8022, 0, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AlwaysAllocPortFwdCb, NULL),
+            WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParsePayloadLen(harness.io.out, harness.io.outSz), 1);
+
+    FreeChannelOpenHarness(&harness);
+}
+
 static void TestGlobalRequestFwdPort0NoAllocSendsFailure(void)
 {
     ChannelOpenHarness harness;
@@ -6814,6 +6859,29 @@ static void TestGlobalRequestFwdCancelWithCbSendsSuccess(void)
 
     AssertIntEQ(ret, WS_SUCCESS);
     AssertGlobalRequestReply(&harness, MSGID_REQUEST_SUCCESS);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A cancel reports no allocated port whatever its bind port, so a port-0
+ * cancel is answered bare as well. */
+static void TestGlobalRequestFwdCancelPort0ReplyHasNoPort(void)
+{
+    ChannelOpenHarness harness;
+    byte in[256];
+    word32 inSz;
+    int ret;
+
+    inSz = BuildGlobalRequestFwdPacket("0.0.0.0", 0, 1, 1, in, sizeof(in));
+    InitChannelOpenHarness(&harness, in, inSz);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL), WS_SUCCESS);
+
+    ret = DoReceive(harness.ssh);
+
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_REQUEST_SUCCESS);
+    AssertIntEQ(ParsePayloadLen(harness.io.out, harness.io.outSz), 1);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -16157,11 +16225,13 @@ int main(int argc, char** argv)
     TestGlobalRequestFwdWithCbSendsSuccess();
     TestGlobalRequestFwdPort0ReturnsAllocatedPort();
     TestGlobalRequestFwdExplicitPortReplyHasNoPort();
+    TestGlobalRequestFwdExplicitPortIgnoresAllocCb();
     TestGlobalRequestFwdPort0NoAllocSendsFailure();
     TestGlobalRequestFwdRemoteSetupErrorSendsFailure();
     TestGlobalRequestFwdPort0NoAllocNoReplyKeepsConnection();
     TestGlobalRequestFwdCancelNoCbSendsFailure();
     TestGlobalRequestFwdCancelWithCbSendsSuccess();
+    TestGlobalRequestFwdCancelPort0ReplyHasNoPort();
     TestRequestSuccessWithPortParsesCorrectly();
 #endif
 #ifdef WOLFSSH_AGENT
