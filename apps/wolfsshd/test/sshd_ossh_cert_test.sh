@@ -76,11 +76,19 @@ HOSTKEY="$WORK/hostkey.pem"
 cp "$ROOT/keys/server-key.pem" "$HOSTKEY"
 chmod 600 "$HOSTKEY"
 
-# Issue certificates bound to the login user (and the negatives). The
-# force-command marker is placed under the per-run work dir, not a fixed,
-# world-readable /tmp path.
+# Issue certificates bound to the login user (and the negatives), into this
+# run's own directory. Written into keys/ they carried only the login user in
+# their names, so two runs overwrote each other's: both principals matched,
+# and the force-command certificate names the marker directory of whichever
+# run issued it last, so a run could authenticate with the other's certificate
+# and then fail its own marker assertion. Only the keypairs are shared, and
+# those are committed. The force-command marker likewise goes under the
+# per-run work dir, not a fixed, world-readable /tmp path.
+CERTS="$WORK/certs"
+mkdir -p "$CERTS"
+chmod 755 "$CERTS"
 ( cd "$ROOT/keys" && OSSH_FORCED_MARKER="$MARKERDIR/forced_marker" \
-    ./renew-ossh-certs.sh "$LOGINUSER" )
+    OSSH_CERT_DIR="$CERTS" ./renew-ossh-certs.sh "$LOGINUSER" )
 
 # Trust all three signing CAs (Ed25519, RSA, ECDSA) but not ossh-bad-ca.
 cat "$ROOT/keys/ossh-ca.pub" "$ROOT/keys/ossh-ca-rsa.pub" \
@@ -256,38 +264,38 @@ scp_check() { # label  user-key  cert  expect(0=allowed,1=denied)
 run_suite() { # driver
     DRIVER=$1
     echo "OpenSSH cert test via $DRIVER client (user=$LOGINUSER, port=$PORT):"
-    check "valid cert"        "$ED"  "$ROOT/keys/$LOGINUSER-ossh-cert.pub"                0
-    check "RSA CA"            "$ED"  "$ROOT/keys/$LOGINUSER-ossh-rsaca-cert.pub"          0
-    check "ECDSA CA"          "$ED"  "$ROOT/keys/$LOGINUSER-ossh-ecdsaca-cert.pub"        0
-    check "RSA user key"      "$RSA" "$ROOT/keys/$LOGINUSER-ossh-rsauser-cert.pub"        0
-    check "ECDSA user key"    "$ECC" "$ROOT/keys/$LOGINUSER-ossh-ecdsauser-cert.pub"      0
-    check "untrusted CA"      "$ED"  "$ROOT/keys/$LOGINUSER-ossh-badca-cert.pub"          1
-    check "wrong principal"   "$ED"  "$ROOT/keys/$LOGINUSER-ossh-wrongprincipal-cert.pub" 1
-    check "empty principal"   "$ED"  "$ROOT/keys/$LOGINUSER-ossh-noprincipal-cert.pub"    1
-    check "unknown crit opt"  "$ED"  "$ROOT/keys/$LOGINUSER-ossh-unkcrit-cert.pub"        1
-    check "source-addr match" "$ED"  "$ROOT/keys/$LOGINUSER-ossh-srcok-cert.pub"         0
-    check "source-addr deny"  "$ED"  "$ROOT/keys/$LOGINUSER-ossh-srcbad-cert.pub"        1
-    check "expired cert"      "$ED"  "$ROOT/keys/$LOGINUSER-ossh-expired-cert.pub"       1
-    force_command_check       "$ED"  "$ROOT/keys/$LOGINUSER-ossh-forcecmd-cert.pub"
+    check "valid cert"        "$ED"  "$CERTS/$LOGINUSER-ossh-cert.pub"                0
+    check "RSA CA"            "$ED"  "$CERTS/$LOGINUSER-ossh-rsaca-cert.pub"          0
+    check "ECDSA CA"          "$ED"  "$CERTS/$LOGINUSER-ossh-ecdsaca-cert.pub"        0
+    check "RSA user key"      "$RSA" "$CERTS/$LOGINUSER-ossh-rsauser-cert.pub"        0
+    check "ECDSA user key"    "$ECC" "$CERTS/$LOGINUSER-ossh-ecdsauser-cert.pub"      0
+    check "untrusted CA"      "$ED"  "$CERTS/$LOGINUSER-ossh-badca-cert.pub"          1
+    check "wrong principal"   "$ED"  "$CERTS/$LOGINUSER-ossh-wrongprincipal-cert.pub" 1
+    check "empty principal"   "$ED"  "$CERTS/$LOGINUSER-ossh-noprincipal-cert.pub"    1
+    check "unknown crit opt"  "$ED"  "$CERTS/$LOGINUSER-ossh-unkcrit-cert.pub"        1
+    check "source-addr match" "$ED"  "$CERTS/$LOGINUSER-ossh-srcok-cert.pub"         0
+    check "source-addr deny"  "$ED"  "$CERTS/$LOGINUSER-ossh-srcbad-cert.pub"        1
+    check "expired cert"      "$ED"  "$CERTS/$LOGINUSER-ossh-expired-cert.pub"       1
+    force_command_check       "$ED"  "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"
 
     # A force-command must not be bypassed by requesting the SFTP subsystem.
     # "internal-sftp" still permits SFTP; any other force-command denies it.
     if sftp_available; then
         sftp_check "valid cert sftp"    "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-cert.pub"              0
+            "$CERTS/$LOGINUSER-ossh-cert.pub"              0
         sftp_check "forcecmd sftp deny" "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-forcecmd-cert.pub"     1
+            "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"     1
         sftp_check "internal-sftp sftp" "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-internalsftp-cert.pub" 0
+            "$CERTS/$LOGINUSER-ossh-internalsftp-cert.pub" 0
 
         # A configured ForceCommand is not a certificate force-command: on its
         # own it must not deny SFTP, and it must not mask one carried by a
         # certificate.
         CONFIG="$WORK/sshd_config_ossh_fc"
         sftp_check "config forcecmd sftp" "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-cert.pub"              0
+            "$CERTS/$LOGINUSER-ossh-cert.pub"              0
         sftp_check "config+cert sftp deny" "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-forcecmd-cert.pub"     1
+            "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"     1
         CONFIG="$WORK/sshd_config_ossh"
     else
         echo "  (sftp $DRIVER client unavailable, skipping sftp cases)"
@@ -298,11 +306,11 @@ run_suite() { # driver
     # only; the system "scp" uses the SFTP protocol and is covered above.
     if [ "$DRIVER" = client ]; then
         scp_check "valid cert scp"      "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-cert.pub"              0
+            "$CERTS/$LOGINUSER-ossh-cert.pub"              0
         scp_check "forcecmd scp deny"   "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-forcecmd-cert.pub"     1
+            "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"     1
         scp_check "internal-sftp scp"   "$ED" \
-            "$ROOT/keys/$LOGINUSER-ossh-internalsftp-cert.pub" 1
+            "$CERTS/$LOGINUSER-ossh-internalsftp-cert.pub" 1
     fi
 }
 
