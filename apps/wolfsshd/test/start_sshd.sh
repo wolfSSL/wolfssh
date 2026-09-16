@@ -134,8 +134,10 @@ EOF
             sleep 0.1
         done
         # A pid file left by a daemon that has since died is worse than none:
-        # stop_wolfsshd would kill whatever has been given that pid since.
-        if [ -n "$PID" ] && ! sudo kill -0 "$PID" 2>/dev/null; then
+        # stop_wolfsshd would kill whatever has been given that pid since. Ask
+        # what the process is, not merely whether it exists: "kill -0" answers
+        # the second question only, and the pid may have been recycled.
+        if [ -n "$PID" ] && ! pgrep -x wolfsshd | grep -qx -- "$PID"; then
             PID=""
         fi
     else
@@ -157,6 +159,22 @@ EOF
             sleep 0.1
         done
     fi
+    # wolfSSHd writes its PID file in StartSSHD() immediately before
+    # tcp_listen(), so the pid appearing does not mean the socket accepts yet.
+    # A caller that connects the moment this returns -- several do, with no
+    # sleep -- would be refused, and the daemon's log would show no connection
+    # at all. Wait for the daemon's own listening line, matched on its pid so
+    # that a previous daemon's line in this appended log cannot satisfy it.
+    if [ -n "$PID" ]; then
+        for i in $(seq 1 100); do
+            if sudo grep -qF "[PID $PID]: [SSHD] Listening on port" \
+                    ./log.txt 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+    fi
+
     printf "SSHD running on PID $PID\n"
 
     # Record the daemon in the run's registry, if the runner set one up. Test

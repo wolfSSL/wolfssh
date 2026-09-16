@@ -49,6 +49,13 @@ command -v ssh-keygen >/dev/null 2>&1 || \
     skip "ssh-keygen not found, skipping OpenSSH cert test"
 
 WORK=$(mktemp -d)
+# Checked before the trap below is installed: an empty WORK would reduce its
+# pattern to "wolfsshd .*", which matches every wolfsshd on the machine and is
+# exactly the host-wide teardown this suite no longer does.
+if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
+    echo "FAIL: could not create a work directory for the OpenSSH cert test"
+    exit 1
+fi
 # Matched on $WORK, this run's own mktemp dir, not on the config basename:
 # "sshd_config_ossh" appears in every concurrent run's command line too,
 # so the basename pattern tore down another run's daemon along with this
