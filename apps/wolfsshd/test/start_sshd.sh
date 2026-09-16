@@ -165,26 +165,41 @@ EOF
     # sleep -- would be refused, and the daemon's log would show no connection
     # at all. Wait for the daemon's own listening line, matched on its pid so
     # that a previous daemon's line in this appended log cannot satisfy it.
+    LISTENING=0
     if [ -n "$PID" ]; then
         for i in $(seq 1 100); do
             if sudo grep -qF "[PID $PID]: [SSHD] Listening on port" \
                     ./log.txt 2>/dev/null; then
+                LISTENING=1
                 break
             fi
             sleep 0.1
         done
     fi
 
-    printf "SSHD running on PID $PID\n"
-
     # Record the daemon in the run's registry, if the runner set one up. Test
     # scripts run as children of run_all_sshd_tests.sh, so a variable cannot
     # carry their pids back; a file can, which is what lets the runner's exit
     # teardown be specific to this run instead of killing every wolfsshd on
-    # the machine.
+    # the machine. Registered before the check below so a daemon that came up
+    # but never listened is still reaped by the runner's teardown.
     if [ -n "$PID" ] && [ -n "$WOLFSSHD_TEST_PIDFILE" ]; then
         printf '%s\n' "$PID" >> "$WOLFSSHD_TEST_PIDFILE" 2>/dev/null || true
     fi
+
+    # Ten seconds and no listening line: report it here rather than return a
+    # pid the caller will trust. Falling through left the caller's empty-PID
+    # check satisfied and the test connecting to a daemon that never bound,
+    # so the run failed as a refused connection somewhere later instead of as
+    # a daemon that did not come up. Clearing PID puts it through the check
+    # every caller already has.
+    if [ -n "$PID" ] && [ "$LISTENING" -eq 0 ]; then
+        printf "wolfSSHd pid %s never logged a listening port\n" "$PID" >&2
+        sudo kill $PID 2>/dev/null || true
+        PID=""
+    fi
+
+    printf "SSHD running on PID $PID\n"
 }
 
 # closes down the sshd session started by start_wolfsshd, using $PID.
