@@ -254,10 +254,21 @@ stop_wolfsshd() {
         if ! wolfsshd_alive "$PID" \
                 && [ -n "$WOLFSSHD_TEST_PIDFILE" ] \
                 && [ -f "$WOLFSSHD_TEST_PIDFILE" ]; then
+            # Status kept through "|| gstat=$?", not read afterwards: callers
+            # source this under "set -e", where grep's 1 for a registry that
+            # held only this pid would end the test.
+            gstat=0
             grep -vx -- "$PID" "$WOLFSSHD_TEST_PIDFILE" \
-                > "$WOLFSSHD_TEST_PIDFILE.new" 2>/dev/null || true
-            mv -f "$WOLFSSHD_TEST_PIDFILE.new" "$WOLFSSHD_TEST_PIDFILE" \
-                2>/dev/null || rm -f "$WOLFSSHD_TEST_PIDFILE.new"
+                > "$WOLFSSHD_TEST_PIDFILE.new" 2>/dev/null || gstat=$?
+            # 0 is lines kept, 1 is none kept -- this was the only entry.
+            # Anything else is grep failing, and the empty file it left would
+            # install as the registry and lose every other daemon's pid.
+            if [ "$gstat" -le 1 ]; then
+                mv -f "$WOLFSSHD_TEST_PIDFILE.new" "$WOLFSSHD_TEST_PIDFILE" \
+                    2>/dev/null || rm -f "$WOLFSSHD_TEST_PIDFILE.new"
+            else
+                rm -f "$WOLFSSHD_TEST_PIDFILE.new"
+            fi
         fi
 
         # Cleared so a second call -- an EXIT trap after an explicit stop -- is
