@@ -1162,7 +1162,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * the id it retired. */
                         wolfSSH_GetLastRxId(ssh, &lastChannel);
                         if (lastChannel == threadCtx->fwdCbCtx.channelId) {
-                            if (threadCtx->fwdCbCtx.appFd == -1) {
+                            /* Held bytes belong to the channel going away. */
+                            fwdBufferIdx = 0;
+                            if (threadCtx->fwdCbCtx.appFd == (WS_SOCKET_T)-1) {
                                 /* The cleanup handler ran ahead of this and
                                  * closed the socket; only this copy of the
                                  * descriptor is stale. */
@@ -1312,6 +1314,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                            to listening. */
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
+                        fwdBufferIdx = 0;
+                        threadCtx->fwdCbCtx.appFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
                             WFREE(threadCtx->fwdCbCtx.hostName,
                                     NULL, 0);
@@ -1332,6 +1336,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
                             WCLOSESOCKET(fwdFd);
+                            fwdFd = -1;
+                            fwdBufferIdx = 0;
+                            threadCtx->fwdCbCtx.appFd = -1;
                             threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                             continue;
                         }
