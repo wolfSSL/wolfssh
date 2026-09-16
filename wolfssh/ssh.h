@@ -451,6 +451,12 @@ WOLFSSH_API const char* wolfSSH_ChannelGetSessionCommand(
 WOLFSSH_API word32 wolfSSH_ChannelGetSessionCommandSz(
         const WOLFSSH_CHANNEL* channel);
 WOLFSSH_API int wolfSSH_ChannelIsPty(const WOLFSSH_CHANNEL* channel);
+/* Returns 1 once a shell, exec or subsystem request on the channel has been
+ * answered CHANNEL_SUCCESS, 0 while none has been, and WS_BAD_ARGUMENT when
+ * channel is NULL. A session-request callback sees this still clear for the
+ * request it is answering, so a set flag is an earlier request's grant. */
+WOLFSSH_API int wolfSSH_ChannelGetSessionGranted(
+        const WOLFSSH_CHANNEL* channel);
 
 /* Channel callbacks */
 typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);

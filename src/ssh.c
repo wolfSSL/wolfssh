@@ -5761,6 +5761,17 @@ word32 wolfSSH_ChannelGetSessionCommandSz(const WOLFSSH_CHANNEL* channel)
 }
 
 
+/* returns 1 if a session was granted on the channel, 0 if not, and
+ * negative on failure */
+int wolfSSH_ChannelGetSessionGranted(const WOLFSSH_CHANNEL* channel)
+{
+    if (channel == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+    return channel->sessionGranted;
+}
+
+
 int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx, WS_CallbackChannelOpen cb)
 {
     int ret = WS_SSH_CTX_NULL_E;
