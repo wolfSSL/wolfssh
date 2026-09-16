@@ -5862,6 +5862,37 @@ static void TestAcceptDivertMatchesScpCommandToken(void)
 
 #endif /* WOLFSSH_SCP */
 
+/* The grant an application reads through the public accessor is the one the
+ * channel records: clear while the request that would set it is still being
+ * answered, set once it has been. */
+static void TestChannelGetSessionGrantedAccessor(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    AssertIntEQ(wolfSSH_ChannelGetSessionGranted(NULL), WS_BAD_ARGUMENT);
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    channel = SeedUnconfirmedChannel(&harness);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+    channel->openConfirmed = 1;
+    AssertIntEQ(wolfSSH_ChannelGetSessionGranted(channel), 0);
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "ls", in, sizeof(in));
+    RepointHarnessInput(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ChannelGetSessionGranted(channel), 1);
+    AssertIntEQ(wolfSSH_ChannelGetSessionGranted(channel),
+            channel->sessionGranted);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
 {
@@ -16006,6 +16037,7 @@ int main(int argc, char** argv)
     TestChannelReqExecCallbackRuns();
     TestChannelReqSubsysCallbackRuns();
     TestSessionReqCallbackSeesCommandSz();
+    TestChannelGetSessionGrantedAccessor();
     TestMalformedSessionRequestSkipsCallback();
     TestSessionReqCallbackMayFreeChannel();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();

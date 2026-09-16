@@ -544,7 +544,7 @@ static int SessionRequestCb(WOLFSSH_CHANNEL* channel, void* vCtx)
     /* One program start per channel, as RFC 4254 section 6.5 allows. This
      * request's grant is recorded once the callback returns, so a flag
      * already set is an earlier request's. */
-    if (!rej && channel->sessionGranted) {
+    if (!rej && wolfSSH_ChannelGetSessionGranted(channel) == 1) {
         rej = 1;
         reason = "a session is already running on the channel";
     }
