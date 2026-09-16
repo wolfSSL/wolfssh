@@ -4,6 +4,7 @@ echo "Running all wolfSSHd tests"
 
 # Define an array of test cases
 test_cases=(
+ "sshd_port_lease_test.sh"
  "sshd_exec_test.sh"
  "sshd_term_size_test.sh"
  "sshd_large_sftp_test.sh"
