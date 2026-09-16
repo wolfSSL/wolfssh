@@ -995,9 +995,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                    channel. The additional channel is only used with the
                    agent. */
                 cnt_r = wolfSSH_worker(ssh, &lastChannel);
-                /* The channel reads below overwrite cnt_r with a byte
-                 * count, so keep the worker's status. */
+                /* rc keeps the worker's status: cnt_r and ssh->error are
+                 * both reused. */
                 rc = cnt_r;
+                if (rc == WS_FATAL_ERROR) {
+                    int err = wolfSSH_get_error(ssh);
+
+                    if (err == WS_WANT_READ || err == WS_WANT_WRITE)
+                        rc = err;
+                }
 
                 /* The peer is done sending: hand back the backlog and answer
                  * its EOF, since the library no longer answers for us. Off
@@ -1167,12 +1173,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * above, which has already run this pass. */
                         continue;
                     }
-                    else if (rc == WS_WANT_WRITE) {
-                        /* Transient; the queue drives the write side. */
-                    }
-                    else if (rc != WS_FATAL_ERROR
-                            || (wolfSSH_get_error(ssh) != WS_WANT_READ
-                                && wolfSSH_get_error(ssh) != WS_WANT_WRITE)) {
+                    else if (rc != WS_WANT_READ && rc != WS_WANT_WRITE) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
