@@ -142,3 +142,39 @@ jobs:
           set -o pipefail
           LD_LIBRARY_PATH=${{ github.workspace }}/build-dir/lib ./tests/unit.test | tee unit-test.log
           grep "ScpSendCallback_ExactFitBuffer: SUCCESS" unit-test.log
+
+  build_wolfssh_no_rsa_ecc:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    name: Build and test wolfssh without RSA or ECC
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 16
+    steps:
+      # Not the cached --enable-all wolfSSL: this job needs one with no RSA
+      # and no ECC. Ed25519 is then the only signing algorithm wolfSSH has,
+      # and wolfssh/internal.h wants WOLFSSL_ED25519_STREAMING_VERIFY with
+      # it, so --enable-ed25519-stream is required, not optional. The ssh
+      # client app needs Base64_Encode_NoNl(), which nothing else in this
+      # short list pulls in, hence --enable-base64encode.
+      - name: Checkout, build, and install wolfssl
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: master
+          path: wolfssl
+          configure: >-
+            --enable-ssh --enable-ed25519 --enable-ed25519-stream
+            --enable-curve25519 --enable-aesctr --enable-base64encode
+            --disable-rsa --disable-ecc --disable-dsa --disable-mldsa
+          check: false
+          install: true
+
+      - name: Checkout, build, and test wolfssh
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssh
+          path: wolfssh
+          configure: --enable-keyboard-interactive --enable-sftp --enable-scp --enable-sshclient LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include"
+          check: true
