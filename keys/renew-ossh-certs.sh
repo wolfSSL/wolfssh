@@ -10,6 +10,14 @@ set -e
 
 USER_NAME=${1:-fred}
 
+# Where the certificates are written. The keypairs below are committed and
+# shared, but a certificate carries the run that made it -- the force-command
+# one names that run's marker directory -- so two runs writing them here would
+# each authenticate with the other's certificate. The test points this at a
+# per-run directory; the default keeps standalone use writing next to the keys.
+OSSH_CERT_DIR="${OSSH_CERT_DIR:-.}"
+mkdir -p "$OSSH_CERT_DIR"
+
 # Where the force-command certificate writes. The test overrides this with a
 # per-run temp dir; the fallback is per-process so it is not a shared path.
 OSSH_FORCED_MARKER="${OSSH_FORCED_MARKER:-${TMPDIR:-/tmp}/wolfsshd_ossh_forced_marker.$$}"
@@ -43,7 +51,7 @@ chmod 600 ossh-ca ossh-ca-rsa ossh-ca-ecdsa ossh-bad-ca \
 
 # gen_cert_u <out-base> <user-pub> <ca-key> <key-id> <principal> [opts...]
 gen_cert_u() {
-    out_base=$1; user_pub=$2; ca=$3; key_id=$4; principal=$5
+    out_base=$OSSH_CERT_DIR/$1; user_pub=$2; ca=$3; key_id=$4; principal=$5
     shift 5
     cp "$user_pub" "$out_base.pub"
     ssh-keygen -q -s "$ca" -I "$key_id" -n "$principal" -V always:forever \
@@ -65,10 +73,10 @@ gen_cert "$USER_NAME-ossh-badca"          ossh-bad-ca "ossh-badca" \
 gen_cert "$USER_NAME-ossh-wrongprincipal" ossh-ca     "ossh-wrongprincipal" \
     "other-$USER_NAME"
 # No principals (signed without -n): must not log in, like OpenSSH sshd.
-cp ossh-user.pub "$USER_NAME-ossh-noprincipal.pub"
+cp ossh-user.pub "$OSSH_CERT_DIR/$USER_NAME-ossh-noprincipal.pub"
 ssh-keygen -q -s ossh-ca -I "ossh-noprincipal" -V always:forever \
-    "$USER_NAME-ossh-noprincipal.pub"
-rm -f "$USER_NAME-ossh-noprincipal.pub"
+    "$OSSH_CERT_DIR/$USER_NAME-ossh-noprincipal.pub"
+rm -f "$OSSH_CERT_DIR/$USER_NAME-ossh-noprincipal.pub"
 # RSA and ECDSA (P-384) CAs cover those CA-signature paths. The user key stays
 # Ed25519, so the ECDSA case also covers taking the digest from the CA curve.
 gen_cert "$USER_NAME-ossh-rsaca"          ossh-ca-rsa   "ossh-rsaca" \
