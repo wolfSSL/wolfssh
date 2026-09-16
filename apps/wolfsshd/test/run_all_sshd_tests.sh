@@ -96,12 +96,45 @@ port_in_use() {
     (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
 }
 
+# Where blocks are claimed. Sticky and world-writable like /tmp itself, so a
+# run as the invoking user and a run under sudo can claim from the same pool.
+PORT_LOCK_ROOT="${TMPDIR:-/tmp}/wolfssh-sshd-ports"
+mkdir -p "$PORT_LOCK_ROOT" 2>/dev/null
+chmod 1777 "$PORT_LOCK_ROOT" 2>/dev/null || true
+
+# Take a block by creating its directory. mkdir is atomic, so of two runners
+# racing for one block exactly one wins; probing alone could not do this,
+# because both could see the same eight ports free before either had bound
+# one. The claim is held for the whole run and released in run_teardown.
+claim_port_block() {
+    local lock owner
+    lock="$PORT_LOCK_ROOT/$1"
+    if mkdir "$lock" 2>/dev/null; then
+        echo $$ > "$lock/pid" 2>/dev/null
+        return 0
+    fi
+    # A claim whose owner is gone is stale. Without this a run killed before
+    # its teardown would take its block out of circulation permanently. Two
+    # runners can reach this at once; the loser's mkdir just fails and it
+    # moves on to the next block.
+    owner=`cat "$lock/pid" 2>/dev/null`
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+        rm -rf "$lock" 2>/dev/null
+        if mkdir "$lock" 2>/dev/null; then
+            echo $$ > "$lock/pid" 2>/dev/null
+            return 0
+        fi
+    fi
+    return 1
+}
+
 find_port_block() {
     local start i n base busy
     start=$(( $$ % PORT_BLOCK_COUNT ))
     for (( i = 0; i < PORT_BLOCK_COUNT; i++ )); do
         base=$(( PORT_BLOCK_FIRST \
             + ((start + i) % PORT_BLOCK_COUNT) * PORT_BLOCK_SIZE ))
+        claim_port_block "$base" || continue
         busy=0
         for (( n = 0; n < PORT_BLOCK_SIZE; n++ )); do
             if port_in_use $(( base + n )); then
@@ -113,11 +146,15 @@ find_port_block() {
             printf '%s' "$base"
             return 0
         fi
+        # Claimed but unusable: something outside the suite holds a port in
+        # it. Give the claim back rather than sit on a block we cannot use.
+        rm -rf "$PORT_LOCK_ROOT/$base" 2>/dev/null
     done
     return 1
 }
 
 PORT_BASE=`find_port_block`
+PORT_LOCK_DIR="$PORT_LOCK_ROOT/$PORT_BASE"
 if [ -z "$PORT_BASE" ]; then
     echo "Error: no free block of $PORT_BLOCK_SIZE ports found starting at" \
         "$PORT_BLOCK_FIRST."
@@ -171,6 +208,9 @@ run_teardown() {
         stop_all_wolfsshd || true
     fi
     rm -f "$WOLFSSHD_TEST_PIDFILE" || true
+    if [ -n "$PORT_BASE" ]; then
+        rm -rf "$PORT_LOCK_DIR" || true
+    fi
 }
 trap run_teardown EXIT
 
