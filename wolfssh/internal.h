@@ -2259,7 +2259,6 @@ enum WS_ScpDirection {
     WOLFSSH_SCP_FROM
 };
 
-WOLFSSH_LOCAL int ChannelCommandIsScp(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpRequest(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);

@@ -5788,6 +5788,78 @@ static void TestAcceptDivertNeedsScpGrantAlone(void)
     FreeChannelOpenHarness(&harness);
 }
 
+
+/* The SCP divert reads only the command, so "scp" has to stand as its own
+ * token: a bare prefix match takes "scpbackup" into the built-in SCP
+ * server. A NUL anywhere in the command hides what follows it from the
+ * parse that serves the transfer, whether it sits where the space belongs
+ * or past a good token boundary. wolfsshd's exec callback asks the same
+ * question with the same helper, so the two cannot answer it
+ * differently. */
+static void TestAcceptDivertMatchesScpCommandToken(void)
+{
+    static const struct {
+        const char* cmd;
+        word32 cmdSz;
+        int divert;
+    } cases[] = {
+        { "scp -f /tmp/a",   13, 1 },  /* what the real client sends */
+        { "scp",              3, 1 },  /* the token alone */
+        { "scpbackup foo",   13, 0 },  /* the token is only a prefix */
+        { "scp\0 -f /tmp/a", 14, 0 }, /* a NUL where the space belongs */
+        { "scp -t /d\0x",    11, 0 }, /* a NUL hiding a tail past the token */
+        { "scp -t /d\0",     10, 0 }, /* a NUL counted at the end */
+        { "sc",               2, 0 },  /* shorter than the token */
+        { "ls",               2, 0 }
+    };
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte payload[128];
+    byte in[128];
+    word32 idx;
+    word32 inSz;
+    word32 i;
+
+    AssertIntEQ(wolfSSH_ChannelCommandIsScp(NULL), WS_BAD_ARGUMENT);
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        InitChannelOpenHarness(&harness, NULL, 0);
+        channel = SeedUnconfirmedChannel(&harness);
+        AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+        channel->openConfirmed = 1;
+
+        idx = 0;
+        idx = AppendUint32(payload, sizeof(payload), idx, channel->channel);
+        idx = AppendString(payload, sizeof(payload), idx, "exec");
+        idx = AppendByte(payload, sizeof(payload), idx, 1);
+        idx = AppendUint32(payload, sizeof(payload), idx, cases[i].cmdSz);
+        idx = AppendData(payload, sizeof(payload), idx,
+                (const byte*)cases[i].cmd, cases[i].cmdSz);
+        inSz = WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, in, sizeof(in));
+        RepointHarnessInput(&harness, in, inSz);
+
+        /* Neither app-channels nor a callback, so the request is granted
+         * and the session is the one wolfSSH_accept() goes on to serve. */
+        AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(channel->commandSz, cases[i].cmdSz);
+        AssertIntEQ(wolfSSH_ChannelCommandIsScp(channel), cases[i].divert);
+        RepointHarnessInput(&harness, NULL, 0);
+
+        harness.ssh->acceptState = ACCEPT_SERVER_CHANNEL_ACCEPT_SENT;
+        if (cases[i].divert) {
+            AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SCP_INIT);
+            AssertIntEQ(harness.ssh->acceptState, ACCEPT_INIT_SCP_TRANSFER);
+        }
+        else {
+            AssertIntEQ(wolfSSH_accept(harness.ssh), WS_SUCCESS);
+            AssertIntEQ(harness.ssh->acceptState,
+                    ACCEPT_CLIENT_SESSION_ESTABLISHED);
+        }
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
+
 #endif /* WOLFSSH_SCP */
 
 /* A username change after the first userauth request must end the session. */
@@ -15955,6 +16027,7 @@ int main(int argc, char** argv)
     TestAcceptDivertNeedsSftpGrantAlone();
 #endif
 #ifdef WOLFSSH_SCP
+    TestAcceptDivertMatchesScpCommandToken();
     TestAcceptDivertNeedsScpGrant();
     TestAcceptDivertNeedsScpGrantAlone();
 #endif

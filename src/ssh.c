@@ -831,7 +831,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
 #ifdef WOLFSSH_SCP
                 if (ssh->channelList != NULL
                         && ssh->channelList->sessionGranted
-                        && ChannelCommandIsScp(ssh)) {
+                        && wolfSSH_ChannelCommandIsScp(ssh->channelList)
+                                == 1) {
                     ssh->acceptState = ACCEPT_INIT_SCP_TRANSFER;
                     WLOG(WS_LOG_DEBUG, acceptState, "ACCEPT_INIT_SCP_TRANSFER");
                     return WS_SCP_INIT;
