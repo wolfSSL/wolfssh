@@ -510,16 +510,23 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         ctx->state = FWD_STATE_DIRECT;
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
-        WCLOSESOCKET(ctx->appFd);
-        if (ctx->hostName) {
-            WFREE(ctx->hostName, NULL, 0);
-            ctx->hostName = NULL;
+        /* Channel id rides in port. Only its holder may tear the slot down. */
+        if (port == ctx->channelId) {
+            /* The open can fail after setup, before anything connected. */
+            if (ctx->appFd != (WS_SOCKET_T)-1) {
+                WCLOSESOCKET(ctx->appFd);
+                ctx->appFd = -1;
+            }
+            if (ctx->hostName) {
+                WFREE(ctx->hostName, NULL, 0);
+                ctx->hostName = NULL;
+            }
+            if (ctx->originName) {
+                WFREE(ctx->originName, NULL, 0);
+                ctx->originName = NULL;
+            }
+            ctx->state = FWD_STATE_INIT;
         }
-        if (ctx->originName) {
-            WFREE(ctx->originName, NULL, 0);
-            ctx->originName = NULL;
-        }
-        ctx->state = FWD_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
@@ -1144,20 +1151,35 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else if (rc == WS_CHANNEL_CLOSED) {
                         #ifdef WOLFSSH_FWD
-                        if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED &&
-                            lastChannel == threadCtx->fwdCbCtx.channelId) {
-                            /* Read zero-returned. Socket is closed. Go back
-                               to listening. */
-                            if (fwdFd != -1) {
-                                WCLOSESOCKET(fwdFd);
+                        /* wolfSSH_worker() names the channel only for the
+                         * data and EOF statuses; DoChannelClose() recorded
+                         * the id it retired. */
+                        wolfSSH_GetLastRxId(ssh, &lastChannel);
+                        if (lastChannel == threadCtx->fwdCbCtx.channelId) {
+                            if (threadCtx->fwdCbCtx.appFd == (WS_SOCKET_T)-1) {
+                                /* The cleanup handler ran ahead of this and
+                                 * closed the socket; only this copy of the
+                                 * descriptor is stale. */
                                 fwdFd = -1;
                             }
-                            if (threadCtx->fwdCbCtx.originName != NULL) {
-                                WFREE(threadCtx->fwdCbCtx.originName,
-                                        NULL, 0);
-                                threadCtx->fwdCbCtx.originName = NULL;
+                            else if (threadCtx->fwdCbCtx.state
+                                    == FWD_STATE_CONNECTED) {
+                                /* A locally opened forward is armed by no
+                                 * LOCAL_SETUP and so draws no cleanup. Its
+                                 * teardown is still ours: go back to
+                                 * listening. */
+                                if (fwdFd != -1) {
+                                    WCLOSESOCKET(fwdFd);
+                                    fwdFd = -1;
+                                    threadCtx->fwdCbCtx.appFd = -1;
+                                }
+                                if (threadCtx->fwdCbCtx.originName != NULL) {
+                                    WFREE(threadCtx->fwdCbCtx.originName,
+                                            NULL, 0);
+                                    threadCtx->fwdCbCtx.originName = NULL;
+                                }
+                                threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                             }
-                            threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                         }
                         #endif
                         continue;
@@ -1289,6 +1311,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                            to listening. */
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
+                        threadCtx->fwdCbCtx.appFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
                             WFREE(threadCtx->fwdCbCtx.hostName,
                                     NULL, 0);
@@ -1309,6 +1332,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
                             WCLOSESOCKET(fwdFd);
+                            fwdFd = -1;
+                            threadCtx->fwdCbCtx.appFd = -1;
                             threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
                             continue;
                         }
@@ -1404,6 +1429,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         threadCtx->fwdCbCtx.hostPort);
 
                 if (fwdFd > 0) {
+                    /* The cleanup handler closes what it finds here, so a
+                     * direct forward has to record its socket too. */
+                    threadCtx->fwdCbCtx.appFd = fwdFd;
                     threadCtx->fwdCbCtx.state = FWD_STATE_CONNECTED;
                 }
             }
