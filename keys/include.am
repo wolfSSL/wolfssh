@@ -16,6 +16,8 @@ EXTRA_DIST+= \
             keys/gretel-key-ecc-384.der keys/gretel-key-ecc-384.pem keys/gretel-key-ecc-384.pub \
             keys/gretel-key-ecc-521.der keys/gretel-key-ecc-521.pem keys/gretel-key-ecc-521.pub \
             keys/gretel-key-rsa.der keys/gretel-key-rsa.pem keys/gretel-key-rsa.pub \
+            keys/hansel-key-ed25519.der keys/hansel-key-ed25519.pem keys/hansel-key-ed25519.pub \
+            keys/gretel-key-ed25519.der keys/gretel-key-ed25519.pem keys/gretel-key-ed25519.pub \
             keys/pubkeys-ecc.txt keys/pubkeys-ecc-384.txt keys/pubkeys-ecc-521.txt \
             keys/pubkeys-rsa.txt keys/passwd.txt keys/ca-cert-ecc.der \
             keys/ca-cert-ecc.pem keys/ca-key-ecc.der keys/ca-key-ecc.pem \

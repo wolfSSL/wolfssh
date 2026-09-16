@@ -275,6 +275,23 @@ static const unsigned int hanselPrivateEccSz = 223;
 #endif
 #endif
 
+/* The pair in keys/hansel-key-ed25519.*, the only built-in user key left
+ * when both RSA and ECDSA are compiled out. */
+#if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA) && \
+    !defined(WOLFSSH_NO_ED25519)
+static const char* hanselPublicEd25519 =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHTSoBZIJBO2V0Jb2OWyMWNbkD"
+    "d6ReDfKxnrAPlbPuCe hansel";
+static const byte hanselPrivateEd25519[] = {
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+  0x04, 0x22, 0x04, 0x20, 0x28, 0xc6, 0xe9, 0xd8, 0x37, 0x4d, 0x0c, 0x52,
+  0x7e, 0x5f, 0xb3, 0x4c, 0x81, 0xe8, 0x68, 0xee, 0xc9, 0x7c, 0xad, 0x00,
+  0xad, 0xa0, 0xe3, 0xe2, 0x13, 0x06, 0x55, 0xf1, 0x17, 0xf1, 0x0a, 0xf0
+};
+static const unsigned int hanselPrivateEd25519Sz =
+        (unsigned int)sizeof(hanselPrivateEd25519);
+#endif
+
 
 #if defined(WOLFSSH_CERTS)
 
@@ -475,6 +492,13 @@ int ClientUserAuth(byte authType,
 
     if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
         WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
+
+        if (userPublicKeyType == NULL || userPublicKeySz == 0) {
+            /* Nothing to sign with. SendUserAuthRequest() turns this
+             * into WS_FATAL_ERROR rather than putting an untyped
+             * publickey request on the wire. */
+            return WOLFSSH_USERAUTH_FAILURE;
+        }
 
         pk->publicKeyType = userPublicKeyType;
         pk->publicKeyTypeSz = userPublicKeyTypeSz;
@@ -1009,12 +1033,21 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
 
     if (privKeyName == NULL) {
     #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
+        (void)userEcc;
+        #ifndef WOLFSSH_NO_ED25519
+        userPrivateKeySz = sizeof(userPrivateKeyBuf);
+        ret = wolfSSH_ReadKey_buffer(hanselPrivateEd25519,
+                hanselPrivateEd25519Sz, WOLFSSH_FORMAT_ASN1,
+                &userPrivateKey, &userPrivateKeySz,
+                &userPrivateKeyType, &userPrivateKeyTypeSz, heap);
+        isPrivate = 1;
+        #else
         /* No built-in key to load. Leave the client to authenticate
          * some other way rather than failing here. */
         userPrivateKeySz = 0;
         userPrivateKeyType = NULL;
-        (void)userEcc;
         (void)heap;
+        #endif
     #else
         if (userEcc) {
         #ifndef WOLFSSH_NO_ECDSA
@@ -1081,12 +1114,25 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap)
 
     if (pubKeyName == NULL) {
     #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
+        (void)userEcc;
+        #ifndef WOLFSSH_NO_ED25519
+        {
+            byte* p = userPublicKey;
+
+            userPublicKeySz = sizeof(userPublicKeyBuf);
+            ret = wolfSSH_ReadKey_buffer((const byte*)hanselPublicEd25519,
+                    (word32)strlen(hanselPublicEd25519), WOLFSSH_FORMAT_SSH,
+                    &p, &userPublicKeySz,
+                    &userPublicKeyType, &userPublicKeyTypeSz, heap);
+            isPrivate = 1;
+        }
+        #else
         /* No built-in key to load. Leave the client to authenticate
          * some other way rather than failing here. */
         userPublicKeySz = 0;
         userPublicKeyType = NULL;
-        (void)userEcc;
         (void)heap;
+        #endif
     #else
         byte* p = userPublicKey;
         userPublicKeySz = sizeof(userPublicKeyBuf);
