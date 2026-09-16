@@ -137,7 +137,7 @@ EOF
         # stop_wolfsshd would kill whatever has been given that pid since. Ask
         # what the process is, not merely whether it exists: "kill -0" answers
         # the second question only, and the pid may have been recycled.
-        if [ -n "$PID" ] && ! pgrep -x wolfsshd | grep -qx -- "$PID"; then
+        if [ -n "$PID" ] && ! wolfsshd_alive "$PID"; then
             PID=""
         fi
     else
@@ -202,6 +202,14 @@ EOF
     printf "SSHD running on PID $PID\n"
 }
 
+# True while $1 is still a wolfsshd. "kill -0" cannot answer this: it reports
+# only that some process holds the pid and that we could signal it, and a pid
+# the daemon has released may belong to anything by now. That distinction is
+# not academic here -- stop_wolfsshd escalates to "sudo kill -9" on the answer.
+wolfsshd_alive() {
+    pgrep -x wolfsshd | grep -qx -- "$1"
+}
+
 # closes down the sshd session started by start_wolfsshd, using $PID.
 # Idempotent and safe to call from an EXIT trap: with no daemon recorded there
 # is nothing to kill, and neither an already-exited daemon nor a missing temp
@@ -214,16 +222,38 @@ stop_wolfsshd() {
         # Wait for the process to actually exit so a subsequent start_wolfsshd on
         # the same port doesn't race the listening socket's release (EADDRINUSE).
         for i in $(seq 1 50); do
-            sudo kill -0 $PID 2>/dev/null || break
+            wolfsshd_alive "$PID" || break
             sleep 0.1
         done
+
+        # Five seconds and still a wolfsshd: escalate rather than let the loop
+        # expire quietly. Everything below hands this pid back, so a daemon
+        # left running here is one nothing goes on to clean up, still holding
+        # the port the next start_wolfsshd wants. Gated on the process still
+        # being a wolfsshd, not on the pid being in use: this sends SIGKILL as
+        # root, and the pid may have been recycled by anything.
+        if wolfsshd_alive "$PID"; then
+            printf "SSHD pid $PID ignored SIGTERM, sending SIGKILL\n"
+            sudo kill -9 $PID 2>/dev/null || true
+            for i in $(seq 1 50); do
+                wolfsshd_alive "$PID" || break
+                sleep 0.1
+            done
+        fi
 
         # Drop it from the run registry now that it is stopped. Left there, it
         # would still be a candidate for the end-of-run sweep, which can only
         # ask whether some wolfsshd holds that pid today -- and a concurrent
         # run forks one per connection, so a recycled pid would be that run's
         # daemon. A run accumulates about nine of these, all dead but one.
-        if [ -n "$WOLFSSHD_TEST_PIDFILE" ] && [ -f "$WOLFSSHD_TEST_PIDFILE" ]; then
+        #
+        # Only once it really has stopped. Removing the entry unconditionally
+        # discarded the last handle on a daemon that had survived both signals,
+        # and the sweep is what would otherwise have retried it at the end of
+        # the run.
+        if ! wolfsshd_alive "$PID" \
+                && [ -n "$WOLFSSHD_TEST_PIDFILE" ] \
+                && [ -f "$WOLFSSHD_TEST_PIDFILE" ]; then
             grep -vx -- "$PID" "$WOLFSSHD_TEST_PIDFILE" \
                 > "$WOLFSSHD_TEST_PIDFILE.new" 2>/dev/null || true
             mv -f "$WOLFSSHD_TEST_PIDFILE.new" "$WOLFSSHD_TEST_PIDFILE" \
