@@ -502,18 +502,11 @@ static int SessionRequestCb(WOLFSSH_CHANNEL* channel, void* vCtx)
                 break;
             }
         #ifdef WOLFSSH_SCP
-            {
-                word32 cmdSz = wolfSSH_ChannelGetSessionCommandSz(channel);
-
-                /* "scp" must stand as its own token; a prefix match
-                 * grants "scpbackup", and a NUL makes it another. */
-                if (cmdSz >= (word32)WSTRLEN("scp")
-                        && WSTRNCMP(cmd, "scp", 3) == 0
-                        && (cmdSz == (word32)WSTRLEN("scp")
-                            || cmd[3] == ' ')) {
-                    rej = 0;
-                    break;
-                }
+            /* Shared with the SCP divert in wolfSSH_accept(), so the two
+             * cannot disagree about what starts a transfer. */
+            if (wolfSSH_ChannelCommandIsScp(channel) == 1) {
+                rej = 0;
+                break;
             }
         #endif
         #ifdef WOLFSSH_SHELL

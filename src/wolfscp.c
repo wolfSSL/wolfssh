@@ -1040,20 +1040,34 @@ WOLFSSH_API int wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message)
     return ret;
 }
 
-/* Determine if channel command sent in initial negotiation is scp.
- * Return 1 if yes, 0 if no */
-int ChannelCommandIsScp(WOLFSSH* ssh)
+/* Determine if the channel's session command is scp. See wolfscp.h for
+ * the contract; "scp" must stand as its own token. */
+int wolfSSH_ChannelCommandIsScp(const WOLFSSH_CHANNEL* channel)
 {
     const char* cmd;
+    word32 cmdSz;
+    word32 scpSz = (word32)WSTRLEN("scp");
+    word32 i;
     int ret = 0;
 
-    if (ssh == NULL)
+    if (channel == NULL)
         return WS_BAD_ARGUMENT;
 
-    cmd = wolfSSH_GetSessionCommand(ssh);
-    if (cmd != NULL && WSTRLEN(cmd) >= 3) {
-        if (WSTRNCMP(cmd, "scp", 3) == 0)
-            ret = 1;
+    cmd = wolfSSH_ChannelGetSessionCommand(channel);
+    cmdSz = wolfSSH_ChannelGetSessionCommandSz(channel);
+
+    if (cmd != NULL && cmdSz >= scpSz
+            && WSTRNCMP(cmd, "scp", scpSz) == 0
+            && (cmdSz == scpSz || cmd[scpSz] == ' ')) {
+        ret = 1;
+    }
+
+    /* The parse that follows is a C string walk, so a NUL inside the
+     * command would drop the rest of it. Refuse rather than transfer
+     * something other than what was asked for. */
+    for (i = 0; ret == 1 && i < cmdSz; i++) {
+        if (cmd[i] == '\0')
+            ret = 0;
     }
 
     return ret;

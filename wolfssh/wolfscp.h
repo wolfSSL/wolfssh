@@ -170,6 +170,20 @@ WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
  * done; call it again on the same session until it completes. */
 WOLFSSH_API int   wolfSSH_SCP_accept(WOLFSSH* ssh);
 
+/* Tells an SCP request from an ordinary exec, for use from an exec
+ * channel-request callback and by wolfSSH_accept() itself, so the two
+ * cannot disagree about what starts a transfer.
+ *
+ * Returns 1 when the channel's session command starts an SCP transfer, 0
+ * when it does not, and WS_BAD_ARGUMENT when channel is NULL. "scp" must
+ * stand as its own token: a bare prefix match would take "scpbackup" as a
+ * transfer. The test runs over the recorded command size rather than the
+ * string length, and a command carrying a NUL anywhere within that size
+ * is not an SCP command: the parse that serves the transfer walks a C
+ * string, so a NUL would silently drop whatever follows it. */
+WOLFSSH_API int   wolfSSH_ChannelCommandIsScp(
+        const WOLFSSH_CHANNEL* channel);
+
 
 #ifdef __cplusplus
 }
