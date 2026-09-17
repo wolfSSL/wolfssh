@@ -241,13 +241,6 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
 
     wolfSSH_Init();
 
-    /* Linked against the installed library, so this also proves
-     * wolfSSH_OutputPending() is exported and not hidden. */
-    if (wolfSSH_OutputPending(NULL) != 0) {
-        fprintf(stderr, "wolfSSH_OutputPending(NULL) was not zero\n");
-        return EXIT_FAILURE;
-    }
-
     #if defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,2)
     {
         int i;

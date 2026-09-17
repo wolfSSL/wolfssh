@@ -5893,6 +5893,39 @@ static void TestChannelGetSessionGrantedAccessor(void)
 }
 
 
+/* Covers each keying bit alone, both together, and a NULL session. */
+static void TestRekeyPendingAccessor(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    AssertIntEQ(wolfSSH_RekeyPending(NULL), 0);
+    AssertIntEQ(wolfSSH_OutputPending(NULL), 0);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_RekeyPending(ssh), 0);
+
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING | WOLFSSH_PEER_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = 0;
+    AssertIntEQ(wolfSSH_RekeyPending(ssh), 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* A username change after the first userauth request must end the session. */
 static void TestUsernameChangeDisconnects(void)
 {
@@ -16038,6 +16071,7 @@ int main(int argc, char** argv)
     TestChannelReqSubsysCallbackRuns();
     TestSessionReqCallbackSeesCommandSz();
     TestChannelGetSessionGrantedAccessor();
+    TestRekeyPendingAccessor();
     TestMalformedSessionRequestSkipsCallback();
     TestSessionReqCallbackMayFreeChannel();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();

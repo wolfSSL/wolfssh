@@ -4567,6 +4567,13 @@ static WS_MAYBE_UNUSED int OobIoSend(WOLFSSH* ssh, void* buf, word32 sz,
     return (int)sz + 1;
 }
 
+/* Fires once the message highwater mark is crossed and reports an error. */
+static WS_MAYBE_UNUSED int FailHighwater(byte side, void* ctx)
+{
+    (void)side; (void)ctx;
+    return WS_FATAL_ERROR;
+}
+
 static int test_DoChannelExtendedData_overflow(void)
 {
     WOLFSSH_CTX*     ctx = NULL;
@@ -5706,13 +5713,6 @@ done:
 }
 
 #ifndef NO_WOLFSSH_SERVER
-
-/* Fires once the message highwater mark is crossed and reports an error. */
-static int FailHighwater(byte side, void* ctx)
-{
-    (void)side; (void)ctx;
-    return WS_FATAL_ERROR;
-}
 
 /* wolfSSH_SendPacket() runs the highwater check after the packet is on the wire
  * and returns the highwater callback's status, so a failing callback makes a
@@ -7191,6 +7191,8 @@ static int test_WorkerKeyingReportsRekey(void)
     if (reportedId != ch->channel) { result = -1818; goto done; }
     /* The flush ran and drained, which the rekey report is gated on. */
     if (ssh->outputBuffer.length != 0) { result = -1817; goto done; }
+    /* The predicate answers the same pass the status reports. */
+    if (!wolfSSH_RekeyPending(ssh)) { result = -1819; goto done; }
 
 done:
     s_recvPkt = NULL;
@@ -8751,6 +8753,81 @@ static int test_TriggerKeyExchangeKeepsError(void)
     }
 
 done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Covers a KEX init whose send fails outright and one that short-writes. */
+static int test_KexInitSendAwayGatesKeying(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    int          result = 0;
+    int          ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1897;
+    /* No refusals, so the first write resets the socket. */
+    s_sendRefusals = 0;
+    wolfSSH_SetIOSend(ctx, RefuseThenResetIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1898; goto done; }
+
+    ret = wolfSSH_TriggerKeyExchange(ssh);
+    if (ret == WS_SUCCESS || ret == WS_WANT_WRITE) {
+        result = -1899;
+        goto done;
+    }
+    if (wolfSSH_RekeyPending(ssh)) { result = -1900; goto done; }
+
+    wolfSSH_free(ssh);
+
+    /* One refusal short-writes instead. */
+    s_sendRefusals = 1;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1903; goto done; }
+
+    ret = wolfSSH_TriggerKeyExchange(ssh);
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
+        result = -1904;
+        goto done;
+    }
+    if (!wolfSSH_RekeyPending(ssh)) { result = -1905; goto done; }
+
+    wolfSSH_free(ssh);
+    ssh = NULL;
+    wolfSSH_CTX_free(ctx);
+    ctx = NULL;
+
+    /* The transport takes the whole packet and the highwater callback then
+     * fails, so the error arrives with the KEX init already sent. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) { result = -1906; goto done; }
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+    wolfSSH_SetHighwaterCb(ctx, 1, FailHighwater);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1907; goto done; }
+    if (wolfSSH_SetHighwater(ssh, 1) != WS_SUCCESS) {
+        result = -1908;
+        goto done;
+    }
+
+    ret = wolfSSH_TriggerKeyExchange(ssh);
+    if (ret == WS_SUCCESS) { result = -1909; goto done; }
+    if (!wolfSSH_RekeyPending(ssh)) { result = -1910; goto done; }
+
+done:
+    s_sendRefusals = 0;
     s_recvPkt = NULL;
     s_recvPktSz = 0;
     s_recvPktOff = 0;
@@ -22940,6 +23017,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_TriggerKeyExchangeKeepsError();
     printf("TriggerKeyExchangeKeepsError: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_KexInitSendAwayGatesKeying();
+    printf("KexInitSendAwayGatesKeying: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

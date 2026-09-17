@@ -15204,6 +15204,7 @@ int SendKexInit(WOLFSSH* ssh)
             macAlgoNamesSz = 0, noneNamesSz = 0;
 
     int ret = WS_SUCCESS;
+    int delivered = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
@@ -15230,8 +15231,6 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        /* Set self is keying flag since we started sending the KEX init msg */
-        ssh->isKeying |= WOLFSSH_SELF_IS_KEYING;
         if (ssh->handshake == NULL) {
             ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
             if (ssh->handshake == NULL) {
@@ -15359,11 +15358,19 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        word32 flushes = ssh->txFlushCount;
+
         ret = wolfSSH_SendPacket(ssh);
+        delivered = SendPacketDelivered(ssh, flushes, ret);
     }
 
-    if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
+    if (delivered) {
+        /* Set self is keying flag now the KEX init msg is away */
+        ssh->isKeying |= WOLFSSH_SELF_IS_KEYING;
+    }
+    else {
         PurgePacket(ssh);
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexInit(), ret = %d", ret);
     return ret;
