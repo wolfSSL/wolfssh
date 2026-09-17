@@ -104,6 +104,8 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
  * the peer's disconnect, which is how most sessions end.
  * To ask whether a write is still owed, call wolfSSH_OutputPending() rather
  * than reading a status: it answers after any return, including a success.
+ * To ask whether a key exchange is in flight, call wolfSSH_RekeyPending()
+ * rather than reading a status: it answers after any return.
  *
  * For WS_CHAN_RXD, WS_EXTDATA, WS_EOF, WS_SUCCESS and a WS_REKEYING that
  * displaced one of those, channelId (when not NULL) names the channel the
@@ -117,6 +119,11 @@ WOLFSSH_API int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId);
 
 /* Returns nonzero if a write is still owed. Session state */
 WOLFSSH_API int wolfSSH_OutputPending(const WOLFSSH* ssh);
+
+/* Returns nonzero while a key exchange is in flight, and 0 otherwise,
+ * including when ssh is NULL. Only NEWKEYS from both sides clears it, so a
+ * peer that abandons the exchange leaves it set. */
+WOLFSSH_API int wolfSSH_RekeyPending(const WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_set_fd(WOLFSSH* ssh, WS_SOCKET_T fd);
 WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh);

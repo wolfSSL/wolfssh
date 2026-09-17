@@ -7189,6 +7189,8 @@ static int test_WorkerKeyingReportsRekey(void)
     if (reportedId != ch->channel) { result = -1818; goto done; }
     /* The flush ran and drained, which the rekey report is gated on. */
     if (ssh->outputBuffer.length != 0) { result = -1817; goto done; }
+    /* The predicate answers the same pass the status reports. */
+    if (!wolfSSH_RekeyPending(ssh)) { result = -1819; goto done; }
 
 done:
     s_recvPkt = NULL;

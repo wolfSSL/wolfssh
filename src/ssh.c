@@ -4715,6 +4715,12 @@ int wolfSSH_OutputPending(const WOLFSSH* ssh)
 }
 
 
+int wolfSSH_RekeyPending(const WOLFSSH* ssh)
+{
+    return (ssh != NULL && ssh->isKeying != 0);
+}
+
+
 #ifdef WOLFSSH_FWD
 
 int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX* ctx,
