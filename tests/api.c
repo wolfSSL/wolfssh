@@ -2911,18 +2911,29 @@ typedef struct AgentTestCtx {
     int partialWrite;
     byte response[AGENT_TEST_BUF_SZ];
     word32 responseSz;
+    word32 readIdx;
+    word32 readChunk;
+    int failWriteCall;
+    int failSetupCall;
+    int setupCalls;
     int writeCalls;
     int readCalls;
 } AgentTestCtx;
 
 static int test_agent_cb(WS_AgentCbAction action, void* ctx)
 {
-    (void)ctx;
+    AgentTestCtx* io = (AgentTestCtx*)ctx;
 
-    if (action == WOLFSSH_AGENT_LOCAL_SETUP ||
-            action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
+        if (io != NULL) {
+            io->setupCalls++;
+            if (io->failSetupCall == io->setupCalls)
+                return WS_AGENT_SETUP_E;
+        }
         return WS_AGENT_SUCCESS;
     }
+    if (action == WOLFSSH_AGENT_LOCAL_CLEANUP)
+        return WS_AGENT_SUCCESS;
 
     return WS_AGENT_INVALID_ACTION;
 }
@@ -2971,9 +2982,12 @@ static int test_agent_io_cb(WS_AgentIoCbAction action, void* buf, word32 bufSz,
         void* ctx)
 {
     AgentTestCtx* io = (AgentTestCtx*)ctx;
+    word32 avail;
 
     if (action == WOLFSSH_AGENT_IO_WRITE) {
         io->writeCalls++;
+        if (io->failWriteCall == io->writeCalls)
+            return WS_CBIO_ERR_GENERAL;
         if (io->partialWrite && bufSz > 0) {
             io->partialWrite = 0;
             return (int)(bufSz - 1);
@@ -2982,10 +2996,20 @@ static int test_agent_io_cb(WS_AgentIoCbAction action, void* buf, word32 bufSz,
     }
 
     io->readCalls++;
-    if (io->responseSz == 0 || bufSz < io->responseSz)
+    avail = io->responseSz - io->readIdx;
+    if (avail == 0)
         return 0;
-    memcpy(buf, io->response, io->responseSz);
-    return (int)io->responseSz;
+    if (avail > bufSz)
+        avail = bufSz;
+    if (io->readChunk > 0 && avail > io->readChunk)
+        avail = io->readChunk;
+    memcpy(buf, io->response + io->readIdx, avail);
+    io->readIdx += avail;
+    /* Replay the canned reply once it has been drained, so a test that runs
+     * several exchanges against one context gets an answer each time. */
+    if (io->readIdx == io->responseSz)
+        io->readIdx = 0;
+    return (int)avail;
 }
 
 static void setup_agent_test(WOLFSSH_CTX** ctx, WOLFSSH** ssh, AgentTestCtx* io)
@@ -3592,6 +3616,285 @@ static void test_wolfSSH_agent_signrequest_rsa_too_large(void)
 }
 #endif /* RSA_MAX_SIZE fits AGENT_TEST_BUF_SZ */
 #endif /* WOLFSSH_NO_RSA_SHA2_256 */
+
+/* Appends a whole agent message to the canned response stream. */
+static word32 append_agent_message(AgentTestCtx* ctx, byte id, byte fill,
+        word32 bodySz)
+{
+    byte body[256];
+    byte msg[AGENT_TEST_BUF_SZ];
+    word32 msgSz;
+
+    AssertTrue(bodySz <= sizeof(body));
+    memset(body, fill, bodySz);
+    build_agent_message(msg, &msgSz, id, body, bodySz);
+    AssertTrue(ctx->responseSz + msgSz <= sizeof(ctx->response));
+    memcpy(ctx->response + ctx->responseSz, msg, msgSz);
+    ctx->responseSz += msgSz;
+
+    return msgSz;
+}
+
+/* A reply arriving a few bytes at a time is one message, not several. */
+static void test_wolfSSH_agent_relay_reply_split_reads(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+    word32 msgSz;
+
+    memset(&io, 0, sizeof(io));
+    io.readChunk = 7;
+    msgSz = append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x5a, 195);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_SUCCESS);
+    AssertIntEQ(rspSz, msgSz);
+    AssertTrue(memcmp(rsp, io.response, msgSz) == 0);
+    AssertTrue(io.readCalls > 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* Two replies queued back to back: the first call must take exactly its own
+ * message so the second call is not answered with the first one's tail. */
+static void test_wolfSSH_agent_relay_reply_desync(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+    word32 firstSz;
+    word32 secondSz;
+
+    memset(&io, 0, sizeof(io));
+    firstSz = append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x11, 100);
+    secondSz = append_agent_message(&io, MSGID_AGENT_FAILURE, 0x22, 60);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_SUCCESS);
+    AssertIntEQ(rspSz, firstSz);
+    AssertTrue(memcmp(rsp, io.response, firstSz) == 0);
+
+    requestSz = 0;
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    rspSz = sizeof(rsp);
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_SUCCESS);
+    AssertIntEQ(rspSz, secondSz);
+    AssertTrue(memcmp(rsp, io.response + firstSz, secondSz) == 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A short write to the agent is finished, not reported as a dead socket. */
+static void test_wolfSSH_agent_relay_short_write(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+    word32 msgSz;
+
+    memset(&io, 0, sizeof(io));
+    io.partialWrite = 1;
+    msgSz = append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x33, 32);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_SUCCESS);
+    AssertIntEQ(rspSz, msgSz);
+    AssertIntEQ(io.writeCalls, 2);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A reply header declaring more than WOLFSSH_AGENT_MAX_MSG_SZ is refused on
+ * the header alone, with no body read and nothing allocated for one. */
+static void test_wolfSSH_agent_relay_oversize_reply(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+
+    memset(&io, 0, sizeof(io));
+    put_uint32(io.response, 0x00100000);
+    io.responseSz = LENGTH_SZ;
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_BUFFER_E);
+    /* One read, for the header. Without the ceiling the body read would run
+     * on and the caller-buffer check would raise the same WS_BUFFER_E. */
+    AssertIntEQ(io.readCalls, 1);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A zero declared length carries no message id and is refused. */
+static void test_wolfSSH_agent_relay_zero_length(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+
+    memset(&io, 0, sizeof(io));
+    put_uint32(io.response, 0);
+    io.responseSz = LENGTH_SZ;
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_BUFFER_E);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A write that sends nothing is taken as a dead socket: reconnect once and
+ * send the message again. */
+static void test_wolfSSH_agent_relay_reconnects_on_dead_socket(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+    word32 msgSz;
+
+    memset(&io, 0, sizeof(io));
+    io.failWriteCall = 1;
+    msgSz = append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x66, 32);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_SUCCESS);
+    AssertIntEQ(rspSz, msgSz);
+    /* The opening connect plus the reconnect. */
+    AssertIntEQ(io.setupCalls, 2);
+    AssertIntEQ(io.writeCalls, 2);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A reconnect the callback refuses is reported as a connection failure. */
+static void test_wolfSSH_agent_relay_reconnect_failure(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+
+    memset(&io, 0, sizeof(io));
+    io.failWriteCall = 1;
+    io.failSetupCall = 2;
+    append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x77, 32);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_AGENT_CXN_FAIL);
+    AssertIntEQ(io.setupCalls, 2);
+    AssertIntEQ(io.readCalls, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A write that lands part of a message and then fails is not retried: the
+ * agent would see the leading bytes twice. */
+static void test_wolfSSH_agent_relay_no_retry_after_partial_write(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[AGENT_TEST_BUF_SZ];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+
+    memset(&io, 0, sizeof(io));
+    io.partialWrite = 1;
+    io.failWriteCall = 2;
+    append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x55, 32);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_AGENT_CXN_FAIL);
+    /* The opening connect only; no reconnect was attempted. */
+    AssertIntEQ(io.setupCalls, 1);
+    AssertIntEQ(io.writeCalls, 2);
+    AssertIntEQ(io.readCalls, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A reply the caller has no room for is an error, not a truncated message. */
+static void test_wolfSSH_agent_relay_reply_exceeds_caller_buf(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte request[16] = {0};
+    byte rsp[64];
+    word32 requestSz;
+    word32 rspSz = sizeof(rsp);
+
+    memset(&io, 0, sizeof(io));
+    append_agent_message(&io, MSGID_AGENT_SUCCESS, 0x44, 200);
+    build_agent_message(request, &requestSz, MSGID_AGENT_REQUEST_IDENTITIES,
+        NULL, 0);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    AssertIntEQ(wolfSSH_AGENT_Relay(ssh, request, &requestSz, rsp, &rspSz),
+        WS_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_BUFFER_E);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
 #endif /* WOLFSSH_AGENT */
 
 
@@ -8387,6 +8690,15 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_agent_signrequest_rsa_too_large();
 #endif
 #endif
+    test_wolfSSH_agent_relay_reply_split_reads();
+    test_wolfSSH_agent_relay_reply_desync();
+    test_wolfSSH_agent_relay_short_write();
+    test_wolfSSH_agent_relay_oversize_reply();
+    test_wolfSSH_agent_relay_zero_length();
+    test_wolfSSH_agent_relay_reply_exceeds_caller_buf();
+    test_wolfSSH_agent_relay_no_retry_after_partial_write();
+    test_wolfSSH_agent_relay_reconnects_on_dead_socket();
+    test_wolfSSH_agent_relay_reconnect_failure();
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
 #ifndef WOLFSSH_NO_ED25519

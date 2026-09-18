@@ -263,13 +263,6 @@ static void modes_reset(void)
 
 #ifndef WOLFSSL_NUCLEUS
 
-#if defined(WOLFSSH_AGENT)
-static inline void ato32(const byte* c, word32* u32)
-{
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
-}
-#endif
-
 typedef struct thread_args {
     WOLFSSH* ssh;
     wolfSSL_Mutex lock;
@@ -582,6 +575,18 @@ static THREAD_RET readInput(void* in)
 }
 
 
+#ifdef WOLFSSH_AGENT
+/* Statuses that say the relay still owes a reply rather than failing. */
+static int AgentRelayHeld(int code, int* wantsWrite)
+{
+    *wantsWrite = (code == WS_WANT_WRITE);
+    return code == WS_WANT_WRITE || code == WS_WINDOW_FULL
+        || code == WS_REKEYING;
+}
+
+
+#endif
+
 static THREAD_RET readPeer(void* in)
 {
     byte buf[256];
@@ -595,8 +600,14 @@ static THREAD_RET readPeer(void* in)
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 #endif
     fd_set readSet;
+    fd_set writeSet;
     fd_set errSet;
     struct timeval timeout;
+#ifdef WOLFSSH_AGENT
+    word32 agentChannel = 0;
+    int agentOwed = 0;
+    int agentWantsWrite = 0;
+#endif
 
 #ifdef USE_WINDOWS_API
     if (args->rawMode == 0) {
@@ -630,13 +641,19 @@ static THREAD_RET readPeer(void* in)
         (void)windowMonitor(args);
 #endif
         FD_ZERO(&readSet);
+        FD_ZERO(&writeSet);
         FD_ZERO(&errSet);
         FD_SET(fd, &readSet);
         FD_SET(fd, &errSet);
 
+#ifdef WOLFSSH_AGENT
+        if (agentWantsWrite)
+            FD_SET(fd, &writeSet);
+#endif
+
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
-        bytes = select(fd + 1, &readSet, NULL, &errSet, &timeout);
+        bytes = select(fd + 1, &readSet, &writeSet, &errSet, &timeout);
         if (bytes < 0) {
         #ifdef USE_WINDOWS_API
             if (WSAGetLastError() == WSAEINTR)
@@ -659,6 +676,19 @@ static THREAD_RET readPeer(void* in)
             FD_SET(fd, &readSet);
         }
         wc_LockMutex(&args->lock);
+#ifdef WOLFSSH_AGENT
+        /* Retry the owed reply on any wake */
+        if (agentOwed && !stop) {
+            int relayRet = wolfSSH_AGENT_RelayChannel(args->ssh, agentChannel);
+
+            agentOwed = AgentRelayHeld(relayRet, &agentWantsWrite);
+            if (relayRet < 0 && !agentOwed) {
+                args->readError = relayRet;
+                stop = 1;
+                bytes = 0;
+            }
+        }
+#endif
         while (bytes > 0 && (FD_ISSET(fd, &readSet) || FD_ISSET(fd, &errSet))) {
             /* there is something to read off the wire */
             WMEMSET(buf, 0, bufSz);
@@ -687,36 +717,31 @@ static THREAD_RET readPeer(void* in)
                 }
 #ifdef WOLFSSH_AGENT
                 else if (err == WS_CHAN_RXD) {
-                    byte agentBuf[512];
-                    int rxd, txd;
                     word32 channel = 0;
 
-                    wolfSSH_GetLastRxId(args->ssh, &channel);
-                        rxd = wolfSSH_ChannelIdRead(args->ssh, channel,
-                                agentBuf, sizeof(agentBuf));
-                        if (rxd > 4) {
-                            word32 msgSz = 0;
-
-                            ato32(agentBuf, &msgSz);
-                            if (msgSz > (word32)rxd - 4) {
-                                rxd += wolfSSH_ChannelIdRead(args->ssh, channel,
-                                        agentBuf + rxd,
-                                        sizeof(agentBuf) - rxd);
-                            }
-
-                            txd = rxd;
-                            rxd = sizeof(agentBuf);
-                            ret = wolfSSH_AGENT_Relay(args->ssh,
-                                    agentBuf, (word32*)&txd,
-                                    agentBuf, (word32*)&rxd);
-                            if (ret == WS_SUCCESS) {
-                                ret = wolfSSH_ChannelIdSend(args->ssh, channel,
-                                        agentBuf, rxd);
-                            }
-                        }
-                        WMEMSET(agentBuf, 0, sizeof(agentBuf));
-                        continue;
+                    if (wolfSSH_GetLastRxId(args->ssh, &channel)
+                            == WS_SUCCESS) {
+                        ret = wolfSSH_AGENT_RelayChannel(args->ssh, channel);
+                        agentChannel = channel;
+                        agentOwed = AgentRelayHeld(ret, &agentWantsWrite);
                     }
+                    else {
+                        ret = WS_FATAL_ERROR;
+                        agentOwed = 0;
+                    }
+                    if (ret < 0 && !agentOwed) {
+                        /* Stop the read thread; the channel is no longer
+                         * safe to send on. */
+                        args->readError = ret;
+                        stop = 1;
+                        bytes = 0;
+                    }
+                    /* Back to select(), which is where the owed reply is
+                     * retried. */
+                    if (agentOwed)
+                        bytes = 0;
+                    continue;
+                }
 #endif /* WOLFSSH_AGENT */
                 else if (err == WS_CBIO_ERR_CONN_CLOSE ||
                          err == WS_SOCKET_ERROR_E ||
