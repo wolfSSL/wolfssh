@@ -3353,7 +3353,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             derSz = inSz;
         }
     }
-    else if (format == WOLFSSH_FORMAT_PEM) {
+    /* WOLFSSH_FORMAT_PEM; the format check above admits no other value. */
+    else {
     #ifdef WOLFSSH_CERTS
         if (type == BUFTYPE_CA) {
             /* A CA buffer may hold a bundle, so every block is loaded. */
@@ -3400,9 +3401,6 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return WS_PARSE_E;
         }
         derSz = (word32)ret;
-    }
-    else {
-        return WS_UNIMPLEMENTED_E;
     }
 
     /* Maybe decrypt */
