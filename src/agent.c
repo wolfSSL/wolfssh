@@ -75,7 +75,7 @@
 /* Largest agent message this build will handle. The peer declares the
  * length, so it is bounded before it drives an allocation. */
 #ifndef WOLFSSH_AGENT_MAX_MSG_SZ
-    #define WOLFSSH_AGENT_MAX_MSG_SZ 32768
+    #define WOLFSSH_AGENT_MAX_MSG_SZ 262144
 #endif
 
 /* Starting size and growth step for the channel accumulation buffer. */
