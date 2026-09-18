@@ -2,6 +2,11 @@
 # included from Top Level Makefile.am
 # All paths should be given relative to the root
 
+# Every script here starts examples/echoserver and drives a client example
+# against it, so all of them need both halves of the library.
+if BUILD_SERVER
+if BUILD_CLIENT
+
 if BUILD_SFTP
 dist_noinst_SCRIPTS+= scripts/sftp.test
 dist_noinst_SCRIPTS+= scripts/get-put.test
@@ -16,5 +21,10 @@ endif
 dist_noinst_SCRIPTS+= scripts/sshclient.test
 
 dist_noinst_SCRIPTS+= scripts/fwd.test
-EXTRA_DIST += scripts/fwd.test.expect
 dist_noinst_SCRIPTS+= scripts/fwd-bulk.test
+endif
+endif
+
+# Distributed whatever the build enables, so the tarball carries it for the
+# builds that do run scripts/fwd.test.
+EXTRA_DIST += scripts/fwd.test.expect

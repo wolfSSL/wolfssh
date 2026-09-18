@@ -406,6 +406,8 @@ AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
                  keys/fred-key.der:keys/fred-key.der])
 
 # Set the automake conditionals.
+AM_CONDITIONAL([BUILD_SERVER],[test "x$ENABLED_SERVER" = "xyes"])
+AM_CONDITIONAL([BUILD_CLIENT],[test "x$ENABLED_CLIENT" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
