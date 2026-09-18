@@ -63,6 +63,18 @@ void Log(const char *const fmt, ...)
     va_end(vlist);
 }
 
+/* The default library callback writes to stdout, which interleaves badly with
+ * the buffered test output above; send library logs to stderr too. Debug lines
+ * are dropped: tests that drive expected rejections emit one per failure,
+ * splicing into the scenario lines this file leaves open until the verdict. */
+static void TestLoggingCb(enum wolfSSH_LogLevel level,
+                          const char *const msgStr)
+{
+    if (level > WS_LOG_DEBUG) {
+        fprintf(stderr, "[%d] %s\n", (int)level, msgStr);
+    }
+}
+
 static void CleanupWildcardTest(void)
 {
     WDIR dir;
@@ -2995,6 +3007,10 @@ static word32 BuildWireKeyBlob(const char* type, const byte* payload,
     return blobSz;
 }
 
+/* OpenSSH maps these RSA SHA-2 signature names onto ssh-rsa; mirrors
+ * AuthKeysTokenKeyType() in apps/wolfsshd/auth.c. */
+static const char* const rsaAliases[] = { "rsa-sha2-256", "rsa-sha2-512" };
+
 /* Build a mutable "<type> <base64(key)>" line; WSTRTOK mutates in place. */
 static int BuildAuthKeysLineType(const char* type, const byte* key,
                                  word32 keySz, char* lineOut, word32 lineOutSz)
@@ -3082,6 +3098,7 @@ static int test_CheckAuthKeysLineTypes(void)
         #endif
         #endif
     #endif
+    #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     #if !defined(WOLFSSH_NO_MLDSA44) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
         "ssh-mldsa44-es256@wolfssl.com",
     #endif
@@ -3104,6 +3121,7 @@ static int test_CheckAuthKeysLineTypes(void)
     #if !defined(WOLFSSH_NO_MLDSA87) && defined(HAVE_ED448)
         "ssh-mldsa87-ed448@wolfssl.com",
     #endif
+    #endif /* !WOLFSSH_NO_MLDSA_COMPOSITES */
     };
     static const char keyAStr[] = "wolfssh-auth-key-test-A-AAAAAAA";
     const byte* keyA = (const byte*)keyAStr;
@@ -3113,11 +3131,14 @@ static int test_CheckAuthKeysLineTypes(void)
     word32 blobSz;
     char line[256];
     char lineCopy[256];
-    word32 i;
+    const word32 numTypes = (word32)(sizeof(types) / sizeof(types[0]));
+    const word32 numAliases = (word32)(sizeof(rsaAliases)
+                                       / sizeof(rsaAliases[0]));
+    word32 i, j;
     int ret = WS_SUCCESS;
     int rc;
 
-    for (i = 0; i < (word32)(sizeof(types) / sizeof(types[0])); i++) {
+    for (i = 0; i < numTypes; i++) {
         blobSz = BuildWireKeyBlob(types[i], keyA, keySz, blob, sizeof(blob));
         if (blobSz == 0) {
             Log("    CheckAuthKeysLine type %s: blob build failed.\n",
@@ -3143,13 +3164,75 @@ static int test_CheckAuthKeysLineTypes(void)
             Log(" FAILED (rc=%d).\n", rc);
             return WS_FATAL_ERROR;
         }
+
+        /* Other types must reject this blob to catch prefix collisions. */
+        if (numTypes < 2) {
+            Log("    Skipping scenario: only one key type built, nothing to "
+                "reject %s blob against.\n", types[i]);
+            continue;
+        }
+        Log("    Testing scenario: all other types rejected "
+            "against %s blob.", types[i]);
+        for (j = 0; j < numTypes; j++) {
+            if (i == j) {
+                continue;
+            }
+            ret = BuildAuthKeysLineType(types[j], blob, blobSz, line,
+                                        sizeof(line));
+            if (ret != WS_SUCCESS) {
+                Log(" build of %s FAILED (ret=%d).\n", types[j], ret);
+                return ret;
+            }
+            WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+            rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                                   blob, blobSz, 0);
+            if (rc != WSSHD_AUTH_FAILURE) {
+                Log(" %s not rejected FAILED (rc=%d).\n", types[j], rc);
+                return WS_FATAL_ERROR;
+            }
+        }
+        Log(" PASSED.\n");
     }
 
-    /* Reject line token naming a different key type. */
+    /* The alias maps to ssh-rsa only: a non-RSA blob must still be rejected. */
+    blobSz = BuildWireKeyBlob("ecdsa-sha2-nistp256", keyA, keySz, blob,
+                              sizeof(blob));
+    if (blobSz == 0) {
+        return WS_BUFFER_E;
+    }
+    for (i = 0; i < numAliases; i++) {
+        const char* sigType = rsaAliases[i];
+
+        ret = BuildAuthKeysLineType(sigType, blob, blobSz, line,
+                                    sizeof(line));
+        if (ret != WS_SUCCESS) {
+            Log("    CheckAuthKeysLine type %s: build failed.\n", sigType);
+            return ret;
+        }
+        Log("    Testing scenario: %s token rejects an "
+            "ecdsa-sha2-nistp256 blob.", sigType);
+        WMEMCPY(lineCopy, line, WSTRLEN(line) + 1);
+        rc = CheckAuthKeysLine(lineCopy, (word32)WSTRLEN(lineCopy),
+                               blob, blobSz, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            return WS_FATAL_ERROR;
+        }
+    }
+
+    /* The acceptance direction of the alias is covered by
+     * test_CheckAuthKeysLine(). */
+
+    /* Used by the mismatched-token case below. */
     blobSz = BuildWireKeyBlob("ssh-rsa", keyA, keySz, blob, sizeof(blob));
     if (blobSz == 0) {
         return WS_BUFFER_E;
     }
+
+    /* Reject line token naming a different key type. */
     ret = BuildAuthKeysLineType("ssh-bogus-type", blob, blobSz, line,
                                 sizeof(line));
     if (ret != WS_SUCCESS) {
@@ -3399,9 +3482,7 @@ static int test_CheckAuthKeysLine(void)
     }
 
     if (ret == WS_SUCCESS) {
-        /* OpenSSH maps an RSA SHA-2 signature name onto ssh-rsa, so these
-         * lines authenticate an ssh-rsa key there and must here too. */
-        static const char* rsaAliases[] = { "rsa-sha2-256", "rsa-sha2-512" };
+        /* An RSA SHA-2 alias line authenticates an ssh-rsa key. */
         word32 i;
 
         for (i = 0; i < (word32)(sizeof(rsaAliases) / sizeof(rsaAliases[0]));
@@ -7284,6 +7365,8 @@ int main(int argc, char** argv)
 
     (void)argc;
     (void)argv;
+
+    wolfSSH_SetLoggingCb(TestLoggingCb);
 
     CleanupWildcardTest();
     ret = SetupWildcardTest();
