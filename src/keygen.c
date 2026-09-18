@@ -376,7 +376,7 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
 /* Build OpenSSH-key-v1 envelope. */
 #if !defined(WOLFSSH_NO_MLDSA)
 /* Guard matches MakeCompositeTradKey() callers to avoid unused warnings. */
-#if !defined(WOLFSSH_NO_ED25519) || defined(HAVE_ED448) || \
+#if !defined(WOLFSSH_NO_ED25519) || defined(WOLFSSH_HAVE_COMPOSITE_ED448) || \
         !defined(WOLFSSH_NO_ECDSA)
 /* Shared init/makeKey/export/free chain for traditional types. */
 static int MakeCompositeTradKeyGeneric(const CompositeTradOps* ops, void* key,
@@ -386,6 +386,7 @@ static int MakeCompositeTradKeyGeneric(const CompositeTradOps* ops, void* key,
     int ret;
     word32 sz;
 
+    /* NULL heap: ops init with INVALID_DEVID, so keygen stays software. */
     if (ops->init(key, NULL) != 0) {
         return WS_CRYPTO_FAILED;
     }
@@ -434,7 +435,7 @@ static int MakeCompositeTradKey(WC_RNG* rng, const CompositeParams* params,
 #endif
     }
     else if (params->tradType == TRAD_TYPE_ED448) {
-#ifdef HAVE_ED448
+#ifdef WOLFSSH_HAVE_COMPOSITE_ED448
         ed448_key key;
         ret = MakeCompositeTradKeyGeneric(ops, &key, rng, params, tradPub,
                 tradPriv);

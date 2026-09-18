@@ -999,7 +999,10 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 printf("\t%d: %s\n", idx, current);
             }
         } while (current != NULL);
-        printf("Set Key: %s\n\n", wolfSSH_GetAlgoListKey(ssh));
+        printf("Set Key: %s\n", wolfSSH_GetAlgoListKey(ssh));
+        /* Separate table from the host key list; both must gate alike. */
+        printf("Set Key Accepted: %s\n\n",
+                wolfSSH_GetAlgoListKeyAccepted(ssh));
 
         idx = 0;
         printf("Cipher:\n");
