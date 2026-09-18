@@ -113,7 +113,8 @@ static HandshakeInfo* AllocHandshake(WOLFSSH* ssh)
 
 /* Build a minimal SSH binary packet carrying only a message ID.
  * Layout: uint32 packetLen, byte padLen, payload[msgId], pad[padLen]. */
-static word32 BuildPacket(byte msgId, byte* out, word32 outSz)
+static WS_MAYBE_UNUSED word32 BuildPacket(byte msgId, byte* out,
+        word32 outSz)
 {
     byte padLen = 10; /* 4 (len) +1 (padLen) +1 (msgId) +10 = 16 */
     word32 packetLen = 1 + 1 + padLen; /* payload + padLen field + pad */
@@ -300,7 +301,8 @@ static word32 BuildChannelClosePacket(word32 peerChannelId, byte* out,
 }
 
 
-static word32 BuildChannelDataPacket(word32 peerChannelId, const char* data,
+static WS_MAYBE_UNUSED word32 BuildChannelDataPacket(word32 peerChannelId,
+        const char* data,
         byte* out, word32 outSz)
 {
     byte payload[64];
@@ -2462,6 +2464,10 @@ static int RejectRemoteSetupFwdCb(WS_FwdCbAction action, void* ctx,
 
 #endif /* NO_WOLFSSH_SERVER */
 
+/* The tests below drive a client-side session. With NO_WOLFSSH_CLIENT the
+ * message filter has no client branch, so every message on such a session is
+ * refused and those tests cannot run. */
+#ifndef NO_WOLFSSH_CLIENT
 /* Reject auth messages while the peer is still keying and the client
  * expects the KEX reply. */
 static void TestAuthMessageBlockedDuringKeying(WOLFSSH* ssh)
@@ -2843,8 +2849,6 @@ static void TestChannelOpenRejectedBeforeKex(byte connectState)
     wolfSSH_CTX_free(ctx);
 }
 
-
-#ifndef NO_WOLFSSH_CLIENT
 /* RFC 4254 section 6.1 has a session open travelling client-to-server, so a
  * client that receives one refuses it. OpenSSH and Dropbear reach the same
  * answer by giving each role its own channel-type list. */
@@ -9815,6 +9819,7 @@ static void TestKexInitRejectedWhenKeying(WOLFSSH* ssh)
     AssertFalse(allowed);
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestDisconnectSetsDisconnectError(void)
 {
     WOLFSSH_CTX* ctx;
@@ -9863,6 +9868,7 @@ static void TestDisconnectSetsDisconnectError(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 /* Append a bare session channel so the stream calls have a channel to work
@@ -9883,6 +9889,7 @@ static void AddSessionChannel(WOLFSSH* ssh)
 }
 
 
+#ifndef NO_WOLFSSH_CLIENT
 /* The same received disconnect on an established session. Without a channel
  * the stream calls bail out on the NULL channel list before they reach
  * anything, so this is the case that shows the gate doing work. */
@@ -10393,6 +10400,7 @@ static void TestShutdownQuietAfterDisconnect(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 /* A send callback that reports "would block" for its first ProbeWantWrite
  * calls, the way a full socket does. */
 static int MemSendWantWriteCount;
@@ -10409,6 +10417,7 @@ static int MemSendWantWrite(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 
 
 
+#ifndef NO_WOLFSSH_CLIENT
 /* The mark firing on the disconnect packet must not fail a send that
  * went out fine. */
 static void TestHighwaterQuietAfterDisconnect(void)
@@ -10610,6 +10619,7 @@ static void TestShutdownFlushClearsWantWrite(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 #ifndef NO_WOLFSSH_SERVER
@@ -10669,6 +10679,7 @@ static void TestShutdownFlushesQueuedUserAuthFailure(void)
 #endif /* !NO_WOLFSSH_SERVER */
 
 
+#ifndef NO_WOLFSSH_CLIENT
 /* DoChannelClose() retires the channel once the close is bundled, so a close
  * the socket refused is left with no channel to carry the retry. Teardown
  * still owes the peer that close, RFC 4254 section 5.3. */
@@ -10728,11 +10739,13 @@ static void TestShutdownFlushesQueuedChannelClose(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 /* One copy each of the channel data and the three teardown messages, in
  * order, accounting for every byte written. */
-static void AssertDataThenTeardownOnWire(const byte* out, word32 outSz)
+static WS_MAYBE_UNUSED void AssertDataThenTeardownOnWire(const byte* out,
+        word32 outSz)
 {
     word32 eofOff;
     word32 reqOff;
@@ -10752,6 +10765,7 @@ static void AssertDataThenTeardownOnWire(const byte* out, word32 outSz)
 }
 
 
+#ifndef NO_WOLFSSH_CLIENT
 /* The flush is no longer tied to a disconnect, so it can fire on a live
  * session with the channel still listed and then short-send itself. The
  * teardown sends bundle in behind bytes the socket has not taken, and the
@@ -10935,6 +10949,7 @@ static void TestShutdownFlushSettledByTeardown(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 /* A reset leaves the output buffer intact, so a flush that short-sent still
@@ -10944,7 +10959,8 @@ static void TestShutdownFlushSettledByTeardown(void)
  * never going to take the rest. */
 static int MemSendResetAfterCount;
 
-static int MemSendWantWriteThenReset(WOLFSSH* ssh, void* buf, word32 sz,
+static WS_MAYBE_UNUSED int MemSendWantWriteThenReset(WOLFSSH* ssh, void* buf,
+        word32 sz,
         void* ctx)
 {
     WOLFSSH_UNUSED(ssh);
@@ -10959,6 +10975,7 @@ static int MemSendWantWriteThenReset(WOLFSSH* ssh, void* buf, word32 sz,
     return WS_CBIO_ERR_CONN_RST;
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestShutdownResetOutranksFlush(void)
 {
     WOLFSSH_CTX* ctx;
@@ -11004,12 +11021,13 @@ static void TestShutdownResetOutranksFlush(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 /* The highwater callback is the application's, and its return propagates out
  * of wolfSSH_SendPacket(). A mark firing on the disconnect packet must not
  * fail a send that went out fine, whoever owns the callback. */
-static int RekeyingHighwaterCb(byte side, void* ctx)
+static WS_MAYBE_UNUSED int RekeyingHighwaterCb(byte side, void* ctx)
 {
     WOLFSSH* ssh = (WOLFSSH*)ctx;
 
@@ -11017,6 +11035,7 @@ static int RekeyingHighwaterCb(byte side, void* ctx)
     return wolfSSH_TriggerKeyExchange(ssh);
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestAppHighwaterQuietAfterDisconnect(void)
 {
     WOLFSSH_CTX* ctx;
@@ -11293,6 +11312,7 @@ static void TestWorkerReportsDisconnect(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 
@@ -11511,6 +11531,7 @@ static void TestDisconnectGatesConnect(void)
 #endif /* !NO_WOLFSSH_CLIENT */
 
 
+#ifndef NO_WOLFSSH_CLIENT
 /* The public senders sit behind the disconnect gate, but the replies the
  * library builds in answer to inbound traffic did not. A channel close
  * draws an EOF and a close of ours out of DoChannelClose(), and a channel
@@ -11878,6 +11899,7 @@ static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 #endif /* WOLFSSH_SFTP */
 
@@ -11960,19 +11982,22 @@ static void TestPasswordEofNoCrash(void)
  * write the socket would not take. */
 static int recvCallCount;
 
-static int WantWriteSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+static WS_MAYBE_UNUSED int WantWriteSend(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
 {
     (void)ssh; (void)buf; (void)sz; (void)ctx;
     return WS_CBIO_ERR_WANT_WRITE;
 }
 
-static int WantReadRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+static WS_MAYBE_UNUSED int WantReadRecv(WOLFSSH* ssh, void* buf, word32 sz,
+        void* ctx)
 {
     (void)ssh; (void)buf; (void)sz; (void)ctx;
     recvCallCount++;
     return WS_CBIO_ERR_WANT_READ;
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestWorkerReadsWhenSendWouldBlock(void)
 {
     WOLFSSH_CTX* ctx;
@@ -12005,6 +12030,7 @@ static void TestWorkerReadsWhenSendWouldBlock(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 #ifdef WOLFSSH_SFTP
@@ -14084,6 +14110,11 @@ static void TestKexInitEmptyName(void)
     }
 }
 
+/* EXT_INFO is transport-generic, so a server session parses it too, RFC 8308
+ * section 2.3. These cases call DoExtInfo() directly and never reach the
+ * message filter, so they run in a client-only or a server-only build. The
+ * client endpoint is just what records server-sig-algs. */
+
 /* Run one EXT_INFO carrying a single server-sig-algs extension, reporting how
  * many peer signature algorithms it left recorded. When peerSigIdOut is given,
  * the recorded IDs are copied out before the ssh is freed, up to
@@ -14500,6 +14531,7 @@ static void TestIndependentAlgoNegotiation(void)
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestIndependentAlgoNegotiationClient(void)
 {
     WOLFSSH_CTX* ctx;
@@ -14599,6 +14631,7 @@ static void TestIndependentAlgoNegotiationClient(void)
 
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 
 /* Verify WS_MATCH_ENC_ALGO_E when exactly one direction's cipher list has no
  * match in the local algoListCipher -- the new per-direction S2C matching path
@@ -14941,6 +14974,7 @@ static void TestGenerateKeysSplit(void)
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef NO_WOLFSSH_CLIENT
 static void TestGenerateKeysSplitClient(void)
 {
     WOLFSSH_CTX* ctx;
@@ -15141,6 +15175,7 @@ static void TestGenerateKeysSplitClient(void)
 
     wolfSSH_CTX_free(ctx);
 }
+#endif /* !NO_WOLFSSH_CLIENT */
 static void TestDoNewKeys(void)
 {
     WOLFSSH_CTX* ctx;
@@ -16095,6 +16130,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSL_BASE64_ENCODE
     TestKnownHostsLastEntry();
 #endif
+#ifndef NO_WOLFSSH_CLIENT
     TestAuthMessageBlockedDuringKeying(ssh);
     TestUserauthFailureDuringKeying(ssh);
     TestPasswordLeakAborts(ssh);
@@ -16110,7 +16146,6 @@ int main(int argc, char** argv)
     TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
-#ifndef NO_WOLFSSH_CLIENT
     TestSessionOnClientSendsOpenFail();
     TestSessionOnClientBeatsOpenCb();
 #ifdef WOLFSSH_AGENT
@@ -16346,24 +16381,29 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
     TestIndependentAlgoNegotiation();
+#ifndef NO_WOLFSSH_CLIENT
     TestIndependentAlgoNegotiationClient();
+#endif
     TestEncMismatch();
     TestMacMismatch();
     TestGenerateKeysSplit();
+#ifndef NO_WOLFSSH_CLIENT
     TestGenerateKeysSplitClient();
+#endif
     TestDoNewKeys();
 #endif
+#ifndef NO_WOLFSSH_CLIENT
     TestDisconnectSetsDisconnectError();
     TestDisconnectTerminalWithChannel();
     TestDisconnectDrainsBufferedData();
     TestDisconnectBlocksEverySend();
     TestSendDisconnectIsTerminal();
+#endif
 #ifndef NO_WOLFSSH_SERVER
     TestDisconnectGatesAccept();
 #endif
 #ifndef NO_WOLFSSH_CLIENT
     TestDisconnectGatesConnect();
-#endif
     TestDisconnectSilencesInboundReplies();
     TestDisconnectKeepsStreamInStep();
     TestDisconnectDropsLateChannelData();
@@ -16377,9 +16417,11 @@ int main(int argc, char** argv)
     TestPeerDisconnectKeepsTrafficQueued(1);
     TestShutdownFlushesWithNoChannel();
     TestShutdownFlushClearsWantWrite();
+#endif
 #ifndef NO_WOLFSSH_SERVER
     TestShutdownFlushesQueuedUserAuthFailure();
 #endif
+#ifndef NO_WOLFSSH_CLIENT
     TestShutdownFlushesQueuedChannelClose();
     TestShutdownFlushShortSendsWithChannel();
     TestShutdownRetryFlushShortSendsWithChannel();
@@ -16391,14 +16433,18 @@ int main(int argc, char** argv)
     TestDisconnectTxdClearsOnFlush();
     TestDisconnectOutranksRekey();
     TestWorkerReportsDisconnect();
-#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
+#endif
+#if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM) \
+    && !defined(NO_WOLFSSH_CLIENT)
     TestTerminalResizeBlockedAfterDisconnect();
 #endif
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
 #endif
     TestPasswordEofNoCrash();
+#ifndef NO_WOLFSSH_CLIENT
     TestWorkerReadsWhenSendWouldBlock();
+#endif
 
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
     #ifndef WOLFSSH_NO_RSA_SHA2_256
@@ -16445,7 +16491,9 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef WOLFSSH_SFTP
+#ifndef NO_WOLFSSH_CLIENT
     TestOct2DecRejectsInvalidNonLeadingDigit();
+#endif
     TestSftpBufferSendPendingOutput();
     #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
             !defined(NO_FILESYSTEM)
