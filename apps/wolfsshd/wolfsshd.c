@@ -3434,7 +3434,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* This read will return 0 on EOF */
                 if (cnt_r < 0) {
                     int err = errno;
-                    if (err != EAGAIN && err != 0) {
+                    if (err != EINTR && err != EAGAIN
+                            && err != EWOULDBLOCK) {
                         break;
                     }
                 }
@@ -3481,7 +3482,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* Treat a 0 return as EOF so the loop can shut down. */
                 if (cnt_r < 0) {
                     int err = errno;
-                    if (err != EAGAIN && err != 0) {
+                    if (err != EINTR && err != EAGAIN
+                            && err != EWOULDBLOCK) {
                         break;
                     }
                 }
