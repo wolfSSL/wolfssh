@@ -49,7 +49,28 @@ if command -v timeout >/dev/null 2>&1; then
 fi
 
 source ./start_sshd.sh
-cat <<CONF > sshd_config_test_stderr_eof
+
+# The runner leases a port block per run so two runs can share a host, and
+# fixed names in the checkout are the other half of that: a second run
+# overwrites this one's config and payload, and whichever finishes first
+# removes them from under the other, which then reports a short transfer that
+# never happened. Everything this test writes goes in a directory of its own.
+TEST_TMP=`mktemp -d 2>/dev/null` || TEST_TMP=`mktemp -d -t stderreof`
+if [ -z "$TEST_TMP" ] || [ ! -d "$TEST_TMP" ]; then
+    echo "Failed to create a temp dir"
+    exit 1
+fi
+TEST_CONFIG="$TEST_TMP/sshd_config_test_stderr_eof"
+TEST_FILE="$TEST_TMP/stderr-eof-test.txt"
+TEST_RESULT_FILE="$TEST_TMP/stderr-eof-test-result.txt"
+
+# The payload is 16 MB and the daemon is shared with the rest of the run, so
+# neither may be left behind by an interrupted pass. Installed before the
+# daemon starts so a failure in between is covered too; stop_wolfsshd is
+# idempotent, so the explicit call at the end still stands.
+trap 'rm -rf "$TEST_TMP"; stop_wolfsshd' EXIT
+
+cat <<CONF > "$TEST_CONFIG"
 Port $TEST_PORT
 Protocol 2
 LoginGraceTime 600
@@ -62,7 +83,7 @@ HostKey $PWD/../../../keys/server-key.pem
 AuthorizedKeysFile $PWD/authorized_keys_test
 CONF
 
-start_wolfsshd "sshd_config_test_stderr_eof"
+start_wolfsshd "$TEST_CONFIG"
 if [ -z "$PID" ]; then
     echo "Failed to start wolfsshd"
     exit 1
@@ -73,17 +94,6 @@ TEST_CLIENT="./examples/client/client"
 PRIVATE_KEY="./keys/hansel-key-ecc.der"
 PUBLIC_KEY="./keys/hansel-key-ecc.pub"
 PWD=`pwd`
-
-# Named in full because the trap below outlives the cd back into the test
-# directory, and bash keeps PWD in step with that cd whatever this script
-# assigned to it.
-TEST_FILE="$PWD/stderr-eof-test.txt"
-TEST_RESULT_FILE="$PWD/stderr-eof-test-result.txt"
-
-# The scratch file is 16 MB and the daemon is shared with the rest of the run,
-# so neither may be left behind by an interrupted pass. stop_wolfsshd is
-# idempotent, so the explicit call below still stands.
-trap 'rm -f "$TEST_FILE" "$TEST_RESULT_FILE"; stop_wolfsshd' EXIT
 
 head -c $TEST_SIZE /dev/urandom > "$TEST_FILE"
 EXPECTED=`wc -c < "$TEST_FILE"`
@@ -116,7 +126,7 @@ for i in `seq 1 $TEST_ITERS`; do
     fi
 done
 
-rm -f "$TEST_FILE" "$TEST_RESULT_FILE"
+rm -rf "$TEST_TMP"
 cd apps/wolfsshd/test
 stop_wolfsshd
 

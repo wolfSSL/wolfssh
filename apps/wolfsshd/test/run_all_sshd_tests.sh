@@ -587,7 +587,7 @@ else
         run_test "sshd_privdrop_fail_test.sh"
     else
         printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+10))
+        SKIPPED=$((SKIPPED+12))
     fi
 
     # these tests run with X509 sshd-config loaded
