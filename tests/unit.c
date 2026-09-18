@@ -11278,14 +11278,15 @@ static int test_SendChannelTerminalRequestNoTty(void)
     }
 
 done:
+    /* Only reached with a descriptor still open on an already-failed path, so
+     * restore it but keep the original error code. Unlike the TERM block
+     * below, a result check here would never be true. */
     if (stdinCopy >= 0) {
-        if (dup2(stdinCopy, STDIN_FILENO) < 0 && result == 0)
-            result = -1494;
+        (void)dup2(stdinCopy, STDIN_FILENO);
         close(stdinCopy);
     }
     if (stdoutCopy >= 0) {
-        if (dup2(stdoutCopy, STDOUT_FILENO) < 0 && result == 0)
-            result = -1495;
+        (void)dup2(stdoutCopy, STDOUT_FILENO);
         close(stdoutCopy);
     }
     if (termPinned) {
