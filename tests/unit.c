@@ -21180,6 +21180,20 @@ static int test_DoUserAuthRequestRsaCert(void)
 #endif /* !WOLFSSH_NO_RSA && !WOLFSSH_NO_SSH_RSA_SHA1 */
 
 #ifdef WOLFSSH_SFTP
+/* IORecv mock that reports no data is available yet. ReceiveData maps this to
+ * WS_WANT_READ, letting the receive loop reach its body-read state without a
+ * live socket. Both the server and client halves below use it. */
+static WS_MAYBE_UNUSED int RecvAlwaysWantRead(WOLFSSH* ssh, void* data,
+        word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+    return WS_CBIO_ERR_WANT_READ;
+}
+
+#ifndef NO_WOLFSSH_SERVER
 /* Property test for the server-side received-packet size bound applied in
  * wolfSSH_SFTP_read(). A non-positive size or one above the largest legal
  * inbound SFTP message must be rejected before any buffer is allocated;
@@ -21229,18 +21243,6 @@ static int test_SftpRecvSizeBound(void)
         return -930;
 
     return 0;
-}
-
-/* IORecv mock that reports no data is available yet. ReceiveData maps this to
- * WS_WANT_READ, letting the receive loop reach its body-read state without a
- * live socket. */
-static int RecvAlwaysWantRead(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
-{
-    WOLFSSH_UNUSED(ssh);
-    WOLFSSH_UNUSED(data);
-    WOLFSSH_UNUSED(sz);
-    WOLFSSH_UNUSED(ctx);
-    return WS_CBIO_ERR_WANT_READ;
 }
 
 /* Drives a single crafted SFTP request header through wolfSSH_SFTP_read() on a
@@ -21374,6 +21376,7 @@ static int test_SftpRecvSizeBoundAccept(void)
 
     return 0;
 }
+#endif /* NO_WOLFSSH_SERVER */
 
 #ifndef NO_WOLFSSH_CLIENT
 /* Builds an SFTP VERSION message in the outSz byte buffer "out", with the
@@ -23413,6 +23416,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_SFTP
+#ifndef NO_WOLFSSH_SERVER
     unitResult = test_SftpRecvSizeBound();
     printf("SftpRecvSizeBound: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
@@ -23426,6 +23430,7 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("SftpRecvSizeBoundAccept: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif /* NO_WOLFSSH_SERVER */
 
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_SftpClientRecvInitSplit();

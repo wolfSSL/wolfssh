@@ -2,9 +2,17 @@
 # included from Top Level Makefile.am
 # All paths should be given relative to the root
 
-check_PROGRAMS  += tests/unit.test tests/api.test \
-                   tests/testsuite.test tests/kex.test \
-                   tests/regress.test
+# unit.test and regress.test drive the library alone. The rest link
+# examples/echoserver, examples/client, or both, so they only exist when the
+# matching half of the library was built.
+check_PROGRAMS  += tests/unit.test tests/regress.test
+
+if BUILD_SERVER
+check_PROGRAMS  += tests/api.test
+if BUILD_CLIENT
+check_PROGRAMS  += tests/testsuite.test tests/kex.test
+endif
+endif
 
 tests_unit_test_SOURCES      = tests/unit.c tests/unit.h
 tests_unit_test_CPPFLAGS     = -DNO_MAIN_DRIVER -DWOLFSSH_TEST_INTERNAL $(AM_CPPFLAGS)
@@ -29,7 +37,10 @@ tests_testsuite_test_CPPFLAGS = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_testsuite_test_LDADD   = src/libwolfssh.la
 tests_testsuite_test_DEPENDENCIES = src/libwolfssh.la
 
+# auth.c drives both wolfSSH_accept() and wolfSSH_connect().
 if BUILD_KEYBOARD_INTERACTIVE
+if BUILD_SERVER
+if BUILD_CLIENT
 check_PROGRAMS              += tests/auth.test
 tests_auth_test_SOURCES      = tests/auth.c tests/auth.h \
                                examples/client/common.c \
@@ -37,6 +48,8 @@ tests_auth_test_SOURCES      = tests/auth.c tests/auth.h \
 tests_auth_test_CPPFLAGS     = -DNO_MAIN_DRIVER $(AM_CPPFLAGS)
 tests_auth_test_LDADD        = src/libwolfssh.la
 tests_auth_test_DEPENDENCIES = src/libwolfssh.la
+endif
+endif
 endif
 
 tests_kex_test_SOURCES = tests/kex.c tests/kex.h \

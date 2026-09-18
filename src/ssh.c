@@ -6058,8 +6058,9 @@ void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
 }
 
 
-#if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-    !defined(NO_WOLFSSH_SERVER)
+/* Not server-only: wolfSSH_SFTP_SetDefaultPath() reaches this through
+ * CanonicalizePath(), and the SFTP client calls that setter. */
+#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
 
 /*
  * Paths starting with a slash are absolute, rooted at "/". Any path that
