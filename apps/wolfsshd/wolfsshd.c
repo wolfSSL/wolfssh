@@ -3171,11 +3171,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 noWait.tv_usec = 0;
                 timeout = &noWait;
             }
-            else if (!ChildRunning && stdoutEmpty && !backlog.len) {
-                /* The child is gone, its output is drained and nothing is
-                 * held: the foot of the loop ends the session this pass, so
-                 * do not wait on a peer that has nothing left to send. */
-                noWait.tv_sec = 0;
+            else if (stdoutEmpty && !backlog.len) {
+                /* The child's output is drained and nothing is held. With the
+                 * child gone the foot of the loop ends the session this pass,
+                 * so do not wait on a peer that has nothing left to send.
+                 * While it is still running its SIGCHLD is the only wake left,
+                 * and one handled between the test here and the call below
+                 * would not interrupt it, so bound that wait. */
+                noWait.tv_sec = ChildRunning ? 1 : 0;
                 noWait.tv_usec = 0;
                 timeout = &noWait;
             }
