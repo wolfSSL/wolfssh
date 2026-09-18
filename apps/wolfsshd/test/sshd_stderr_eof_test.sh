@@ -37,6 +37,17 @@ TEST_SIZE=16777216
 TEST_STALL=4
 TEST_ITERS=12
 
+# A byte count cannot tell a short transfer from one that never finished, and
+# the runner invokes this test synchronously: a regression that leaves the
+# session open would stall the whole suite here. One pass takes about four
+# seconds, so this is only a deadline, not a budget. Degraded rather than
+# skipped where "timeout" is missing, matching run_all_sshd_tests.sh.
+TEST_TIMEOUT=120
+TIMEOUT=""
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT="timeout $TEST_TIMEOUT"
+fi
+
 source ./start_sshd.sh
 cat <<CONF > sshd_config_test_stderr_eof
 Port $TEST_PORT
@@ -52,6 +63,10 @@ AuthorizedKeysFile $PWD/authorized_keys_test
 CONF
 
 start_wolfsshd "sshd_config_test_stderr_eof"
+if [ -z "$PID" ]; then
+    echo "Failed to start wolfsshd"
+    exit 1
+fi
 cd ../../..
 
 TEST_CLIENT="./examples/client/client"
@@ -59,19 +74,40 @@ PRIVATE_KEY="./keys/hansel-key-ecc.der"
 PUBLIC_KEY="./keys/hansel-key-ecc.pub"
 PWD=`pwd`
 
-head -c $TEST_SIZE /dev/urandom > stderr-eof-test.txt
-EXPECTED=`wc -c < stderr-eof-test.txt`
+# Named in full because the trap below outlives the cd back into the test
+# directory, and bash keeps PWD in step with that cd whatever this script
+# assigned to it.
+TEST_FILE="$PWD/stderr-eof-test.txt"
+TEST_RESULT_FILE="$PWD/stderr-eof-test-result.txt"
+
+# The scratch file is 16 MB and the daemon is shared with the rest of the run,
+# so neither may be left behind by an interrupted pass. stop_wolfsshd is
+# idempotent, so the explicit call below still stands.
+trap 'rm -f "$TEST_FILE" "$TEST_RESULT_FILE"; stop_wolfsshd' EXIT
+
+head -c $TEST_SIZE /dev/urandom > "$TEST_FILE"
+EXPECTED=`wc -c < "$TEST_FILE"`
 
 RESULT=0
 for i in `seq 1 $TEST_ITERS`; do
     # The inner client cats the file through the outer session, so the shell
     # loop is the one relaying it. Stalling the outer client's reader fills
     # the window and leaves the loop holding a backlog.
-    $TEST_CLIENT -q -c "cd $PWD; $TEST_CLIENT -q -c \"cat $PWD/stderr-eof-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" \
+    $TIMEOUT $TEST_CLIENT -q -c "cd $PWD; $TEST_CLIENT -q -c \"cat $TEST_FILE\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" \
         -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT 2>/dev/null \
-        | { sleep $TEST_STALL; cat; } > stderr-eof-test-result.txt
+        | { sleep $TEST_STALL; cat; } > "$TEST_RESULT_FILE"
+    # The client's own status, not the reader's. 124 is the deadline above,
+    # which a byte count would go on to report as a short transfer.
+    CLIENT_RESULT=${PIPESTATUS[0]}
 
-    GOT=`wc -c < stderr-eof-test-result.txt`
+    if [ "$CLIENT_RESULT" = 124 ]; then
+        echo "pass $i of $TEST_ITERS never finished"
+        echo "the client was still running after $TEST_TIMEOUT seconds"
+        RESULT=1
+        break
+    fi
+
+    GOT=`wc -c < "$TEST_RESULT_FILE"`
     if [ "$GOT" != "$EXPECTED" ]; then
         echo "pass $i of $TEST_ITERS truncated the shell output"
         echo "expected $EXPECTED bytes, got $GOT, short by $((EXPECTED-GOT))"
@@ -80,7 +116,7 @@ for i in `seq 1 $TEST_ITERS`; do
     fi
 done
 
-rm -f stderr-eof-test.txt stderr-eof-test-result.txt
+rm -f "$TEST_FILE" "$TEST_RESULT_FILE"
 cd apps/wolfsshd/test
 stop_wolfsshd
 
