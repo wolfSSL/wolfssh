@@ -356,6 +356,7 @@ typedef struct {
     word32 outSz;
     word32 outCap;
     byte blockNext; /* make the next send report a would-block */
+    byte blockAll;  /* make every send report a would-block */
     byte isrNext;   /* make the next send report an interrupted call */
 } MemIo;
 
@@ -377,6 +378,8 @@ static int MemSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 {
     (void)ssh;
     MemIo* io = (MemIo*)ctx;
+    if (io->blockAll)
+        return WS_CBIO_ERR_WANT_WRITE;
     if (io->blockNext) {
         io->blockNext = 0;
         return WS_CBIO_ERR_WANT_WRITE;
@@ -402,6 +405,7 @@ static void MemIoInit(MemIo* io, byte* in, word32 inSz, byte* out, word32 outCap
     io->outSz = 0;
     io->outCap = outCap;
     io->blockNext = 0;
+    io->blockAll = 0;
     io->isrNext = 0;
 }
 
@@ -3031,6 +3035,826 @@ static void TestAgentOpenAfterRequestSucceeds(void)
 
     FreeChannelOpenHarness(&harness);
 }
+
+/* Records every byte handed to the agent so a test can check the exact
+ * message that was relayed. */
+#define AGENT_RELAY_TEST_SZ 8192
+
+typedef struct AgentRelayIo {
+    byte written[AGENT_RELAY_TEST_SZ];
+    byte response[128];
+    word32 writtenSz;
+    word32 responseSz;
+    word32 readIdx;
+    word32 writeCalls;
+    byte shortWrite;
+    byte failSetup;
+    word32 failWriteCall;
+    word32 failReadCall;
+    word32 readCalls;
+    word32 setupCalls;
+} AgentRelayIo;
+
+static int AgentRelayCb(WS_AgentCbAction action, void* ctx)
+{
+    AgentRelayIo* io = (AgentRelayIo*)ctx;
+
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
+        if (io != NULL)
+            io->setupCalls++;
+        if (io != NULL && io->failSetup)
+            return WS_AGENT_SETUP_E;
+        return WS_AGENT_SUCCESS;
+    }
+    if (action == WOLFSSH_AGENT_LOCAL_CLEANUP)
+        return WS_AGENT_SUCCESS;
+
+    return WS_AGENT_INVALID_ACTION;
+}
+
+static int AgentRelayIoCb(WS_AgentIoCbAction action, void* buf, word32 bufSz,
+        void* ctx)
+{
+    AgentRelayIo* io = (AgentRelayIo*)ctx;
+    word32 avail;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE) {
+        io->writeCalls++;
+        if (io->failWriteCall == io->writeCalls)
+            return WS_CBIO_ERR_GENERAL;
+        if (io->shortWrite && bufSz > 0) {
+            io->shortWrite = 0;
+            bufSz--;
+        }
+        AssertTrue(io->writtenSz + bufSz <= sizeof(io->written));
+        WMEMCPY(io->written + io->writtenSz, buf, bufSz);
+        io->writtenSz += bufSz;
+        return (int)bufSz;
+    }
+
+    io->readCalls++;
+    if (io->failReadCall == io->readCalls)
+        return WS_CBIO_ERR_GENERAL;
+
+    avail = io->responseSz - io->readIdx;
+    if (avail == 0)
+        return 0;
+    if (avail > bufSz)
+        avail = bufSz;
+    WMEMCPY(buf, io->response + io->readIdx, avail);
+    io->readIdx += avail;
+    /* Replay the canned reply once it drains, so every relayed request gets
+     * an answer. */
+    if (io->readIdx == io->responseSz)
+        io->readIdx = 0;
+    return (int)avail;
+}
+
+/* Builds on ChannelOpenHarness for the session and transport, and re-points
+ * its MemIo at a buffer large enough for several relayed replies. */
+typedef struct AgentRelayHarness {
+    ChannelOpenHarness base;
+    WOLFSSH_CHANNEL* channel;
+    AgentRelayIo agentIo;
+    byte in[128];
+    byte out[AGENT_RELAY_TEST_SZ];
+} AgentRelayHarness;
+
+/* An agent message is an SSH blob: a 4-byte length over bodySz filler bytes. */
+static word32 BuildAgentMessage(byte* out, word32 outSz, word32 bodySz,
+        byte fill)
+{
+    byte body[AGENT_RELAY_TEST_SZ];
+
+    AssertTrue(bodySz <= sizeof(body));
+    WMEMSET(body, fill, bodySz);
+
+    return AppendBlob(out, outSz, 0, body, bodySz);
+}
+
+/* Opens an auth-agent channel the way the peer would, then marks it confirmed
+ * so the relay can send replies back over it. */
+static WOLFSSH_CHANNEL* AgentRelayAddChannel(AgentRelayHarness* harness,
+        word32 peerChannelId)
+{
+    WOLFSSH_CHANNEL* channel;
+    word32 inSz;
+
+    inSz = BuildChannelOpenPacket("auth-agent@openssh.com", peerChannelId,
+            0x4000, 0x8000, NULL, 0, harness->in, sizeof(harness->in));
+    MemIoInit(&harness->base.io, harness->in, inSz,
+            harness->out, sizeof(harness->out));
+    AssertIntEQ(DoReceive(harness->base.ssh), WS_SUCCESS);
+
+    channel = wolfSSH_ChannelFind(harness->base.ssh,
+            peerChannelId, WS_CHANNEL_ID_PEER);
+    AssertNotNull(channel);
+    channel->openConfirmed = 1;
+
+    return channel;
+}
+
+static void InitAgentRelayHarness(AgentRelayHarness* harness)
+{
+    WMEMSET(harness, 0, sizeof(*harness));
+
+    InitChannelOpenHarnessClient(&harness->base, harness->in, 0);
+    MemIoInit(&harness->base.io, harness->in, 0,
+            harness->out, sizeof(harness->out));
+
+    /* DoChannelOpen admits an auth-agent channel only on a client that has
+     * sent auth-agent-req, so the harness stands in for that request. */
+    harness->base.ssh->connectState = CONNECT_CLIENT_CHANNEL_AGENT_REQUEST_SENT;
+
+    AssertIntEQ(wolfSSH_CTX_AGENT_enable(harness->base.ctx, 1), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_set_agent_cb(harness->base.ctx, AgentRelayCb,
+                AgentRelayIoCb), WS_SUCCESS);
+    harness->base.ssh->agent = wolfSSH_AGENT_new(harness->base.ctx->heap);
+    AssertNotNull(harness->base.ssh->agent);
+    AssertIntEQ(wolfSSH_set_agent_cb_ctx(harness->base.ssh, &harness->agentIo),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_enable(harness->base.ssh, 1), WS_SUCCESS);
+
+    /* Any well formed reply will do; these tests assert on the request side. */
+    harness->agentIo.responseSz = BuildAgentMessage(harness->agentIo.response,
+            sizeof(harness->agentIo.response), 8, 0xF0);
+
+    harness->channel = AgentRelayAddChannel(harness, 11);
+}
+
+/* A request split over three channel deliveries reaches the agent once, whole
+ * and in order. */
+static void TestAgentRelayChannelReassemblesFragmentedRequest(void)
+{
+    AgentRelayHarness harness;
+    byte msg[604];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 600, 0x5a);
+    AssertIntEQ(msgSz, sizeof(msg));
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, 200), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg + 200, 200), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg + 400, 204), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writtenSz, sizeof(msg));
+    AssertIntEQ(WMEMCMP(harness.agentIo.written, msg, sizeof(msg)), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* Two messages arriving together are relayed as two, with the second not
+ * folded into the first one's length. */
+static void TestAgentRelayChannelKeepsTrailingBytes(void)
+{
+    AgentRelayHarness harness;
+    byte msg[120];
+    word32 firstSz;
+    word32 secondSz;
+
+    InitAgentRelayHarness(&harness);
+    firstSz = BuildAgentMessage(msg, sizeof(msg), 56, 0x11);
+    secondSz = BuildAgentMessage(msg + firstSz, sizeof(msg) - firstSz,
+            56, 0x22);
+    AssertIntEQ(firstSz + secondSz, sizeof(msg));
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, sizeof(msg)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+
+    AssertIntEQ(harness.agentIo.writeCalls, 2);
+    AssertIntEQ(harness.agentIo.writtenSz, sizeof(msg));
+    AssertIntEQ(WMEMCMP(harness.agentIo.written, msg, sizeof(msg)), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* A backlog larger than one read is drained rather than stranded. */
+static void TestAgentRelayChannelDrainsOversizeBacklog(void)
+{
+    AgentRelayHarness harness;
+    byte msg[3000];
+    word32 firstSz;
+    word32 secondSz;
+
+    InitAgentRelayHarness(&harness);
+    firstSz = BuildAgentMessage(msg, sizeof(msg), 1496, 0x99);
+    secondSz = BuildAgentMessage(msg + firstSz, sizeof(msg) - firstSz,
+            1496, 0xAA);
+    AssertIntEQ(firstSz + secondSz, sizeof(msg));
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, sizeof(msg)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+
+    AssertIntEQ(harness.agentIo.writeCalls, 2);
+    AssertIntEQ(harness.agentIo.writtenSz, sizeof(msg));
+    AssertIntEQ(WMEMCMP(harness.agentIo.written, msg, sizeof(msg)), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* A partial request on one channel is dropped rather than prepended to the
+ * next channel's data. */
+static void TestAgentRelayChannelResetsOnChannelChange(void)
+{
+    AgentRelayHarness harness;
+    WOLFSSH_CHANNEL* other;
+    byte partial[8];
+    byte whole[36];
+    word32 wholeSz;
+
+    InitAgentRelayHarness(&harness);
+    WMEMSET(partial, 0x77, sizeof(partial));
+    partial[0] = 0;
+    partial[1] = 0;
+    partial[2] = 0;
+    partial[3] = 200;
+
+    AssertIntEQ(ChannelPutData(harness.channel, partial, sizeof(partial)),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    other = AgentRelayAddChannel(&harness, 12);
+    wholeSz = BuildAgentMessage(whole, sizeof(whole), 32, 0x33);
+    AssertIntEQ(ChannelPutData(other, whole, wholeSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh, other->channel),
+            WS_SUCCESS);
+
+    AssertIntEQ(harness.agentIo.writtenSz, wholeSz);
+    AssertIntEQ(WMEMCMP(harness.agentIo.written, whole, wholeSz), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* A declared length past the build's ceiling is refused and nothing is sent
+ * to the agent. */
+static void TestAgentRelayChannelRejectsOversizeLength(void)
+{
+    AgentRelayHarness harness;
+    byte msg[16];
+
+    InitAgentRelayHarness(&harness);
+    WMEMSET(msg, 0, sizeof(msg));
+    msg[0] = 0x00;
+    msg[1] = 0x10;
+    msg[2] = 0x00;
+    msg[3] = 0x00;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, sizeof(msg)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_BUFFER_E);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* A zero declared length carries no message id, so it is refused and nothing
+ * is sent to the agent. */
+static void TestAgentRelayChannelRejectsZeroLength(void)
+{
+    AgentRelayHarness harness;
+    byte msg[16];
+
+    InitAgentRelayHarness(&harness);
+    WMEMSET(msg, 0, sizeof(msg));
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, sizeof(msg)), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_BUFFER_E);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* The agent's reply goes back out on the channel as CHANNEL_DATA carrying
+ * exactly the reply bytes, in several packets because the test caps the
+ * peer's max packet size. */
+static void TestAgentRelayChannelReplyReachesChannel(void)
+{
+    AgentRelayHarness harness;
+    byte reply[AGENT_RELAY_TEST_SZ];
+    byte msg[36];
+    word32 msgSz;
+    word32 outBefore;
+    word32 idx;
+    word32 replySz = 0;
+    word32 dataPkts = 0;
+    int calls = 1;
+    int ret;
+
+    InitAgentRelayHarness(&harness);
+    /* Small enough that the canned reply cannot leave in one packet. */
+    harness.channel->peerMaxPacketSz = 5;
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x44);
+    outBefore = harness.base.io.outSz;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+
+    /* One call per packet the cap allows: each holds the rest of the reply
+     * and answers WS_WANT_WRITE until the last of it is out. */
+    ret = wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+            harness.channel->channel);
+    while (ret == WS_WANT_WRITE && ++calls < 64) {
+        ret = wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel);
+    }
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertTrue(calls > 1);
+
+    /* Unencrypted packets: 4 length, 1 padding, 1 msg id, 4 channel id, then
+     * the SSH string holding this piece of the reply. Stitch them back into
+     * one buffer and compare that against what the agent handed over. */
+    idx = outBefore;
+    while (idx + LENGTH_SZ < harness.base.io.outSz) {
+        word32 pktSz = ReadUint32(harness.base.io.out + idx);
+
+        if (harness.base.io.out[idx + 5] == MSGID_CHANNEL_DATA) {
+            word32 dataSz = ReadUint32(harness.base.io.out + idx + 10);
+
+            AssertTrue(replySz + dataSz <= sizeof(reply));
+            WMEMCPY(reply + replySz, harness.base.io.out + idx + 14, dataSz);
+            replySz += dataSz;
+            dataPkts++;
+        }
+        idx += LENGTH_SZ + pktSz;
+    }
+
+    AssertTrue(dataPkts > 1);
+    AssertIntEQ(replySz, harness.agentIo.responseSz);
+    AssertIntEQ(WMEMCMP(reply, harness.agentIo.response, replySz), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* An unfinished reply is owed, not dropped: the relay answers WS_WANT_WRITE
+ * and leaves a request arriving behind it in the channel, untouched. */
+static void TestAgentRelayChannelHoldsReplyTail(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+    word32 writtenAfterFirst;
+
+    InitAgentRelayHarness(&harness);
+    /* Small enough that the canned reply cannot leave in one packet. */
+    harness.channel->peerMaxPacketSz = 5;
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x55);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    writtenAfterFirst = harness.agentIo.writtenSz;
+    AssertIntEQ(writtenAfterFirst, msgSz);
+
+    /* A second request lands while the tail is still owed. */
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    AssertIntEQ(harness.agentIo.writtenSz, writtenAfterFirst);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A send the socket would not take leaves the reply queued, and the relay
+ * still owes it even though the byte count was full. */
+static void TestAgentRelayChannelOwesQueuedReply(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x66);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+
+    /* The whole reply fits in one send, and the socket takes none of it. */
+    harness.base.io.blockAll = 1;
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(harness.base.ssh));
+
+    /* The retry must not call it done while the transport still holds it. */
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+
+    /* Once the socket takes it, the reply is no longer owed. */
+    harness.base.io.blockAll = 0;
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_OutputPending(harness.base.ssh), 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* The agent socket dropped since the last exchange, so the relay reconnects
+ * and sends the request again rather than ending the channel. */
+static void TestAgentRelayChannelReconnectsOnDeadSocket(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xAA);
+    harness.agentIo.failWriteCall = 1;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writeCalls, 2);
+    AssertIntEQ(harness.agentIo.writtenSz, msgSz);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A rekey in flight holds the reply rather than failing the channel. */
+static void TestAgentRelayChannelHoldsOnRekey(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xBB);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    harness.base.ssh->isKeying = 1;
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_REKEYING);
+    AssertIntEQ(harness.base.ssh->agent->error, WS_SUCCESS);
+
+    /* The rekey finished, so the held reply goes out. */
+    harness.base.ssh->isKeying = 0;
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* The agent socket is gone, so the connect the relay opens with fails and
+ * nothing is handed to the agent. */
+static void TestAgentRelayChannelSetupFailure(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    harness.agentIo.failSetup = 1;
+    harness.base.ssh->agent->state = AGENT_STATE_INIT;
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x88);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_AGENT_CXN_FAIL);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A channel that has already sent EOF cannot carry the reply. That is not a
+ * status the relay holds on, so it fails and records the error. */
+static void TestAgentRelayChannelSendFailureIsFatal(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x99);
+    harness.channel->eofTxd = 1;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_EOF);
+    AssertIntEQ(harness.base.ssh->agent->error, WS_EOF);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A read late in the loop can credit the channel window while no agent
+ * message completes, and that write is still owed. */
+static void TestAgentRelayChannelOwesAdjustFromRead(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xEE);
+    (void)msgSz;
+
+    /* Only the length prefix arrives, so no message can complete. */
+    AssertIntEQ(ChannelPutData(harness.channel, msg, LENGTH_SZ), WS_SUCCESS);
+
+    /* An empty window makes the read credit it, and the socket takes none. */
+    harness.channel->windowSz = 0;
+    harness.base.io.blockAll = 1;
+
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    AssertTrue(wolfSSH_OutputPending(harness.base.ssh));
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A flush inside the reply's own send advances the flush count, and the peer
+ * window is empty behind it. That is still a held reply, not a failure. */
+static void TestAgentRelayChannelFullWindowAfterFlush(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x6B);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+
+    /* The read credits the window and that adjust cannot go out yet, so it is
+     * still queued when the reply is sent. */
+    harness.channel->windowSz = 0;
+    harness.base.io.blockNext = 1;
+
+    /* No reply byte can be framed behind it. */
+    harness.channel->peerWindowSz = 0;
+
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WINDOW_FULL);
+    AssertIntEQ(harness.base.ssh->agent->error, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* The agent drops the connection partway through its reply, so the exchange
+ * fails and nothing of it reaches the channel. */
+static void TestAgentRelayChannelAgentReadFailure(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+    word32 outBefore;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x5A);
+    outBefore = harness.base.io.outSz;
+
+    /* The length prefix reads, the body does not. */
+    harness.agentIo.failReadCall = 2;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_AGENT_CXN_FAIL);
+    AssertIntEQ(harness.base.ssh->agent->error, WS_AGENT_CXN_FAIL);
+    AssertIntEQ(harness.base.io.outSz, outBefore);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* The channel is gone by the time the relay reads it, so the read's own error
+ * ends the exchange. */
+static void TestAgentRelayChannelReadFailure(void)
+{
+    AgentRelayHarness harness;
+
+    InitAgentRelayHarness(&harness);
+
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel + 0x4000), WS_INVALID_CHANID);
+    AssertIntEQ(harness.base.ssh->agent->error, WS_INVALID_CHANID);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+static int AgentRelayHighwaterCb(byte side, void* ctx)
+{
+    int* calls = (int*)ctx;
+
+    WOLFSSH_UNUSED(side);
+
+    (*calls)++;
+    return WS_FATAL_ERROR;
+}
+
+
+/* The highwater callback fails after the reply is on the wire, so its error
+ * arrives as the send's return. Holding the reply for a retry would hand the
+ * peer those bytes twice, so the channel fails instead. */
+static void TestAgentRelayChannelHighwaterErrorIsFatal(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+    int calls = 0;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xDD);
+
+    wolfSSH_SetHighwaterCb(harness.base.ctx, 1, AgentRelayHighwaterCb);
+    wolfSSH_SetHighwaterCtx(harness.base.ssh, &calls);
+    harness.base.ssh->highwaterMark = 1;
+    harness.base.ssh->txCount = 1;
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_AGENT_CXN_FAIL);
+    AssertIntEQ(calls, 1);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A partial request leaves no reply to send, but a window adjust the channel
+ * read deferred is still queued, so the relay reports the write as owed. */
+static void TestAgentRelayChannelOwesQueuedAdjust(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    byte probe[4];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xCC);
+    (void)msgSz;
+
+    /* Only the length prefix arrives, so nothing can go to the agent yet. */
+    AssertIntEQ(ChannelPutData(harness.channel, msg, LENGTH_SZ), WS_SUCCESS);
+
+    /* Something the transport would not take is already queued below. */
+    harness.base.io.blockAll = 1;
+    WMEMSET(probe, 0, sizeof(probe));
+    wolfSSH_ChannelIdSend(harness.base.ssh, harness.channel->channel,
+            probe, sizeof(probe));
+    AssertTrue(wolfSSH_OutputPending(harness.base.ssh));
+
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    AssertIntEQ(harness.agentIo.writtenSz, 0);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* A peer window that runs out mid-reply leaves the rest owed rather than
+ * ending the session with part of the reply already sent. */
+static void TestAgentRelayChannelHoldsOnFullWindow(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    word32 msgSz;
+
+    InitAgentRelayHarness(&harness);
+    /* Smaller than the canned reply, so the window empties partway. */
+    harness.channel->peerWindowSz = 5;
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0x77);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+
+    /* The window clamps this send rather than refusing it, so the reply is
+     * simply unfinished. */
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+    AssertIntEQ(harness.channel->peerWindowSz, 0);
+
+    /* Now the window is empty, and the relay says so rather than calling it
+     * a failure. */
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WINDOW_FULL);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+/* A rekey stops the send before anything queued below goes out, so the relay
+ * drives that itself and names the socket while it still holds bytes. */
+static void TestAgentRelayChannelFlushesUnderRekey(void)
+{
+    AgentRelayHarness harness;
+    byte msg[36];
+    byte probe[4];
+    word32 msgSz;
+    int calls = 0;
+    int ret;
+
+    InitAgentRelayHarness(&harness);
+    /* Small enough that the canned reply cannot leave in one packet. */
+    harness.channel->peerMaxPacketSz = 5;
+    msgSz = BuildAgentMessage(msg, sizeof(msg), 32, 0xDD);
+
+    AssertIntEQ(ChannelPutData(harness.channel, msg, msgSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+
+    /* The rekey starts with part of its own packet left queued below. */
+    harness.base.io.blockAll = 1;
+    WMEMSET(probe, 0, sizeof(probe));
+    wolfSSH_ChannelIdSend(harness.base.ssh, harness.channel->channel,
+            probe, sizeof(probe));
+    AssertTrue(wolfSSH_OutputPending(harness.base.ssh));
+    harness.base.ssh->isKeying = 1;
+
+    /* The socket holds those bytes, so that is what the caller waits on. */
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_WANT_WRITE);
+
+    /* It takes them now, so the queue drains and only the rekey is left. */
+    harness.base.io.blockAll = 0;
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_REKEYING);
+    AssertIntEQ(wolfSSH_OutputPending(harness.base.ssh), 0);
+
+    /* The rekey finished, so the rest of the reply goes out. */
+    harness.base.ssh->isKeying = 0;
+    ret = wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+            harness.channel->channel);
+    while (ret == WS_WANT_WRITE && ++calls < 64) {
+        ret = wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel);
+    }
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
+/* Shifting a held request down leaves a copy of it above the buffer's
+ * length, and a channel change scrubs that copy too. */
+static void TestAgentRelayChannelScrubsShiftedRequest(void)
+{
+    AgentRelayHarness harness;
+    WOLFSSH_CHANNEL* other;
+    WOLFSSH_BUFFER* relay;
+    byte first[36];
+    byte second[36];
+    byte third[36];
+    word32 firstSz;
+    word32 secondSz;
+    word32 thirdSz;
+    word32 i;
+
+    InitAgentRelayHarness(&harness);
+    firstSz = BuildAgentMessage(first, sizeof(first), 32, 0x11);
+    secondSz = BuildAgentMessage(second, sizeof(second), 32, 0x22);
+    thirdSz = BuildAgentMessage(third, sizeof(third), 32, 0x99);
+
+    /* A whole request and the head of the next, twice over: the first round
+     * grows the buffer, so the second round shifts inside it. */
+    AssertIntEQ(ChannelPutData(harness.channel, first, firstSz), WS_SUCCESS);
+    AssertIntEQ(ChannelPutData(harness.channel, second, secondSz - 12),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+
+    AssertIntEQ(ChannelPutData(harness.channel, second + secondSz - 12, 12),
+            WS_SUCCESS);
+    AssertIntEQ(ChannelPutData(harness.channel, third, thirdSz - 12),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh,
+                harness.channel->channel), WS_SUCCESS);
+    AssertIntEQ(harness.agentIo.writtenSz, firstSz + secondSz);
+
+    /* The conversation moves on, dropping the head held for this one. */
+    other = AgentRelayAddChannel(&harness, 12);
+    AssertIntEQ(ChannelPutData(other, first, firstSz), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_AGENT_RelayChannel(harness.base.ssh, other->channel),
+            WS_SUCCESS);
+
+    relay = harness.base.ssh->agent->relayBuf;
+    AssertNotNull(relay);
+    for (i = 0; i < relay->bufferSz; i++)
+        AssertTrue(relay->buffer[i] != 0x99);
+
+    FreeChannelOpenHarness(&harness.base);
+}
+
+
 #endif /* WOLFSSH_AGENT */
 #endif /* !NO_WOLFSSH_CLIENT */
 
@@ -4450,6 +5274,7 @@ static int RunRequestThroughFreeingCb(ChannelOpenHarness* harness,
 
     return DoReceive(harness->ssh);
 }
+
 
 /* The generic callback may free the channel it was called on. Nothing below
  * it reads the channel again after that, and the request ends there: the
@@ -16234,6 +17059,28 @@ int main(int argc, char** argv)
     TestAgentChannelNullAgentSendsOpenFail();
     TestAgentOpenWithAgentDisabledFails();
     TestAgentOpenAfterRequestSucceeds();
+    TestAgentRelayChannelReassemblesFragmentedRequest();
+    TestAgentRelayChannelKeepsTrailingBytes();
+    TestAgentRelayChannelDrainsOversizeBacklog();
+    TestAgentRelayChannelResetsOnChannelChange();
+    TestAgentRelayChannelRejectsOversizeLength();
+    TestAgentRelayChannelRejectsZeroLength();
+    TestAgentRelayChannelReplyReachesChannel();
+    TestAgentRelayChannelHoldsReplyTail();
+    TestAgentRelayChannelOwesQueuedReply();
+    TestAgentRelayChannelOwesQueuedAdjust();
+    TestAgentRelayChannelOwesAdjustFromRead();
+    TestAgentRelayChannelHighwaterErrorIsFatal();
+    TestAgentRelayChannelFullWindowAfterFlush();
+    TestAgentRelayChannelAgentReadFailure();
+    TestAgentRelayChannelReadFailure();
+    TestAgentRelayChannelHoldsOnFullWindow();
+    TestAgentRelayChannelSetupFailure();
+    TestAgentRelayChannelSendFailureIsFatal();
+    TestAgentRelayChannelReconnectsOnDeadSocket();
+    TestAgentRelayChannelHoldsOnRekey();
+    TestAgentRelayChannelFlushesUnderRekey();
+    TestAgentRelayChannelScrubsShiftedRequest();
 #endif
 #endif
 #if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_SERVER)
