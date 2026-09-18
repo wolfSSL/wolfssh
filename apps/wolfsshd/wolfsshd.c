@@ -2772,6 +2772,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     int   wantWrite  = 0;
     int   peerConnected = 1;
     int   stdoutEmpty = 0;
+    int   stderrEmpty = 0;
     int   ptyReq = 0;
     int   childInSz = 0;  /* Bytes read off the channel into channelBuffer
                            * that the child has yet to take. The read is
@@ -3121,18 +3122,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
         /* Watch the child's output only on a pass that would read it. A held
          * backlog skips those reads, and an exited child's pipe is always
-         * ready, so watching it then spins. */
+         * ready, so watching it then spins. A pipe that has reported EOF
+         * stays ready for the same reason: drop it once it has. */
         if (!backlog.len) {
             if (!ptyReq || forcedCmd) {
-                FD_SET(stdoutPipe[0], &readFds);
-                if (stdoutPipe[0] > maxFd)
-                    maxFd = stdoutPipe[0];
+                if (!stdoutEmpty) {
+                    FD_SET(stdoutPipe[0], &readFds);
+                    if (stdoutPipe[0] > maxFd)
+                        maxFd = stdoutPipe[0];
+                }
 
-                FD_SET(stderrPipe[0], &readFds);
-                if (stderrPipe[0] > maxFd)
-                    maxFd = stderrPipe[0];
+                if (!stderrEmpty) {
+                    FD_SET(stderrPipe[0], &readFds);
+                    if (stderrPipe[0] > maxFd)
+                        maxFd = stderrPipe[0];
+                }
             }
-            else {
+            else if (!stdoutEmpty) {
                 FD_SET(childFd, &readFds);
                 if (childFd > maxFd)
                     maxFd = childFd;
@@ -3161,6 +3167,14 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
             else if (pending && childInIdx == childInSz && !backlog.len) {
                 /* the drain needs the child caught up and no backlog held */
+                noWait.tv_sec = 0;
+                noWait.tv_usec = 0;
+                timeout = &noWait;
+            }
+            else if (!ChildRunning && stdoutEmpty && !backlog.len) {
+                /* The child is gone, its output is drained and nothing is
+                 * held: the foot of the loop ends the session this pass, so
+                 * do not wait on a peer that has nothing left to send. */
                 noWait.tv_sec = 0;
                 noWait.tv_usec = 0;
                 timeout = &noWait;
@@ -3361,12 +3375,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (FD_ISSET(stderrPipe[0], &readFds)) {
                 cnt_r = (int)read(stderrPipe[0], shellBuffer,
                     sizeof shellBuffer);
-                /* This read will return 0 on EOF */
-                if (cnt_r <= 0) {
+                /* errno only speaks for a -1 return. A 0 is EOF and leaves
+                 * it alone, so testing it there reads whatever the last
+                 * call left -- an EINTR from the child's SIGCHLD ends the
+                 * loop with the peer's output still queued. */
+                if (cnt_r < 0) {
                     int err = errno;
-                    if (err != EAGAIN && err != 0) {
+                    if (err != EINTR && err != EAGAIN
+                            && err != EWOULDBLOCK) {
                         break;
                     }
+                }
+                else if (cnt_r == 0) {
+                    stderrEmpty = 1;
                 }
                 else {
                     if (cnt_r > 0) {
