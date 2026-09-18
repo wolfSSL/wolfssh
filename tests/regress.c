@@ -14188,7 +14188,11 @@ static void TestKexInitEmptyName(void)
     }
 }
 
-#ifndef NO_WOLFSSH_CLIENT
+/* EXT_INFO is transport-generic, so a server session parses it too, RFC 8308
+ * section 2.3. These cases call DoExtInfo() directly and never reach the
+ * message filter, so they run in a client-only or a server-only build. The
+ * client endpoint is just what records server-sig-algs. */
+
 /* Run one EXT_INFO carrying a single server-sig-algs extension, reporting how
  * many peer signature algorithms it left recorded. When peerSigIdOut is given,
  * the recorded IDs are copied out before the ssh is freed, up to
@@ -14432,7 +14436,6 @@ static void TestExtInfoSigAlgsReplace(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
-#endif /* !NO_WOLFSSH_CLIENT */
 
 /* The two KEXINIT language name-lists were skipped with an unchecked
  * begin += skipSz, so a bogus length could wrap begin back into the payload
@@ -16444,11 +16447,9 @@ int main(int argc, char** argv)
     TestKexInitReservedNonZeroRejected();
     TestKexInitNameListCaps();
     TestKexInitEmptyName();
-#ifndef NO_WOLFSSH_CLIENT
     TestExtInfoEmptyName();
     TestExtInfoNameListCaps();
     TestExtInfoSigAlgsReplace();
-#endif
     TestKexInitLanguageLengthOverflow();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
