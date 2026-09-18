@@ -2868,6 +2868,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             return WS_FATAL_ERROR;
         }
     }
+    else {
+        /* A pty session has no stderr pipe for the loop to wait on. */
+        stderrEmpty = 1;
+    }
 
     /* Before the fork, so a child that exits at once clears ChildRunning */
     signal(SIGCHLD, ChildSig);
@@ -3090,7 +3094,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     (void)SHELL_SetNonBlocking((!ptyReq || forcedCmd) ?
             stdinPipe[1] : childFd);
 
-    while (ChildRunning || backlog.len || !stdoutEmpty || peerConnected) {
+    /* The pipes hold the loop through peerConnected, which the foot clears
+     * only at EOF on both: a background process holding either write end
+     * keeps the session open, as OpenSSH does. A closed channel clears it
+     * too, and then nothing read from them can be sent. */
+    while (ChildRunning || backlog.len || peerConnected) {
         byte tmp[2];
         fd_set readFds;
         fd_set writeFds;
@@ -3184,7 +3192,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 noWait.tv_usec = 0;
                 timeout = &noWait;
             }
-            else if (stdoutEmpty && !backlog.len) {
+            else if (stdoutEmpty && stderrEmpty && !backlog.len) {
                 /* The child's output is drained and nothing is held. With the
                  * child gone the foot of the loop ends the session this pass,
                  * so do not wait on a peer that has nothing left to send.
@@ -3541,7 +3549,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
-        if (!ChildRunning && peerConnected && stdoutEmpty && !backlog.len) {
+        if (!ChildRunning && peerConnected && stdoutEmpty && stderrEmpty
+                && !backlog.len) {
             peerConnected = 0;
         }
     }
