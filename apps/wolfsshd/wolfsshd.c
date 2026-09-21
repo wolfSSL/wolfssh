@@ -109,6 +109,11 @@
     #define WOLFSSHD_TIMEOUT 1
 #endif
 
+/* The umask the daemon holds, and so the one every session inherits. */
+#ifndef WOLFSSHD_DEFAULT_UMASK
+    #define WOLFSSHD_DEFAULT_UMASK 022
+#endif
+
 #ifdef EXAMPLE_BUFFER_SZ
     #warning use WOLFSSHD_SHELL_BUFFER_SZ instead of EXAMPLE_BUFFER_SZ
     #define WOLFSSHD_SHELL_BUFFER_SZ EXAMPLE_BUFFER_SZ
@@ -4556,7 +4561,11 @@ static int StartSSHD(int argc, char** argv)
                 exit(EXIT_SUCCESS);
             }
 
-            umask(0);
+            /* Not umask(0): every per-connection child inherits this, and
+             * nothing sets one later, so a cleared mask reaches the user's
+             * shell and the SCP receive path. Files created there came out
+             * 0666 and directories 0777. */
+            umask(WOLFSSHD_DEFAULT_UMASK);
             if (chdir("/") < 0) {
                 ret = WS_FATAL_ERROR;
             }
