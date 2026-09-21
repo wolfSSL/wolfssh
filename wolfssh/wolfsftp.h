@@ -354,6 +354,10 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
     WOLFSSH_API int wolfSSH_TestSftpDoName(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestSftpGetHandle(WOLFSSH* ssh, byte* handle,
             word32* handleSz);
+    WOLFSSH_API int wolfSSH_TestSftpSetAttributes(byte* buf, word32 bufSz,
+            WS_SFTP_FILEATRB* atr);
+    WOLFSSH_API int wolfSSH_TestSftpParseAttributes(byte* buf, word32 bufSz,
+            WS_SFTP_FILEATRB* atr, word32* idx);
     WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
     WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
     #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)

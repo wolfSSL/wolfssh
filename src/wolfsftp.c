@@ -1142,9 +1142,9 @@ static int SFTP_AttributesSz(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr)
 
     /* check if extended attributes are present */
     if (atr->flags & WOLFSSH_FILEATRB_EXT) {
+        /* @TODO handle extended attributes. Only the count is sized, and
+         * SFTP_SetAttributes writes it as zero to match. */
         sz += UINT32_SZ;
-
-        /* @TODO handle extended attributes */
     }
 
     return sz;
@@ -1191,12 +1191,41 @@ static int SFTP_SetAttributes(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     /* check if extended attributes are present */
     if (atr->flags & WOLFSSH_FILEATRB_EXT) {
-        /* @TODO handle attribute extensions */
-        c32toa(atr->extCount, buf + idx);
+        /* @TODO handle attribute extensions. Until they are written, the
+         * count goes out as zero: atr->extCount would promise records that
+         * follow, and the peer's decoder reads past the end looking for
+         * them. */
+        c32toa(0, buf + idx); idx += UINT32_SZ;
     }
 
     return WS_SUCCESS;
 }
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Encode atr with the real encoder for unit testing. Returns the number of
+ * bytes written, or a negative error. */
+int wolfSSH_TestSftpSetAttributes(byte* buf, word32 bufSz,
+        WS_SFTP_FILEATRB* atr)
+{
+    int sz;
+
+    if (buf == NULL || atr == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    sz = SFTP_AttributesSz(NULL, atr);
+    if (sz < 0 || (word32)sz > bufSz) {
+        return WS_BUFFER_E;
+    }
+
+    if (SFTP_SetAttributes(NULL, buf, bufSz, atr) != WS_SUCCESS) {
+        return WS_FATAL_ERROR;
+    }
+
+    return sz;
+}
+#endif
 
 
 static INLINE int SFTP_GetSz(byte* buf, word32* sz,
@@ -7092,6 +7121,20 @@ int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr, byte* buf,
     WOLFSSH_UNUSED(ssh);
     return WS_SUCCESS;
 }
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Decode attributes with the real parser for unit testing. */
+int wolfSSH_TestSftpParseAttributes(byte* buf, word32 bufSz,
+        WS_SFTP_FILEATRB* atr, word32* idx)
+{
+    if (buf == NULL || atr == NULL || idx == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    return SFTP_ParseAttributes_buffer(NULL, atr, buf, idx, bufSz);
+}
+#endif
 
 
 #if 0

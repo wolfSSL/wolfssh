@@ -11879,6 +11879,84 @@ static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
+/* fenrir 2479: the attribute encoder and decoder must agree. Extensions are
+ * unimplemented, so an encode of WOLFSSH_FILEATRB_EXT writes a zero count and
+ * the peer's decoder consumes the block instead of reading past it looking for
+ * records that were never written. */
+static void TestSftpAttributesRoundTrip(void)
+{
+    static const struct {
+        word32 flags;
+        word32 sz;
+    } cases[] = {
+        { 0, 4 },
+        { WOLFSSH_FILEATRB_PERM, 8 },
+        { WOLFSSH_FILEATRB_SIZE | WOLFSSH_FILEATRB_UIDGID
+            | WOLFSSH_FILEATRB_PERM | WOLFSSH_FILEATRB_TIME, 32 },
+        { WOLFSSH_FILEATRB_EXT, 8 },
+        { WOLFSSH_FILEATRB_PERM | WOLFSSH_FILEATRB_EXT, 12 },
+        { WOLFSSH_FILEATRB_SIZE | WOLFSSH_FILEATRB_UIDGID
+            | WOLFSSH_FILEATRB_PERM | WOLFSSH_FILEATRB_TIME
+            | WOLFSSH_FILEATRB_EXT, 36 },
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(cases) / sizeof(cases[0])); i++) {
+        WS_SFTP_FILEATRB in, out;
+        byte   buf[64];
+        word32 idx = 0;
+        int    encSz;
+
+        WMEMSET(&in, 0, sizeof(in));
+        WMEMSET(&out, 0, sizeof(out));
+        WMEMSET(buf, 0xEE, sizeof(buf));
+
+        in.flags = cases[i].flags;
+        in.sz[0] = 0x44332211;
+        in.sz[1] = 0x88776655;
+        in.uid   = 1000;
+        in.gid   = 1001;
+        in.per   = 0640;
+        in.atime = 0x5A5A5A5A;
+        in.mtime = 0x6B6B6B6B;
+        /* a caller that set the flag may well have set a count too */
+        in.extCount = 3;
+
+        encSz = wolfSSH_TestSftpSetAttributes(buf, (word32)sizeof(buf), &in);
+        AssertIntEQ(encSz, (int)cases[i].sz);
+
+        /* the encoder writes exactly the size it advertises */
+        AssertTrue(encSz < (int)sizeof(buf));
+        AssertIntEQ(buf[encSz], 0xEE);
+
+        /* the decoder consumes exactly that, over a buffer bounded to it */
+        AssertIntEQ(wolfSSH_TestSftpParseAttributes(buf, (word32)encSz, &out,
+                    &idx), WS_SUCCESS);
+        AssertIntEQ((int)idx, encSz);
+
+        AssertIntEQ((int)out.flags, (int)in.flags);
+        if (in.flags & WOLFSSH_FILEATRB_SIZE) {
+            AssertIntEQ((int)out.sz[0], (int)in.sz[0]);
+            AssertIntEQ((int)out.sz[1], (int)in.sz[1]);
+        }
+        if (in.flags & WOLFSSH_FILEATRB_UIDGID) {
+            AssertIntEQ((int)out.uid, (int)in.uid);
+            AssertIntEQ((int)out.gid, (int)in.gid);
+        }
+        if (in.flags & WOLFSSH_FILEATRB_PERM) {
+            AssertIntEQ((int)out.per, (int)in.per);
+        }
+        if (in.flags & WOLFSSH_FILEATRB_TIME) {
+            AssertIntEQ((int)out.atime, (int)in.atime);
+            AssertIntEQ((int)out.mtime, (int)in.mtime);
+        }
+        /* no extension records are written, so none come back */
+        AssertIntEQ((int)out.extCount, 0);
+        AssertNull(out.exts);
+    }
+}
+
 #endif /* WOLFSSH_SFTP */
 
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
@@ -16447,6 +16525,8 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_SFTP
     TestOct2DecRejectsInvalidNonLeadingDigit();
     TestSftpBufferSendPendingOutput();
+    /* the attribute encoder and decoder agree, extensions included */
+    TestSftpAttributesRoundTrip();
     #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
             !defined(NO_FILESYSTEM)
     /* fenrir 4232/4343/4346/4349: forged SFTP file handles must be rejected */
