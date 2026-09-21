@@ -7578,6 +7578,120 @@ static void test_wolfSSH_SetAlgoList(void)
 }
 
 
+/* Is name an exact entry in a comma separated algorithm list? Substring
+ * matching would confuse hmac-sha1 with hmac-sha1-96. */
+static int AlgoListHas(const char* list, const char* name)
+{
+    const char* p = list;
+    word32 nameSz = (word32)WSTRLEN(name);
+
+    if (list == NULL) {
+        return 0;
+    }
+
+    while (*p != '\0') {
+        const char* end = WSTRCHR(p, ',');
+        word32 sz = (end != NULL) ? (word32)(end - p) : (word32)WSTRLEN(p);
+
+        if (sz == nameSz && WSTRNCMP(p, name, nameSz) == 0) {
+            return 1;
+        }
+        if (end == NULL) {
+            break;
+        }
+        p = end + 1;
+    }
+
+    return 0;
+}
+
+
+/* fenrir 13961: the canned default lists leave SHA-1 and AES-CBC out unless
+ * the build opts back in. Nothing asserted on their contents, so an inverted
+ * guard or a stray list edit could put a weak algorithm back in the default
+ * proposal without failing a test. Check what the defaults actually hold. */
+static void test_wolfSSH_DefaultAlgoListsExcludeWeak(void)
+{
+    WOLFSSH_CTX* ctx;
+    const char* kex;
+    const char* key;
+    const char* cipher;
+    const char* mac;
+
+    /* A client context: the server derives its key lists from the host keys
+     * it has loaded, so they are still null on a fresh one. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    kex = wolfSSH_CTX_GetAlgoListKex(ctx);
+    key = wolfSSH_CTX_GetAlgoListKey(ctx);
+    cipher = wolfSSH_CTX_GetAlgoListCipher(ctx);
+    mac = wolfSSH_CTX_GetAlgoListMac(ctx);
+    AssertNotNull(kex);
+    AssertNotNull(key);
+    AssertNotNull(cipher);
+    AssertNotNull(mac);
+
+    /* The lists are not empty: a guard that removed everything would other-
+     * wise pass every absence check below. */
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
+    AssertIntEQ(AlgoListHas(mac, "hmac-sha2-256"), 1);
+#endif
+#ifndef WOLFSSH_NO_AES_CTR
+    AssertIntEQ(AlgoListHas(cipher, "aes256-ctr"), 1);
+#endif
+#ifndef WOLFSSH_NO_AES_GCM
+    AssertIntEQ(AlgoListHas(cipher, "aes256-gcm@openssh.com"), 1);
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+    AssertIntEQ(AlgoListHas(kex, "diffie-hellman-group14-sha256"), 1);
+#endif
+
+    /* SHA-1 KEX, host key and MAC: in only under the opt-in macro. */
+#ifdef WOLFSSH_NO_SHA1_SOFT_DISABLE
+    #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
+    AssertIntEQ(AlgoListHas(kex, "diffie-hellman-group14-sha1"), 1);
+    #endif
+    #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    AssertIntEQ(AlgoListHas(key, "ssh-rsa"), 1);
+    #endif
+    #ifndef WOLFSSH_NO_HMAC_SHA1
+    AssertIntEQ(AlgoListHas(mac, "hmac-sha1"), 1);
+    #endif
+#else
+    AssertIntEQ(AlgoListHas(kex, "diffie-hellman-group14-sha1"), 0);
+    AssertIntEQ(AlgoListHas(kex, "diffie-hellman-group1-sha1"), 0);
+    AssertIntEQ(AlgoListHas(key, "ssh-rsa"), 0);
+    AssertIntEQ(AlgoListHas(key, "x509v3-ssh-rsa"), 0);
+    AssertIntEQ(AlgoListHas(mac, "hmac-sha1"), 0);
+    AssertIntEQ(AlgoListHas(mac, "hmac-sha1-96"), 0);
+#endif
+
+    /* AES-CBC: the same, under its own macro. */
+#if defined(WOLFSSH_NO_AES_CBC_SOFT_DISABLE) && !defined(WOLFSSH_NO_AES_CBC)
+    AssertIntEQ(AlgoListHas(cipher, "aes256-cbc"), 1);
+#else
+    AssertIntEQ(AlgoListHas(cipher, "aes256-cbc"), 0);
+    AssertIntEQ(AlgoListHas(cipher, "aes192-cbc"), 0);
+    AssertIntEQ(AlgoListHas(cipher, "aes128-cbc"), 0);
+#endif
+
+    /* A fresh session inherits the context's policy, so the same holds. */
+    {
+        WOLFSSH* ssh = wolfSSH_new(ctx);
+
+        AssertNotNull(ssh);
+        AssertPtrEq(wolfSSH_GetAlgoListKex(ssh), kex);
+        AssertPtrEq(wolfSSH_GetAlgoListKey(ssh), key);
+        AssertPtrEq(wolfSSH_GetAlgoListCipher(ssh), cipher);
+        AssertPtrEq(wolfSSH_GetAlgoListMac(ssh), mac);
+        wolfSSH_free(ssh);
+    }
+
+    wolfSSH_CTX_free(ctx);
+}
+
+
 /* Exercise CheckAlgoList()'s rejection paths through the public setters. */
 static void test_wolfSSH_CheckAlgoList(void)
 {
@@ -8249,6 +8363,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_AlgoListKeyInSync();
     test_wolfSSH_SetAlgoList();
+    test_wolfSSH_DefaultAlgoListsExcludeWeak();
     test_wolfSSH_CheckAlgoList();
 #ifdef WOLFSSH_FWD
     test_wolfSSH_FwdRemote_badArgs();
