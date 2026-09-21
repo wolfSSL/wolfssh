@@ -1375,6 +1375,21 @@ static int CheckNotInMatch(const WOLFSSHD_CONFIG* conf, const char* option)
     return ret;
 }
 
+/* Returns the keyword a config option tag came from, for log messages. */
+static const char* OptionName(int opt)
+{
+    int idx;
+
+    for (idx = 0; idx < NUM_OPTIONS; ++idx) {
+        if (options[idx].tag == opt) {
+            return options[idx].name;
+        }
+    }
+
+    return "<unknown>";
+}
+
+
 /* returns WS_SUCCESS on success */
 /* NOLINTNEXTLINE(misc-no-recursion): bounded by WOLFSSHD_MAX_INCLUDE_DEPTH */
 static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
@@ -1404,28 +1419,21 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
         case OPT_PERMIT_EMPTY_PW:
             ret = HandlePermitEmptyPw(*conf, value);
             break;
+        /* @TODO Recognized for sshd_config compatibility, but nothing reads
+         * them. An unknown keyword is fatal, so accepting these in silence
+         * reads as support for a setting that is not enforced. Warn and carry
+         * on: rejecting them would turn every config copied from OpenSSH into
+         * a startup failure. */
         case OPT_SUBSYSTEM:
-            /* TODO */
-            ret = WS_SUCCESS;
-            break;
         case OPT_CHALLENGE_RESPONSE_AUTH:
-            /* TODO */
-            ret = WS_SUCCESS;
-            break;
         case OPT_USE_PAM:
-            /* TODO */
-            ret = WS_SUCCESS;
-            break;
         case OPT_X11_FORWARDING:
-            /* TODO */
-            ret = WS_SUCCESS;
-            break;
         case OPT_PRINT_MOTD:
-            /* TODO */
-            ret = WS_SUCCESS;
-            break;
         case OPT_ACCEPT_ENV:
-            /* TODO */
+        case OPT_USE_DNS:
+            wolfSSH_Log(WS_LOG_WARN,
+                "[SSHD] %s is recognized but not implemented, it has no "
+                "effect", OptionName(opt));
             ret = WS_SUCCESS;
             break;
         case OPT_PROTOCOL:
@@ -1478,10 +1486,6 @@ static int HandleConfigOption(WOLFSSHD_CONFIG** conf, int opt,
             break;
         case OPT_PERMIT_ROOT:
             ret = HandlePermitRoot(*conf, value);
-            break;
-        case OPT_USE_DNS:
-            /* TODO */
-            ret = WS_SUCCESS;
             break;
         case OPT_INCLUDE:
             ret = HandleInclude(*conf, value, depth);
