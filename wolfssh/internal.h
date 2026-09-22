@@ -529,8 +529,12 @@ enum {
     ID_CURVE25519_SHA256,
     ID_CURVE25519_SHA256_LIBSSH,
 #endif
-    ID_EXTINFO_S, /* Pseudo-KEX to indicate server extensions. */
-    ID_EXTINFO_C, /* Pseudo-KEX to indicate client extensions. */
+    ID_EXT_INFO_S, /* Pseudo-KEX to indicate server extensions. */
+    ID_EXT_INFO_C, /* Pseudo-KEX to indicate client extensions. */
+    ID_EXT_STRICT_KEX_S, /* Pseudo-KEX to indicate server strict KEX. */
+    ID_EXT_STRICT_KEX_C, /* Pseudo-KEX to indicate client strict KEX. */
+    ID_EXT_PRE_STRICT_KEX_S, /* OpenSSH -v00 spelling of the server's. */
+    ID_EXT_PRE_STRICT_KEX_C, /* OpenSSH -v00 spelling of the client's. */
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -947,6 +951,7 @@ struct WOLFSSH_CTX {
     word32 windowSz;
     word32 maxPacketSz;
     word32 maxAuthAttempts;           /* server cap on failed userauth */
+    byte sendStrictKex;               /* offer the strict KEX marker */
     byte side;                        /* client or server */
     byte showBanner;
     byte appChannels;                 /* app drives channels, see ssh.h */
@@ -1350,6 +1355,9 @@ struct WOLFSSH {
     byte userAuthPkDone;
     byte sendExtInfo;
     byte extInfoSent; /* track if the ext info has already been sent */
+    byte sendStrictKex; /* offer strict KEX on initial KEXINIT */
+    byte useStrictKex; /* strict KEX negotiated for this session */
+    byte initialKexDone; /* peer initial KEX finished (NEWKEYS arrived) */
     byte* peerSigId;
     word32 peerSigIdSz;
 

@@ -7623,6 +7623,54 @@ static void test_wolfSSH_RealPath(void) { ; }
 #endif
 
 
+/* Strict KEX CTX control and negotiated-state accessor. */
+static void test_wolfSSH_StrictKex(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    AssertIntEQ(wolfSSH_CTX_SetStrictKex(NULL, 1), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_CTX_GetStrictKex(NULL), WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_GetStrictKexNegotiated(NULL), WS_SSH_NULL_E);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    /* Default-enabled: a caller has to ask to be vulnerable. */
+    AssertIntEQ(wolfSSH_CTX_GetStrictKex(ctx), 1);
+
+    AssertIntEQ(wolfSSH_CTX_SetStrictKex(ctx, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_GetStrictKex(ctx), 0);
+
+    /* Any non-zero enables, and the getter normalizes to 1. */
+    AssertIntEQ(wolfSSH_CTX_SetStrictKex(ctx, 200), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_GetStrictKex(ctx), 1);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(ssh->sendStrictKex, 1);
+
+    /* Nothing has been negotiated yet. */
+    AssertIntEQ(wolfSSH_GetStrictKexNegotiated(ssh), 0);
+    AssertIntEQ(ssh->initialKexDone, 0);
+
+    /* A CTX change leaves existing sessions alone. */
+    AssertIntEQ(wolfSSH_CTX_SetStrictKex(ctx, 0), WS_SUCCESS);
+    AssertIntEQ(ssh->sendStrictKex, 1);
+
+    wolfSSH_free(ssh);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(ssh->sendStrictKex, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    printf("\tstrict KEX runtime controls.\n");
+}
+
+
 static void test_wolfSSH_SetMaxAuthAttempts(void)
 {
     WOLFSSH_CTX* ctx;
@@ -8664,6 +8712,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey_sshNoComment();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetMaxAuthAttempts();
+    test_wolfSSH_StrictKex();
     test_wolfSSH_AlgoListKeyInSync();
     test_wolfSSH_SetAlgoList();
     test_wolfSSH_DefaultAlgoListsExcludeWeak();

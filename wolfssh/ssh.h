@@ -210,6 +210,15 @@ WOLFSSH_API const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
+/* Strict KEX (Terrapin mitigation, CVE-2023-48795), enabled by default.
+ * wolfSSH_new() copies the CTX setting, so a change affects only later
+ * sessions. The CTX calls return WS_BAD_ARGUMENT on NULL, else the getter
+ * returns 1 or 0. wolfSSH_GetStrictKexNegotiated() returns 1 if the
+ * session negotiated strict KEX, else 0, or WS_SSH_NULL_E on NULL. */
+WOLFSSH_API int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable);
+WOLFSSH_API int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx);
+WOLFSSH_API int wolfSSH_GetStrictKexNegotiated(WOLFSSH* ssh);
+
 WOLFSSH_API const char* wolfSSH_QueryKex(word32* idx);
 WOLFSSH_API const char* wolfSSH_QueryKey(word32* idx);
 WOLFSSH_API const char* wolfSSH_QueryCipher(word32* idx);
@@ -966,6 +975,8 @@ WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
 /* Starts a key exchange. A clean start leaves ssh->error alone; only a
  * failure records its code there. */
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
+/* Returns WS_INVALID_STATE_E before the initial KEX completes when strict
+ * KEX is offered. */
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz);
 /* One disconnect ends the session, so a second call reports WS_DISCONNECT.
  * The exception is a disconnect of this side's own, left short by a
