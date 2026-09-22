@@ -3465,6 +3465,56 @@ int wolfSSH_CheckAlgoName(const char* name)
 }
 
 
+int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ctx->sendStrictKex = enable ? 1 : 0;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ret = ctx->sendStrictKex ? 1 : 0;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_SetStrictKex(WOLFSSH* ssh, byte enable)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ssh->sendStrictKex = enable ? 1 : 0;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_GetStrictKex(WOLFSSH* ssh)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ret = ssh->sendStrictKex ? 1 : 0;
+    }
+
+    return ret;
+}
+
+
 const char* wolfSSH_QueryKex(word32* idx)
 {
     return NameByIndexType(TYPE_KEX, idx);
@@ -5699,7 +5749,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                     break;
             #endif /* !WOLFSSH_NO_DH */
 
-                case ID_EXTINFO_S:
+                case ID_EXT_INFO_S:
                    #if defined(__CCRX__)
                     ret = WSNPRINTF0(str, strSz, "Server extensions KEX");
                    #else
@@ -5707,7 +5757,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                    #endif
                     break;
 
-                case ID_EXTINFO_C:
+                case ID_EXT_INFO_C:
                    #if defined(__CCRX__)
                     ret = WSNPRINTF0(str, strSz, "Client extensions KEX");
                    #else

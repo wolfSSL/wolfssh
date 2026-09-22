@@ -766,6 +766,40 @@ Notes:
   `-DWC_SIG_MIN_HASH_TYPE=WC_HASH_TYPE_SHA`. This re-enables a deprecated hash;
   prefer ECDSA unless RSA is mandated.
 
+STRICT KEY EXCHANGE
+===================
+
+wolfSSH implements strict key exchange, the mitigation for the Terrapin attack
+(CVE-2023-48795) described in `draft-miller-sshm-strict-kex`. It is negotiated
+in the initial KEXINIT and enabled whenever the peer asks for it too, so no
+configuration is needed for the usual case.
+
+With strict KEX in force, wolfSSH accepts nothing but the key exchange itself
+and SSH_MSG_DISCONNECT until the peer's SSH_MSG_NEWKEYS arrives, and it zeroes
+the packet sequence numbers at every SSH_MSG_NEWKEYS. Together those stop an
+attacker splicing packets into the unauthenticated initial exchange to shift
+the sequence numbers. A message that arrives out of turn ends the connection
+with SSH_MSG_DISCONNECT rather than being ignored.
+
+Note that wolfSSH offers neither `chacha20-poly1305@openssh.com` nor the
+`*-etm@openssh.com` MACs, the modes whose nonce comes from the sequence
+number. The full silent-truncation form of Terrapin needs one of those, so it
+was never reachable here; strict KEX closes the sequence-number shift the
+attack is built on.
+
+A caller that has to interoperate with a peer that mishandles the marker can
+turn it off, per context or per session:
+
+    wolfSSH_CTX_SetStrictKex(ctx, 0);   /* seeds every session from ctx */
+    wolfSSH_SetStrictKex(ssh, 0);       /* this session only */
+
+Only the initial KEXINIT carries the marker, and only that exchange decides
+whether the mitigation is on, so the session call has to be made before the
+connection starts. A rekey neither re-advertises the marker nor revisits the
+decision, and a change made to a session already keying is ignored for the
+life of that session. The context call is the one that affects anything
+later: it seeds the sessions made after it.
+
 WOLFSSH APPLICATIONS
 ====================
 
