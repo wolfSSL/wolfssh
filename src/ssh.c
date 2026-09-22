@@ -1819,6 +1819,7 @@ int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out, word32 outSz)
 int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 {
     byte scratch[128];
+    byte keyed;
 
     WOLFSSH_UNUSED(buf);
     WOLFSSH_UNUSED(bufSz);
@@ -1828,6 +1829,14 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
 
     if (SendAfterDisconnect(ssh))
         return WS_FATAL_ERROR;
+
+    /* A strict KEX peer ends the connection on an IGNORE during the
+     * initial KEX. */
+    keyed = (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) ?
+            (ssh->acceptState >= ACCEPT_KEYED) :
+            (ssh->connectState >= CONNECT_KEYED);
+    if (ssh->sendStrictKex && !keyed)
+        return WS_INVALID_STATE_E;
 
     WMEMSET(scratch, 0, sizeof(scratch));
 
@@ -3459,6 +3468,43 @@ int wolfSSH_CheckAlgoName(const char* name)
         if (NameToId(name, nameSz) != ID_UNKNOWN) {
             ret = WS_SUCCESS;
         }
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ctx->sendStrictKex = (enable != 0);
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ret = ctx->sendStrictKex;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_GetStrictKexNegotiated(WOLFSSH* ssh)
+{
+    int ret = WS_SSH_NULL_E;
+
+    if (ssh) {
+        ret = ssh->useStrictKex;
     }
 
     return ret;
@@ -5705,7 +5751,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                     break;
             #endif /* !WOLFSSH_NO_DH */
 
-                case ID_EXTINFO_S:
+                case ID_EXT_INFO_S:
                    #if defined(__CCRX__)
                     ret = WSNPRINTF0(str, strSz, "Server extensions KEX");
                    #else
@@ -5713,7 +5759,7 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                    #endif
                     break;
 
-                case ID_EXTINFO_C:
+                case ID_EXT_INFO_C:
                    #if defined(__CCRX__)
                     ret = WSNPRINTF0(str, strSz, "Client extensions KEX");
                    #else

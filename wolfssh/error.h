@@ -132,7 +132,7 @@ enum WS_ErrorCodes {
     WS_KEY_CHECK_VAL_E      = -1091, /* OpenSSH key check value fail */
     WS_KEY_FORMAT_E         = -1092, /* OpenSSH key format fail */
     WS_SFTP_NOT_FILE_E      = -1093, /* Not a regular file */
-    WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message not allowed before userauth */
+    WS_MSGID_NOT_ALLOWED_E  = -1094, /* Message ID not allowed at this point */
     WS_ED25519_E            = -1095, /* Ed25519 failure */
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
     WS_KDF_E                = -1097, /* KDF error*/
