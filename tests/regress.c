@@ -742,6 +742,8 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 /* The same splice aimed the other way: the packet goes in ahead of the
  * client's NEWKEYS, so the server is the one asked to accept it. */
 #define REGRESS_MUTATE_TERRAPIN_C2S 9
+/* The splice ahead of the server's KEXINIT, before the allow list arms. */
+#define REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT 10
 
 /* 4 (len) + 1 (padLen) + 1 (msgId) + 4 (empty string payload) + 6 (pad) */
 #define REGRESS_INJECT_PACKET_SZ 16U
@@ -1353,49 +1355,51 @@ static int FindPlainPacketOffset(const byte* packet, word32 packetSz,
  * cipher state, so a deletion breaks decryption outright. The injection
  * alone is what these tests exercise, and refusing it is what the
  * mitigation has to do. */
-static void TerrapinInjectBeforeNewKeys(DuplexEndpoint* endpoint,
+static void TerrapinInject(DuplexEndpoint* endpoint,
         const byte** output, word32* outputSz)
 {
     KexReplyMutator* mutator = endpoint->mutator;
     byte injectPkt[REGRESS_INJECT_MAX_SZ];
     word32 injectPktSz;
-    word32 newKeysOffset;
+    word32 anchorOffset;
+    byte anchorMsgId = (mutator->mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT)
+            ? MSGID_KEXINIT : MSGID_NEWKEYS;
 
     if (mutator->injectedPackets > 0) {
         return;
     }
-    if (!FindPlainPacketOffset(*output, *outputSz, MSGID_NEWKEYS,
-            &newKeysOffset)) {
+    if (!FindPlainPacketOffset(*output, *outputSz, anchorMsgId,
+            &anchorOffset)) {
         return;
     }
 
     injectPktSz = BuildInjectedPacket(injectPkt, (word32)sizeof(injectPkt),
             mutator->injectMsgId);
 
-    /* Everything ahead of NEWKEYS passes through untouched, then the forged
-     * packet; the caller forwards the NEWKEYS tail. */
-    if (newKeysOffset > 0) {
+    /* Pass through what precedes the anchor, then the forged packet; the
+     * caller forwards the rest. */
+    if (anchorOffset > 0) {
         AssertIntEQ(QueueAppend(&endpoint->peer->inbound, *output,
-                newKeysOffset), WS_SUCCESS);
+                anchorOffset), WS_SUCCESS);
     }
     AssertIntEQ(QueueAppend(&endpoint->peer->inbound, injectPkt,
             injectPktSz), WS_SUCCESS);
 
     mutator->injectedPackets++;
-    *output += newKeysOffset;
-    *outputSz -= newKeysOffset;
+    *output += anchorOffset;
+    *outputSz -= anchorOffset;
 }
 
-/* Both splice a packet into the initial KEX, they only differ in which
- * side's NEWKEYS they go in ahead of. */
+/* Each splices a packet into the initial KEX ahead of a different one. */
 static int IsTerrapinMode(byte mode)
 {
     return mode == REGRESS_MUTATE_TERRAPIN ||
-            mode == REGRESS_MUTATE_TERRAPIN_C2S;
+            mode == REGRESS_MUTATE_TERRAPIN_C2S ||
+            mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT;
 }
 
-/* SIG_*, F_TRUNC, TERRAPIN and the GEX_* modes rewrite the server's
- * messages; E_TRUNC, E_EMPTY and TERRAPIN_C2S the client's. */
+/* E_TRUNC, E_EMPTY and TERRAPIN_C2S rewrite the client's messages; the
+ * rest rewrite the server's. */
 static int MutatorTargetsEndpoint(byte mode, byte isServer)
 {
     if (mode == REGRESS_MUTATE_E_TRUNC || mode == REGRESS_MUTATE_E_EMPTY ||
@@ -1491,7 +1495,7 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
             !(outputSz >= REGRESS_SSH_PROTO_PREFIX_SZ &&
               WMEMCMP(output, REGRESS_SSH_PROTO_PREFIX,
                       REGRESS_SSH_PROTO_PREFIX_SZ) == 0)) {
-        TerrapinInjectBeforeNewKeys(endpoint, &output, &outputSz);
+        TerrapinInject(endpoint, &output, &outputSz);
     }
 
     if (endpoint->mutator != NULL &&
@@ -2700,6 +2704,69 @@ static void TestStrictKexTakesInjectedDisconnect(void)
     /* It landed ahead of the server's NEWKEYS, so the initial KEX never
      * finished and the gate was still up when the message went through. */
     AssertIntEQ(harness.client->initialKexDone, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* A packet ahead of the server's KEXINIT passes the unarmed allow list,
+ * so the KEXINIT arrives at a nonzero sequence number and the client
+ * disconnects. */
+static void AssertPreKexInitInjectionRejected(byte injectMsgId)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarnessMode(&harness, injectMsgId, 1, 1,
+            REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.client->strictKexEnabled, 1);
+
+    AssertFalse(result.clientSuccess);
+    AssertIntEQ(result.clientErr, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(harness.client->initialKexDone, 0);
+    AssertIntEQ(harness.client->disconnected, 1);
+
+    /* Still plaintext, so the reason is readable. */
+    AssertIntEQ(harness.clientIo.sawDisconnect, 1);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestPreKexInitInjectionRejectedWithStrictKex(void)
+{
+    /* EXT_INFO would replace the client's server-sig-algs list. DEBUG is
+     * omitted: it gets decoded here, and the payload is too short. */
+    static const byte injectable[] = {
+        MSGID_IGNORE, MSGID_UNIMPLEMENTED, MSGID_EXT_INFO,
+        REGRESS_UNASSIGNED_TRANS_MSGID
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(injectable) / sizeof(injectable[0])); i++) {
+        AssertPreKexInitInjectionRejected(injectable[i]);
+    }
+}
+
+/* Without strict KEX the same splice is accepted. */
+static void TestPreKexInitInjectionAcceptedWithoutStrictKex(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarnessMode(&harness, MSGID_IGNORE, 0, 0,
+            REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.client->strictKexEnabled, 0);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
 
     FreeKexReplyHarness(&harness);
 }
@@ -17575,6 +17642,8 @@ int main(int argc, char** argv)
     TestTerrapinInjectionRejectedWithStrictKex();
     TestTerrapinInjectionRejectedByServer();
     TestStrictKexTakesInjectedDisconnect();
+    TestPreKexInitInjectionRejectedWithStrictKex();
+    TestPreKexInitInjectionAcceptedWithoutStrictKex();
 #endif
 
 #ifdef WOLFSSH_SFTP

@@ -6736,6 +6736,17 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (ssh->strictKexEnabled) {
                 WLOG(WS_LOG_DEBUG, "DKI: strict KEX negotiated");
             }
+
+            /* Strict KEX requires KEXINIT to be the peer's first packet.
+             * The allow list is not armed until now. peerSeq is still
+             * this packet's number here. */
+            if (ssh->strictKexEnabled && ssh->peerSeq != 0) {
+                WLOG(WS_LOG_DEBUG,
+                        "DKI: strict KEX, KEXINIT was not the first packet");
+                (void)SendDisconnect(ssh,
+                        WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+                ret = WS_MSGID_NOT_ALLOWED_E;
+            }
         }
         else {
             WLOG(WS_LOG_DEBUG,
