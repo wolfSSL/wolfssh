@@ -2108,6 +2108,10 @@ static int sftp_worker(thread_ctx_t* threadCtx)
                     continue;
                 }
             #endif
+                if (ret == WS_WANT_READ) {
+                    /* Part of a packet arrived; wait for the rest. */
+                    continue;
+                }
                 if (ret == WS_WANT_WRITE) {
                     /* recall wolfSSH_worker here because is likely our custom
                      * highwater callback that returned up a WS_WANT_WRITE */
