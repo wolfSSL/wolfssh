@@ -1,0 +1,443 @@
+#!/bin/sh
+
+# OpenSSH interop test for strict key exchange, the Terrapin mitigation
+# (CVE-2023-48795).
+#
+# Part 1 puts the OpenSSH client on the wolfSSH echoserver, part 2 the
+# wolfSSH example client on OpenSSH's sshd. Each one checks that the marker
+# is negotiated and that a session then runs over the connection: the
+# mitigation zeroes the packet sequence numbers at SSH_MSG_NEWKEYS, and a
+# peer that disagreed about the counters would fail the first packet that
+# had to authenticate.
+#
+# The checks read OpenSSH's own debug output, so they are worded the way
+# OpenSSH words them. Strict KEX arrived in OpenSSH 9.6; anything older is
+# skipped.
+
+no_pid=-1
+server_pid=$no_pid
+sshd_pid=$no_pid
+work_dir="`pwd`/openssh_interop_test$$"
+ready_file="$work_dir/ready"
+client_out="$work_dir/client.out"
+client_log="$work_dir/client.log"
+sshd_log="$work_dir/sshd.log"
+port=0
+counter=0
+# What the echo session sends and expects back.
+probe="strictkexprobe$$"
+# Seconds any one connection is given before it is killed. Nothing here
+# takes more than a moment; the limit only keeps a stuck session from
+# hanging make check.
+run_limit=60
+killer_pid=-1
+# The test keys are not copied into the build directory, so reach them
+# through srcdir the way scripts/fwd.test does, or an out-of-tree build
+# and make distcheck cannot find them.
+keys_dir="${srcdir:-.}/keys"
+
+do_cleanup() {
+    if [ $killer_pid != $no_pid ]
+    then
+        kill $killer_pid 2>/dev/null
+        killer_pid=$no_pid
+    fi
+    if [ $sshd_pid != $no_pid ]
+    then
+        kill -9 $sshd_pid 2>/dev/null
+        sshd_pid=$no_pid
+    fi
+    if [ $server_pid != $no_pid ]
+    then
+        kill -9 $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+    rm -rf -- "$work_dir"
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    exit 1
+}
+
+trap do_trap INT TERM
+# sshd holds a fixed port, so clean up on the way out however that happens.
+trap do_cleanup EXIT
+
+# Wait for a backgrounded command, killing it if it outstays the limit.
+# timeout(1) is GNU coreutils and is on neither stock macOS nor the BSDs,
+# so the watchdog is run here, the way scripts/sshclient.test does it.
+# Polls rather than sleeping the whole limit: killing a subshell that is
+# waiting on a sleep leaves the sleep running.
+wait_with_limit() {
+    watched_pid=$1
+
+    (
+        watched=0
+        while kill -0 $watched_pid 2>/dev/null; do
+            if [ $watched -ge $run_limit ]; then
+                kill -9 $watched_pid 2>/dev/null
+                break
+            fi
+            sleep 1
+            watched=$((watched + 1))
+        done
+    ) 2>/dev/null &
+    killer_pid=$!
+
+    wait $watched_pid
+    watched_status=$?
+
+    kill $killer_pid 2>/dev/null
+    killer_pid=$no_pid
+
+    return $watched_status
+}
+
+fail() {
+    printf '\n\n%s\n' "$1"
+    do_cleanup
+    exit 1
+}
+
+skip() {
+    printf '%s, skipping\n' "$1"
+    rm -rf -- "$work_dir"
+    exit 77
+}
+
+command -v ssh > /dev/null 2>&1 || skip "no ssh in the path"
+
+ssh_version=`ssh -V 2>&1`
+case "$ssh_version" in
+    OpenSSH_*) ;;
+    *) skip "ssh is not OpenSSH ($ssh_version)" ;;
+esac
+
+# 0 when the OpenSSH_X.Y in $1 is 9.6 or newer, 1 when it is older, and 2
+# when there is no version to read. Strict KEX arrived in 9.6.
+has_strict_kex() {
+    hsk_major=`echo "$1" | sed -n 's/.*OpenSSH_\([0-9][0-9]*\)\..*/\1/p'`
+    hsk_minor=`echo "$1" | \
+        sed -n 's/.*OpenSSH_[0-9][0-9]*\.\([0-9][0-9]*\).*/\1/p'`
+
+    [ -z "$hsk_major" ] && return 2
+    [ -z "$hsk_minor" ] && hsk_minor=0
+
+    if [ "$hsk_major" -lt 9 ] ||
+        { [ "$hsk_major" -eq 9 ] && [ "$hsk_minor" -lt 6 ]; }
+    then
+        return 1
+    fi
+
+    return 0
+}
+
+has_strict_kex "$ssh_version"
+case $? in
+    1) skip "$ssh_version predates strict KEX" ;;
+    2) skip "can't read the OpenSSH version ($ssh_version)" ;;
+esac
+
+[ ! -x ./examples/echoserver/echoserver ] && skip "echoserver doesn't exist"
+./examples/echoserver/echoserver '-?' 2>&1 | grep -q "^echoserver " \
+    || skip "echoserver doesn't run"
+
+mkdir -p "$work_dir" || exit 1
+
+# The echoserver is one shot, so start a new one per connection. It picks
+# an ephemeral port and writes it to the ready file.
+#
+# -f keeps it in echo mode; without it a build with shell support tries to
+# fork a login shell for a user who doesn't exist on this machine. Any
+# argument given here is passed along, which is how the ECC sample key set
+# is selected.
+start_echoserver() {
+    if [ $server_pid != $no_pid ]
+    then
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+
+    rm -f "$ready_file"
+    ./examples/echoserver/echoserver -1 -f "$@" -R "$ready_file" \
+        > "$work_dir/server.log" 2>&1 &
+    server_pid=$!
+
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+
+    [ ! -s "$ready_file" ] && fail "NO ready file, the echoserver never came up"
+
+    port=`cat "$ready_file"`
+}
+
+# Run one echo session with the OpenSSH client.
+#
+# $1 - the private key to authenticate with, in a form OpenSSH reads
+# rest  - extra echoserver arguments
+#
+# The key is copied because OpenSSH refuses one that is readable by anyone
+# else, and the checked-in keys are group and world readable. The 0x03 in
+# the input is what tells the echoserver's worker the session is over; the
+# newline before it is the line the server echoes back.
+run_openssh_client() {
+    key_file=$1
+    shift
+
+    rm -f "$client_out" "$client_log"
+    cp "$key_file" "$work_dir/id" || fail "couldn't copy $key_file"
+    chmod 600 "$work_dir/id"
+
+    start_echoserver "$@"
+
+    printf '%s\n\003' "$probe" | \
+        ssh -vvv -T -p $port \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -i "$work_dir/id" hansel@127.0.0.1 \
+            > "$client_out" 2> "$client_log" &
+    wait_with_limit $!
+}
+
+echo "Test the OpenSSH client against the wolfSSH echoserver"
+
+# -e switches the echoserver to its ECC sample keys. A build without ECDSA
+# has only the RSA set, so fall back to that rather than call it a failure.
+# A build with neither has only Ed25519, and the checked-in Ed25519 key is
+# PKCS#8, which an OpenSSH on LibreSSL won't load, so make a key of
+# OpenSSH's own and hand the echoserver its public half.
+run_openssh_client "$keys_dir/hansel-key-ecc.pem" -e
+session_status=$?
+if [ $session_status -ne 0 ]; then
+    echo "the ECC attempt failed, retrying with the RSA sample key"
+    run_openssh_client "$keys_dir/hansel-key-rsa.pem"
+    session_status=$?
+fi
+if [ $session_status -ne 0 ] && command -v ssh-keygen > /dev/null 2>&1; then
+    echo "the RSA attempt failed, retrying with an Ed25519 key"
+    ssh-keygen -q -t ed25519 -N '' -C hansel -f "$work_dir/ed25519" \
+        < /dev/null || fail "couldn't make an Ed25519 client key"
+    run_openssh_client "$work_dir/ed25519" -j "$work_dir/ed25519.pub"
+    session_status=$?
+fi
+if [ $session_status -ne 0 ]; then
+    cat "$client_log"
+    fail "couldn't open a session"
+fi
+
+# What the echoserver put in its KEXINIT. Both spellings go out; this is
+# the one deployed OpenSSH matches on.
+grep -q 'kex-strict-s-v00@openssh.com' "$client_log" \
+    || fail "the echoserver didn't offer the strict KEX marker"
+
+# And what OpenSSH decided to do about it.
+grep -qi 'strict KEX ordering' "$client_log" \
+    || fail "the OpenSSH client didn't turn strict KEX on"
+
+grep -q "$probe" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+# OpenSSH logs each reset as it happens. Informational: it is the one check
+# here that a reworded debug line would break, and the round trip above
+# already proves the two ends agree on the sequence numbers.
+if grep -q 'resetting read seqnr' "$client_log"; then
+    echo "the OpenSSH client reset its inbound sequence number"
+else
+    echo "note: no sequence number reset in the client log"
+fi
+
+echo "the OpenSSH client negotiated strict KEX with the echoserver"
+
+# Part 2 needs an sshd to talk to, and a host key to give it. Neither is
+# worth failing the test over.
+sshd_bin=
+for candidate in /usr/sbin/sshd /usr/local/sbin/sshd /opt/homebrew/sbin/sshd
+do
+    [ -x "$candidate" ] && sshd_bin="$candidate" && break
+done
+if [ -z "$sshd_bin" ]; then
+    sshd_bin=`command -v sshd 2>/dev/null`
+fi
+
+if [ -z "$sshd_bin" ] || [ ! -x "$sshd_bin" ]; then
+    echo "no sshd on this machine, skipping the wolfSSH client half"
+    do_cleanup
+    exit 0
+fi
+if ! command -v ssh-keygen > /dev/null 2>&1; then
+    echo "no ssh-keygen, skipping the wolfSSH client half"
+    do_cleanup
+    exit 0
+fi
+if [ ! -x ./examples/client/client ]; then
+    echo "the example client wasn't built, skipping the wolfSSH client half"
+    do_cleanup
+    exit 0
+fi
+
+echo "Test the wolfSSH client against OpenSSH's sshd"
+
+# RSA and Ed25519 host keys beside the ECDSA one, for a build without
+# ECDSA. A build with neither ECDSA nor Ed25519 can verify only RSA.
+ssh-keygen -q -t ecdsa -N '' -f "$work_dir/hostkey" < /dev/null \
+    || fail "couldn't make a host key for sshd"
+ssh-keygen -q -t rsa -b 3072 -N '' -f "$work_dir/hostkey-rsa" < /dev/null \
+    || fail "couldn't make an RSA host key for sshd"
+ssh-keygen -q -t ed25519 -N '' -f "$work_dir/hostkey-ed25519" < /dev/null \
+    || fail "couldn't make an Ed25519 host key for sshd"
+
+# sshd takes a fixed port, so try a few. -f /dev/null keeps the machine's
+# own sshd_config out of it, and -ddd both raises the log level and keeps
+# sshd in the foreground for one connection. ForceCommand stands in for the
+# user's login shell: the client exits with the session's exit status, and
+# whatever the user's dotfiles leave behind is not this test's business.
+start_sshd() {
+    rm -f "$sshd_log"
+    "$sshd_bin" -ddd -f /dev/null -p "$1" -h "$work_dir/hostkey" \
+        -h "$work_dir/hostkey-rsa" -h "$work_dir/hostkey-ed25519" \
+        -o "ListenAddress=127.0.0.1" \
+        -o "AuthorizedKeysFile=$work_dir/authorized_keys" \
+        -o "StrictModes=no" \
+        -o "PasswordAuthentication=no" \
+        -o "ForceCommand=true" \
+        -o "PidFile=none" > "$sshd_log" 2>&1 &
+    sshd_pid=$!
+
+    # Its own counter: the loop that calls this one is counting too. A
+    # failed bind is checked for as well as a good one -- sshd carries on
+    # after one address fails, so "Server listening" alone does not mean
+    # the port the client dials is answering.
+    sshd_wait=0
+    while [ "$sshd_wait" -lt 100 ]; do
+        grep -q 'failed: Address already in use' "$sshd_log" 2>/dev/null \
+            && return 1
+        grep -q 'Server listening on' "$sshd_log" 2>/dev/null && return 0
+        kill -0 $sshd_pid 2>/dev/null || return 1
+        sleep 0.1
+        sshd_wait=$((sshd_wait + 1))
+    done
+
+    return 1
+}
+
+sshd_port=0
+candidate_port=$((22500 + ($$ % 1000)))
+counter=0
+while [ "$counter" -lt 5 ]; do
+    if start_sshd $candidate_port; then
+        sshd_port=$candidate_port
+        break
+    fi
+    kill -9 $sshd_pid 2>/dev/null
+    sshd_pid=$no_pid
+    candidate_port=$((candidate_port + 1))
+    counter=$((counter + 1))
+done
+
+if [ "$sshd_port" -eq 0 ]; then
+    echo "sshd wouldn't start here, skipping the wolfSSH client half"
+    [ -s "$sshd_log" ] && tail -n 5 "$sshd_log"
+    do_cleanup
+    exit 0
+fi
+
+# The version gate above covered the client. This sshd was found on its own
+# and can be the older vendor one while a newer ssh sits earlier in PATH, so
+# read what it says about itself before asking it for a marker it has never
+# heard of.
+sshd_version=`sed -n 's/.*sshd version \(OpenSSH_[^,]*\).*/\1/p' \
+    "$sshd_log" | head -n 1`
+has_strict_kex "$sshd_version"
+if [ $? -ne 0 ]; then
+    echo "$sshd_bin is ${sshd_version:-an unreadable version}, no strict KEX,"
+    echo "skipping the wolfSSH client half"
+    do_cleanup
+    exit 0
+fi
+
+# sshd authenticates the user running this test, with one of the canned
+# client keys put in an authorized_keys file of its own.
+login_user=${USER:-`id -un`}
+[ -z "$login_user" ] && fail "couldn't work out who is running this"
+
+run_wolfssh_client() {
+    cat "$2" > "$work_dir/authorized_keys" \
+        || fail "couldn't write the authorized_keys file"
+    chmod 600 "$work_dir/authorized_keys"
+
+    # -x stops once the session is up: the KEX and the user auth are what
+    # this half is about, and the echo path was covered above. stdin is
+    # closed because the client prompts for a password when publickey is
+    # refused, and a prompt with nothing behind it hangs the run.
+    HOME="$work_dir" ./examples/client/client \
+        -h 127.0.0.1 -p $sshd_port -u "$login_user" -i "$1" -j "$2" -x \
+        < /dev/null > "$client_out" 2>&1 &
+    wait_with_limit $!
+}
+
+# sshd handles one connection per -d run, so it needs restarting between
+# attempts. Wait for the old one to go first, or the restart races it for
+# the port.
+restart_sshd() {
+    kill -9 $sshd_pid 2>/dev/null
+    wait $sshd_pid 2>/dev/null
+    sshd_pid=$no_pid
+    start_sshd $sshd_port || fail "couldn't restart sshd"
+}
+
+run_wolfssh_client "$keys_dir/hansel-key-ecc.der" \
+        "$keys_dir/hansel-key-ecc.pub"
+if [ $? -ne 0 ]; then
+    echo "the ECC attempt failed, retrying with the RSA client key"
+    restart_sshd
+    run_wolfssh_client "$keys_dir/hansel-key-rsa.der" \
+        "$keys_dir/hansel-key-rsa.pub"
+fi
+if [ $? -ne 0 ]; then
+    echo "the RSA attempt failed, retrying with the Ed25519 client key"
+    restart_sshd
+    run_wolfssh_client "$keys_dir/hansel-key-ed25519.der" \
+        "$keys_dir/hansel-key-ed25519.pub"
+fi
+if [ $? -ne 0 ]; then
+    cat "$client_out"
+    tail -n 20 "$sshd_log"
+    fail "the wolfSSH client couldn't connect to sshd"
+fi
+
+# Give sshd a moment to finish writing its side of the session.
+counter=0
+while [ "$counter" -lt 50 ]; do
+    grep -q 'Accepted publickey' "$sshd_log" 2>/dev/null && break
+    sleep 0.1
+    counter=$((counter + 1))
+done
+
+grep -q 'kex-strict-c-v00@openssh.com' "$sshd_log" \
+    || fail "the wolfSSH client didn't offer the strict KEX marker"
+
+grep -qi 'strict KEX ordering' "$sshd_log" \
+    || fail "sshd didn't turn strict KEX on"
+
+grep -q 'Accepted publickey' "$sshd_log" \
+    || fail "sshd never authenticated the wolfSSH client"
+
+if grep -q 'resetting send seqnr' "$sshd_log"; then
+    echo "sshd reset its outbound sequence number"
+else
+    echo "note: no sequence number reset in the sshd log"
+fi
+
+echo "the wolfSSH client negotiated strict KEX with sshd"
+
+do_cleanup
+echo "OpenSSH strict KEX interop tests passed"
+exit 0
