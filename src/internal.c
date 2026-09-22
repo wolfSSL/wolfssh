@@ -14872,7 +14872,9 @@ int DoReceive(WOLFSSH* ssh)
         ssh->inputBuffer.idx += peerMacSz;
 
         WLOG(WS_LOG_DEBUG, "PR4: Shrinking input buffer");
-        ShrinkBuffer(&ssh->inputBuffer, 1);
+        /* Keep bytes past this packet; DoProtoId() can leave some. */
+        ShrinkBuffer(&ssh->inputBuffer,
+                ssh->inputBuffer.idx >= ssh->inputBuffer.length);
         ssh->processReplyState = PROCESS_INIT;
     }
 
