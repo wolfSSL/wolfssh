@@ -737,9 +737,12 @@ static THREAD_RET readPeer(void* in)
                         bytes = 0;
                     }
                     /* Back to select(), which is where the owed reply is
-                     * retried. */
-                    if (agentOwed)
+                     * retried. A held status is not an error, so keep the
+                     * outer loop alive. */
+                    if (agentOwed) {
+                        ret = WS_SUCCESS;
                         bytes = 0;
+                    }
                     continue;
                 }
 #endif /* WOLFSSH_AGENT */
