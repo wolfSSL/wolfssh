@@ -11878,8 +11878,10 @@ static void TestTerminalResizeBlockedAfterDisconnect(void)
     wolfSSH_CTX_free(ctx);
 }
 #endif /* WOLFSSH_TERM && !NO_FILESYSTEM */
+#endif /* !NO_WOLFSSH_CLIENT */
 
 #ifdef WOLFSSH_SFTP
+#ifndef NO_WOLFSSH_CLIENT
 static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
 {
     WOLFSSH_CTX* ctx;
