@@ -1164,10 +1164,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
         sessionChannel = wolfSSH_ChannelNext(ssh, NULL);
         if (canServe && sessionChannel != NULL
-                && sessionChannel->sessionGranted) {
+                && sessionChannel->sessionGranted
+                && wolfSSH_ChannelGetId(sessionChannel,
+                        &threadCtx->shellCtx.channelId,
+                        WS_CHANNEL_ID_SELF) == WS_SUCCESS) {
             threadCtx->shellCtx.state = APP_STATE_CONNECTED;
-            wolfSSH_ChannelGetId(sessionChannel,
-                    &threadCtx->shellCtx.channelId, WS_CHANNEL_ID_SELF);
         }
     }
 
