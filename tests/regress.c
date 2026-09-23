@@ -11880,8 +11880,7 @@ static void TestTerminalResizeBlockedAfterDisconnect(void)
 #endif /* WOLFSSH_TERM && !NO_FILESYSTEM */
 #endif /* !NO_WOLFSSH_CLIENT */
 
-#ifdef WOLFSSH_SFTP
-#ifndef NO_WOLFSSH_CLIENT
+#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
 {
     WOLFSSH_CTX* ctx;
@@ -11901,9 +11900,10 @@ static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
-#endif /* !NO_WOLFSSH_CLIENT */
+#endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT */
 
 
+#ifdef WOLFSSH_SFTP
 /* fenrir 2479: the attribute encoder and decoder must agree. Extensions are
  * unimplemented, so an encode of WOLFSSH_FILEATRB_EXT writes a zero count and
  * the peer's decoder consumes the block instead of reading past it looking for
@@ -16617,8 +16617,10 @@ int main(int argc, char** argv)
     TestKeyboardResponseNoUserAuthCallback(ssh, ctx);
     TestKeyboardResponseNullSsh();
     TestKeyboardResponseNullCtx(ssh);
+    #ifndef NO_WOLFSSH_SERVER
     TestKbUsernameChangeDisconnects();
     TestKbSameUserResponseSucceeds();
+    #endif
 #endif
 
     /* TODO: add app-level regressions that simulate stdin EOF/password
