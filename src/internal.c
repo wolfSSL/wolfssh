@@ -15393,7 +15393,9 @@ int SendKexInit(WOLFSSH* ssh)
          * (RFC draft-miller-sshm-strict-kex), distinguished here by an
          * empty session id. The sendStrictKex flag lets callers opt out
          * at runtime; the handshake freezes it so this and the enforcement
-         * decision in DoKexInit() cannot read different values. */
+         * decision in DoKexInit() cannot read different values. The
+         * -v00@openssh.com marker goes last: Paramiko lets the last
+         * kex-strict-* name it sees decide, and knows only that one. */
         int includeStrictKex =
                 (ssh->sessionIdSz == 0) && HandshakeStrictKex(ssh);
 
@@ -15401,8 +15403,8 @@ int SendKexInit(WOLFSSH* ssh)
             if (includeStrictKex) {
                 kexAlgoNamesPlus =
                     ",ext-info-c"
-                    ",kex-strict-c-v00@openssh.com"
-                    ",kex-strict-c";
+                    ",kex-strict-c"
+                    ",kex-strict-c-v00@openssh.com";
             }
             else {
                 kexAlgoNamesPlus = ",ext-info-c";
@@ -15413,8 +15415,8 @@ int SendKexInit(WOLFSSH* ssh)
             if (includeStrictKex) {
                 kexAlgoNamesPlus =
                     ",ext-info-s"
-                    ",kex-strict-s-v00@openssh.com"
-                    ",kex-strict-s";
+                    ",kex-strict-s"
+                    ",kex-strict-s-v00@openssh.com";
             }
             else {
                 kexAlgoNamesPlus = ",ext-info-s";
