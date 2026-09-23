@@ -285,9 +285,12 @@ fi
 
 echo "Test the wolfSSH client against OpenSSH's sshd"
 
-# An Ed25519 host key beside the ECDSA one, for a build without ECDSA.
+# RSA and Ed25519 host keys beside the ECDSA one, for a build without
+# ECDSA. A build with neither ECDSA nor Ed25519 can verify only RSA.
 ssh-keygen -q -t ecdsa -N '' -f "$work_dir/hostkey" < /dev/null \
     || fail "couldn't make a host key for sshd"
+ssh-keygen -q -t rsa -b 3072 -N '' -f "$work_dir/hostkey-rsa" < /dev/null \
+    || fail "couldn't make an RSA host key for sshd"
 ssh-keygen -q -t ed25519 -N '' -f "$work_dir/hostkey-ed25519" < /dev/null \
     || fail "couldn't make an Ed25519 host key for sshd"
 
@@ -299,7 +302,7 @@ ssh-keygen -q -t ed25519 -N '' -f "$work_dir/hostkey-ed25519" < /dev/null \
 start_sshd() {
     rm -f "$sshd_log"
     "$sshd_bin" -ddd -f /dev/null -p "$1" -h "$work_dir/hostkey" \
-        -h "$work_dir/hostkey-ed25519" \
+        -h "$work_dir/hostkey-rsa" -h "$work_dir/hostkey-ed25519" \
         -o "ListenAddress=127.0.0.1" \
         -o "AuthorizedKeysFile=$work_dir/authorized_keys" \
         -o "StrictModes=no" \
