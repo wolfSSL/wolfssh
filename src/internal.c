@@ -8402,6 +8402,11 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         ret = WS_BUFFER_E;
     }
 
+    /* ssh->k holds the ML-KEM secret first, then the classical secret. */
+    if ((ret == 0) && (ssh->kSz <= length_sharedsecret)) {
+        ret = WS_BUFFER_E;
+    }
+
 #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
     if (kexId == ID_CURVE25519_MLKEM768_SHA256) {
         /* Handle Curve25519 variant */
@@ -8430,12 +8435,14 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
                     EC25519_LITTLE_ENDIAN);
         }
         if (ret == 0) {
+            word32 tmp_kSz = ssh->kSz - length_sharedsecret;
             PRIVATE_KEY_UNLOCK();
             ret = wc_curve25519_shared_secret_ex(
                     &ssh->handshake->privKey.curve25519,
                     x25519_key_ptr, ssh->k + length_sharedsecret,
-                    &ssh->kSz, EC25519_LITTLE_ENDIAN);
+                    &tmp_kSz, EC25519_LITTLE_ENDIAN);
             PRIVATE_KEY_LOCK();
+            ssh->kSz = length_sharedsecret + tmp_kSz;
         }
         if (x25519KeyInited)
             wc_curve25519_free(x25519_key_ptr);
@@ -8483,11 +8490,13 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
         }
 
         if (ret == 0) {
+            word32 tmp_kSz = ssh->kSz - length_sharedsecret;
             PRIVATE_KEY_UNLOCK();
             ret = wc_ecc_shared_secret(&ssh->handshake->privKey.ecc,
                                        key_ptr, ssh->k + length_sharedsecret,
-                                       &ssh->kSz);
+                                       &tmp_kSz);
             PRIVATE_KEY_LOCK();
+            ssh->kSz = length_sharedsecret + tmp_kSz;
         }
         if (eccKeyInited)
             wc_ecc_free(key_ptr);
@@ -8501,17 +8510,15 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     }
 
     if (ret == 0) {
-        wc_MlKemKey_DecodePrivateKey(&kem, ssh->handshake->x,
-                                     length_privatekey);
+        ret = wc_MlKemKey_DecodePrivateKey(&kem, ssh->handshake->x,
+                                           length_privatekey);
     }
 
     if (ret == 0) {
         ret = wc_MlKemKey_Decapsulate(&kem, ssh->k, f, length_ciphertext);
     }
 
-    if (ret == 0) {
-        ssh->kSz += length_sharedsecret;
-    } else {
+    if (ret != 0) {
         ssh->kSz = 0;
         /* Local faults (RNG, HSM, memory) are logged at ERROR;
          * peer-driven rejects stay at DEBUG so a remote peer
@@ -26202,6 +26209,16 @@ int wolfSSH_TestKeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
     return KeyAgreeEcdh_client(ssh, hashId, f, fSz);
 }
 #endif /* !WOLFSSH_NO_ECDH */
+
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+int wolfSSH_TestKeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
+        const byte* f, word32 fSz)
+{
+    return KeyAgreeEcdhMlKem_client(ssh, hashId, f, fSz);
+}
+#endif
 
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
 
