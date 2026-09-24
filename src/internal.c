@@ -14566,6 +14566,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
             break;
 #endif
 
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
         case ID_HMAC_SHA2_256:
             {
                 Hmac hmac;
@@ -14584,6 +14585,7 @@ static INLINE int CreateMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 wc_HmacFree(&hmac);
             }
             break;
+#endif
 
 #ifndef WOLFSSH_NO_HMAC_SHA2_512
         case ID_HMAC_SHA2_512:
@@ -14641,8 +14643,13 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 ret = WS_SUCCESS;
                 break;
 
+#ifndef WOLFSSH_NO_HMAC_SHA1
             case ID_HMAC_SHA1:
+#endif
+#ifndef WOLFSSH_NO_HMAC_SHA1_96
             case ID_HMAC_SHA1_96:
+#endif
+#if !defined(WOLFSSH_NO_HMAC_SHA1) || !defined(WOLFSSH_NO_HMAC_SHA1_96)
                 ret = wc_HmacSetKey(&hmac, WC_SHA, ssh->peerKeys.macKey,
                         ssh->peerKeys.macKeySz);
                 if (ret == WS_SUCCESS)
@@ -14654,7 +14661,9 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
+#endif
 
+#ifndef WOLFSSH_NO_HMAC_SHA2_256
             case ID_HMAC_SHA2_256:
                 ret = wc_HmacSetKey(&hmac, WC_SHA256, ssh->peerKeys.macKey,
                         ssh->peerKeys.macKeySz);
@@ -14667,7 +14676,9 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
+#endif
 
+#ifndef WOLFSSH_NO_HMAC_SHA2_512
             case ID_HMAC_SHA2_512:
                 ret = wc_HmacSetKey(&hmac, WC_SHA512, ssh->peerKeys.macKey,
                         ssh->peerKeys.macKeySz);
@@ -14680,6 +14691,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                 if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
+#endif
 
             default:
                 ret = WS_INVALID_ALGO_ID;
