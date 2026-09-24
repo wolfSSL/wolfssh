@@ -5682,7 +5682,7 @@ int GetBoolean(byte* v, const byte* buf, word32 len, word32* idx)
     int result = WS_BUFFER_E;
 
     if (*idx < len) {
-        *v = buf[*idx];
+        *v = (buf[*idx] != 0);
         *idx += BOOLEAN_SZ;
         result = WS_SUCCESS;
     }
