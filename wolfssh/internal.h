@@ -2322,10 +2322,12 @@ enum WS_ScpDirection {
     WOLFSSH_SCP_FROM
 };
 
+#ifndef NO_WOLFSSH_SERVER
 WOLFSSH_LOCAL int DoScpRequest(WOLFSSH* ssh);
+WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH* ssh);
+#endif /* !NO_WOLFSSH_SERVER */
 WOLFSSH_LOCAL int DoScpSink(WOLFSSH* ssh);
 WOLFSSH_LOCAL int DoScpSource(WOLFSSH* ssh);
-WOLFSSH_LOCAL int ParseScpCommand(WOLFSSH* ssh);
 WOLFSSH_LOCAL int ReceiveScpMessage(WOLFSSH* ssh);
 WOLFSSH_LOCAL int ReceiveScpFile(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendScpConfirmation(WOLFSSH* ssh);

@@ -887,6 +887,7 @@ int DoScpSource(WOLFSSH* ssh)
     return ret;
 }
 
+#ifndef NO_WOLFSSH_SERVER
 /* Contract is in wolfssh/wolfscp.h. */
 int wolfSSH_SCP_accept(WOLFSSH* ssh)
 {
@@ -992,6 +993,7 @@ int DoScpRequest(WOLFSSH* ssh)
 
     return ret;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 /* Sets the error message that is sent back to the peer when an error or fatal
  * confirmation message is sent. Expected to be used inside the scp
@@ -1616,6 +1618,7 @@ static int ParseBasePathHelper(WOLFSSH* ssh)
     return ret;
 }*/
 
+#ifndef NO_WOLFSSH_SERVER
 /* Parse scp command received, currently only looks for and stores the
  * SCP base path being written to.
  *
@@ -1735,6 +1738,7 @@ int ParseScpCommand(WOLFSSH* ssh)
 
     return ret;
 }
+#endif /* !NO_WOLFSSH_SERVER */
 
 /* Reads and parses SCP protocol control messages
  *
@@ -2221,7 +2225,7 @@ int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
 
     return ret;
 }
-#endif /* ! NO_WOLFSSH_CLIENT */
+#endif /* !NO_WOLFSSH_CLIENT */
 
 
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS)
