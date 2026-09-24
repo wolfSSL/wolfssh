@@ -780,7 +780,7 @@ enum NameIdType {
 #define WOLFSSH_PROTOID_LIMIT 255
 
 /* Keep track of keying state for both sides of the connection.
- * WOLFSSH_SELF_IS_KEYING gets set on sending KEX init and
+ * WOLFSSH_SELF_IS_KEYING gets set once the KEX init is sent or queued and
  * WOLFSSH_PEER_IS_KEYING gets set on receiving KEX init */
 #define WOLFSSH_PEER_IS_KEYING 0x01
 #define WOLFSSH_SELF_IS_KEYING 0x02
