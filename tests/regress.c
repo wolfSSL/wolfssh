@@ -15792,6 +15792,39 @@ static void TestClientParseDestination(void)
 }
 
 
+/* Covers each keying bit alone, both together, and a NULL session. */
+static void TestRekeyPendingAccessor(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    AssertIntEQ(wolfSSH_RekeyPending(NULL), 0);
+    AssertIntEQ(wolfSSH_OutputPending(NULL), 0);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_RekeyPending(ssh), 0);
+
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING | WOLFSSH_PEER_IS_KEYING;
+    AssertTrue(wolfSSH_RekeyPending(ssh) != 0);
+
+    ssh->isKeying = 0;
+    AssertIntEQ(wolfSSH_RekeyPending(ssh), 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) || defined(WOLFSSL_BASE64_ENCODE)
 /* Write contents to path exactly as given, with no terminator added, so a
  * test can seed a file whose last line ends without a newline. */
@@ -16203,6 +16236,7 @@ int main(int argc, char** argv)
 #endif
 
     TestClientParseDestination();
+    TestRekeyPendingAccessor();
 #ifdef WOLFSSH_TEST_INTERNAL
     TestAppendKeyToFile();
     TestAppendNoTrailingNewline();
