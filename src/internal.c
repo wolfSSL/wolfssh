@@ -6920,7 +6920,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         if (ret == WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, " packet follows: %s",
                     kexPacketFollows ? "yes" : "no");
-            if (kexPacketFollows
+            /* Every supported KEX starts with a client message, so only a
+             * client can send a guessed packet. Ignore the flag from a
+             * server. */
+            if (kexPacketFollows && side != WOLFSSH_ENDPOINT_SERVER) {
+                WLOG(WS_LOG_DEBUG, " ignoring server's packet follows flag");
+            }
+            else if (kexPacketFollows
                     && (kexIdGuess != ssh->handshake->kexId
                         || pubKeyIdGuess != ssh->handshake->pubKeyId)) {
                 ssh->handshake->ignoreNextKexMsg = 1;
@@ -8641,12 +8647,6 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         return ret;
     }
 
-    if (ret == WS_SUCCESS) {
-        if (SkipGuessedKexMsg(ssh, "server's KEXDH_REPLY message",
-                len, idx))
-            return WS_SUCCESS;
-    }
-
     if (ret == WS_SUCCESS && len < LENGTH_SZ*2 + *idx) {
         ret = WS_BUFFER_E;
     }
@@ -9370,14 +9370,6 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        /* A conformant server sends GROUP only in response to the client's
-         * REQUEST, so it should never set first_packet_follows here. Discard
-         * the message defensively if a peer sets it anyway, mirroring the other
-         * Do* handlers. */
-        if (SkipGuessedKexMsg(ssh, "server's KEXDH_GEX_GROUP message",
-                len, idx))
-            return WS_SUCCESS;
-
         begin = *idx;
         ret = GetMpint(&primeGroupSz, &primeGroup, buf, len, &begin);
         if (ret == WS_SUCCESS && primeGroupSz > (MAX_KEX_KEY_SZ + 1)) {
