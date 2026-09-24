@@ -3700,6 +3700,12 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
     }
 #endif /* SHOW_SECRETS */
 
+    /* Do not keep a partial key set from a failed derivation. */
+    if (ret != WS_SUCCESS && cK != NULL) {
+        WS_FORCEZERO(cK, sizeof(Keys));
+        WS_FORCEZERO(sK, sizeof(Keys));
+    }
+
     return ret;
 }
 
@@ -8913,6 +8919,10 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         WLOG_EXPECT_MSGID(ssh->handshake->expectMsgId);
         ret = SendNewKeys(ssh);
     }
+
+    /* K is only needed to derive the keys. Wipe all of it, success or not. */
+    WS_FORCEZERO(ssh->k, sizeof(ssh->k));
+    ssh->kSz = 0;
 
     if (sigKeyBlock_ptr)
         WFREE(sigKeyBlock_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
@@ -18674,6 +18684,12 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
         PurgePacket(ssh);
+
+    /* K is only needed to derive the keys. Wipe all of it, success or not. */
+    if (ssh != NULL) {
+        WS_FORCEZERO(ssh->k, sizeof(ssh->k));
+        ssh->kSz = 0;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhReply(), ret = %d", ret);
     if (sigKeyBlock_ptr) {
