@@ -20,6 +20,10 @@ endif
 # app wasn't built.
 dist_noinst_SCRIPTS+= scripts/sshclient.test
 
+# Not gated on anything: the script skips itself when OpenSSH is missing
+# or predates strict KEX.
+dist_noinst_SCRIPTS+= scripts/openssh-interop.test
+
 dist_noinst_SCRIPTS+= scripts/fwd.test
 dist_noinst_SCRIPTS+= scripts/fwd-bulk.test
 endif

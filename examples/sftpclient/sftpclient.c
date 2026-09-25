@@ -1570,13 +1570,18 @@ static int doAutopilot(int cmd, char* local, char* remote)
                 ret == WS_FATAL_ERROR);
 
     if (ret != WS_SUCCESS) {
+        /* ret is a generic failure code; the cause is in the session */
+        err = wolfSSH_get_error(ssh);
+
         if (cmd == AUTOPILOT_PUT) {
-            fprintf(stderr, "Unable to copy local file %s to remote file %s\n",
-                   local, fullpath);
+            fprintf(stderr, "Unable to copy local file %s to remote file %s"
+                    ": ret %d, error %d, %s\n",
+                   local, fullpath, ret, err, wolfSSH_ErrorToName(err));
         }
         else if (cmd == AUTOPILOT_GET) {
-            fprintf(stderr, "Unable to copy remote file %s to local file %s\n",
-                    fullpath, local);
+            fprintf(stderr, "Unable to copy remote file %s to local file %s"
+                    ": ret %d, error %d, %s\n",
+                    fullpath, local, ret, err, wolfSSH_ErrorToName(err));
         }
     }
 
