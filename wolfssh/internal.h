@@ -241,17 +241,28 @@ extern "C" {
     #undef WOLFSSH_NO_ECDH_SHA2_NISTP521
     #define WOLFSSH_NO_ECDH_SHA2_NISTP521
 #endif
-#if !defined(WOLFSSL_HAVE_MLKEM) || defined(NO_SHA256) \
+/* wolfSSL can leave out FIPS 203 ML-KEM or any one parameter set. */
+#if !defined(WOLFSSL_HAVE_MLKEM) || defined(WOLFSSL_NO_ML_KEM) \
+    || defined(WOLFSSL_NO_ML_KEM_768)
+    #undef WOLFSSH_NO_MLKEM768
+    #define WOLFSSH_NO_MLKEM768
+#endif
+#if !defined(WOLFSSL_HAVE_MLKEM) || defined(WOLFSSL_NO_ML_KEM) \
+    || defined(WOLFSSL_NO_ML_KEM_1024)
+    #undef WOLFSSH_NO_MLKEM1024
+    #define WOLFSSH_NO_MLKEM1024
+#endif
+#if defined(WOLFSSH_NO_MLKEM768) || defined(NO_SHA256) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
     #undef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
     #define WOLFSSH_NO_NISTP256_MLKEM768_SHA256
 #endif
-#if !defined(WOLFSSL_HAVE_MLKEM) || !defined(WOLFSSL_SHA384) \
+#if defined(WOLFSSH_NO_MLKEM1024) || !defined(WOLFSSL_SHA384) \
     || defined(WOLFSSH_NO_ECDH_SHA2_NISTP384)
     #undef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
     #define WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
 #endif
-#if !defined(WOLFSSL_HAVE_MLKEM) || defined(NO_SHA256) \
+#if defined(WOLFSSH_NO_MLKEM768) || defined(NO_SHA256) \
     || !defined(HAVE_CURVE25519)
     #undef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
     #define WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
