@@ -693,11 +693,12 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
  * UNIMPLEMENTED, having already counted the packet. */
 #define REGRESS_UNASSIGNED_TRANS_MSGID 9
 
+#define REGRESS_SERVER_KEY_PATH "keys/server-key-rsa.der"
+
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
 
 #define REGRESS_DUPLEX_QUEUE_SZ 32768U
 #define REGRESS_MUTATION_SCRATCH_SZ 4096U
-#define REGRESS_SERVER_KEY_PATH "keys/server-key-rsa.der"
 #define REGRESS_SERVER_KEY_ECC_PATH "keys/server-key-ecc.der"
 #define REGRESS_SERVER_KEY_ED25519_PATH "keys/server-key-ed25519.der"
 #define REGRESS_USERNAME "jill"
@@ -15787,6 +15788,116 @@ static void TestKexInitReservedNonZeroRejected(void)
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef NO_WOLFSSH_SERVER
+/* What becomes of the server's reply to the peer's KEXINIT. */
+enum {
+    KEXINIT_REPLY_SENT,     /* goes out */
+    KEXINIT_REPLY_BLOCKED,  /* send would block */
+    KEXINIT_REPLY_FAILED,   /* send fails outright */
+    KEXINIT_REPLY_NONE      /* not owed: the server sent its own first */
+};
+
+/* Run the peer's KEXINIT through DoKexInit() on a server, with ssh->error
+ * holding staleError and the reply handled as reply says. */
+static int RunKexInitWithError(int staleError, int reply)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte keyBuf[2048];
+    byte payload[512];
+    byte out[2048];
+    word32 keySz;
+    word32 payloadSz;
+    word32 idx = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+    keySz = LoadFileBuffer(REGRESS_SERVER_KEY_PATH, keyBuf, sizeof(keyBuf));
+    AssertTrue(keySz > 0);
+    AssertIntEQ(wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyBuf, keySz,
+            WOLFSSH_FORMAT_ASN1), WS_SUCCESS);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+    AssertIntEQ(wolfSSH_SetHighwater(ssh, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+
+    if (reply == KEXINIT_REPLY_NONE) {
+        AssertIntEQ(SendKexInit(ssh), WS_SUCCESS);
+        io.outSz = 0;
+    }
+    else if (reply == KEXINIT_REPLY_BLOCKED) {
+        io.blockNext = 1;
+    }
+    else if (reply == KEXINIT_REPLY_FAILED) {
+        io.outCap = 0;
+    }
+
+    payloadSz = BuildKexInitPayload(ssh, FPF_KEX_GOOD, FPF_KEY_GOOD,
+            0, payload, (word32)sizeof(payload));
+
+    ssh->error = staleError;
+    ret = wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    if (reply == KEXINIT_REPLY_SENT) {
+        AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_KEXINIT);
+    }
+    else {
+        AssertIntEQ(io.outSz, 0);
+    }
+
+    /* Short of a failed send, the KEXINIT is consumed and the handshake
+     * moves on, a blocked reply included. */
+    if (reply != KEXINIT_REPLY_FAILED) {
+        AssertIntEQ(idx, payloadSz);
+        AssertIntEQ(ssh->clientState, CLIENT_KEXINIT_DONE);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return ret;
+}
+
+/* DoKexInit() reported any nonzero ssh->error once it had handled the
+ * KEXINIT, to pass on a blocked reply. A WS_WINDOW_FULL an earlier
+ * SendChannelData() left there failed the peer's rekey. */
+static void TestKexInitIgnoresStaleError(void)
+{
+    AssertIntEQ(RunKexInitWithError(WS_SUCCESS, KEXINIT_REPLY_SENT),
+            WS_SUCCESS);
+    AssertIntEQ(RunKexInitWithError(WS_WINDOW_FULL, KEXINIT_REPLY_SENT),
+            WS_SUCCESS);
+    AssertIntEQ(RunKexInitWithError(WS_CHAN_RXD, KEXINIT_REPLY_SENT),
+            WS_SUCCESS);
+    AssertIntEQ(RunKexInitWithError(WS_WANT_WRITE, KEXINIT_REPLY_SENT),
+            WS_SUCCESS);
+    /* A blocked reply is still reported. */
+    AssertIntEQ(RunKexInitWithError(WS_SUCCESS, KEXINIT_REPLY_BLOCKED),
+            WS_WANT_WRITE);
+    AssertIntEQ(RunKexInitWithError(WS_WINDOW_FULL, KEXINIT_REPLY_BLOCKED),
+            WS_WANT_WRITE);
+    AssertIntEQ(RunKexInitWithError(WS_WANT_WRITE, KEXINIT_REPLY_BLOCKED),
+            WS_WANT_WRITE);
+    /* So is a failed one. */
+    AssertIntEQ(RunKexInitWithError(WS_SUCCESS, KEXINIT_REPLY_FAILED),
+            WS_SOCKET_ERROR_E);
+    /* No reply is owed once the server has sent its own KEXINIT. */
+    AssertIntEQ(RunKexInitWithError(WS_WINDOW_FULL, KEXINIT_REPLY_NONE),
+            WS_SUCCESS);
+    AssertIntEQ(RunKexInitWithError(WS_WANT_WRITE, KEXINIT_REPLY_NONE),
+            WS_SUCCESS);
+}
+#endif /* NO_WOLFSSH_SERVER */
+
 /* Run a KEXINIT whose KEX-algorithms field is kexList through DoKexInit,
  * against a local list of FPF_KEX_GOOD. A list of unknown tokens fails to
  * match (WS_MATCH_KEX_ALGO_E); one rejected by the caps returns WS_BUFFER_E.
@@ -18430,6 +18541,9 @@ int main(int argc, char** argv)
     && !defined(WOLFSSH_NO_RSA_SHA2_256)
     TestFirstPacketFollows();
     TestKexInitReservedNonZeroRejected();
+#ifndef NO_WOLFSSH_SERVER
+    TestKexInitIgnoresStaleError();
+#endif
     TestKexInitNameListCaps();
     TestKexInitEmptyName();
     TestExtInfoEmptyName();

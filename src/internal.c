@@ -6956,11 +6956,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         enum wc_HashType hashId = (enum wc_HashType)ssh->handshake->kexHashId;
         byte scratchLen[LENGTH_SZ];
         word32 strSz = 0;
+        int sendRet = WS_SUCCESS;
 
         /* respond with KEX Init message if not having initiated the keying */
         if ((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) == 0) {
             WLOG(WS_LOG_DEBUG, "Keying initiated");
-            ret = SendKexInit(ssh);
+            sendRet = SendKexInit(ssh);
+            ret = sendRet;
         }
 
         /* account for possible want write case from SendKexInit */
@@ -7029,9 +7031,10 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             else
                 ssh->serverState = SERVER_KEXINIT_DONE;
 
-            /* Propagate potential want write case from SendKexInit. */
-            if (ssh->error != 0)
-                ret = ssh->error;
+            /* SendKexInit() queued its reply but could not flush it; report
+             * that to the caller. Its other failures return before here. */
+            if (sendRet == WS_WANT_WRITE)
+                ret = WS_WANT_WRITE;
         }
     }
     /* RFC 4253 7.1: no common algorithm means both sides disconnect. */
