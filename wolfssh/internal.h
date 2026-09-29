@@ -1192,8 +1192,10 @@ struct WOLFSSH {
     word32 txFlushCount;   /* Output buffer drained, whatever came after */
     word32 highwaterMark;
     word32 msgHighwaterMark; /* Per-key packet limit (RFC 4344 Sec 3.1) */
-    byte highwaterFlag;    /* Set when highwater CB called */
-    byte msgHighwaterFlag; /* Set when msg-count highwater CB called */
+    byte highwaterFlag;    /* Set when highwater CB called, or when an
+                            * inbound packet fails a framing or integrity
+                            * check */
+    byte msgHighwaterFlag; /* Same, for the msg-count highwater CB */
     void* highwaterCtx;    /* Highwater CB context */
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Success CB context */
