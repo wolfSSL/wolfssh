@@ -523,6 +523,7 @@ static THREAD_RET readInput(void* in)
     int ret = 0;
     int err = 0;
     int queued = 0;
+    int resend = 0;
     word32 sz = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
@@ -549,16 +550,24 @@ static THREAD_RET readInput(void* in)
             ret = wolfSSH_stream_send(args->ssh, buf, sz);
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
-            /* A send the socket wasn't ready for still counts the data as
-             * taken, it is left queued in the session instead. */
+            /* Data taken with a positive return can still be queued in the
+             * session, waiting on the socket. */
             queued = (wolfSSH_get_error(args->ssh) == WS_WANT_WRITE);
             wc_UnLockMutex(&args->lock);
+            resend = 0;
             if (err == WS_REKEYING) {
                 /* give readPeer() the lock to finish the rekey, then
                  * send this buffer again */
                 PauseForSocket();
+                resend = 1;
             }
-        } while (err == WS_REKEYING);
+            else if (ret <= 0 && err == WS_WANT_WRITE) {
+                /* None of buf was taken. Push out what is queued, then send
+                 * buf again. */
+                resend = (FlushQueuedSend(args->ssh, &args->lock)
+                        == WS_SUCCESS);
+            }
+        } while (resend);
         if (ret <= 0) {
             fprintf(stderr, "Couldn't send data\n");
             break;

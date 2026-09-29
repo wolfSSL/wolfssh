@@ -346,6 +346,9 @@ static int windowMonitor(thread_args* args)
 #endif /* WOLFSSH_TERM */
 
 
+/* Seconds to keep resending stdin the socket was not ready to take. */
+#define SEND_RETRY_TIMEOUT 10
+
 static THREAD_RET readInput(void* in)
 {
     byte buf[256];
@@ -354,6 +357,7 @@ static THREAD_RET readInput(void* in)
     int ret = 0;
     int err = 0;
     word32 sz = 0;
+    time_t deadline = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
 #endif
@@ -373,6 +377,7 @@ static THREAD_RET readInput(void* in)
             fprintf(stderr, "Error reading stdin\n");
             break;
         }
+        deadline = 0;
         do {
             /* lock SSH structure access */
             wc_LockMutex(&args->lock);
@@ -380,16 +385,24 @@ static THREAD_RET readInput(void* in)
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
             wc_UnLockMutex(&args->lock);
+            /* A rekey restarts the wait on the socket. */
             if (err == WS_REKEYING) {
-                /* give readPeer() the lock to finish the rekey, then
-                 * send this buffer again */
+                deadline = 0;
+            }
+            else if (err == WS_WANT_WRITE && deadline == 0) {
+                deadline = WTIME(NULL) + SEND_RETRY_TIMEOUT;
+            }
+            if (err == WS_REKEYING || err == WS_WANT_WRITE) {
+                /* give readPeer() the lock to finish the rekey, or let the
+                 * socket drain, then send this buffer again */
             #ifdef USE_WINDOWS_API
                 Sleep(1);
             #else
                 usleep(1000);
             #endif
             }
-        } while (err == WS_REKEYING);
+        } while (err == WS_REKEYING ||
+                (err == WS_WANT_WRITE && WTIME(NULL) < deadline));
         if (ret <= 0) {
             fprintf(stderr, "Couldn't send data\n");
             break;
