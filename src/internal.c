@@ -5599,9 +5599,9 @@ static int SendPacketFlush(WOLFSSH* ssh)
 }
 
 
-/* returns WS_SUCCESS on success. Transport failures record their code in
- * ssh->error, so a later write to that field on the same pass has to be
- * conditional on this having succeeded, or it hides the dead transport. */
+/* returns WS_SUCCESS on success. Flush failures record their code in
+ * ssh->error, so a later write there on the same pass must wait for this to
+ * succeed. HighwaterCheck() writes nothing there, but its callback may. */
 int wolfSSH_SendPacket(WOLFSSH* ssh)
 {
     int ret;
@@ -13997,11 +13997,16 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     if (padSz < MIN_PAD_LENGTH) {
         WLOG(WS_LOG_DEBUG, "Packet padding length %u below minimum %u",
              (word32)padSz, (word32)MIN_PAD_LENGTH);
+        /* Retries fail on this unconsumed packet, so no rekey may start. */
+        ssh->highwaterFlag = 1;
+        ssh->msgHighwaterFlag = 1;
         return WS_BUFFER_E;
     }
 
     /* check for underflow */
     if ((word32)(PAD_LENGTH_SZ + padSz + MSG_ID_SZ) > pktSz) {
+        ssh->highwaterFlag = 1;
+        ssh->msgHighwaterFlag = 1;
         return WS_OVERFLOW_E;
     }
 
@@ -14772,6 +14777,10 @@ int DoReceive(WOLFSSH* ssh)
                 if (ret != WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
                     ssh->error = ret;
+                    /* The input cannot be resynced, so no highwater rekey
+                     * may start. */
+                    ssh->highwaterFlag = 1;
+                    ssh->msgHighwaterFlag = 1;
                     return WS_FATAL_ERROR;
                 }
             }
@@ -14789,6 +14798,8 @@ int DoReceive(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, "Packet length overflow: size = %u",
                         ssh->curSz);
                 ssh->error = WS_OVERFLOW_E;
+                ssh->highwaterFlag = 1;
+                ssh->msgHighwaterFlag = 1;
                 return WS_FATAL_ERROR;
             }
 
@@ -14804,6 +14815,8 @@ int DoReceive(WOLFSSH* ssh)
                         "block = %u, aead = %u",
                         alignSz, (word32)alignBlockSz, (word32)aeadMode);
                 ssh->error = WS_BUFFER_E;
+                ssh->highwaterFlag = 1;
+                ssh->msgHighwaterFlag = 1;
                 return WS_FATAL_ERROR;
             }
             ssh->processReplyState = PROCESS_PACKET_FINISH;
@@ -14843,11 +14856,15 @@ int DoReceive(WOLFSSH* ssh)
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
                         ssh->error = ret;
+                        ssh->highwaterFlag = 1;
+                        ssh->msgHighwaterFlag = 1;
                         return WS_FATAL_ERROR;
                     }
                     if (verifyResult != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
                         ssh->error = verifyResult;
+                        ssh->highwaterFlag = 1;
+                        ssh->msgHighwaterFlag = 1;
                         return WS_FATAL_ERROR;
                     }
                 }
@@ -14867,6 +14884,8 @@ int DoReceive(WOLFSSH* ssh)
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
                         ssh->error = ret;
+                        ssh->highwaterFlag = 1;
+                        ssh->msgHighwaterFlag = 1;
                         return WS_FATAL_ERROR;
                     }
 #endif

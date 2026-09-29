@@ -1731,6 +1731,8 @@ static int test_DoReceive_VerifyMacFailure(void)
         ssh->curSz = 0;
         ssh->processReplyState = PROCESS_INIT;
         ssh->error = 0;
+        ssh->highwaterFlag = 0;
+        ssh->msgHighwaterFlag = 0;
 
         flatSeq[0] = (byte)(ssh->peerSeq >> 24);
         flatSeq[1] = (byte)(ssh->peerSeq >> 16);
@@ -1779,6 +1781,10 @@ static int test_DoReceive_VerifyMacFailure(void)
         }
         if (ssh->error != WS_VERIFY_MAC_E) {
             result = -207;
+            goto done;
+        }
+        if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+            result = -209;
             goto done;
         }
     }
@@ -1884,6 +1890,10 @@ static int test_DoReceive_AeadTagFailure(void)
     }
     if (ssh->error != AES_GCM_AUTH_E) {
         result = -229;
+        goto done;
+    }
+    if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+        result = -230;
         goto done;
     }
 
@@ -2130,8 +2140,64 @@ static int test_DoReceive_RejectsShortPadding(void)
         result = -764;
         goto done2;
     }
+    if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+        result = -765;
+        goto done2;
+    }
 
 done2:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Verify DoReceive rejects a cleartext packet whose padding_length leaves no
+ * room for the message id, returning WS_OVERFLOW_E, and stops the highwater
+ * callback. Layout: packet_length=4, padding_length=4 => 8 bytes total. */
+static int test_DoReceive_RejectsPaddingUnderflow(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    byte pkt[8];
+    word32 totalLen = (word32)sizeof(pkt);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -766;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -767;
+    }
+
+    WMEMSET(pkt, 0, sizeof(pkt));
+    pkt[3] = 4;             /* packet_length */
+    pkt[4] = MIN_PAD_LENGTH;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    ret = GrowBuffer(&ssh->inputBuffer, totalLen);
+    if (ret != WS_SUCCESS) {
+        result = -768;
+        goto done;
+    }
+    WMEMCPY(ssh->inputBuffer.buffer, pkt, totalLen);
+    ssh->inputBuffer.length = totalLen;
+    ssh->inputBuffer.idx = 0;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_OVERFLOW_E) {
+        result = -769;
+        goto done;
+    }
+    if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+        result = -793;
+        goto done;
+    }
+
+done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
@@ -2195,6 +2261,10 @@ static int test_DoReceive_RejectsMisalignedPacket(void)
     }
     if (ssh->error != WS_BUFFER_E) {
         result = -774;
+        goto done3;
+    }
+    if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+        result = -794;
         goto done3;
     }
 
@@ -6606,6 +6676,117 @@ done:
     return result;
 }
 
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+/* An inbound packet that fails its checks starts no highwater rekey, neither
+ * from the worker's flush on that pass nor from a later send. */
+static int test_HighwaterQuietAfterBadPacket(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    HwTestCtx    hc;
+    Hmac         hmac;
+    int          result = 0;
+    int          ret;
+    word32       prefixLen;
+    byte         seq[LENGTH_SZ];
+    byte         macKey[WC_SHA256_DIGEST_SIZE];
+    byte         digest[WC_SHA256_DIGEST_SIZE];
+    byte         pkt[UINT32_SZ + 12 + WC_SHA256_DIGEST_SIZE];
+
+    WMEMSET(&hc, 0, sizeof(hc));
+    s_extSendCount = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1950;
+    wolfSSH_SetIOSend(ctx, CountIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+    wolfSSH_SetHighwaterCb(ctx, 1, HwTestCb);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1951; goto done; }
+    hc.ssh = ssh;
+    wolfSSH_SetHighwaterCtx(ssh, &hc);
+    wolfSSH_SetMsgHighwater(ssh, 1);
+    ssh->txCount = 1;
+    ssh->txMsgCount = 1;
+
+    /* Control: the flush after an idle receive fires the callback. */
+    ssh->outputBuffer.length = 1;
+    ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.buffer[0] = 0;
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR || wolfSSH_get_error(ssh) != WS_WANT_READ) {
+        result = -1952;
+        goto done;
+    }
+    if (hc.count != 1) { result = -1953; goto done; }
+
+    /* A new key epoch clears both flags. */
+    ssh->highwaterFlag = 0;
+    ssh->msgHighwaterFlag = 0;
+    hc.count = 0;
+
+    /* An IGNORE packet under HMAC-SHA2-256 at peerSeq 0, one MAC bit off. */
+    prefixLen = BuildMacTestPacketPrefix(MSGID_IGNORE, 10, pkt, sizeof(pkt));
+    if (prefixLen == 0) { result = -1954; goto done; }
+    WMEMSET(macKey, 0xA5, sizeof(macKey));
+    WMEMSET(seq, 0, sizeof(seq));
+    ret = wc_HmacInit(&hmac, ssh->ctx->heap, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_HmacSetKey(&hmac, WC_SHA256, macKey, sizeof(macKey));
+        if (ret == 0)
+            ret = wc_HmacUpdate(&hmac, seq, sizeof(seq));
+        if (ret == 0)
+            ret = wc_HmacUpdate(&hmac, pkt, prefixLen);
+        if (ret == 0)
+            ret = wc_HmacFinal(&hmac, digest);
+        wc_HmacFree(&hmac);
+    }
+    if (ret != 0) { result = -1955; goto done; }
+    WMEMCPY(pkt + prefixLen, digest, sizeof(digest));
+    pkt[prefixLen] ^= 0x01;
+
+    ssh->peerMacId = ID_HMAC_SHA2_256;
+    ssh->peerMacSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->peerKeys.macKey, macKey, sizeof(macKey));
+    ssh->peerKeys.macKeySz = sizeof(macKey);
+    s_recvPkt = pkt;
+    s_recvPktSz = prefixLen + WC_SHA256_DIGEST_SIZE;
+    s_recvPktOff = 0;
+
+    /* The worker still flushes what was queued, but fires nothing. */
+    ssh->outputBuffer.length = 1;
+    ssh->outputBuffer.idx = 0;
+    ssh->outputBuffer.buffer[0] = 0;
+    s_extSendCount = 0;
+    ret = wolfSSH_worker(ssh, NULL);
+    if (ret != WS_FATAL_ERROR || wolfSSH_get_error(ssh) != WS_VERIFY_MAC_E) {
+        result = -1957;
+        goto done;
+    }
+    if (wolfSSH_OutputPending(ssh) || s_extSendCount == 0) {
+        result = -1958;
+        goto done;
+    }
+    if (hc.count != 0) { result = -1959; goto done; }
+
+    /* Nor does the next send, as a teardown would make. */
+    ret = wolfSSH_SendIgnore(ssh, NULL, 0);
+    if (ret != WS_SUCCESS) { result = -1960; goto done; }
+    if (hc.count != 0) { result = -1961; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    s_extSendCount = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_HMAC_SHA2_256 */
+
 /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x44. */
 static const byte s_workerExtBlob[] = {
     0x00, 0x00, 0x00, 0x00,
@@ -6811,6 +6992,10 @@ static int test_WorkerHardRecvErrorOutranksFlush(void)
     ret = wolfSSH_worker(ssh, NULL);
     if (ret != WS_FATAL_ERROR) { result = -1735; goto done; }
     if (wolfSSH_get_error(ssh) != WS_OVERFLOW_E) { result = -1736; goto done; }
+    if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+        result = -1784;
+        goto done;
+    }
 
 done:
     s_recvPkt = NULL;
@@ -22806,6 +22991,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoReceiveRejectsShortPadding: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+    unitResult = test_DoReceive_RejectsPaddingUnderflow();
+    printf("DoReceiveRejectsPaddingUnderflow: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -23033,6 +23223,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("WorkerReportsExtDataChannelKeying: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    unitResult = test_HighwaterQuietAfterBadPacket();
+    printf("HighwaterQuietAfterBadPacket: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_WorkerFlushesOnIdleReceive();
     printf("WorkerFlushesOnIdleReceive: %s\n",
