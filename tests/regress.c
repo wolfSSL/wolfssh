@@ -750,6 +750,9 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 #define REGRESS_MUTATE_TERRAPIN_C2S 9
 /* The splice ahead of the server's KEXINIT, before the allow list arms. */
 #define REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT 10
+/* The splice ahead of the client's KEXDH_INIT, while the server waits for
+ * the message that opens the negotiated KEX. */
+#define REGRESS_MUTATE_TERRAPIN_PRE_KEXDH 11
 
 /* 4 (len) + 1 (padLen) + 1 (msgId) + 4 (empty string payload) + 6 (pad) */
 #define REGRESS_INJECT_PACKET_SZ 16U
@@ -1368,8 +1371,14 @@ static void TerrapinInject(DuplexEndpoint* endpoint,
     byte injectPkt[REGRESS_INJECT_MAX_SZ];
     word32 injectPktSz;
     word32 anchorOffset;
-    byte anchorMsgId = (mutator->mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT)
-            ? MSGID_KEXINIT : MSGID_NEWKEYS;
+    byte anchorMsgId = MSGID_NEWKEYS;
+
+    if (mutator->mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT) {
+        anchorMsgId = MSGID_KEXINIT;
+    }
+    else if (mutator->mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXDH) {
+        anchorMsgId = MSGID_KEXDH_INIT;
+    }
 
     if (mutator->injectedPackets > 0) {
         return;
@@ -1401,15 +1410,17 @@ static int IsTerrapinMode(byte mode)
 {
     return mode == REGRESS_MUTATE_TERRAPIN ||
             mode == REGRESS_MUTATE_TERRAPIN_C2S ||
-            mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT;
+            mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT ||
+            mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXDH;
 }
 
-/* E_TRUNC, E_EMPTY and TERRAPIN_C2S rewrite the client's messages; the
- * rest rewrite the server's. */
+/* E_TRUNC, E_EMPTY, TERRAPIN_C2S and TERRAPIN_PRE_KEXDH rewrite the
+ * client's messages; the rest rewrite the server's. */
 static int MutatorTargetsEndpoint(byte mode, byte isServer)
 {
     if (mode == REGRESS_MUTATE_E_TRUNC || mode == REGRESS_MUTATE_E_EMPTY ||
-            mode == REGRESS_MUTATE_TERRAPIN_C2S) {
+            mode == REGRESS_MUTATE_TERRAPIN_C2S ||
+            mode == REGRESS_MUTATE_TERRAPIN_PRE_KEXDH) {
         return !isServer;
     }
     return isServer != 0;
@@ -2724,6 +2735,69 @@ static void TestPreKexInitInjectionAcceptedWithoutStrictKex(void)
     FreeKexReplyHarness(&harness);
 }
 #endif /* !WOLFSSH_NO_AES_GCM */
+
+/* Between the client's KEXINIT and its KEXDH_INIT the server accepts only
+ * the message that opens the negotiated KEX, so one from another method or
+ * an early NEWKEYS ends the connection (draft-ietf-sshm-strict-kex
+ * section 3.2). */
+static void AssertOutOfTurnKexMsgRejected(byte injectMsgId)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarnessMode(&harness, injectMsgId, 1, 1,
+            REGRESS_MUTATE_TERRAPIN_PRE_KEXDH);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.server->useStrictKex, 1);
+
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(result.serverErr, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(harness.server->initialKexDone, 0);
+    AssertIntEQ(harness.server->disconnected, 1);
+
+    AssertIntEQ(harness.serverIo.sawDisconnect, 1);
+    AssertIntEQ(harness.serverIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestOutOfTurnKexMsgRejectedWithStrictKex(void)
+{
+    static const byte outOfTurn[] = {
+        MSGID_NEWKEYS, MSGID_KEXDH_REPLY, MSGID_KEXDH_GEX_INIT,
+        MSGID_KEXDH_GEX_REQUEST
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(outOfTurn) / sizeof(outOfTurn[0])); i++) {
+        AssertOutOfTurnKexMsgRejected(outOfTurn[i]);
+    }
+}
+
+/* A NEWKEYS that installs no keys (the injected one carries a payload) is
+ * counted like any other packet: no counter reset, and the initial KEX is
+ * not over. The server has counted KEXINIT, KEXDH_INIT and this one. */
+static void TestStrictKexFailedNewKeysNotCounted(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarnessMode(&harness, MSGID_NEWKEYS, 1, 1,
+            REGRESS_MUTATE_TERRAPIN_C2S);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.server->useStrictKex, 1);
+
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(harness.server->initialKexDone, 0);
+    AssertIntEQ(harness.server->peerSeq, 3);
+
+    FreeKexReplyHarness(&harness);
+}
 
 /* A strict KEX peer ends the connection on an IGNORE during the initial
  * KEX, so wolfSSH_SendIgnore() refuses until that KEX is done. */
@@ -15604,7 +15678,7 @@ static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
 /* After skipping a wrong-guess packet, the real first packet of the negotiated
  * KEX must still pass the message gate even when it sits across the GEX
  * boundary from the guess. Drives skip-then-real through IsMessageAllowed and
- * checks the skip did not pin expectMsgId to the discarded message's ID. */
+ * checks the skip set expectMsgId from the negotiated KEX, not the guess. */
 static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
         const char* label, byte realMsg)
 {
@@ -15624,6 +15698,8 @@ static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
     ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
     ssh->handshake->ignoreNextKexMsg = 1;
     ssh->handshake->expectMsgId = MSGID_NONE;
+    ssh->handshake->kexId = (realMsg == MSGID_KEXDH_GEX_REQUEST) ?
+            ID_DH_GEX_SHA256 : ID_DH_GROUP14_SHA256;
 
     WMEMSET(payload, 0xAB, sizeof(payload));
 
@@ -15631,8 +15707,8 @@ static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
     if (ret != WS_SUCCESS)
         Fail(("%s returns WS_SUCCESS when skipping", label), ("%d", ret));
 
-    /* Gate must not be pinned to the discarded guess's ID. */
-    AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+    /* Gate is set by the negotiated KEX, not the discarded guess. */
+    AssertIntEQ(ssh->handshake->expectMsgId, realMsg);
     /* The negotiated first-KEX packet must be accepted. */
     AssertIntEQ(wolfSSH_TestIsMessageAllowed(ssh, realMsg, 0), 1);
 
@@ -18493,6 +18569,8 @@ int main(int argc, char** argv)
     TestTerrapinInjectionRejectedByServer();
     TestStrictKexTakesInjectedDisconnect();
     TestPreKexInitInjectionRejectedWithStrictKex();
+    TestOutOfTurnKexMsgRejectedWithStrictKex();
+    TestStrictKexFailedNewKeysNotCounted();
     TestStrictKexHoldsSendIgnore();
     #ifndef WOLFSSH_NO_AES_GCM
     TestPreKexInitInjectionAcceptedWithoutStrictKex();

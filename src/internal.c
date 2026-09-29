@@ -6574,6 +6574,19 @@ static int IsKexMatchError(int ret)
     #define WOLFSSH_KEXINIT_ID_LIST_MAX 32
 #endif
 
+#ifndef NO_WOLFSSH_SERVER
+/* Server: after KEXINIT, accept only the message that opens the negotiated
+ * KEX (draft-ietf-sshm-strict-kex section 3.2). */
+static void ExpectClientKexMsg(WOLFSSH* ssh)
+{
+    ssh->handshake->expectMsgId =
+            (ssh->handshake->kexId == ID_DH_GEX_SHA256) ?
+            MSGID_KEXDH_GEX_REQUEST : MSGID_KEXDH_INIT;
+    WLOG_EXPECT_MSGID(ssh->handshake->expectMsgId);
+}
+#endif
+
+
 static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     int ret = WS_SUCCESS;
@@ -7005,8 +7018,14 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
         if (ret == WS_SUCCESS) {
             *idx = begin;
-            if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
+            if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
                 ssh->clientState = CLIENT_KEXINIT_DONE;
+#ifndef NO_WOLFSSH_SERVER
+                /* A wrong guess sets it once the guess is skipped. */
+                if (!ssh->handshake->ignoreNextKexMsg)
+                    ExpectClientKexMsg(ssh);
+#endif
+            }
             else
                 ssh->serverState = SERVER_KEXINIT_DONE;
 
@@ -7221,9 +7240,9 @@ static const word32 dhPrimeGroup16Sz = (word32)sizeof(dhPrimeGroup16);
 #endif
 
 /* RFC 4253 sec. 7.1: discard the KEX packet a peer sent after a wrong
- * first_packet_follows guess. Leave expectMsgId at MSGID_NONE, the real
- * follow-up's ID comes from the negotiated KEX, not the guess, and may cross
- * the GEX boundary. Returns 1 if consumed, else 0. Caller validates handshake. */
+ * first_packet_follows guess. expectMsgId stays at MSGID_NONE until then,
+ * since the guessed packet's ID may cross the GEX boundary. Returns 1 if
+ * consumed, else 0. Caller validates handshake. */
 static int SkipGuessedKexMsg(WOLFSSH* ssh, const char* what,
         word32 len, word32* idx)
 {
@@ -7234,6 +7253,10 @@ static int SkipGuessedKexMsg(WOLFSSH* ssh, const char* what,
             what);
     ssh->handshake->ignoreNextKexMsg = 0;
     *idx += len;
+#ifndef NO_WOLFSSH_SERVER
+    if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER)
+        ExpectClientKexMsg(ssh);
+#endif
     return 1;
 }
 
@@ -13956,6 +13979,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     byte msg;
     word32 payloadIdx = 0;
     int msgAllowed;
+    byte newKeysDone = 0;
     int ret = WS_SUCCESS;
 
     WLOG(WS_LOG_DEBUG, "DoPacket sequence number: %d", ssh->peerSeq);
@@ -14088,9 +14112,16 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             break;
 
         case MSGID_NEWKEYS:
+        {
+            /* DoNewKeys() frees the handshake once the keys are in, even
+             * when the window flush after that wants a write. */
+            byte hadHandshake = (ssh->handshake != NULL);
+
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_NEWKEYS");
             ret = DoNewKeys(ssh, buf + idx, payloadSz, &payloadIdx);
+            newKeysDone = hadHandshake && ssh->handshake == NULL;
             break;
+        }
 
         case MSGID_KEXDH_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_INIT");
@@ -14257,10 +14288,11 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             idx = len;
         }
         ssh->inputBuffer.idx = idx;
-        if (msg == MSGID_NEWKEYS) {
+        if (newKeysDone) {
             /* Strict KEX (Terrapin mitigation): once negotiated, every
              * SSH_MSG_NEWKEYS resets the incoming sequence number so the
-             * next inbound packet starts at zero under the new keys. */
+             * next inbound packet starts at zero under the new keys. A
+             * NEWKEYS that installed no keys is counted like any other. */
             if (ssh->useStrictKex) {
                 ssh->peerSeq = 0;
             }
