@@ -3724,10 +3724,15 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId, byte doKeyPad)
     }
 #endif /* SHOW_SECRETS */
 
-    /* Do not keep a partial key set from a failed derivation. */
+    /* Do not keep a partial key set from a failed derivation. Keep the
+     * negotiated sizes so a retry cannot succeed with no keys. */
     if (ret != WS_SUCCESS && cK != NULL) {
-        WS_FORCEZERO(cK, sizeof(Keys));
-        WS_FORCEZERO(sK, sizeof(Keys));
+        WS_FORCEZERO(cK->iv, sizeof(cK->iv));
+        WS_FORCEZERO(cK->encKey, sizeof(cK->encKey));
+        WS_FORCEZERO(cK->macKey, sizeof(cK->macKey));
+        WS_FORCEZERO(sK->iv, sizeof(sK->iv));
+        WS_FORCEZERO(sK->encKey, sizeof(sK->encKey));
+        WS_FORCEZERO(sK->macKey, sizeof(sK->macKey));
     }
 
     return ret;
