@@ -729,6 +729,15 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
     #define REGRESS_TRUNC_KEX_ALGO "ecdh-sha2-nistp256"
 #endif
 
+/* Hybrid KEX algorithm for the truncated hybrid f test */
+#if !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    #define REGRESS_HYBRID_KEX_ALGO "mlkem768x25519-sha256"
+#elif !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256)
+    #define REGRESS_HYBRID_KEX_ALGO "mlkem768nistp256-sha256"
+#elif !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    #define REGRESS_HYBRID_KEX_ALGO "mlkem1024nistp384-sha384"
+#endif
+
 /* KEX algorithm for the GEX group test */
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     #define REGRESS_GEX_KEX_ALGO "diffie-hellman-group-exchange-sha256"
@@ -2290,6 +2299,33 @@ static void TestKexDhInitEmptyESendsDisconnect(void)
     FreeKexReplyHarness(&harness);
 }
 #endif /* REGRESS_TRUNC_KEX_ALGO */
+
+#ifdef REGRESS_HYBRID_KEX_ALGO
+/* A hybrid KEX failure on the client also ends with KEY_EXCHANGE_FAILED. The
+ * short f leaves the classical peer key one byte short. */
+static void TestKexHybridReplyTruncatedFSendsDisconnect(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarnessKex(&harness, REGRESS_HYBRID_KEX_ALGO,
+            REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH, 1,
+            REGRESS_MUTATE_F_TRUNC, NULL, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.mutator.mutatedPackets, 1);
+    AssertFalse(result.clientSuccess);
+    AssertFalse(harness.client->connectState >= CONNECT_KEYED);
+    AssertTrue(result.clientRet == WS_FATAL_ERROR);
+    AssertIntEQ(result.clientErr, WS_CRYPTO_FAILED);
+    AssertTrue(harness.clientIo.sawDisconnect);
+    AssertIntEQ(harness.clientIo.disconnectReason,
+            WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* REGRESS_HYBRID_KEX_ALGO */
 
 #ifdef REGRESS_GEX_KEX_ALGO
 /* A GEX group below the floor this client enforces (RFC 8270) ends the key
@@ -18664,6 +18700,9 @@ int main(int argc, char** argv)
     TestKexDhReplyTruncatedFSendsDisconnect();
     TestKexDhInitTruncatedESendsDisconnect();
     TestKexDhInitEmptyESendsDisconnect();
+    #endif
+    #ifdef REGRESS_HYBRID_KEX_ALGO
+    TestKexHybridReplyTruncatedFSendsDisconnect();
     #endif
     #ifdef REGRESS_GEX_KEX_ALGO
     TestKexDhGexGroupShrunkPrimeSendsDisconnect();
