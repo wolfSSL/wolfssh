@@ -34,6 +34,8 @@ typedef struct thread_args {
     word32      caCertSz;
     const byte* hostKeyBuf;     /* server host key; NULL = use load_key() */
     word32      hostKeyBufSz;
+    const byte* hostCertBuf;    /* server host cert DER; NULL = none */
+    word32      hostCertBufSz;
 } thread_args;
 
 #endif /* _WOLFSSH_TESTS_AUTH_H_ */
