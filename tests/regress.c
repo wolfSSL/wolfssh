@@ -14239,6 +14239,223 @@ static void TestClientBuffersIdempotent(void)
 }
 #endif
 
+#if !defined(NO_WOLFSSH_CLIENT) && !defined(WOLFSSH_NO_PUBKEY_AUTH) \
+    && ((!defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)) \
+        || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
+/* When set, the key type the next publickey request claims for the loaded
+ * key. Only the algorithm choice runs before the key is parsed. */
+static const char* pkCaseKeyType = NULL;
+/* When set, a server-sig-algs EXT_INFO sent ahead of the case's own. */
+static const char* pkCasePriorSigAlgs = NULL;
+
+static int PkCaseUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    int ret = ClientUserAuth(authType, authData, ctx);
+
+    if (ret == WOLFSSH_USERAUTH_SUCCESS && pkCaseKeyType != NULL
+            && authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        authData->sf.publicKey.publicKeyType = (const byte*)pkCaseKeyType;
+        authData->sf.publicKey.publicKeyTypeSz =
+            (word32)WSTRLEN(pkCaseKeyType);
+    }
+    return ret;
+}
+
+/* Send one publickey USERAUTH_REQUEST from a fresh client session with the
+ * key pair ClientUsePubKey() and ClientSetPrivateKey() loaded. A non-NULL
+ * extName arrives first in an EXT_INFO with extValue. On success algName
+ * gets the public key algorithm name the request offered. */
+static int RunUserAuthPkSigAlgsCase(const char* extName, const char* extValue,
+        char* algName, word32 algNameSz)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[2048];
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+    wolfSSH_SetUserAuth(ctx, PkCaseUserAuth);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetUsername(ssh, "gretel"), WS_SUCCESS);
+
+    MemIoInit(&io, NULL, 0, out, (word32)sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+    ssh->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->sessionId, 0x33, ssh->sessionIdSz);
+
+    if (pkCasePriorSigAlgs != NULL) {
+        byte payload[128];
+        word32 payloadSz;
+        word32 idx = 0;
+
+        payloadSz = BuildExtInfoSigAlgs(payload, (word32)sizeof(payload),
+                pkCasePriorSigAlgs);
+        AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+                WS_SUCCESS);
+    }
+
+    if (extName != NULL) {
+        byte payload[128];
+        word32 payloadSz;
+        word32 idx = 0;
+
+        payloadSz = AppendUint32(payload, (word32)sizeof(payload), 0, 1);
+        payloadSz = AppendString(payload, (word32)sizeof(payload), payloadSz,
+                extName);
+        payloadSz = AppendString(payload, (word32)sizeof(payload), payloadSz,
+                extValue);
+        AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
+                WS_SUCCESS);
+    }
+
+    algName[0] = '\0';
+    ret = SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1);
+    if (ret == WS_SUCCESS) {
+        static const char osshCertSuffix[] = "-cert-v01@openssh.com";
+        const byte* payload;
+        const byte* field;
+        const byte* sig;
+        word32 payloadSz;
+        word32 fieldSz;
+        word32 sigSz;
+        word32 nameSz;
+        word32 idx = 0;
+        byte hasSignature = 0;
+        int i;
+
+        AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_USERAUTH_REQUEST);
+        payloadSz = ParsePayloadLen(io.out, io.outSz) - MSG_ID_SZ;
+        payload = io.out + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+
+        /* user name, service name, method name */
+        for (i = 0; i < 3; i++) {
+            AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz,
+                    &idx), WS_SUCCESS);
+        }
+        AssertIntEQ(GetBoolean(&hasSignature, payload, payloadSz, &idx),
+                WS_SUCCESS);
+        AssertIntEQ(hasSignature, 1);
+        AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz, &idx),
+                WS_SUCCESS);
+        AssertTrue(fieldSz < algNameSz);
+        WMEMCPY(algName, field, fieldSz);
+        algName[fieldSz] = '\0';
+
+        /* public key blob, then the signature, which ends the payload */
+        AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz, &idx),
+                WS_SUCCESS);
+        AssertIntEQ(GetStringRef(&sigSz, &sig, payload, payloadSz, &idx),
+                WS_SUCCESS);
+        AssertIntEQ(idx, payloadSz);
+
+        /* The signature names the offered algorithm, less a cert suffix. */
+        idx = 0;
+        AssertIntEQ(GetStringRef(&fieldSz, &field, sig, sigSz, &idx),
+                WS_SUCCESS);
+        nameSz = (word32)WSTRLEN(algName);
+        if (nameSz > sizeof(osshCertSuffix) - 1
+                && WSTRCMP(algName + nameSz - (sizeof(osshCertSuffix) - 1),
+                        osshCertSuffix) == 0) {
+            nameSz -= (word32)(sizeof(osshCertSuffix) - 1);
+        }
+        AssertIntEQ(fieldSz, nameSz);
+        AssertIntEQ(WMEMCMP(field, algName, nameSz), 0);
+    }
+    else {
+        AssertIntEQ(io.outSz, 0);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return ret;
+}
+
+/* With no server-sig-algs, RFC 8308 section 2.2, the client uses its own
+ * order; with one, only what it lists. */
+static void TestUserAuthPkWithoutServerSigAlgs(void)
+{
+    char algName[64];
+
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)
+    #ifndef WOLFSSH_NO_RSA_SHA2_512
+    const char* rsaFirst = "rsa-sha2-512";
+    #else
+    const char* rsaFirst = "rsa-sha2-256";
+    #endif
+
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-rsa.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-rsa.pem"), 0);
+
+    AssertIntEQ(RunUserAuthPkSigAlgsCase(NULL, NULL, algName,
+            sizeof(algName)), WS_SUCCESS);
+    AssertStrEQ(algName, rsaFirst);
+
+    /* An EXT_INFO without server-sig-algs lists nothing. */
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("ping@openssh.com", "0", algName,
+            sizeof(algName)), WS_SUCCESS);
+    AssertStrEQ(algName, rsaFirst);
+
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "rsa-sha2-256",
+            algName, sizeof(algName)), WS_SUCCESS);
+    AssertStrEQ(algName, "rsa-sha2-256");
+
+    /* Listed but nothing usable is still a mismatch. */
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "bogus",
+            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "",
+            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+
+    /* Nor when it replaces a usable one, RFC 8308 section 2.4. */
+    pkCasePriorSigAlgs = "rsa-sha2-256";
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "bogus",
+            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+    AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "",
+            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+    pkCasePriorSigAlgs = NULL;
+
+    #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_SSH_RSA_SHA1) \
+        && !defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+    /* Our own choice skips soft-disabled SHA-1. */
+    pkCaseKeyType = "x509v3-ssh-rsa";
+    AssertIntEQ(RunUserAuthPkSigAlgsCase(NULL, NULL, algName,
+            sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+    pkCaseKeyType = NULL;
+    #endif
+
+    #if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    /* An OpenSSH RSA certificate falls back the same way. */
+    pkCaseKeyType = "ssh-rsa-cert-v01@openssh.com";
+    AssertIntEQ(RunUserAuthPkSigAlgsCase(NULL, NULL, algName,
+            sizeof(algName)), WS_SUCCESS);
+    AssertIntEQ(WSTRNCMP(algName, rsaFirst, WSTRLEN(rsaFirst)), 0);
+    AssertStrEQ(algName + WSTRLEN(rsaFirst), "-cert-v01@openssh.com");
+    pkCaseKeyType = NULL;
+    #endif
+
+    ClientFreeBuffers();
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-ecc.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-ecc.pem"), 0);
+
+    AssertIntEQ(RunUserAuthPkSigAlgsCase(NULL, NULL, algName,
+            sizeof(algName)), WS_SUCCESS);
+    AssertStrEQ(algName, "ecdsa-sha2-nistp256");
+
+    ClientFreeBuffers();
+#endif
+}
+#endif
+
 /* Windows has no /dev/null; the null device there is "NUL". Keyed on
  * _WIN32, like the arpa/inet.h/direct.h include guard above: this is a
  * libc-availability question, not a wolfSSH API-selection one. */
@@ -16761,6 +16978,8 @@ static void TestExtInfoSigAlgsReplace(void)
             WS_SUCCESS);
     AssertIntEQ(ssh->peerSigIdSz, 0);
     AssertNull(ssh->peerSigId);
+    /* Still seen, so no fallback to the canned list. */
+    AssertIntEQ(ssh->peerSigAlgsSeen, 1);
 
     /* Same for an empty list, from a good one again. */
     idx = 0;
@@ -19124,6 +19343,11 @@ int main(int argc, char** argv)
 #endif
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
+#endif
+#if !defined(NO_WOLFSSH_CLIENT) && !defined(WOLFSSH_NO_PUBKEY_AUTH) \
+    && ((!defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)) \
+        || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
+    TestUserAuthPkWithoutServerSigAlgs();
 #endif
     TestPasswordEofNoCrash();
 #ifndef NO_WOLFSSH_CLIENT

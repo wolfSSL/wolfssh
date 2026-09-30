@@ -9751,6 +9751,9 @@ static int DoExtInfoServerSigAlgs(WOLFSSH* ssh,
      * ids[0] may be ID_UNKNOWN by design, inert downstream. */
     ret = GetNameListRaw(ids, &idsSz, names, namesSz);
 
+    if (ret == WS_SUCCESS)
+        ssh->peerSigAlgsSeen = 1;
+
     if (ret == WS_SUCCESS && idsSz == 0) {
         /* No usable names, either an empty list or one that opens with an
          * empty element. Legal, and it advertises nothing. */
@@ -20313,6 +20316,17 @@ static int BuildUserAuthResponseKeyboard(WOLFSSH* ssh, byte* output, word32* idx
 #endif
 
 #ifndef WOLFSSH_NO_RSA
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+/* The rsa-sha2-* variant for an OpenSSH RSA certificate's name and hash.
+ * With no server-sig-algs, the canned order decides, as for ssh-rsa. */
+static byte ClientOsshRsaCertSigId(WOLFSSH* ssh)
+{
+    if (ssh->peerSigAlgsSeen)
+        return OsshRsaCertSigId(ssh->peerSigId, ssh->peerSigIdSz);
+    return OsshRsaCertSigId(cannedKeyAlgoClient, cannedKeyAlgoClientSz);
+}
+#endif
+
 static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
         const WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -20416,10 +20430,9 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
 
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
     /* An OpenSSH RSA certificate is dispatched by its cert id, but the
-     * signature itself is rsa-sha2-*. Use the strongest variant the server
-     * advertised. */
+     * signature itself is rsa-sha2-*. */
     if (keySig->sigId == ID_OSSH_CERT_RSA) {
-        effSigId = OsshRsaCertSigId(ssh->peerSigId, ssh->peerSigIdSz);
+        effSigId = ClientOsshRsaCertSigId(ssh);
     }
 #endif
 
@@ -22005,9 +22018,17 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
             algoId[algoIdSz++] = keySig->keyId;
         }
 
-        /* Is that in the peerSigId list? */
-        matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
-                ssh->peerSigId, ssh->peerSigIdSz);
+        /* Is that in the peerSigId list? With no server-sig-algs, RFC 8308
+         * section 2.2, use the canned order, which prefers rsa-sha2-* to
+         * ssh-rsa; RFC 8332 section 3.3 allows either. */
+        if (ssh->peerSigAlgsSeen) {
+            matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
+                    ssh->peerSigId, ssh->peerSigIdSz);
+        }
+        else {
+            matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
+                    cannedKeyAlgoClient, cannedKeyAlgoClientSz);
+        }
         if (matchId == ID_UNKNOWN) {
             ret = WS_MATCH_KEY_ALGO_E;
         }
@@ -22021,8 +22042,7 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         if (keySig->keyId == ID_OSSH_CERT_RSA) {
         #if !defined(WOLFSSH_NO_RSA_SHA2_256) && \
             !defined(WOLFSSH_NO_RSA_SHA2_512)
-            if (OsshRsaCertSigId(ssh->peerSigId, ssh->peerSigIdSz)
-                    == ID_RSA_SHA2_512) {
+            if (ClientOsshRsaCertSigId(ssh) == ID_RSA_SHA2_512) {
                 keySig->sigName = cannedKeyAlgoOsshRsaSha2_512CertName;
             }
             else {
