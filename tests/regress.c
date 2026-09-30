@@ -3725,6 +3725,145 @@ static void TestClientServiceAcceptBlockedDuringKeying(WOLFSSH* ssh)
 }
 
 
+/* Until the first userauth request goes out, no userauth message may
+ * arrive, the banner included. */
+static void TestClientUserauthReplyBeforeRequest(WOLFSSH* ssh)
+{
+    static const byte msgs[] = {
+        MSGID_USERAUTH_FAILURE,
+        MSGID_USERAUTH_SUCCESS,
+        MSGID_USERAUTH_BANNER,
+        MSGID_USERAUTH_PK_OK, /* also INFO_REQUEST and PW_CHRQ */
+    };
+    static const byte states[] = {
+        CONNECT_KEYED,
+        CONNECT_CLIENT_USERAUTH_REQUEST_SENT,
+        CONNECT_SERVER_USERAUTH_REQUEST_DONE,
+    };
+    word32 i, j;
+    int allowed;
+
+    for (i = 0; i < sizeof(states)/sizeof(*states); i++) {
+        for (j = 0; j < sizeof(msgs)/sizeof(*msgs); j++) {
+            ResetSession(ssh);
+            ssh->connectState = states[i];
+            allowed = wolfSSH_TestIsMessageAllowed(ssh, msgs[j],
+                    WS_MSG_RECV);
+            AssertFalse(allowed);
+            AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+        }
+    }
+
+    /* The service accept still answers the service request. */
+    ResetSession(ssh);
+    ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+    allowed = wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_ACCEPT,
+            WS_MSG_RECV);
+    AssertTrue(allowed);
+
+    /* Once the first userauth request is out, all of them are allowed. */
+    for (j = 0; j < sizeof(msgs)/sizeof(*msgs); j++) {
+        ResetSession(ssh);
+        ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
+        allowed = wolfSSH_TestIsMessageAllowed(ssh, msgs[j],
+                WS_MSG_RECV);
+        AssertTrue(allowed);
+    }
+}
+
+
+/* A userauth reply to the service request draws a disconnect and leaves
+ * serverState alone. */
+static void TestClientUnsolicitedUserauthReplyRejected(byte msgId)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte pkt[32];
+    byte out[256];
+    word32 pktSz;
+
+    pktSz = BuildPacket(msgId, pkt, sizeof(pkt));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    MemIoInit(&io, pkt, pktSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+    ssh->serverState = SERVER_KEXINIT_DONE;
+
+    AssertIntEQ(wolfSSH_TestDoReceive(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(ssh->serverState, SERVER_KEXINIT_DONE);
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_DISCONNECT);
+    AssertTrue(ssh->disconnected);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* Unused by a "none" request, which still needs a callback. */
+static int NoneUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authType;
+    (void)authData;
+    (void)ctx;
+    return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+}
+
+/* A banner bundled behind the service accept, as wolfSSH's server sends
+ * it, is read after wolfSSH_connect() sends the first request. */
+static void TestClientBannerBehindServiceAccept(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    byte payload[64];
+    word32 inSz;
+    word32 payloadSz;
+
+    payloadSz = AppendString(payload, sizeof(payload), 0, "ssh-userauth");
+    inSz = WrapPacket(MSGID_SERVICE_ACCEPT, payload, payloadSz,
+            in, sizeof(in));
+    payloadSz = AppendString(payload, sizeof(payload), 0, "banner");
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, "");
+    inSz += WrapPacket(MSGID_USERAUTH_BANNER, payload, payloadSz,
+            in + inSz, sizeof(in) - inSz);
+
+    InitChannelOpenHarnessClient(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, NoneUserAuthCb);
+    AssertIntEQ(wolfSSH_SetUsername(harness.ssh, "user"), WS_SUCCESS);
+    harness.ssh->connectState = CONNECT_CLIENT_USERAUTH_REQUEST_SENT;
+    harness.ssh->serverState = SERVER_KEXINIT_DONE;
+
+    /* Both packets read, then WANT_READ for the auth answer. */
+    AssertIntEQ(wolfSSH_connect(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_WANT_READ);
+    AssertIntEQ(harness.io.inOff, inSz);
+    AssertIntEQ(harness.ssh->connectState, CONNECT_CLIENT_USERAUTH_SENT);
+    AssertIntEQ(harness.ssh->serverState, SERVER_USERAUTH_REQUEST_DONE);
+    AssertFalse(harness.ssh->disconnected);
+    /* Only the userauth request went out. */
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_REQUEST);
+    AssertIntEQ(NextPacketOffset(harness.io.out, harness.io.outSz),
+            harness.io.outSz);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
  * connectState: no channel created, and the only thing sent back is the
  * disconnect RFC 4252 section 6 asks for. The connectState gate does the
@@ -18635,6 +18774,14 @@ int main(int argc, char** argv)
     TestChannelAllowedAfterAuth(ssh);
     TestClientOnlyKexMsgsBlocked(ssh);
     TestClientServiceAcceptBlockedDuringKeying(ssh);
+    TestClientUserauthReplyBeforeRequest(ssh);
+    TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_SUCCESS);
+    TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_FAILURE);
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    /* Id 60 is only a known id as INFO_REQUEST. */
+    TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_PK_OK);
+#endif
+    TestClientBannerBehindServiceAccept();
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
     TestSessionOnClientSendsOpenFail();
