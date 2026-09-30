@@ -1358,6 +1358,7 @@ struct WOLFSSH {
     byte sendStrictKex; /* offer strict KEX on initial KEXINIT */
     byte useStrictKex; /* strict KEX negotiated for this session */
     byte initialKexDone; /* peer initial KEX finished (NEWKEYS arrived) */
+    byte peerSigAlgsSeen; /* peer sent server-sig-algs, even an unusable one */
     byte* peerSigId;
     word32 peerSigIdSz;
 
