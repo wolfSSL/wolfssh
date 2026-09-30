@@ -1031,6 +1031,12 @@ static int test_KDF(void)
 }
 
 
+/* Checks the internal.h derivation directly, independent of any API. */
+#if defined(WOLFSSH_NO_MLDSA44) && defined(WOLFSSH_NO_MLDSA65) && \
+    defined(WOLFSSH_NO_MLDSA87) && !defined(WOLFSSH_NO_MLDSA)
+    #error "WOLFSSH_NO_MLDSA must follow from all three levels being off"
+#endif
+
 /* Key Generation Unit Test */
 
 #ifdef WOLFSSH_KEYGEN
@@ -1368,6 +1374,24 @@ static int test_MlDsaCompositesDisabled(void)
 #endif
 
 #endif /* WOLFSSH_NO_MLDSA */
+
+/* API behaviour with ML-DSA off; the #error above covers the derivation. */
+#ifdef WOLFSSH_NO_MLDSA
+static int test_MlDsaLevelsDisabled(void)
+{
+    byte dummy[1];
+    int result = 0;
+    int sz;
+
+    sz = wolfSSH_MakeMlDsaKey(dummy, sizeof(dummy), WOLFSSH_MLDSAKEY_44);
+    if (sz != WS_NOT_COMPILED) {
+        printf("MlDsaLevelsDisabled: MakeMlDsaKey wrong result %d\n", sz);
+        result = -133;
+    }
+
+    return result;
+}
+#endif
 
 #endif /* WOLFSSH_KEYGEN */
 
@@ -13229,7 +13253,7 @@ static int test_KEY_clean_osshCert(void)
 }
 #endif /* WOLFSSH_OSSH_CERTS */
 
-#if !defined(WOLFSSH_NO_MLDSA)
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44)
 /* keys/server-key-mldsa44.der - MlDsa44 OneAsymmetricKey */
 static const byte unitTestMlDsaPrivKey[] = {
     0x30, 0x82, 0x0a, 0x3e, 0x02, 0x01, 0x00, 0x30,
@@ -13562,7 +13586,7 @@ static const byte unitTestMlDsaPrivKey[] = {
     0x27, 0xfe, 0x32, 0x26, 0x3c, 0x33, 0x83, 0xda,
     0x18, 0xc9
 };
-#endif /* !WOLFSSH_NO_MLDSA */
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSH_NO_MLDSA44 */
 
 #ifndef WOLFSSH_NO_ECDSA
 /* P-256 DER with the OID last byte changed 0x07 -> 0x01 (secp192r1).
@@ -23760,6 +23784,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* WOLFSSH_NO_MLDSA_COMPOSITES */
+#endif
+#ifdef WOLFSSH_NO_MLDSA
+    unitResult = test_MlDsaLevelsDisabled();
+    printf("MlDsaLevelsDisabled: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 #endif /* WOLFSSH_KEYGEN */
     unitResult = test_OpenSshPemNegative();
