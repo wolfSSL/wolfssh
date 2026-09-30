@@ -1423,23 +1423,13 @@ static void test_pubkey_auth_wrong_key(void)
 #if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
-/* Covers the private-only ML-DSA host key through the real load path
- * (wolfSSH_CTX_UsePrivateKey_buffer), not just IdentifyAsn1Key called
- * directly as in the unit test. */
-static void test_pubkey_load_mldsa_privonly_hostkey(void)
+/* Generate a private-only ML-DSA-44 host key in PKCS#8 DER. Caller frees. */
+static byte* mldsa_privonly_hostkey_der(int* derSz)
 {
-    WOLFSSH_CTX* ctx;
     MlDsaKey mlKey;
     WC_RNG mlRng;
     byte* mlDer;
     int mlDerSz;
-#ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
-    const int expect = WS_SUCCESS;
-#else
-    const int expect = WS_CRYPTO_FAILED;
-#endif
-
-    printf("Testing ML-DSA private-only host key load\n");
 
     WMEMSET(&mlKey, 0, sizeof(mlKey));
     AssertIntEQ(wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID), 0);
@@ -1455,16 +1445,167 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
     wc_MlDsaKey_Free(&mlKey);
     AssertIntGT(mlDerSz, 0);
 
+    *derSz = mlDerSz;
+    return mlDer;
+}
+
+/* Covers the private-only ML-DSA host key through the real load path
+ * (wolfSSH_CTX_UsePrivateKey_buffer), not just IdentifyAsn1Key called
+ * directly as in the unit test. */
+static void test_pubkey_load_mldsa_privonly_hostkey(void)
+{
+    WOLFSSH_CTX* ctx;
+    byte* mlDer;
+    int mlDerSz;
+#ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+    const int expect = WS_SUCCESS;
+#else
+    const int expect = WS_CRYPTO_FAILED;
+#endif
+
+    printf("Testing ML-DSA private-only host key load\n");
+
+    mlDer = mldsa_privonly_hostkey_der(&mlDerSz);
+
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
     AssertIntEQ(wolfSSH_CTX_UsePrivateKey_buffer(ctx, mlDer, (word32)mlDerSz,
             WOLFSSH_FORMAT_ASN1), expect);
     wolfSSH_CTX_free(ctx);
 
+    WMEMSET(mlDer, 0, mlDerSz);
     WFREE(mlDer, NULL, 0);
 }
-#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSH_NO_MLDSA44 && WOLFSSL_MLDSA_PRIVATE_KEY
-        * && !WOLFSSL_MLDSA_NO_ASN1 && !WOLFSSL_MLDSA_NO_MAKE_KEY */
+
+#if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && !defined(WOLFSSH_NO_ECDSA)
+/* ML-DSA counterpart to test_pubkey_auth_ed25519_privonly_hostkey: a real
+ * handshake with a private-only host key, exercising the derived public
+ * key all the way through SendKexGetSigningKey. */
+static void test_pubkey_auth_mldsa_privonly_hostkey(void)
+{
+    PubkeyServerCtx sCtx = {0};
+    PubkeyClientCtx cCtx;
+    byte  pubKeyBuf[512];
+    byte* p = pubKeyBuf;
+    word32 pubKeySz = sizeof(pubKeyBuf);
+    const byte* pubKeyType   = NULL;
+    word32      pubKeyTypeSz = 0;
+    byte  privKeyBuf[1300];
+    byte* privKeyPtr = privKeyBuf;
+    word32 privKeySz = sizeof(privKeyBuf);
+    const byte* privKeyType   = NULL;
+    word32      privKeyTypeSz = 0;
+    byte* hostKeyDer;
+    int hostKeyDerSz;
+
+    printf("Testing ML-DSA private-only host key at KEX (derived pubkey)\n");
+
+    hostKeyDer = mldsa_privonly_hostkey_der(&hostKeyDerSz);
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
+            (word32)WSTRLEN(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+            &p, &pubKeySz, &pubKeyType, &pubKeyTypeSz, NULL), WS_SUCCESS);
+
+    AssertIntEQ(wc_Sha256Hash(pubKeyBuf, pubKeySz, sCtx.hash), 0);
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
+            WOLFSSH_FORMAT_ASN1,
+            &privKeyPtr, &privKeySz, &privKeyType, &privKeyTypeSz, NULL),
+            WS_SUCCESS);
+
+    cCtx.publicKeyType   = pubKeyType;
+    cCtx.publicKeyTypeSz = pubKeyTypeSz;
+    cCtx.publicKey       = pubKeyBuf;
+    cCtx.publicKeySz     = pubKeySz;
+    cCtx.privateKey      = privKeyBuf;
+    cCtx.privateKeySz    = privKeySz;
+
+    run_pubkey_test_ex(&sCtx, &cCtx, WS_SUCCESS, hostKeyDer,
+            (word32)hostKeyDerSz);
+
+    WMEMSET(privKeyBuf, 0, sizeof(privKeyBuf));
+    WMEMSET(hostKeyDer, 0, hostKeyDerSz);
+    WFREE(hostKeyDer, NULL, 0);
+}
+#endif /* WOLFSSH_HAVE_MLDSA_DERIVE_PUB && !WOLFSSH_NO_ECDSA */
+
+#if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && \
+    defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
+    (!defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_RSA))
+/* User auth with a private-only ML-DSA-44 client key, read the way an
+ * application would, through wolfSSH_ReadKey_buffer(). */
+static void test_pubkey_auth_mldsa_privonly_userkey(void)
+{
+    PubkeyServerCtx sCtx = {0};
+    PubkeyClientCtx cCtx;
+    MlDsaKey mlKey;
+    WC_RNG rng;
+    byte* pubDer;
+    int pubDerSz;
+    byte* privDer;
+    int privDerSz;
+    byte* pubBlob = NULL;
+    word32 pubBlobSz = 0;
+    const byte* pubType = NULL;
+    word32 pubTypeSz = 0;
+    byte* privKey = NULL;
+    word32 privKeySz = 0;
+    const byte* privType = NULL;
+    word32 privTypeSz = 0;
+
+    printf("Testing ML-DSA private-only client key for user auth\n");
+
+    WMEMSET(&mlKey, 0, sizeof(mlKey));
+    AssertIntEQ(wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID), 0);
+    AssertIntEQ(wc_MlDsaKey_SetParams(&mlKey, WC_ML_DSA_44), 0);
+    AssertIntEQ(wc_InitRng(&rng), 0);
+    AssertIntEQ(wc_MlDsaKey_MakeKey(&mlKey, &rng), 0);
+    wc_FreeRng(&rng);
+
+    pubDer = (byte*)WMALLOC(WC_MLDSA_44_PUB_KEY_DER_SIZE, NULL, 0);
+    AssertNotNull(pubDer);
+    pubDerSz = wc_MlDsaKey_PublicKeyToDer(&mlKey, pubDer,
+            WC_MLDSA_44_PUB_KEY_DER_SIZE, 1);
+    AssertIntGT(pubDerSz, 0);
+    privDer = (byte*)WMALLOC(WC_MLDSA_44_PRV_KEY_DER_SIZE, NULL, 0);
+    AssertNotNull(privDer);
+    privDerSz = wc_MlDsaKey_PrivateKeyToDer(&mlKey, privDer,
+            WC_MLDSA_44_PRV_KEY_DER_SIZE);
+    wc_MlDsaKey_Free(&mlKey);
+    AssertIntGT(privDerSz, 0);
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(pubDer, (word32)pubDerSz,
+            WOLFSSH_FORMAT_ASN1, &pubBlob, &pubBlobSz, &pubType, &pubTypeSz,
+            0, NULL), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ReadKey_buffer(privDer, (word32)privDerSz,
+            WOLFSSH_FORMAT_ASN1, &privKey, &privKeySz, &privType,
+            &privTypeSz, NULL), WS_SUCCESS);
+    AssertIntEQ(privTypeSz, pubTypeSz);
+    AssertIntEQ(WMEMCMP(privType, pubType, pubTypeSz), 0);
+
+    AssertIntEQ(wc_Sha256Hash(pubBlob, pubBlobSz, sCtx.hash), 0);
+
+    cCtx.publicKeyType   = pubType;
+    cCtx.publicKeyTypeSz = pubTypeSz;
+    cCtx.publicKey       = pubBlob;
+    cCtx.publicKeySz     = pubBlobSz;
+    cCtx.privateKey      = privKey;
+    cCtx.privateKeySz    = privKeySz;
+
+    run_pubkey_test_ex(&sCtx, &cCtx, WS_SUCCESS, NULL, 0);
+
+    WMEMSET(privKey, 0, privKeySz);
+    WFREE(privKey, NULL, DYNTYPE_PRIVKEY);
+    WFREE(pubBlob, NULL, DYNTYPE_PRIVKEY);
+    WMEMSET(privDer, 0, privDerSz);
+    WFREE(privDer, NULL, 0);
+    WFREE(pubDer, NULL, 0);
+}
+#endif /* WOLFSSH_HAVE_MLDSA_DERIVE_PUB && WOLFSSL_MLDSA_PUBLIC_KEY &&
+        * (!WOLFSSH_NO_ECDSA || !WOLFSSH_NO_RSA) */
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSH_NO_MLDSA44
+        * && WOLFSSL_MLDSA_PRIVATE_KEY && !WOLFSSL_MLDSA_NO_ASN1
+        * && !WOLFSSL_MLDSA_NO_MAKE_KEY */
 
 #if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
     defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)
@@ -1599,6 +1740,8 @@ static void test_pubkey_auth_ecdsa_privonly_hostkey(void)
     run_pubkey_test_ex(&sCtx, &cCtx, WS_SUCCESS, hostKeyDer,
             (word32)hostKeyDerSz);
 
+    WMEMSET(privKeyBuf, 0, sizeof(privKeyBuf));
+    WMEMSET(hostKeyDer, 0, hostKeyDerSz);
     WFREE(hostKeyDer, NULL, 0);
 }
 #endif /* !WOLFSSH_NO_ECDSA && !WOLFSSH_NO_RSA */
@@ -2514,6 +2657,14 @@ int wolfSSH_AuthTest(int argc, char** argv)
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
     test_pubkey_load_mldsa_privonly_hostkey();
+    #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && !defined(WOLFSSH_NO_ECDSA)
+    test_pubkey_auth_mldsa_privonly_hostkey();
+    #endif
+    #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && \
+        defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
+        (!defined(WOLFSSH_NO_ECDSA) || !defined(WOLFSSH_NO_RSA))
+    test_pubkey_auth_mldsa_privonly_userkey();
+    #endif
 #endif
 #endif /* !NO_SHA256 */
 
