@@ -472,6 +472,17 @@ After that, configure and build wolfSSH as usual:
     $ ./configure
     $ make all
 
+A private-only ML-DSA key, used as a host key or read as a client key with
+`wolfSSH_ReadKey_buffer()`/`wolfSSH_ReadKey_file()`, loads when wolfSSL
+provides `wc_MlDsaKey_MakePublicKey()`; wolfSSH derives the public key. This
+is on when `./configure` detects the function, or in any build when wolfSSL
+defines `WC_MLDSA_HAVE_MAKE_PUBLIC_KEY` alongside it. A build without
+`./configure` against a wolfSSL that has the function but not that macro
+must define `WOLFSSH_HAVE_MLDSA_DERIVE_PUB`. Without it, such keys are
+rejected with `WS_CRYPTO_FAILED`.
+An ML-DSA private key of a level disabled in wolfSSH
+(`WOLFSSH_NO_MLDSA44/65/87`) is rejected at load with `WS_UNIMPLEMENTED_E`.
+
 The wolfSSH client and server will automatically negotiate using ML-KEM-768
 hybridized with ECDHE over the P-256 ECC curve and ML-DSA for host keys/client
 public key authentication.
