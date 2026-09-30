@@ -983,8 +983,10 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
             return 0;
         }
         else if (MSGIDLIMIT_AUTH(msg)) {
-            /* Do not accept any userauth messages until we've asked for auth. */
-            if (ssh->connectState < CONNECT_CLIENT_USERAUTH_REQUEST_SENT) {
+            /* No userauth message, the banner included, before our first
+             * request. wolfSSH_connect() sends it before reading past the
+             * service accept. */
+            if (ssh->connectState < CONNECT_CLIENT_USERAUTH_SENT) {
                 WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
                         msg, "client", "before sending userauth request");
                 ssh->error = WS_MSGID_NOT_ALLOWED_E;
