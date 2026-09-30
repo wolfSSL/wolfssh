@@ -879,6 +879,11 @@ typedef struct WOLFSSH_PVT_KEY {
     byte publicKeyFmt;
         /* Public key format for the private key. Note, some public key
          * formats are used with multiple public key signing algorithms. */
+#ifndef WOLFSSH_NO_MLDSA
+    byte* mldsaPub;
+        /* Raw ML-DSA public key, exported once at load time. Owned by CTX. */
+    word32 mldsaPubSz;
+#endif /* !WOLFSSH_NO_MLDSA */
 #ifdef WOLFSSH_TPM
     byte isTpm;
         /* When set, the host key material lives in the TPM and key/keySz are
@@ -892,6 +897,11 @@ typedef struct WOLFSSH_PVT_KEY {
          * Owned by CTX, must be freed with CertFreeCertificateContext. */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
+
+#ifndef WOLFSSH_NO_MLDSA
+/* Free a slot's cached ML-DSA public key. Every slot writer calls it. */
+WOLFSSH_LOCAL void ClearMlDsaHostPubKey(WOLFSSH_PVT_KEY* pvtKey, void* heap);
+#endif
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Returns 1 when the value is exactly one assigned CERT_SYSTEM_STORE_*

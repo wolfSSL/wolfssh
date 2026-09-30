@@ -4145,6 +4145,9 @@ static void CommitCertStoreSlot(WOLFSSH_CTX* ctx, CertStoreSlot* slot)
         pvtKey->key = NULL;
         pvtKey->keySz = 0;
     }
+#ifndef WOLFSSH_NO_MLDSA
+    ClearMlDsaHostPubKey(pvtKey, heap);
+#endif
     if (pvtKey->cert != NULL) {
         WFREE(pvtKey->cert, heap, DYNTYPE_CERT);
     }
