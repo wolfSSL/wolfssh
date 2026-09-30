@@ -846,6 +846,16 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
         }
     }
 
+    /* No userauth before the service request, RFC 4252 section 1.
+     * wolfSSH_accept() advances acceptState before reading again, so a
+     * pipelined request still passes. */
+    if (MSGIDLIMIT_AUTH(msg)
+            && ssh->acceptState < ACCEPT_CLIENT_USERAUTH_REQUEST_DONE) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                msg, "server", "before the service request");
+        return 0;
+    }
+
     /* Has client userauth started? */
     /* Allows the server to receive up to KEXDH GEX Request during KEX. */
     if (ssh->acceptState < ACCEPT_KEYED) {
