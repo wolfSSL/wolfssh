@@ -38,7 +38,9 @@
 #endif
 #if (!defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519) && \
      defined(HAVE_ED25519_MAKE_KEY) && defined(HAVE_ED25519_KEY_EXPORT)) || \
-    (!defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT))
+    (!defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)) || \
+    (!defined(WOLFSSH_NO_MLDSA) && defined(WOLFSSH_CERTS) && \
+     defined(WOLFSSL_CERT_GEN))
     #include <wolfssl/wolfcrypt/asn_public.h>
 #endif
 #ifdef NO_FILESYSTEM
@@ -595,6 +597,15 @@ static THREAD_RETURN WOLFSSH_THREAD pubkey_server_thread(void* args)
         }
     }
 
+#ifdef WOLFSSH_CERTS
+    if (serverArgs->hostCertBuf != NULL &&
+            wolfSSH_CTX_UseCert_buffer(ctx, serverArgs->hostCertBuf,
+                serverArgs->hostCertBufSz, WOLFSSH_FORMAT_ASN1) < 0) {
+        serverArgs->return_code = WS_BAD_FILE_E;
+        goto cleanup;
+    }
+#endif /* WOLFSSH_CERTS */
+
     clientFd = accept(listenFd, (struct sockaddr*)&clientAddr, &clientAddrSz);
     if (clientFd == WOLFSSH_SOCKET_INVALID) {
         serverArgs->return_code = WS_SOCKET_ERROR_E;
@@ -637,10 +648,15 @@ static int AcceptAnyServerHostKey(const byte* pubKey, word32 pubKeySz,
  *               WS_FATAL_ERROR for a reject test
  * hostKeyBuf  - server host key DER; NULL uses the default fixture key
  *               via load_key() (what every existing caller wants)
- * hostKeyBufSz - size of hostKeyBuf; ignored when hostKeyBuf is NULL */
-static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
+ * hostKeyBufSz - size of hostKeyBuf; ignored when hostKeyBuf is NULL
+ * hostCertBuf - server host cert DER; NULL = none
+ * rootCertBuf - client root CA for hostCertBuf
+ * hostKeyAlgo - client host key algo list; NULL keeps the default */
+static int run_pubkey_test_host(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
                            int expect, const byte* hostKeyBuf,
-                           word32 hostKeyBufSz)
+                           word32 hostKeyBufSz, const byte* hostCertBuf,
+                           word32 hostCertBufSz, const byte* rootCertBuf,
+                           word32 rootCertBufSz, const char* hostKeyAlgo)
 {
     thread_args serverArgs;
     tcp_ready   ready;
@@ -661,6 +677,8 @@ static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
     serverArgs.caCertSz        = sCtx->caCertSz;
     serverArgs.hostKeyBuf      = hostKeyBuf;
     serverArgs.hostKeyBufSz    = hostKeyBufSz;
+    serverArgs.hostCertBuf     = hostCertBuf;
+    serverArgs.hostCertBufSz   = hostCertBufSz;
     InitTcpReady(serverArgs.signal);
 
     ThreadStart(pubkey_server_thread, (void*)&serverArgs, &serThread);
@@ -670,6 +688,17 @@ static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
     AssertNotNull(clientCtx);
     wolfSSH_CTX_SetPublicKeyCheck(clientCtx, AcceptAnyServerHostKey);
     wolfSSH_SetUserAuth(clientCtx, clientPubkeyUserAuth);
+#ifdef WOLFSSH_CERTS
+    if (rootCertBuf != NULL)
+        AssertIntEQ(wolfSSH_CTX_AddRootCert_buffer(clientCtx, rootCertBuf,
+                rootCertBufSz, WOLFSSH_FORMAT_ASN1), WS_SUCCESS);
+#else
+    (void)rootCertBuf;
+    (void)rootCertBufSz;
+#endif
+    if (hostKeyAlgo != NULL)
+        AssertIntEQ(wolfSSH_CTX_SetAlgoListKey(clientCtx, hostKeyAlgo),
+                WS_SUCCESS);
 
     clientSsh = wolfSSH_new(clientCtx);
     AssertNotNull(clientSsh);
@@ -705,6 +734,14 @@ static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
 
     FreeTcpReady(&ready);
     return WS_SUCCESS;
+}
+
+static int run_pubkey_test_ex(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
+                           int expect, const byte* hostKeyBuf,
+                           word32 hostKeyBufSz)
+{
+    return run_pubkey_test_host(sCtx, cCtx, expect, hostKeyBuf, hostKeyBufSz,
+            NULL, 0, NULL, 0, NULL);
 }
 
 /* Existing callers all want the default fixture host key, and every one of
@@ -1478,6 +1515,37 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
 }
 
 #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && !defined(WOLFSSH_NO_ECDSA)
+/* Authorize hansel's ECC key on the server and have the client present
+ * it. cCtx points into pubBuf and privBuf. */
+static void load_hansel_ecc_client(PubkeyServerCtx* sCtx,
+        PubkeyClientCtx* cCtx, byte* pubBuf, word32 pubBufSz,
+        byte* privBuf, word32 privBufSz)
+{
+    const byte* pubKeyType   = NULL;
+    word32      pubKeyTypeSz = 0;
+    const byte* privKeyType   = NULL;
+    word32      privKeyTypeSz = 0;
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
+            (word32)WSTRLEN(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
+            &pubBuf, &pubBufSz, &pubKeyType, &pubKeyTypeSz, NULL),
+            WS_SUCCESS);
+
+    AssertIntEQ(wc_Sha256Hash(pubBuf, pubBufSz, sCtx->hash), 0);
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
+            WOLFSSH_FORMAT_ASN1,
+            &privBuf, &privBufSz, &privKeyType, &privKeyTypeSz, NULL),
+            WS_SUCCESS);
+
+    cCtx->publicKeyType   = pubKeyType;
+    cCtx->publicKeyTypeSz = pubKeyTypeSz;
+    cCtx->publicKey       = pubBuf;
+    cCtx->publicKeySz     = pubBufSz;
+    cCtx->privateKey      = privBuf;
+    cCtx->privateKeySz    = privBufSz;
+}
+
 /* ML-DSA counterpart to test_pubkey_auth_ed25519_privonly_hostkey: a real
  * handshake with a private-only host key, exercising the derived public
  * key all the way through SendKexGetSigningKey. */
@@ -1486,15 +1554,7 @@ static void test_pubkey_auth_mldsa_privonly_hostkey(void)
     PubkeyServerCtx sCtx = {0};
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[512];
-    byte* p = pubKeyBuf;
-    word32 pubKeySz = sizeof(pubKeyBuf);
-    const byte* pubKeyType   = NULL;
-    word32      pubKeyTypeSz = 0;
     byte  privKeyBuf[1300];
-    byte* privKeyPtr = privKeyBuf;
-    word32 privKeySz = sizeof(privKeyBuf);
-    const byte* privKeyType   = NULL;
-    word32      privKeyTypeSz = 0;
     byte* hostKeyDer;
     int hostKeyDerSz;
 
@@ -1502,23 +1562,8 @@ static void test_pubkey_auth_mldsa_privonly_hostkey(void)
 
     hostKeyDer = mldsa_privonly_hostkey_der(&hostKeyDerSz);
 
-    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
-            (word32)WSTRLEN(hanselPublicEcc), WOLFSSH_FORMAT_SSH,
-            &p, &pubKeySz, &pubKeyType, &pubKeyTypeSz, NULL), WS_SUCCESS);
-
-    AssertIntEQ(wc_Sha256Hash(pubKeyBuf, pubKeySz, sCtx.hash), 0);
-
-    AssertIntEQ(wolfSSH_ReadKey_buffer(hanselPrivateEcc, hanselPrivateEccSz,
-            WOLFSSH_FORMAT_ASN1,
-            &privKeyPtr, &privKeySz, &privKeyType, &privKeyTypeSz, NULL),
-            WS_SUCCESS);
-
-    cCtx.publicKeyType   = pubKeyType;
-    cCtx.publicKeyTypeSz = pubKeyTypeSz;
-    cCtx.publicKey       = pubKeyBuf;
-    cCtx.publicKeySz     = pubKeySz;
-    cCtx.privateKey      = privKeyBuf;
-    cCtx.privateKeySz    = privKeySz;
+    load_hansel_ecc_client(&sCtx, &cCtx, pubKeyBuf, sizeof(pubKeyBuf),
+            privKeyBuf, sizeof(privKeyBuf));
 
     run_pubkey_test_ex(&sCtx, &cCtx, WS_SUCCESS, hostKeyDer,
             (word32)hostKeyDerSz);
@@ -1528,6 +1573,104 @@ static void test_pubkey_auth_mldsa_privonly_hostkey(void)
     WFREE(hostKeyDer, NULL, 0);
 }
 #endif /* WOLFSSH_HAVE_MLDSA_DERIVE_PUB && !WOLFSSH_NO_ECDSA */
+
+/* A generated cert can't meet the FPKI profile the client enforces. */
+#if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && !defined(WOLFSSH_NO_ECDSA) && \
+    defined(WOLFSSH_CERTS) && defined(WOLFSSL_CERT_GEN) && \
+    defined(WOLFSSH_NO_FPKI)
+/* Make an ML-DSA-44 cert for key, signed by signer (self-signed when
+ * issuerDer is NULL). Caller frees. */
+static byte* mldsa44_cert_der(MlDsaKey* key, MlDsaKey* signer,
+        const byte* issuerDer, int issuerDerSz, WC_RNG* rng, int* derSz)
+{
+    Cert cert;
+    byte* der;
+    int sz;
+
+    der = (byte*)WMALLOC(16384, NULL, 0);
+    AssertNotNull(der);
+    wc_InitCert(&cert);
+    WSTRNCPY(cert.subject.commonName, issuerDer == NULL ?
+            "wolfSSH-mldsa-ca" : "wolfSSH-mldsa-host", CTC_NAME_SIZE - 1);
+    WSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE - 1);
+    cert.daysValid = 365;
+    cert.sigType   = CTC_ML_DSA_44;
+    if (issuerDer == NULL) {
+        cert.selfSigned = 1;
+        cert.isCA       = 1;
+    }
+    else {
+        AssertIntEQ(wc_SetIssuerBuffer(&cert, issuerDer, issuerDerSz), 0);
+    }
+    sz = wc_MakeCert_ex(&cert, der, 16384, ML_DSA_44_TYPE, key, rng);
+    AssertIntGT(sz, 0);
+    sz = wc_SignCert_ex(sz, CTC_ML_DSA_44, der, 16384, ML_DSA_44_TYPE,
+            signer, rng);
+    AssertIntGT(sz, 0);
+
+    *derSz = sz;
+    return der;
+}
+
+/* x509v3-ssh-mldsa-44 handshake with a private-only host key: the cert
+ * path signs without the cached public key and sends the certificate. */
+static void test_pubkey_auth_mldsa_privonly_hostcert(void)
+{
+    PubkeyServerCtx sCtx = {0};
+    PubkeyClientCtx cCtx;
+    byte  pubKeyBuf[512];
+    byte  privKeyBuf[1300];
+    MlDsaKey caKey;
+    MlDsaKey hostKey;
+    WC_RNG rng;
+    byte* caDer;
+    int caDerSz;
+    byte* certDer;
+    int certDerSz;
+    byte* hostKeyDer;
+    int hostKeyDerSz;
+
+    printf("Testing ML-DSA private-only host key with x509v3 cert\n");
+
+    AssertIntEQ(wc_InitRng(&rng), 0);
+    WMEMSET(&caKey, 0, sizeof(caKey));
+    WMEMSET(&hostKey, 0, sizeof(hostKey));
+    AssertIntEQ(wc_MlDsaKey_Init(&caKey, NULL, INVALID_DEVID), 0);
+    AssertIntEQ(wc_MlDsaKey_SetParams(&caKey, WC_ML_DSA_44), 0);
+    AssertIntEQ(wc_MlDsaKey_MakeKey(&caKey, &rng), 0);
+    AssertIntEQ(wc_MlDsaKey_Init(&hostKey, NULL, INVALID_DEVID), 0);
+    AssertIntEQ(wc_MlDsaKey_SetParams(&hostKey, WC_ML_DSA_44), 0);
+    AssertIntEQ(wc_MlDsaKey_MakeKey(&hostKey, &rng), 0);
+
+    /* The client refuses a CA as the leaf, so issue the host cert. */
+    caDer = mldsa44_cert_der(&caKey, &caKey, NULL, 0, &rng, &caDerSz);
+    certDer = mldsa44_cert_der(&hostKey, &caKey, caDer, caDerSz, &rng,
+            &certDerSz);
+    wc_MlDsaKey_Free(&caKey);
+    wc_FreeRng(&rng);
+
+    hostKeyDer = (byte*)WMALLOC(WC_MLDSA_44_PRV_KEY_DER_SIZE, NULL, 0);
+    AssertNotNull(hostKeyDer);
+    hostKeyDerSz = wc_MlDsaKey_PrivateKeyToDer(&hostKey, hostKeyDer,
+            WC_MLDSA_44_PRV_KEY_DER_SIZE);
+    wc_MlDsaKey_Free(&hostKey);
+    AssertIntGT(hostKeyDerSz, 0);
+
+    load_hansel_ecc_client(&sCtx, &cCtx, pubKeyBuf, sizeof(pubKeyBuf),
+            privKeyBuf, sizeof(privKeyBuf));
+
+    run_pubkey_test_host(&sCtx, &cCtx, WS_SUCCESS, hostKeyDer,
+            (word32)hostKeyDerSz, certDer, (word32)certDerSz,
+            caDer, (word32)caDerSz, "x509v3-ssh-mldsa-44");
+
+    WMEMSET(privKeyBuf, 0, sizeof(privKeyBuf));
+    WMEMSET(hostKeyDer, 0, hostKeyDerSz);
+    WFREE(hostKeyDer, NULL, 0);
+    WFREE(certDer, NULL, 0);
+    WFREE(caDer, NULL, 0);
+}
+#endif /* WOLFSSH_HAVE_MLDSA_DERIVE_PUB && !WOLFSSH_NO_ECDSA &&
+        * WOLFSSH_CERTS && WOLFSSL_CERT_GEN && WOLFSSH_NO_FPKI */
 
 #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && \
     defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
@@ -2659,6 +2802,11 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_pubkey_load_mldsa_privonly_hostkey();
     #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && !defined(WOLFSSH_NO_ECDSA)
     test_pubkey_auth_mldsa_privonly_hostkey();
+    #endif
+    #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && \
+        !defined(WOLFSSH_NO_ECDSA) && defined(WOLFSSH_CERTS) && \
+        defined(WOLFSSL_CERT_GEN) && defined(WOLFSSH_NO_FPKI)
+    test_pubkey_auth_mldsa_privonly_hostcert();
     #endif
     #if defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB) && \
         defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \

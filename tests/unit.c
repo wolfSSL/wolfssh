@@ -22846,9 +22846,7 @@ done:
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
-    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
-    defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
-    defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB)
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
 /* Make an ML-DSA-44 DER (private-only when the load can derive) and its
  * public key. Caller frees *derOut. */
 static int mldsa44_der_and_pub(byte** derOut, word32* derSzOut,
@@ -22906,6 +22904,45 @@ static int mldsa44_der_and_pub(byte** derOut, word32* derSzOut,
 }
 
 
+/* Returns keyId's slot, or NULL when it has none. */
+static const WOLFSSH_PVT_KEY* FindMlDsaSlot(WOLFSSH_CTX* ctx, byte keyId)
+{
+    word32 slot;
+
+    for (slot = 0; slot < ctx->privateKeyCount; slot++) {
+        if (ctx->privateKey[slot].publicKeyFmt == keyId)
+            return &ctx->privateKey[slot];
+    }
+    return NULL;
+}
+
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+/* Nonzero when keyId's slot holds exactly the DER der. */
+static int MlDsaKeyHeld(WOLFSSH_CTX* ctx, byte keyId,
+        const byte* der, word32 derSz)
+{
+    const WOLFSSH_PVT_KEY* pvtKey = FindMlDsaSlot(ctx, keyId);
+
+    return pvtKey != NULL && pvtKey->key != NULL && pvtKey->keySz == derSz
+            && WMEMCMP(pvtKey->key, der, derSz) == 0;
+}
+#endif
+
+
+/* Nonzero when keyId's cached public key is exactly pub. */
+static int MlDsaPubCached(WOLFSSH_CTX* ctx, byte keyId,
+        const byte* pub, word32 pubSz)
+{
+    const WOLFSSH_PVT_KEY* pvtKey = FindMlDsaSlot(ctx, keyId);
+
+    return pvtKey != NULL && pvtKey->mldsaPub != NULL
+            && pvtKey->mldsaPubSz == pubSz
+            && WMEMCMP(pvtKey->mldsaPub, pub, pubSz) == 0;
+}
+
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
 /* Counts allocations of exactly failAllocSz bytes (any size when 0) and
  * fails the failAllocNth one (1-based); 0 only counts. */
 static size_t failAllocSz = 0;
@@ -22920,8 +22957,113 @@ static void* FailSizeMalloc(size_t size)
     }
     return malloc(size);
 }
+#endif
 
 
+/* The ML-DSA slot cache is filled at load, replaced on reload, and left
+ * as it was when a reload's export fails.
+ * Return codes -710..-721 */
+static int test_MlDsaHostPubKeyCache(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    byte* derA = NULL;
+    byte* derB = NULL;
+    word32 derASz = 0, derBSz = 0;
+    byte pubA[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
+    byte pubB[WOLFSSH_MLDSA_MAX_PUB_KEY_SZ];
+    word32 pubASz = sizeof(pubA), pubBSz = sizeof(pubB);
+    int result = 0;
+
+    if (mldsa44_der_and_pub(&derA, &derASz, pubA, &pubASz) != 0)
+        return -710;
+    if (mldsa44_der_and_pub(&derB, &derBSz, pubB, &pubBSz) != 0)
+        result = -711;
+    /* The keys must differ for the reload check to mean anything. */
+    if (result == 0 && pubASz == pubBSz
+            && WMEMCMP(pubA, pubB, pubASz) == 0)
+        result = -712;
+
+    if (result == 0) {
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL)
+            result = -713;
+    }
+
+    /* The load caches the public key on the slot. */
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_buffer(ctx, derA, derASz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS)
+        result = -714;
+    if (result == 0 && !MlDsaPubCached(ctx, ID_MLDSA44, pubA, pubASz))
+        result = -715;
+
+    /* A reload replaces the cache. */
+    if (result == 0 && wolfSSH_CTX_UsePrivateKey_buffer(ctx, derB, derBSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS)
+        result = -716;
+    if (result == 0 && !MlDsaPubCached(ctx, ID_MLDSA44, pubB, pubBSz))
+        result = -717;
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+    /* Fail the export's allocation on a reload of key A; key B stays.
+     * Same-size allocations in IdentifyAsn1Key() come first; skip them. */
+    if (result == 0) {
+        wolfSSL_Malloc_cb prevMf = NULL;
+        wolfSSL_Free_cb prevFf = NULL;
+        wolfSSL_Realloc_cb prevRf = NULL;
+        word32 countBefore = ctx->privateKeyCount;
+        WS_KeySignature* sig = NULL;
+        int decodeHits;
+        int loadRet;
+
+        wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+        failAllocSz = pubASz;
+        failAllocNth = 0;
+        failAllocHits = 0;
+        if (wolfSSL_SetAllocators(FailSizeMalloc, prevFf, prevRf) != 0) {
+            result = -718;
+        }
+        else {
+            loadRet = IdentifyAsn1Key(derA, derASz, 1, NULL, &sig);
+            decodeHits = failAllocHits;
+            if (sig != NULL) {
+                wolfSSH_KEY_clean(sig);
+                WFREE(sig, NULL, DYNTYPE_PRIVKEY);
+            }
+            failAllocNth = decodeHits + 1;
+            failAllocHits = 0;
+            if (loadRet != ID_MLDSA44) {
+                result = -719;
+            }
+            else {
+                loadRet = wolfSSH_CTX_UsePrivateKey_buffer(ctx, derA,
+                        derASz, WOLFSSH_FORMAT_ASN1);
+                if (loadRet != WS_MEMORY_E || failAllocHits != failAllocNth)
+                    result = -720;
+                else if (ctx->privateKeyCount != countBefore
+                        || !MlDsaPubCached(ctx, ID_MLDSA44, pubB, pubBSz)
+                        || !MlDsaKeyHeld(ctx, ID_MLDSA44, derB, derBSz))
+                    result = -721;
+            }
+            wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+        }
+    }
+#endif
+
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    WMEMSET(derA, 0, derASz);
+    WFREE(derA, NULL, 0);
+    if (derB != NULL) {
+        WMEMSET(derB, 0, derBSz);
+        WFREE(derB, NULL, 0);
+    }
+
+    return result;
+}
+
+
+#if defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
+    defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB)
 /* An out-of-memory derivation of a private-only key is WS_MEMORY_E, not
  * WS_CRYPTO_FAILED. Fails each allocation in turn: only the derivation's
  * can yield WS_MEMORY_E after the first (the WS_KeySignature itself).
@@ -22976,7 +23118,9 @@ static int test_MlDsaDeriveOutOfMemory(void)
 
     return result;
 }
-#endif /* ML-DSA-44 derive out-of-memory test */
+#endif
+
+#endif /* ML-DSA-44 public key cache test */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_MLDSA) && \
@@ -23888,13 +24032,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
-    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
-    defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+    unitResult = test_MlDsaHostPubKeyCache();
+    printf("MlDsaHostPubKeyCache: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#if defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
     defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB)
     unitResult = test_MlDsaDeriveOutOfMemory();
     printf("MlDsaDeriveOutOfMemory: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif
 #endif
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_MLDSA) && \
