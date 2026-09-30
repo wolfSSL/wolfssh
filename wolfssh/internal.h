@@ -146,6 +146,12 @@ extern "C" {
     #define WOLFSSH_NO_MLDSA65
     #define WOLFSSH_NO_MLDSA87
 #endif
+/* Each composite needs its ML-DSA level, so no level leaves no ML-DSA. */
+#if defined(WOLFSSH_NO_MLDSA44) && defined(WOLFSSH_NO_MLDSA65) && \
+    defined(WOLFSSH_NO_MLDSA87)
+    #undef WOLFSSH_NO_MLDSA
+    #define WOLFSSH_NO_MLDSA
+#endif
 
 #ifdef NO_SHA
     #undef WOLFSSH_NO_SHA1

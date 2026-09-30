@@ -211,7 +211,8 @@ Flags:
     HAVE_ED25519_KEY_EXPORT are all set. Disables ssh-ed25519 server and
     user authentication as well as the ML-DSA+Ed25519 composites.
   WOLFSSH_NO_MLDSA
-    Set when MLDSA is disabled and/or not included in wolfssl downloaded.
+    Set when MLDSA is disabled and/or not included in wolfssl downloaded,
+    or when WOLFSSH_NO_MLDSA44, 65 and 87 are all set.
   WOLFSSH_NO_MLDSA44
     Set for ML-DSA-44.
   WOLFSSH_NO_MLDSA65

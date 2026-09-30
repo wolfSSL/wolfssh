@@ -1,6 +1,6 @@
 name: ML-DSA Composite Configs
 
-# Builds wolfSSH with ML-DSA on but traditional halves off, exercising the
+# Builds wolfSSH with ML-DSA levels or traditional halves off, exercising the
 # per-composite gates in wolfssh/internal.h in states the all-on and all-off
 # builds never reach.
 
@@ -68,6 +68,16 @@ jobs:
             defines: -DWOLFSSH_NO_ECDSA_SHA2_NISTP256 -DWOLFSSH_NO_ECDSA_SHA2_NISTP384 -DWOLFSSH_NO_ED25519 -DWOLFSSH_NO_MLDSA87
             expect: ''
             exclude_tests: tests/api.test tests/testsuite.test
+          # No level left, so WOLFSSH_NO_MLDSA itself must be derived;
+          # test_MlDsaLevelsDisabled in unit.test checks that.
+          - name: no-levels
+            defines: -DWOLFSSH_NO_MLDSA44 -DWOLFSSH_NO_MLDSA65 -DWOLFSSH_NO_MLDSA87
+            mldsa_off: true
+            expect: ''
+          # ML-DSA-44 alone off; its composites go, 65 and 87 stay.
+          - name: no-mldsa44
+            defines: -DWOLFSSH_NO_MLDSA44
+            expect: ssh-mldsa65-ed25519@wolfssl.com ssh-mldsa65-es256@wolfssl.com ssh-mldsa87-ed448@wolfssl.com ssh-mldsa87-es384@wolfssl.com
           # Sets one gate directly rather than deriving it, the rest left on
           # to expose a missed site. Only row with --enable-ossh-certs.
           - name: single-composite-gate
@@ -143,14 +153,20 @@ jobs:
           # A crash must not pass vacuously with an empty list.
           echo "$out" | grep -q '^Set Key: '
           keys=$(echo "$out" | sed -n 's/^Set Key: //p')
-          # ML-DSA itself must be on, or an empty composite list proves nothing.
-          echo "$keys" | grep -q 'ssh-mldsa-44'
+          acc=$(echo "$out" | sed -n 's/^Set Key Accepted: //p')
+          if [ '${{ matrix.mldsa_off }}' = 'true' ]; then
+              # No ML-DSA name of any kind in either table. A bare `!` does
+              # not trip bash -e, so fail explicitly.
+              if echo "$keys,$acc" | grep -q 'ssh-mldsa'; then exit 1; fi
+          else
+              # ML-DSA itself must be on, or an empty composite list proves nothing.
+              echo "$keys" | grep -q 'ssh-mldsa-[0-9]'
+          fi
           got=$(echo "$keys" | tr ',' '\n' | { grep -o 'ssh-mldsa[0-9][0-9]-.*' || true; } | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
           echo "composites offered: '$got'"
           test "$got" = "${{ matrix.expect }}"
           # Second table, gated in parallel with the host-key one.
           echo "$out" | grep -q '^Set Key Accepted: '
-          acc=$(echo "$out" | sed -n 's/^Set Key Accepted: //p')
           gotAcc=$(echo "$acc" | tr ',' '\n' | { grep -o 'ssh-mldsa[0-9][0-9]-.*' || true; } | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
           echo "composites accepted: '$gotAcc'"
           test "$gotAcc" = "${{ matrix.expect }}"
