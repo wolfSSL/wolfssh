@@ -16855,17 +16855,26 @@ static int test_ECCKexDeriveFallbackFailure(void)
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
     (!defined(WOLFSSH_NO_MLDSA44) || !defined(WOLFSSH_NO_MLDSA65) || \
      !defined(WOLFSSH_NO_MLDSA87))
-/* Private-only DER: rejected at decode time. Shared across 44/65/87 levels.
+/* Private-only DER: the public key is derived at decode time where wolfSSL
+ * supports it, otherwise rejected there. Shared across 44/65/87 levels.
  * Return codes -692..-699 */
 static int test_IdentifyAsn1Key_MlDsaPrivOnlyDer(byte level,
-        word32 derBufSz, const char* levelName)
+        word32 derBufSz, int expectedKeyId, const char* levelName)
 {
+#ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+    const int expect = expectedKeyId;
+#else
+    const int expect = WS_CRYPTO_FAILED;
+#endif
     int ret;
     MlDsaKey mlKey;
     WC_RNG mlRng;
     byte* mlDer = NULL;
     int mlDerSz;
 
+#ifndef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+    WOLFSSH_UNUSED(expectedKeyId);
+#endif
     WMEMSET(&mlKey, 0, sizeof(mlKey));
     if (wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID) != 0) {
         return -692;
@@ -16898,27 +16907,30 @@ static int test_IdentifyAsn1Key_MlDsaPrivOnlyDer(byte level,
     }
 
     ret = IdentifyAsn1Key(mlDer, (word32)mlDerSz, 1, NULL, NULL);
-    if (ret != WS_CRYPTO_FAILED) {
+    if (ret != expect) {
         WFREE(mlDer, NULL, 0);
         printf("IdentifyAsn1Key: private-only MlDsa %s DER expected "
-               "WS_CRYPTO_FAILED, got %d\n", levelName, ret);
+               "%d, got %d\n", levelName, expect, ret);
         return -698;
     }
 
-    /* Confirms *pkey stays NULL on rejection path. */
+    /* On the derive path *pkey comes back set; on the reject path it
+     * stays NULL. */
     {
         WS_KeySignature* mlKeySig = NULL;
+        int bad;
 
         ret = IdentifyAsn1Key(mlDer, (word32)mlDerSz, 1, NULL,
                 &mlKeySig);
         WFREE(mlDer, NULL, 0);
-        if (ret != WS_CRYPTO_FAILED || mlKeySig != NULL) {
+        bad = (ret != expect) || ((mlKeySig != NULL) != (expect > 0));
+        if (mlKeySig != NULL) {
+            wolfSSH_KEY_clean(mlKeySig);
+            WFREE(mlKeySig, NULL, DYNTYPE_PRIVKEY);
+        }
+        if (bad) {
             printf("IdentifyAsn1Key: private-only MlDsa %s DER pkey-out "
                    "variant failed, ret=%d\n", levelName, ret);
-            if (mlKeySig != NULL) {
-                wolfSSH_KEY_clean(mlKeySig);
-                WFREE(mlKeySig, NULL, DYNTYPE_PRIVKEY);
-            }
             return -699;
         }
     }
@@ -17590,7 +17602,7 @@ static int test_IdentifyAsn1Key(void)
 #if defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
     ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_44,
-            WC_MLDSA_44_PRV_KEY_DER_SIZE, "44");
+            WC_MLDSA_44_PRV_KEY_DER_SIZE, ID_MLDSA44, "44");
     if (ret != 0) {
         result = ret; goto done;
     }
@@ -17601,7 +17613,7 @@ static int test_IdentifyAsn1Key(void)
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
     ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_65,
-            WC_MLDSA_65_PRV_KEY_DER_SIZE, "65");
+            WC_MLDSA_65_PRV_KEY_DER_SIZE, ID_MLDSA65, "65");
     if (ret != 0) {
         result = ret; goto done;
     }
@@ -17611,7 +17623,7 @@ static int test_IdentifyAsn1Key(void)
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
     ret = test_IdentifyAsn1Key_MlDsaPrivOnlyDer(WC_ML_DSA_87,
-            WC_MLDSA_87_PRV_KEY_DER_SIZE, "87");
+            WC_MLDSA_87_PRV_KEY_DER_SIZE, ID_MLDSA87, "87");
     if (ret != 0) {
         result = ret; goto done;
     }

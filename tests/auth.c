@@ -1423,9 +1423,9 @@ static void test_pubkey_auth_wrong_key(void)
 #if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
     defined(WOLFSSL_MLDSA_PRIVATE_KEY) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
-/* Confirms a private-only ML-DSA host key is rejected through the real
- * load path (wolfSSH_CTX_UsePrivateKey_buffer), not just IdentifyAsn1Key
- * called directly as in the unit test. */
+/* Covers the private-only ML-DSA host key through the real load path
+ * (wolfSSH_CTX_UsePrivateKey_buffer), not just IdentifyAsn1Key called
+ * directly as in the unit test. */
 static void test_pubkey_load_mldsa_privonly_hostkey(void)
 {
     WOLFSSH_CTX* ctx;
@@ -1433,8 +1433,13 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
     WC_RNG mlRng;
     byte* mlDer;
     int mlDerSz;
+#ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+    const int expect = WS_SUCCESS;
+#else
+    const int expect = WS_CRYPTO_FAILED;
+#endif
 
-    printf("Testing ML-DSA private-only host key load rejection\n");
+    printf("Testing ML-DSA private-only host key load\n");
 
     WMEMSET(&mlKey, 0, sizeof(mlKey));
     AssertIntEQ(wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID), 0);
@@ -1453,7 +1458,7 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
     AssertIntEQ(wolfSSH_CTX_UsePrivateKey_buffer(ctx, mlDer, (word32)mlDerSz,
-            WOLFSSH_FORMAT_ASN1), WS_CRYPTO_FAILED);
+            WOLFSSH_FORMAT_ASN1), expect);
     wolfSSH_CTX_free(ctx);
 
     WFREE(mlDer, NULL, 0);

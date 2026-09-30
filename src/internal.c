@@ -2025,6 +2025,43 @@ static int IsCompositeMlDsaId(byte id)
 #endif
 
 
+#ifndef WOLFSSH_NO_MLDSA
+/* Nonzero when keyId is an ML-DSA level wolfSSH was built without. */
+static int MlDsaIdDisabled(byte keyId)
+{
+    WOLFSSH_UNUSED(keyId);
+    return
+    #ifdef WOLFSSH_NO_MLDSA44
+        keyId == ID_MLDSA44 ||
+    #endif
+    #ifdef WOLFSSH_NO_MLDSA65
+        keyId == ID_MLDSA65 ||
+    #endif
+    #ifdef WOLFSSH_NO_MLDSA87
+        keyId == ID_MLDSA87 ||
+    #endif
+        0;
+}
+
+
+/* MlDsaIdDisabled() for a decoded key. */
+static int MlDsaLevelDisabled(MlDsaKey* key)
+{
+    byte level = 0;
+
+    if (wc_MlDsaKey_GetParams(key, &level) != 0)
+        return 0;
+    if (level == WC_ML_DSA_44)
+        return MlDsaIdDisabled(ID_MLDSA44);
+    if (level == WC_ML_DSA_65)
+        return MlDsaIdDisabled(ID_MLDSA65);
+    if (level == WC_ML_DSA_87)
+        return MlDsaIdDisabled(ID_MLDSA87);
+    return 0;
+}
+#endif
+
+
 void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
@@ -2094,10 +2131,14 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
  * fails try to load it as if ECDSA. Both public and private keys can be
  * decoded. For RSA keys, the key format is described as "ssh-rsa".
  *
- * Private-only ML-DSA keys are rejected (WS_CRYPTO_FAILED) as public keys
- * cannot be derived. ECDSA derives and validates the public key here.
+ * Private-only ML-DSA keys have their public key derived here when
+ * WOLFSSH_HAVE_MLDSA_DERIVE_PUB is set; otherwise, or when derivation
+ * fails, they are rejected (WS_CRYPTO_FAILED, or WS_MEMORY_E if it ran
+ * out of memory). A private ML-DSA key of a level disabled in wolfSSH is
+ * rejected with WS_UNIMPLEMENTED_E. ECDSA derives and validates the public
+ * key here.
  * Ed25519 allows missing public keys if HAVE_ED25519_MAKE_KEY is defined
- * (derived later at KEX); otherwise rejected like ML-DSA.
+ * (derived later at KEX); otherwise rejected.
  *
  * @param in        key to identify
  * @param inSz      size of key
@@ -2114,8 +2155,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
-    /* Set to WS_CRYPTO_FAILED if ML-DSA key lacks derivable public key.
-     * Prevents Ed25519 fallback decode. */
+    /* Set to the rejection code when a private key lacks a derivable
+     * public key or is of a disabled ML-DSA level. Prevents a fallback
+     * decode as another key type. */
     int noPubKeyRet = 0;
 #ifndef WOLFSSH_NO_MLDSA
     byte mlDsaLevel = 0;
@@ -2232,14 +2274,32 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_MlDsaKey_PrivateKeyDecode(&key->ks.mldsa.key,
                                                        in, inSz, &idx);
-                    if (ret == 0) {
-                        /* Priv-only decode can succeed with no derivable
-                         * public key; reject here instead of at first
-                         * handshake. */
-                        if (!key->ks.mldsa.key.pubKeySet) {
-                            WLOG(WS_LOG_ERROR,
-                                "ML-DSA priv-only key rejected; no derivable pubkey");
-                            ret = WS_CRYPTO_FAILED;
+                    if (ret == 0 && MlDsaLevelDisabled(&key->ks.mldsa.key)) {
+                        /* Either DER form; before paying for derivation. */
+                        WLOG(WS_LOG_ERROR, "ML-DSA level not enabled in "
+                            "this build");
+                        ret = WS_UNIMPLEMENTED_E;
+                        noPubKeyRet = ret;
+                    }
+                    else if (ret == 0 && !key->ks.mldsa.key.pubKeySet) {
+                        /* Derive the public key now so underivable keys
+                         * are rejected at load time instead of handshake. */
+                        #ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+                        int makeRet = wc_MlDsaKey_MakePublicKey(
+                                &key->ks.mldsa.key);
+                        #else
+                        int makeRet = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
+                        #endif
+                        if (makeRet != 0) {
+                            WLOG(WS_LOG_ERROR, "ML-DSA priv-only key "
+                                "rejected; no derivable pubkey (%d)",
+                                makeRet);
+                            if (makeRet == WC_NO_ERR_TRACE(MEMORY_E)) {
+                                ret = WS_MEMORY_E;
+                            }
+                            else {
+                                ret = WS_CRYPTO_FAILED;
+                            }
                             noPubKeyRet = ret;
                         }
                     }
@@ -2973,6 +3033,16 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         WS_FORCEZERO(der, derSz);
         WFREE(der, ctx->heap, dynamicType);
         ret = WS_BAD_ARGUMENT;
+    }
+#endif
+#ifndef WOLFSSH_NO_MLDSA
+    /* Defensive: IdentifyAsn1Key() already refuses a disabled level. */
+    else if (MlDsaIdDisabled(keyId)) {
+        WLOG(WS_LOG_ERROR, "SetHostPrivateKey: ML-DSA level not enabled "
+             "in this build");
+        WS_FORCEZERO(der, derSz);
+        WFREE(der, ctx->heap, dynamicType);
+        ret = WS_UNIMPLEMENTED_E;
     }
 #endif
     else {
@@ -16342,6 +16412,13 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                         &sigKeyBlock_ptr->sk.mldsa.key,
                         ssh->ctx->privateKey[keyIdx].key,
                         ssh->ctx->privateKey[keyIdx].keySz, &scratch);
+            #ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+            /* The exporters below are pure accessors; a private-only host
+             * key needs its public half derived first. */
+            if (ret == 0 && !sigKeyBlock_ptr->sk.mldsa.key.pubKeySet)
+                ret = wc_MlDsaKey_MakePublicKey(
+                        &sigKeyBlock_ptr->sk.mldsa.key);
+            #endif
             if (ret == 0)
                 ret = wc_MlDsaKey_ExportPubRaw(
                         &sigKeyBlock_ptr->sk.mldsa.key,

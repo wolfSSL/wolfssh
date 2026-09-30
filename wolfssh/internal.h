@@ -147,6 +147,19 @@ extern "C" {
     #define WOLFSSH_NO_MLDSA87
 #endif
 
+/* Check if the wc_MlDsaKey_MakePublicKey API is available.
+ * A private-only key needs this call made explicitly before its
+ * public half is read. Set by configure, by wolfSSL's own
+ * WC_MLDSA_HAVE_MAKE_PUBLIC_KEY, or predefined. */
+#if defined(WC_MLDSA_HAVE_MAKE_PUBLIC_KEY) && \
+    !defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB)
+    #define WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+#endif
+#if defined(WOLFSSH_NO_MLDSA) || defined(WOLFSSL_MLDSA_ASSIGN_KEY) || \
+    defined(WOLFSSL_MLDSA_NO_MAKE_KEY) || defined(WOLFSSL_MLDSA_VERIFY_ONLY)
+    #undef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+#endif
+
 #ifdef NO_SHA
     #undef WOLFSSH_NO_SHA1
     #define WOLFSSH_NO_SHA1
