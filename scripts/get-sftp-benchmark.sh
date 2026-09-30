@@ -17,59 +17,99 @@ else
     PORT="$1"
 fi
 
+# Print the last transfer rate in the sftp progress output as MB/s
+parse_openssh_rate() {
+    TRANSFER_MBS="$(tr '\r' '\n' < "$1" | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[0-9.]+[KMG]?B\/s$/) {
+                    v = $i; u = $i
+                    sub(/[KMG]?B\/s$/, "", v)
+                    sub(/^[0-9.]+/, "", u)
+                    if (u == "B/s") v /= 1024 * 1024
+                    else if (u == "KB/s") v /= 1024
+                    else if (u == "GB/s") v *= 1024
+                    rate = v
+                }
+            }
+        }
+        END { if (rate != "") printf "%.3f", rate }')"
+    if [ -n "$TRANSFER_MBS" ]; then
+        printf " $TRANSFER_MBS" >> $LOG_FILE
+    else
+        echo "Failed to parse sftp rate from $1" >&2
+        cat "$1" >&2
+        exit 1
+    fi
+}
+
 do_openssh_put_test() {
     cp $TEST_FILE $TEST_FILE-out
-    sftp_command="sftp -P$PORT -o \"StrictHostKeyChecking no\" -i $KEY $USER@127.0.0.1"
+    sftp_command="timeout 30 sftp -P $PORT -o BatchMode=yes -o StrictHostKeyChecking=no -i $KEY $USER@127.0.0.1"
     output_file="sftp_log.txt"
 
     # Start the script command to capture the sftp session
-script -qc "$sftp_command << EOF
+script -qec "$sftp_command << EOF
     put $TEST_FILE $TEST_FILE-out
     bye
-EOF" /dev/null 2>&1 | tee $output_file | while read line; do
-    if [[ "$line" == *'MB/s'* ]]; then
-        #TRANSFER_MBS=$(echo "$line" | awk '{print $(NF-2)}' | sed 's/MB\/s//')
-        TRANSFER_MBS="$(echo "$line" | awk '{print $(NF-2)}' | sed 's/MB\/s//')"
-        printf " $TRANSFER_MBS" >> $LOG_FILE
+EOF" /dev/null > $output_file 2>&1
+    if [ $? -ne 0 ]; then
+        echo "OpenSSH SFTP transfer failed" >&2
+        cat $output_file >&2
+        exit 1
     fi
-    done
+    parse_openssh_rate $output_file
 }
 
 do_openssh_get_test() {
     cp $TEST_FILE $TEST_FILE-out
-    sftp_command="sftp -P $PORT -o \"StrictHostKeyChecking no\" -i $KEY $USER@127.0.0.1"
+    sftp_command="timeout 30 sftp -P $PORT -o BatchMode=yes -o StrictHostKeyChecking=no -i $KEY $USER@127.0.0.1"
     output_file="sftp_log.txt"
 
     # Start the script command to capture the sftp session
-script -qc "$sftp_command << EOF
+script -qec "$sftp_command << EOF
     get $TEST_FILE $TEST_FILE-out
     bye
-EOF" /dev/null 2>&1 | tee $output_file | while read line; do
-    if [[ "$line" == *'MB/s'* ]]; then
-        #TRANSFER_MBS=$(echo "$line" | awk '{print $(NF-2)}' | sed 's/MB\/s//')
-        TRANSFER_MBS="$(echo "$line" | awk '{print $(NF-2)}' | sed 's/MB\/s//')"
-        printf " $TRANSFER_MBS" >> $LOG_FILE
+EOF" /dev/null > $output_file 2>&1
+    if [ $? -ne 0 ]; then
+        echo "OpenSSH SFTP transfer failed" >&2
+        cat $output_file >&2
+        exit 1
     fi
-    done
+    parse_openssh_rate $output_file
 }
 
 do_wolfssh_put_test() {
     cp $TEST_FILE $TEST_FILE-out
-    RESULT=$(./examples/sftpclient/wolfsftp -g -l $TEST_FILE -r $TEST_FILE-out -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT)
-    TRANSFER_MBS="$(echo "$RESULT" | awk '{print $(NF-0)}' | sed 's/MB\/s//')"
+    if ! RESULT=$(timeout 30 ./examples/sftpclient/wolfsftp -g -l $TEST_FILE -r $TEST_FILE-out -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT); then
+        echo "wolfSSH SFTP transfer failed: $RESULT" >&2
+        exit 1
+    fi
+    TRANSFER_MBS="$(echo "$RESULT" | awk '/^Transferred .*MB\/s$/ {sub(/MB\/s$/, "", $NF); print $NF}')"
+    if [ -z "$TRANSFER_MBS" ]; then
+        echo "Failed to parse wolfSSH rate: $RESULT" >&2
+        exit 1
+    fi
     printf " $TRANSFER_MBS" >> $LOG_FILE
 }
 
 do_wolfssh_get_test() {
     cp $TEST_FILE $TEST_FILE-out
-    RESULT=$(./examples/sftpclient/wolfsftp -G -l $TEST_FILE-out -r $TEST_FILE -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT)
-    TRANSFER_MBS="$(echo "$RESULT" | awk '{print $(NF-0)}' | sed 's/MB\/s//')"
+    if ! RESULT=$(timeout 30 ./examples/sftpclient/wolfsftp -G -l $TEST_FILE-out -r $TEST_FILE -i $PWD/keys/hansel-key-ecc.der -j $PWD/keys/hansel-key-ecc.pub -u $USER -p $PORT); then
+        echo "wolfSSH SFTP transfer failed: $RESULT" >&2
+        exit 1
+    fi
+    TRANSFER_MBS="$(echo "$RESULT" | awk '/^Transferred .*MB\/s$/ {sub(/MB\/s$/, "", $NF); print $NF}')"
+    if [ -z "$TRANSFER_MBS" ]; then
+        echo "Failed to parse wolfSSH rate: $RESULT" >&2
+        exit 1
+    fi
     printf " $TRANSFER_MBS" >> $LOG_FILE
 }
 
 # Create a log with averages
 do_create_average() {
-    awk -F', ' '{sum[$1]+=$2; count[$1]++} END {for (i in sum) print i, sum[i]/count[i]}' "$LOG_FILE" | sort -n > "$AVERAGE_FILE"
+    awk -F', ' '$2 + 0 > 0 {sum[$1]+=$2; count[$1]++} END {for (i in sum) print i, sum[i]/count[i]}' "$LOG_FILE" | sort -n > "$AVERAGE_FILE"
     sed -i 's/ /, /' $AVERAGE_FILE
 }
 
