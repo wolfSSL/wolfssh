@@ -761,6 +761,8 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         return WS_FATAL_ERROR;
                     }
                 }
+                /* IsMessageAllowedServer() gates userauth on this; set it
+                 * before any further read. */
                 ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_USERAUTH_REQUEST_DONE");
                 FALL_THROUGH;
