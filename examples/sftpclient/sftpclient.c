@@ -1621,7 +1621,7 @@ static int doAutopilot(int cmd, char* local, char* remote)
         double result;
         result = (double)longBytes / 1000000;
         result = result / ((double)currentTime / 1000000);
-        printf("Transfered %s at %.2fMB/s\n", fullpath, result);
+        printf("Transferred %s at %.2fMB/s\n", fullpath, result);
     }
 #endif
 

@@ -56,7 +56,7 @@ jobs:
         wolfssl: [ master ]
     name: Collect SFTP performance
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checking cache for wolfssl
         uses: actions/cache@v4
@@ -84,19 +84,17 @@ jobs:
 
       - name: Get Saved OpenSSH Upload Results
         id: cache-upload
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: wolfssh/openssh-average-download.csv
-          key: openssh-average-download.csv
-          fail-on-cache-miss: false
+          path: wolfssh/openssh-average-upload.csv
+          key: openssh-average-upload.csv
 
       - name: Get Saved OpenSSH Download Results
         id: cache-download
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: wolfssh/openssh-average-upload.csv
-          key: openssh-averavge-upload.csv
-          fail-on-cache-miss: false
+          path: wolfssh/openssh-average-download.csv
+          key: openssh-average-download.csv
 
       - name: Install gnuplot
         run: sudo apt-get install gnuplot
@@ -111,6 +109,8 @@ jobs:
           echo "PubkeyAuthentication yes" >> sshd-config-test.txt
           echo "Subsystem   sftp    internal-sftp" >> sshd-config-test.txt
           echo "KbdInteractiveAuthentication no" >> sshd-config-test.txt
+          echo "PasswordAuthentication no" >> sshd-config-test.txt
+          echo "StrictModes no" >> sshd-config-test.txt
           sed -i.bak "s/hansel/$USER/" ./keys/hansel-key-ecc.pub
           chmod 600 ./keys/hansel-key-*.pem
           chmod 600 ./keys/hansel-key-*.pub
@@ -122,9 +122,23 @@ jobs:
 
       - name: Run SFTP client benchmark
         working-directory: ./wolfssh/
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           ./scripts/get-sftp-benchmark.sh 22222
+
+      - name: Save OpenSSH Upload Results
+        if: always() && steps.cache-upload.outputs.cache-hit != 'true' && hashFiles('wolfssh/openssh-average-upload.csv') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: wolfssh/openssh-average-upload.csv
+          key: openssh-average-upload.csv
+
+      - name: Save OpenSSH Download Results
+        if: always() && steps.cache-download.outputs.cache-hit != 'true' && hashFiles('wolfssh/openssh-average-download.csv') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: wolfssh/openssh-average-download.csv
+          key: openssh-average-download.csv
 
       - name: Store Upload Speed PNG
         uses: actions/upload-artifact@v4
@@ -139,20 +153,6 @@ jobs:
           name: download-results-pr${{ github.event.pull_request.number }}.png
           path: wolfssh/download-results.png
           retention-days: 2
-
-      - name: Upload OpenSSH Download Results
-        if: steps.cache-download.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
-        with:
-          path: wolfssh/openssh-average-download.csv
-          key: openssh-average-download.csv
-
-      - name: Upload OpenSSH Upload Results
-        if: steps.cache-upload.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
-        with:
-          path: wolfssh/openssh-average-upload.csv
-          key: openssh-average-upload.csv
 
 # Currently the comment in PR does not work correctly
 #      - name: Comment on PR about performance
