@@ -63,12 +63,17 @@ jobs:
           key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
           lookup-only: true
 
-      - name: Install build dependencies
-        timeout-minutes: 5
+      - uses: actions/checkout@v6
         if: steps.cache-pkixssh.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get -o Acquire::Retries=3 -y update
-          sudo apt-get -o Acquire::Retries=3 -y install libssl-dev zlib1g-dev
+        with:
+          sparse-checkout: .github/actions
+
+      - name: Install build dependencies
+        if: steps.cache-pkixssh.outputs.cache-hit != 'true'
+        uses: ./.github/actions/install-apt-deps
+        with:
+          packages: libssl-dev zlib1g-dev
+          ghcr-debs-tag: ubuntu-24.04-tests
 
       - name: Download, build, and install PKIX-SSH
         if: steps.cache-pkixssh.outputs.cache-hit != 'true'
@@ -108,15 +113,15 @@ jobs:
           key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
           fail-on-cache-miss: true
 
-      - name: Install test dependencies
-        timeout-minutes: 2
-        run: |
-          sudo apt-get -o Acquire::Retries=3 -y update
-          sudo apt-get -o Acquire::Retries=3 -y install netcat-traditional
-
       - uses: actions/checkout@v6
         with:
           path: wolfssh/
+
+      - name: Install test dependencies
+        uses: ./wolfssh/.github/actions/install-apt-deps
+        with:
+          packages: netcat-traditional
+          ghcr-debs-tag: ubuntu-24.04-tests
 
       - name: autogen
         working-directory: ./wolfssh/

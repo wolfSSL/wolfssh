@@ -67,11 +67,13 @@ jobs:
         run: make
 
       - name: Install dependencies
-        timeout-minutes: 5
-        run: |
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y python3-pip openssh-client
-          python3 -m pip install paramiko
+        uses: ./wolfssh/.github/actions/install-apt-deps
+        with:
+          packages: python3-pip openssh-client
+          ghcr-debs-tag: ubuntu-24.04-tests
+
+      - name: Install paramiko
+        run: python3 -m pip install paramiko
 
       - name: Create test directories
         run: |

@@ -64,14 +64,15 @@ jobs:
             cxx: clang++-17
 
     steps:
-      - name: Install compiler
-        timeout-minutes: 5
-        run: |
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y ${{ matrix.cc }}
-
       - name: Checkout wolfSSH
         uses: actions/checkout@v6
+
+      - name: Install compiler
+        uses: ./.github/actions/install-apt-deps
+        with:
+          packages: ${{ matrix.cc }}
+          ghcr-debs-tag: ubuntu-24.04-compilers
+          budget-seconds: 300
 
       - name: Download wolfSSL
         uses: actions/download-artifact@v8

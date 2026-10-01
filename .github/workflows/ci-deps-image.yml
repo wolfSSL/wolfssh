@@ -1,0 +1,86 @@
+name: CI deps image
+
+# Builds the apt .deb bundles that .github/actions/install-apt-deps installs
+# offline (input ghcr-debs-tag), so PR jobs stay off the apt mirror. Each
+# bundle holds the .debs for a package list in .github/ci-deps/ - every
+# package plus the dependencies not already on the runner image - and its own
+# apt index, published to ghcr.io/wolfssl/wolfssh-ci-debs:<tag>. Ported from
+# wolfSSL's ci-deps-image workflow.
+#
+# ONE-TIME SETUP: after the first successful run, make the package
+# `wolfssh-ci-debs` PUBLIC (org > Packages > Package settings > Change
+# visibility). Until then install-apt-deps falls back to apt.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  push:
+    branches: [ master ]
+    paths:
+      - '.github/ci-deps/**'
+      - '.github/scripts/download-deb-closure.sh'
+      - '.github/workflows/ci-deps-image.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-deps-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: build ${{ matrix.tag }}
+    if: github.repository_owner == 'wolfssl'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The .debs must be downloaded on the Ubuntu version that consumes
+          # them. -compilers is its own tag so the other jobs do not pull it.
+          - runner: ubuntu-24.04
+            tag: ubuntu-24.04-tests
+          - runner: ubuntu-24.04
+            tag: ubuntu-24.04-compilers
+    runs-on: ${{ matrix.runner }}
+    # Backstop only; the download script kills and retries stalled apt calls.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve and download the .deb closure
+        run: |
+          sudo bash .github/scripts/download-deb-closure.sh \
+            ".github/ci-deps/packages-${{ matrix.tag }}.txt" debs
+
+      - name: Index the bundle
+        run: |
+          set -euo pipefail
+          # The consumer resolves against this index, not the runner's lists.
+          # dpkg-scanpackages is from dpkg-dev, preinstalled on the runners.
+          ( cd debs && dpkg-scanpackages --multiversion . /dev/null > Packages )
+          gzip -9kf debs/Packages
+          printf 'tag=%s\nrunner=%s %s\nbuilt=%s\ndebs=%s\n' \
+            "${{ matrix.tag }}" "${ImageOS:-?}" "${ImageVersion:-?}" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(ls debs/*.deb | wc -l)" \
+            > debs/bundle-info
+          cat debs/bundle-info
+
+      - name: Build bundle image
+        run: |
+          printf 'FROM busybox\nCOPY debs /debs\nLABEL org.opencontainers.image.source=https://github.com/wolfSSL/wolfssh\n' \
+            > Dockerfile.debs
+          docker build -f Dockerfile.debs -t bundle .
+
+      - name: Log in to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push to ghcr
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/wolfssl/wolfssh-ci-debs:${{ matrix.tag }}"
+          docker tag bundle "$IMG"
+          docker push "$IMG"
+          echo "Pushed $IMG"
