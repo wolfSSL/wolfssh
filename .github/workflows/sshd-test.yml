@@ -130,6 +130,9 @@ jobs:
         with:
           packages: valgrind
           ghcr-debs-tag: ubuntu-24.04-tests
+          # The recommends (gdb, libc6-dbg) nearly double the download.
+          no-install-recommends: true
+          budget-seconds: 300
 
       - name: Test memory after close down
         working-directory: ./wolfssh/
