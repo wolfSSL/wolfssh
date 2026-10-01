@@ -52,6 +52,8 @@ jobs:
 
       - name: Resolve and download the .deb closure
         run: |
+          # Created unprivileged so the later steps can write the index.
+          mkdir -p debs
           sudo bash .github/scripts/download-deb-closure.sh \
             ".github/ci-deps/packages-${{ matrix.tag }}.txt" debs
 
