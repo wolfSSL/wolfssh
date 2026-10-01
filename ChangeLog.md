@@ -1,3 +1,478 @@
+# wolfSSH v1.6.0 (October 6, 2026)
+
+## Vulnerabilities
+
+- [Critical] CVE-2026-16516. wolfSSH did not check that the ECDSA curve in a
+  server's host key blob matched the negotiated algorithm, so a
+  man-in-the-middle could substitute a key on another curve and pass
+  verification with a private key of its own. Also requires a lax public key
+  check callback. Affects through 1.5.0. Thanks to zhangph (GitHub afldl).
+  Fixed in PR 1022, issue #1012
+- [High] CVE-2026-83540. wolfSSHd on Windows shared one authentication
+  context, and the logon token stored in it, across concurrent connections,
+  so a user with a valid account could end up logged in as another, more
+  privileged user. Password and public key logins both wrote the shared
+  token. Non-Windows builds are unaffected. Affects 1.4.15 through 1.5.0.
+  Found by internal wolfSSL testing. Fixed in PR 1163
+- [Medium] CVE-2026-84897. A wolfSSH server accepted the DH group exchange
+  messages only a server sends, `SSH_MSG_KEX_DH_GEX_GROUP` (31) and
+  `SSH_MSG_KEX_DH_GEX_REPLY` (33), from an unauthenticated client. A client
+  that negotiated `diffie-hellman-group-exchange-sha256` and sent message 31
+  made the server run the client-side handler, which primality-tests an
+  attacker-chosen group of up to 8192 bits, about half a second of CPU per
+  1 KB packet for a 4096-bit prime, and then continue the key exchange in
+  the client role. Affects 1.2.0 through 1.5.0; the primality cost applies
+  from 1.5.0. Builds with `WOLFSSH_NO_DH_GEX_SHA256` are unaffected. Thanks
+  to Abdullah Al Ishtiaq, Kai Tu, Matthew Carter, Xiaotian Zhou, Ananna
+  Rahman, Yilu Dong, Tianwei Yu, Ali Ranjbar and Syed Rafiul Hussain. Fixed
+  in PR 1221
+- [Medium] CVE-2026-81535. With `--enable-fwd`, `forwarded-tcpip` channel
+  opens were admitted without consulting the forwarding policy callback, and
+  a client accepted them for forwards it never requested with
+  `tcpip-forward`. A peer could make an endpoint allocate buffers for
+  forwarding channels the application never authorized. Affects 1.4.8
+  through 1.5.0. Thanks to zhangph (GitHub afldl). Fixed in PR 1059, 1148,
+  1220
+- [Medium] CVE-2026-83742. `wolfSSH_RealPath()` bounded each path component
+  it appended by the space left in the output buffer rather than by the
+  buffer's size, so once an accumulated path passed the halfway mark the
+  unsigned length computation in `wstrncat()` wrapped and the copy became
+  effectively unbounded. A crafted SFTP path could then write a single
+  terminating NUL one byte past the end of a stack buffer, corrupting an
+  adjacent value and crashing the process. Requires an authenticated
+  session, and affects non-Windows builds. An application calling the public
+  `wolfSSH_RealPath()` with an output buffer smaller than its input is
+  further exposed to an unbounded copy. Affects 1.4.11 through 1.5.0. Thanks
+  to Asif Nadaf. Fixed in PR 1084
+
+## Notes
+
+- wolfSSH now requires wolfSSL built with `--enable-wolfssh`
+  (`WOLFSSL_WOLFSSH`); a build without it stops with an `#error`. (PR 938)
+- `WOLFSSH_DEFAULT_GEXDH_MIN` is now a 2048-bit floor, so GEX fails with a
+  1024-bit-only server. (PR 1056)
+- An OpenSSH client now gets the 4096-bit group 16, at 5-8x the cost of
+  group 14; `WOLFSSH_NO_DH_GROUP16_SHA512` keeps group 14. (PR 1056)
+- Strict KEX is on by default; a non-KEX message in a strict first KEX ends
+  the connection. Opt out with `wolfSSH_CTX_SetStrictKex()`. (PR 1271)
+- RSA user authentication keys must now be at least 2048 bits
+  (`WOLFSSH_RSA_MIN_KEY_BITS`); shorter keys must be regenerated. (PR 1101)
+- A "none" cipher or MAC now requires `--enable-none-cipher`. (PR 1117)
+- The `SetAlgoList*()` setters now validate input and can return
+  `WS_INVALID_ALGO_ID`; most no longer accept NULL. (PR 1117)
+- `wolfSSH_CTX_SetWindowPacketSize()` now returns `WS_BAD_ARGUMENT` for a
+  window over 256 KB or a packet over `MAX_PACKET_SZ`. (PR 995)
+- The server now disconnects after 6 failed authentication attempts; change
+  it with `wolfSSH_CTX_SetMaxAuthAttempts()`. (PR 1117, 1127)
+- A password-change user auth request is now refused without reaching
+  `userAuthCb`. (PR 1049)
+- A `WOLFSSH_USERAUTH_REJECTED` from keyboard-interactive setup now ends the
+  session; `NO_FAILURE_ON_REJECTED` is gone. (PR 1202)
+- Applications must now drain stderr. Ignoring `WS_EXTDATA` exhausts the
+  channel window and deadlocks it. (PR 1054)
+- `wolfSSH_stream_read()` now fails on extended data for any channel but the
+  first; use `wolfSSH_ChannelIdReadExt()`. (PR 1054)
+- `wolfSSH_extended_data_read()` now returns `WS_BAD_ARGUMENT` for a zero
+  `outSz` or no open channel, never `WS_INVALID_EXTDATA`. (PR 1054)
+- A peer's channel EOF is now reported as `WS_EOF`, not answered; send your
+  own with `wolfSSH_ChannelSendEof()`. (PR 1195, 982)
+- `wolfSSH_ChannelExit()` now keeps the channel, and the application's
+  pointer, valid until `WS_CHANNEL_CLOSED`. (PR 1195)
+- `wolfSSH_shutdown()` now returns `WS_WANT_WRITE` while output is still
+  queued; call it again until it completes. (PR 1217, 1219, 1252)
+- `wolfSSH_get_fd()` given a NULL session now returns -1, where non-Windows
+  builds returned `WS_BAD_ARGUMENT`. (PR 1247)
+- `WS_CallbackFwd` must now return the allocated port for a port-0
+  `WOLFSSH_FWD_REMOTE_SETUP`, not `WS_FWD_SUCCESS`. (PR 1059)
+- `forwarded-tcpip` channel opens now require a `fwdCb`, as `direct-tcpip`
+  opens do; without one they are refused. (PR 1059)
+- A client now refuses a `forwarded-tcpip` open matching no registered
+  forward; opt out with `wolfSSH_SetFwdRemoteMatch()`. (PR 1148, 1220)
+- A client now refuses `tcpip-forward` and `cancel-tcpip-forward` with
+  `REQUEST_FAILURE`, even with a `fwdCb`. (PR 1214)
+- A client now refuses a `session` channel open outright, per RFC 4254
+  section 6.1, ahead of any `channelOpenCb`. (PR 1224)
+- Each `WOLFSSH_FWD_LOCAL_SETUP` now gets a `WOLFSSH_FWD_LOCAL_CLEANUP`; a
+  `fwdCb` must not free that state twice. (PR 1229)
+- SFTP `SETSTAT` and `FSETSTAT` now apply the attributes or answer
+  `SSH_FX_OP_UNSUPPORTED`, not always `SSH_FX_OK`. (PR 1197)
+- On Windows, an SFTP open with `CREAT` but not `TRUNC` no longer truncates
+  an existing file, and `EXCL` now fails on one. (PR 1173)
+- The `wolfssh` client no longer accepts `-N`. It was parsed but never read,
+  so it is now a usage error rather than silently ignored. (PR 1162)
+- wolfSSHd enforces `StrictModes` by default and refuses unsafe host key or
+  CA file modes; `StrictModes no` relaxes only authorized keys. (PR 1042)
+- wolfSSHd refuses a `Match` keyed on anything but `User` or `Group`, and
+  `Match User X Group Y` now requires both. (PR 1026, 1027)
+- Without FPKI, wolfSSHd certificate auth now requires `AuthorizedKeysFile`;
+  CA-only logins fail closed. (PR 1019)
+- wolfSSHd's `LoginGraceTime` now defaults to 120 seconds, not unlimited.
+  (PR 950)
+- wolfSSHd now keeps a 022 umask (`WOLFSSHD_DEFAULT_UMASK`), so sessions no
+  longer create world-writable files. (PR 1269)
+
+## New Features
+
+- Added strict key exchange, the Terrapin (CVE-2023-48795) mitigation, and
+  `wolfSSH_GetStrictKexNegotiated()`. (PR 1271, 1295)
+- Added ML-DSA-44, -65 and -87 host keys and user auth, with X.509 and
+  composite variants. (PR 1048, 1109, 1259, 1266)
+- Added OpenSSH certificate user authentication to wolfSSHd, behind
+  `--enable-ossh-certs`. (PR 1060)
+- Added TPM-resident host keys, including X.509 host certificates, with
+  `wolfSSH_CTX_UseTpmHostKey()`. (PR 1033, 1081)
+- Added host keys from the Windows certificate store, and wolfSSHd options
+  to load keys and CAs from system stores. (PR 900)
+- Added support for builds with neither RSA nor ECDSA, such as Ed25519
+  only. (PR 1257, 1183)
+- Added client-side remote port forwarding with `wolfSSH_FwdRemoteSetup()`
+  and `wolfSSH_FwdRemoteCancel()`, and portfwd `-r`. (PR 1066)
+- Added `wolfSSH_SetFwdRemoteMatch()` to match remote forwards on the port
+  alone or not at all. (PR 1148)
+- Added `wolfSSH_ReadCert_file()` and related certificate loaders that
+  detect PEM or DER from the content. (PR 1140, 1150)
+- Added SFTP session confinement with `wolfSSH_SFTP_SetConfinePath()`,
+  separate from where a session starts; wolfSSHd sets none. (PR 1000, 1167)
+- Added per-channel stderr buffering with window flow control, and the
+  `wolfSSH_Channel*Ext()` read and send functions. (PR 1054)
+- Added independent cipher and MAC negotiation for each direction. (PR 952)
+- Added a packet-count rekey trigger and `wolfSSH_SetMsgHighwater()`.
+  (PR 963)
+- Added `wolfSSH_RekeyPending()`, which reports whether a key exchange is
+  in flight. (PR 1260)
+- Added wolfSSHd's `PubkeyAuthentication` directive. (PR 1011)
+- Added `StrictModes` to wolfSSHd, on by default. (PR 1042)
+- Added `prohibit-password` and `forced-commands-only` to wolfSSHd's
+  `PermitRootLogin`. (PR 1111)
+- Added `%u`, `%h` and `%%` expansion to `AuthorizedKeysFile`. (PR 1064)
+- Added `make sbom` targets producing CycloneDX and SPDX output. (PR 1050)
+- Added Zephyr 4.4.0 to the test sample and its CI, keeping 3.4.0.
+  (PR 1065)
+- Added `wolfssh-options`, a build option probe for test scripts. (PR 1180)
+- Added an `-E` log file option to the `wolfssh` client, and built and
+  tested the client app in CI. (PR 1168)
+- Added CI for X.509 interop, coverage, Windows SFTP and SCP, MinGW, TPM,
+  heapmath and Espressif. (PR 989, 1158, 1058, 1165, 1241, 1038, 1255)
+- Added KEX and user auth tests for corrupted signatures, ed25519 keys, cert
+  auth and the pre-auth gate. (PR 1051, 924, 968, 992, 1068, 923, 929, 925)
+- Added tests for channel limits, forged SFTP handles, the AEAD IV counter
+  and a forwarding rejection. (PR 1057, 943, 875, 1112, 1205)
+- Added tests that secrets are zeroized on free and in DH KEX. (PR 980)
+- Added wolfSSHd authentication tests for the privilege drop, password hash
+  checks and authorized keys rejection. (PR 994, 1107, 914, 1100)
+- Added tests for the protocol state machine's rejections. (PR 990)
+- Added tests for the channel open response, close, exec and subsystem
+  callbacks, and for the default algorithm lists. (PR 1227, 1269, 1273)
+- Added `wolfSSH_ChannelSendEof()` and `wolfSSH_stream_send_eof()`,
+  completing the RFC 4254 section 5.3 half-close. (PR 1195)
+- Added `wolfSSH_ChannelIdPeek()`, which reports buffered channel data
+  without consuming it. (PR 1270)
+- Added application-driven channels: with `wolfSSH_CTX_SetAppChannels()`,
+  the application grants each session request. (PR 1233, 1234, 1251, 1274)
+- Added `wolfSSH_CTX_SetChannelReqAnyCb()` and
+  `wolfSSH_CTX_SetGlobalReqAnyCb()`, consulted first. (PR 1236)
+- Added `wolfSSH_ChannelGetSessionGranted()` and
+  `wolfSSH_ChannelCommandIsScp()`. (PR 1237)
+- Added `wolfSSH_AGENT_ChannelOpen()`, so an application driving its own
+  channels can open the agent channel. (PR 1230)
+- Added `wolfSSH_AGENT_RelayChannel()`, which relays whole agent messages
+  across partial reads and writes. (PR 1262)
+- Added `wolfSSH_SCP_accept()`, so an application that binds an `scp`
+  command to a channel itself can run the transfer. (PR 1231)
+
+## Improvements
+
+- Validated peer DH and ECDH public keys before key agreement, rejecting
+  degenerate and off-curve values. (PR 1049, 1077)
+- Rejected packets with less than the minimum padding. (PR 1049)
+- Reworked DH group exchange to honor the client's size window and enforce
+  a 2048-bit floor. See Notes. (PR 1056)
+- Bounded KEXINIT name-list parsing, closing a pre-auth CPU DoS. (PR 1062)
+- Rejected inbound packets that are not cipher-block aligned. (PR 1189)
+- Made the client refuse the key exchange messages only a client sends.
+  (PR 1222, 1223)
+- Capped failed auth attempts, validated the algorithm setters and version
+  string, and zeroized transport buffers. (PR 1117)
+- Reworked `wolfSSH_RsaVerify()` to compare blocks in constant time rather
+  than parse the recovered padding. (PR 1203)
+- Validated the ECC curve name in user auth, and documented the user auth
+  and public key check callback contracts. (PR 1141)
+- Sanitized control bytes in `wolfSSH_Log()`, closing log injection.
+  (PR 1031)
+- Hardened the SCP callbacks against symlinks, masked setuid and setgid mode
+  bits, and bounded SCP depth. (PR 1015, 1034, 1037, 1032, 999, 991)
+- Bounded peer-declared SFTP request and NAME response sizes before
+  allocating. (PR 1025, 1036)
+- Capped open SFTP handles per session. Thanks to @loganaden. (PR 1135)
+- Tracked SFTP handles per session and validated them on use. (PR 875, 997)
+- Zeroized secret buffers before free; `--disable-sftp-zeroize` opts out for
+  SFTP file data. (PR 1099, 1053, 947, 1129, 1108, 1106)
+- Hardened wolfSSHd's PID file and chroot. (PR 1074, 1088)
+- Equalized the cost of a rejected wolfSSHd password, closing a user
+  enumeration timing oracle. (PR 1116)
+- Enforced shadow password and account aging in wolfSSHd. (PR 1184)
+- Bound wolfSSHd certificate auth to the requested user, and added
+  `AuthorizedUPNDomains` to restrict the UPN realm. (PR 1019, 1079)
+- Required an end-entity leaf and CA intermediates in X.509 chains, and
+  skipped OCSP with no responder URL. (PR 1075, 1021)
+- Rejected unsanitized host names and key types before the `wolfssh` client
+  writes `known_hosts`. (PR 1045)
+- Replaced `atoi()` on peer-supplied fields with bounded parsers. (PR 1095)
+- Refused a shell, exec or subsystem request wolfSSHd's build cannot serve,
+  rather than accepting and then dropping it. (PR 1237)
+- Warned on wolfSSHd options that are parsed but not enforced, such as
+  `UsePAM` and `X11Forwarding`. (PR 1269)
+- Added `WOLFSSH_NO_HOSTKEY_PERMS`, which skips wolfSSHd's host key owner
+  and mode checks on QNX. (PR 1185)
+- Sent a `DISCONNECT` with `PROTOCOL_ERROR` for a message the connection
+  state disallows, rather than tearing down silently. (PR 1214)
+- Shrank the `WOLFSSH` struct by about 4KB per connection. (PR 1104)
+- Centralized the AES cipher lifecycle so a context is never keyed or freed
+  uninitialized. (PR 1043)
+- Advertised `ext-info-s` from the server. (PR 998)
+- Made the client skip non-SSH banner lines before the version. (PR 959)
+- Cleared all 378 clang-tidy findings. (PR 1002)
+- Reworked the SFTP parsers onto the bounds-checked `Get*` helpers. (PR 961)
+- Sanity checked the server's SFTP version, and reported a bad PEM as
+  `WS_PARSE_E`. (PR 1133, 1151)
+- Checked that a decoded private host key yields a public key. (PR 1121)
+- Removed dead code in `wolfSSH_ProcessBuffer()` and the agent, and sized
+  wolfSSHd's wide-character conversion exactly. (PR 1268, 1258, CID 653252)
+- Refactored the echoserver's forwarding, agent and shell paths. (PR 962)
+- Added `CONTRIBUTING.md`. (PR 1160)
+- Converted permission constants to octal, made the sources 7-bit ASCII
+  clean, and restored C89 compliance. (PR 1007, 987, 948, 1087)
+- Moved the path to the end of an `auth.c` log message. (PR 1175)
+- Removed `wolfSSH_CTX_SetFwdEnable()` and `wolfSSH_SetFwdEnable()`, which
+  were declared but never defined. (PR 1210)
+- Warned when a channel open arrives with no `channelOpenCb`. (PR 954)
+- Improved MQX filesystem compatibility, and exported two Windows directory
+  wrappers. (PR 941, 958)
+- Terminated the `ES_ERROR()` messages with a newline. (PR 1208)
+- Made the SFTP example client's autopilot report why a copy failed.
+  (PR 1271)
+- Registered the portfwd example's channel open response callbacks, which
+  had no caller anywhere in the tree. (PR 1232)
+- Took the authorized-keys type from the wire blob, and fixed ML-DSA
+  small-stack use and composite gating. (PR 1159)
+- Validated custom identification strings, including the CRLF terminator,
+  when they are set. (PR 1218, 1239)
+- Reworked the wolfSSHd test harness, which passed while silently skipping
+  the last eleven tests. (PR 1174, 1024)
+- Hardened `sftp.test`'s ready-file wait, and dropped the external test.
+  (PR 1206)
+- Let concurrent wolfSSHd suite runs share a host, widened the echoserver
+  ready-file wait, and fixed two CI flakes. (PR 1256, 1225, 1249)
+- Stopped skipped test binaries crashing with SIGILL on macOS. (PR 1226)
+- Let the tests fall back when RSA or ECDSA is disabled. (PR 951)
+- Matched the private-only ECC key test to wolfSSL's earlier scalar range
+  check. (PR 1187)
+- Made the `wolfSSH_RealPath()` tests fail on a mismatch, and cleared static
+  analysis findings in the tests and dead code. (PR 935, 1110, 1154, 1134)
+- Allowed SCP in a client-only build, and PTY requests from a client with
+  no filesystem. (PR 1272)
+- Updated CI actions, wolfSSL versions and timeouts, and the Windows SFTP
+  client project. (PR 970, 984, 1046, 1114, 957)
+
+## Fixes
+
+- Fixed a wolfSSHd auth bypass under `WOLFSSH_ALLOW_USERAUTH_NONE`.
+  (PR 940)
+- Fixed public key auth failing for a key string with no trailing newline.
+  Affects 1.4.21 through 1.5.0. (PR 1136)
+- Fixed four fail-open wolfSSHd `Match` defects. (PR 1003, 1027, 1039, 1026)
+- Fixed wolfSSHd `Match` blocks inheriting settings, dropping `Include`d
+  blocks, and applying only one match. (PR 1153, 1186)
+- Fixed `PermitRootLogin` covering only the name root, not every UID 0
+  account. (PR 1073)
+- Fixed wolfSSHd to fail closed when a privilege drop fails. (PR 1067)
+- Fixed wolfSSHd skipping the supplementary group drop on BSD and macOS.
+  (PR 1085)
+- Fixed wolfSSHd rejecting empty passwords with `PermitEmptyPasswords yes`.
+  (PR 986)
+- Fixed a stack over-read in wolfSSHd's Windows pseudo-console resize.
+  (PR 1005)
+- Fixed a `pty-req` mode size wrap when stdin is not a terminal. (PR 1130)
+- Fixed a heap over-read parsing an `SSH_FXP_HANDLE` reply, and a one-byte
+  overflow in `LoadTpmSshKey()`. (PR 1083, 1164)
+- Fixed out-of-bounds accesses in `wolfSSH_DoOSC()` and
+  `wolfSSH_DoControlSeq()`. (PR 1035, 1076)
+- Fixed a stack out-of-bounds write in the example client, and its missing
+  RFC 6187 name length check. (PR 1004, 1052)
+- Fixed TPM builds refusing password and keyboard-interactive user
+  authentication. (PR 1081)
+- Fixed keyboard-interactive in the example client without `WOLFSSH_TERM`.
+  (PR 1065)
+- Fixed six SFTP client request states dropping unsent bytes on a partial
+  send. (PR 1008)
+- Fixed SFTP and SCP transfers failing on a mid-flight rekey.
+  (PR 1001, 1018)
+- Fixed the client SFTP VERSION and DATA length reads, which could not
+  recover from a short read. (PR 1138, 1181)
+- Fixed `wolfSSH_SFTP_Put()` reporting success on a rejected write.
+  (PR 1182)
+- Fixed `wolfSSH_SFTP_Open()` ignoring its `atr` argument. (PR 999)
+- Fixed a resumed SFTP put truncating the destination. (PR 1191)
+- Fixed `wPread()` and `wPwrite()` dropping offsets past 4 GiB in the
+  pread/pwrite, Harmony and Zephyr ports. (PR 1166, 1172)
+- Fixed `WFSEEK()` return checks on Nucleus and Harmony. (PR 1145)
+- Fixed an SFTP `readdir` double free, and FATFS end-of-directory, root
+  attribute and timestamp defects. (PR 973, 978, 974, 977)
+- Fixed wolfSSHd shell relay data loss on `EINTR`, stderr backlog, write
+  back-pressure and stdin close. (PR 996, 1212, 1253, 1263)
+- Fixed wolfSSHd spinning a core on an idle SFTP session. (PR 1207)
+- Fixed the `wolfssh` client discarding the remote command. (PR 1162)
+- Fixed `ssh://hostname` destinations with no explicit port. (PR 1006)
+- Fixed agent RSA signing failing every key above 2048 bits, and a signing
+  error becoming a huge signature length. (PR 1179, 1131)
+- Fixed Ed25519 agent authentication sending no signature. (PR 1196)
+- Fixed DH and DH-GEX key exchange and agent RSA signing failing against a
+  FIPS wolfSSL. (PR 1297)
+- Fixed agent forwarding in the `wolfssh` and example clients losing
+  messages that did not arrive in one 512-byte read. (PR 1262)
+- Fixed ECDSA and Ed25519 ASN.1 public keys being read as RSA. (PR 1137)
+- Fixed an all-zero mpint not encoding as empty, per RFC 4251. (PR 939)
+- Fixed name-list parsing of trailing, doubled and empty elements, and
+  unchecked KEXINIT language lists. (PR 1055, 1132)
+- Fixed a wrong `first_kex_packet_follows` guess not being discarded, on
+  both sides. (PR 927, 956, 1056)
+- Fixed the client accepting an unencrypted `CHANNEL_OPEN` pre-KEX.
+  (PR 1147)
+- Fixed service messages being accepted while keying. (PR 1200)
+- Fixed the server accepting a `USERAUTH_REQUEST` for a service other than
+  `ssh-connection`. (PR 953, 1201)
+- Fixed two keyboard-interactive defects: a response-count mismatch
+  dropping the connection, and unvalidated prompts. (PR 1070, 1199)
+- Fixed the `USERAUTH_BANNER` and `REQUEST_*` parsers, and unknown channel
+  requests not being rejected. (PR 937, 949, 942)
+- Fixed the userauth username not being bound to the first request.
+  (PR 1063)
+- Fixed `wolfSSH_shutdown()` looking up the channel by the wrong ID, and
+  the drivers and `DoPacket()` running past a disconnect. (PR 1190, 1211)
+- Fixed `wolfSSH_shutdown()` dropping queued output other than a
+  disconnect. (PR 1219)
+- Fixed a non-blocking application stalling because `wolfSSH_worker()`
+  never flushed a queued window adjust. (PR 1217)
+- Fixed a refused session request still establishing the session or
+  starting SFTP. (PR 1235)
+- Fixed an exec of a command such as `scpbackup` reaching the built-in SCP
+  server. (PR 1237)
+- Fixed the server adding a bound-port field to a `tcpip-forward` success
+  for an explicit port. Thanks to the tlspuffin team. (PR 1254, issue #1246)
+- Fixed `WOLFSSH_FWD_LOCAL_CLEANUP` never being sent, leaking a peer-opened
+  forward's setup state. (PR 1229)
+- Fixed KEX failures aborting with no `SSH_MSG_DISCONNECT`. (PR 1091, 1171)
+- Fixed packets sent in the same segment as the peer's version line being
+  dropped. (PR 1271)
+- Fixed the server accepting any transport message between the client's
+  KEXINIT and its first KEX message. (PR 1271)
+- Fixed a peer-initiated rekey failing after an earlier channel send filled
+  the window. (PR 1278)
+- Fixed an unsent KEXINIT leaving a rekey stuck, and a highwater callback
+  starting a second one. (PR 1260)
+- Fixed `wolfSSH_SetChannelType()` name checks, a channel packet-size bound
+  and a terminal size wrap. (PR 1177)
+- Fixed `wolfSSH_ChannelRead()` and `wolfSSH_stream_read()` returning the
+  window-adjust result rather than the byte count. (PR 1192)
+- Fixed four channel message defects, including a missing size check.
+  (PR 982)
+- Fixed SCP send repeating the file header when the send callback first
+  returned 0 bytes. (PR 1128)
+- Fixed a recursive SCP source aborting on a separator-less path, and an
+  exact-fit `ScpBuffer` rejected. (PR 1020, 1161)
+- Fixed the SCP rename check bounding the base path by the peer's command
+  length. (PR 1049)
+- Fixed an SCP base path leak, and wolfSSHd leaving privileges raised when
+  shell setup failed. (PR 1125, 1126)
+- Fixed wolfSSHd loading a PKCS#8 PEM host key, and PEM private keys
+  without `WOLFSSH_CERTS`. (PR 1118, 1119)
+- Fixed root CA bundles loading only their first certificate, and a replaced
+  host certificate being appended instead. (PR 1149, 1152)
+- Fixed `wolfSSHD_ConfigSetAuthKeysFile()` not marking `AuthorizedKeysFile`
+  as set, so certificate logins skipped the authorized keys check. (PR 1044)
+- Fixed `LoginGraceTime` never being armed on Windows. (PR 1028)
+- Fixed wolfSSHd `Include` crashes and truncation, and config files without
+  a trailing newline. (PR 1029, 1023, 1156)
+- Fixed the SFTP example client's autopilot retry loop never iterating.
+  (PR 993)
+- Fixed the examples loading no public key under `WOLFSSH_NO_RSA`. (PR 1170)
+- Fixed the portfwd example printing the SSH password. (PR 1198)
+- Fixed portfwd cutting a transfer short when input ended mid-window.
+  (PR 1228)
+- Fixed three echoserver defects around agent sockets and rekeys. (PR 1209)
+- Fixed the echoserver spinning in its SFTP loop on a blocked write.
+  (PR 1250)
+- Fixed the echoserver losing data a channel send did not take, and ending
+  SFTP sessions on a partial packet. (PR 1261, 1271)
+- Fixed eight issues from a security audit. (PR 1143)
+- Fixed a dozen memory-safety and error-handling findings. (PR 1136)
+- Fixed twenty-four agent, SFTP, terminal and FPKI findings. (PR 1103)
+- Fixed ten integer underflow and bounds defects. (PR 1096)
+- Fixed reported issues in `FindKeyId()`, locking, SCP size parsing and root
+  CA loading. Thanks to Asif Nadaf. (PR 1084)
+- Hardened `DoOpenSshKey()` parsing, and fixed `wc_InitDecodedCert()` given
+  the wrong argument. Thanks to Asif Nadaf. (PR 1078, 1080)
+- Fixed the remaining fuzz findings: negative mpints and RSA signature blob
+  parsing. (PR 1022, issue #1013)
+- Fixed wolfSSHd and echoserver leaks, a required `sshd` user, and the
+  echoserver's key lookup. (PR 1071, 1038)
+- Fixed a password overflow check and a large stack key struct. (PR 1122)
+- Fixed missing `WMALLOC` checks in the SFTP client. (PR 1124)
+- Fixed Windows resource cleanup in the shell subsystem and
+  `wolfSSH_SFTP_RecvOpenDir()`. (PR 981)
+- Fixed SFTP short writes reporting success. (PR 998)
+- Fixed `wolfSSH_SFTP_SaveOfst()` accepting a name with no room for its
+  terminator. (PR 1105)
+- Fixed SFTP attributes promising extension records they did not carry.
+  (PR 1269)
+- Fixed the client writing `known_hosts` in text mode on Windows. (PR 1241)
+- Fixed the Nucleus and Harmony SFTP builds referencing an out-of-scope
+  `ssh->fs`. (PR 1082)
+- Fixed `GetOpenSshPublicKey()` ignoring a failed key-type parse. (PR 1193)
+- Fixed the test suites under `--disable-server`, `--disable-client` and
+  `--enable-tpm`. (PR 1155, 1264, 1169)
+- Fixed an `api.test` SFTP race under `make -j check` and two wolfSSHd test
+  dependencies on the host. (PR 1142, 1115, 1040)
+- Fixed the build against wolfSSL without `mlkem.h`. (PR 960)
+- Fixed the Zephyr build on Zephyr 4.1 and newer, and against current
+  wolfSSL. (PR 1267, 1265, 1144)
+- Fixed the `wolfssh` client accepting a declined host key, an Ed25519
+  verify failure, and an SFTP underflow. (PR 969)
+- Static analysis fixes in the disconnect handlers, the client config, a
+  Windows file-move leak and a wolfSSHd hash wipe. (PR 965, 988)
+- Static analysis fixes in `DoProtoId()`, `DoNewKeys()`, `DoKexInit()` and
+  the client buffers. (PR 983)
+- Static analysis fixes in the GEX state and the key readers. (PR 976)
+- Static analysis fixes for an uninitialized variable, a `word16` truncation
+  and a Nucleus log variable. (PR 945, 946, 944)
+- Static analysis fixes in `VerifyMac()`, `IdentifyAsn1Key()`, three SFTP
+  handlers, config line parsing and OpenSSH key padding. (PR 967, 971, 972)
+- Static analysis fixes in the user auth and SFTP paths. (PR 966, 979)
+- Coverity fixes for unchecked SFTP returns and an uninitialized scalar.
+  (PR 964, 1041)
+- Coverity fixes in wolfscp, wolfsftp, the client app and wolfSSHd.
+  (PR 1139)
+- Fixed an uninitialized Windows file handle, and cleared cppcheck
+  findings. (PR 1204)
+- Fixed four `agent.c` functions never freeing their SHA-256 context.
+  (PR 930)
+- Fixed the Windows SFTP open flags, including TRUNC, EXCL and APPEND, and
+  wolfSSHd's `-D` on Windows. (PR 1173)
+- Fixed a resumed SFTP `get` truncating the local file on Windows, and
+  trusting a stale saved offset. (PR 1216)
+- Fixed recursive SCP send on Windows, which read end-of-directory as an
+  enumeration failure and truncated every tree silently. (PR 1242)
+- Fixed the Zephyr directory walk discarding every entry it read, so
+  recursive SCP sent empty directories. (PR 1245)
+- Fixed wolfSSHd on Windows refusing a first login by a user with no
+  profile, and never unloading the profile hive. (PR 1243)
+- Fixed an inbound `auth-agent@openssh.com` open being admitted without the
+  client's request. (PR 1244)
+- Fixed SFTP append offsets, Windows short writes, and wolfSSHd's Windows
+  argv handling. (PR 1159)
+
+---
+
 # wolfSSH v1.5.0 (April 17, 2026)
 
 ## Vulnerabilities
@@ -173,8 +648,8 @@
 
 ## New Features
 
-- Added a complete SFTP client example for the Renesas RX72N platform. (PR
-  847)
+- Added a complete SFTP client example for the Renesas RX72N platform.
+  (PR 847)
 - Enabled TSIP support and provided cleaned-up configuration headers for the
   RX72N example. (PR 847)
 - Added FIPS-enabled build configurations to the Visual Studio project files.
@@ -189,8 +664,8 @@
 ## Improvements
 
 - Refactored SSH string parsing by unifying GetString() and GetStringAlloc()
-  around GetStringRef(), simplifying maintenance and reducing duplication. (PR
-  857)
+  around GetStringRef(), simplifying maintenance and reducing duplication.
+  (PR 857)
 - Enhanced SSH message-order validation by introducing explicit
   expected-message tracking and clearer message ID range macros. (PR 855)
 - Improved server-side out-of-order message checking to align behavior with the
@@ -210,9 +685,9 @@
 
 ## Fixes
 
-- Fix off-by-1 read error when cleaning the file path for SCP. (PR  859)
-- Fixed incorrect handling of zero-length SSH strings in packet parsing. (PR
-  857)
+- Fix off-by-1 read error when cleaning the file path for SCP. (PR 859)
+- Fixed incorrect handling of zero-length SSH strings in packet parsing.
+  (PR 857)
 - Fixed a worker-thread deadlock caused by blocked sends preventing
   window-adjust processing. (PR 856)
 - Fixed a double-free crash and eliminated a socket-close spin loop under error
@@ -237,33 +712,53 @@
 
 ## Vulnerabilities
 
-- [Critical] CVE-2025-11625 The client's host verification can be bypassed by a malicious server, and client credentials leaked. This affects client applications with wolfSSH version 1.4.20 and earlier. Users of wolfSSH on the client side must update or apply the fix patch and it's recommended to update credentials used. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/840)
+- [Critical] CVE-2025-11625 The client's host verification can be bypassed
+  by a malicious server, and client credentials leaked. This affects client
+  applications with wolfSSH version 1.4.20 and earlier. Users of wolfSSH on
+  the client side must update or apply the fix patch and it's recommended to
+  update credentials used.
+  Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/840)
 
-- [Med] CVE-2025-11624 Potential for stack overflow write when reading the file handle provided by an SFTP client. After a SFTP connection was established there is the case where a SFTP client could craft a malicious read, write or set state SFTP packet which would cause the SFTP server code to write into stack. Thanks to Stanislav Fort of Aisle Research for the report. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/834)
+- [Med] CVE-2025-11624 Potential for stack overflow write when reading the
+  file handle provided by an SFTP client. After a SFTP connection was
+  established there is the case where a SFTP client could craft a malicious
+  read, write or set state SFTP packet which would cause the SFTP server
+  code to write into stack. Thanks to Stanislav Fort of Aisle Research for
+  the report. Fixed in PR (https://github.com/wolfSSL/wolfssh/pull/834)
 
 ## New Features
 
-- Curve25519 interoperability with LibSSH. Update to treat curve25519-sha256@libssh.org as an alias for curve25519-sha256 (PR 789)
+- Curve25519 interoperability with LibSSH. Update to treat
+  curve25519-sha256@libssh.org as an alias for curve25519-sha256 (PR 789)
 - Microchip example for ATSAMV71Q21B and harmony filesystem support (PR 790)
-- Make Keyboard Interactive a compile time option, enabled using --enable-keyboard-interactive. Off by default. (PR 800)
+- Make Keyboard Interactive a compile time option, enabled using
+  --enable-keyboard-interactive. Off by default. (PR 800)
 - wolfSSH support for using TPM based key for authentication (PR 754)
-- By default, soft disable AES-CBC. It isn't offered as a default encrypt algorithm, but may be set at runtime (PR 804)
+- By default, soft disable AES-CBC. It isn't offered as a default encrypt
+  algorithm, but may be set at runtime (PR 804)
 - Add ED25519 key generation support. (PR 823)
 
 ## Improvements
 
-- Add GitHub Action for testing wolfSSH server with Paramiko SFTP client (PR 788)
+- Add GitHub Action for testing wolfSSH server with Paramiko SFTP client
+  (PR 788)
 - Additional sanity checks on message types during rekey (PR 793)
 - FATFS improvements, test and Linux example (PR 787)
-- Adjust behavior when getting WOLFSSH_USERAUTH_REJECTED return from callback. It now will reject and not continue on with user auth attempts. (PR 837)
-- Rename arguments and variables to idx instead of index to avoid shadowed variables. (PR 828)
-- Move user filesystem override to the top of the ports check so that the override also overrides enabled ports. (PR 805)
+- Adjust behavior when getting WOLFSSH_USERAUTH_REJECTED return from
+  callback. It now will reject and not continue on with user auth attempts.
+  (PR 837)
+- Rename arguments and variables to idx instead of index to avoid shadowed
+  variables. (PR 828)
+- Move user filesystem override to the top of the ports check so that the
+  override also overrides enabled ports. (PR 805)
 - Remove keyboard auth callback and use a generic auth callback (PR 807)
-- Update Espressif examples and add getting started info to Espressif README (PR 810, 771)
+- Update Espressif examples and add getting started info to Espressif README
+  (PR 810, 771)
 - Disable old threading functions when SINGLE_THREADED (PR 809)
 - Replace Kyber 512 with ML-KEM 768. (PR 792)
 - Update SFTP status callback to output once per second. (PR 779)
-- Refactor to leverage wolfSSL FALLTHROUGH macro with switch statements. (PR 815)
+- Refactor to leverage wolfSSL FALLTHROUGH macro with switch statements.
+  (PR 815)
 - Autoconf and Automake Updates (PR 821)
 - Simplify Test Build Flags (PR 818)
 - Fixed typo and spelling edits (PR 797, 798)
@@ -275,16 +770,20 @@
 - Fix warning on FATFS builds (PR 796)
 - Keyboard Interactive bug fixes (PR 801, 802)
 - Fix double-free on `wolfSSH_SFTPNAME_readdir` (PR 806)
-- Adjust the highwater check location to avoid masking the return value. (PR 795)
+- Adjust the highwater check location to avoid masking the return value.
+  (PR 795)
 - DoAsn1Key now fails when WOLFSSH_NO_RSA is defined (PR 808)
-- Avoid potential for overflow/underflow in comparison by rearranging evaluation of unsigned condition. (PR 814)
+- Avoid potential for overflow/underflow in comparison by rearranging
+  evaluation of unsigned condition. (PR 814)
 - Fixing a batch of warning from Coverity reports. (PR 817, 820, 822)
 - Fix inet_addr accounting for '.' character (PR 816)
 - Fix to only send ext info once after SSH_MSG_NEWKEYS. (PR 819)
 - Fix "rejected" authentication in DoUserAuthRequestPublicKey() (PR 825)
-- Rename struct Buffer to WOLFSSH_BUFFER in wolfSSH_ShowSizes to match the previous rename.(PR 830)
+- Rename struct Buffer to WOLFSSH_BUFFER in wolfSSH_ShowSizes to match the
+  previous rename.(PR 830)
 - Rename wolfssh test certs to avoid conflict with wolfssl test certs (PR 831)
-- Do not treat the shell as interactive until pty-req message request is received. This fixes an interoperability issue with WinSCP (PR 832)
+- Do not treat the shell as interactive until pty-req message request is
+  received. This fixes an interoperability issue with WinSCP (PR 832)
 
 ---
 
@@ -307,7 +806,8 @@
 - Refactor and simplify autogen script (PR 758)
 - Fix SCP hang issue in interop scenarios (PR 751)
 - Fix for SCP server side handling of EAGAIN (PR 783)
-- Reinstate support for P521 and P384 curves by default when compiled in (PR 762)
+- Reinstate support for P521 and P384 curves by default when compiled in
+  (PR 762)
 - Fix for wolfSSH client app handling of an empty hostname (PR 768)
 
 ---
@@ -321,17 +821,23 @@
 ## Improvements
 
 - Use of the new SSH-KDF function in wolfCrypt (PR 729)
-- Adds macro guards to the non-POSIX value checks and updates with TTY modes (PR 739)
+- Adds macro guards to the non-POSIX value checks and updates with TTY modes
+  (PR 739)
 - Add CI test against master and last two wolfSSL releases (PR 746)
-- Show version of wolfSSL linked to when application help messages are printed out (PR 741)
-- Purge OQS from wolfSSH and instead use Kyber implementation from wolfssl (PR 736)
+- Show version of wolfSSL linked to when application help messages are
+  printed out (PR 741)
+- Purge OQS from wolfSSH and instead use Kyber implementation from wolfssl
+  (PR 736)
 - Adjust Espressif wolfssl_echoserver example timehelper (PR 730)
 
 ## Fixes
 
-- Remove Inline for function HashForId() to resolve clash with WOLFSSH_LOCAL declaration (PR 738)
-- Fix for wolfSSHd's handling of re-key and window full when processing a command with lots of stdout text (PR 719)
-- Fix for wolfSSH client app to gracefully clean up on failure and added more WLOG debug messages (PR 732)
+- Remove Inline for function HashForId() to resolve clash with WOLFSSH_LOCAL
+  declaration (PR 738)
+- Fix for wolfSSHd's handling of re-key and window full when processing a
+  command with lots of stdout text (PR 719)
+- Fix for wolfSSH client app to gracefully clean up on failure and added
+  more WLOG debug messages (PR 732)
 - Minor static analysis report fixes (PR 740, 735)
 - Fix for handling SFTP transfer to non-existent folder (PR 743)
 
@@ -526,23 +1032,30 @@
 
 ## New Feature Additions and Improvements
 
-- Add user authentication support for RSA signing with SHA2-256 and SHA2-512 (Following RFC 8332)
+- Add user authentication support for RSA signing with SHA2-256 and SHA2-512
+  (Following RFC 8332)
 - Support for FATFS on Xilinx targets
-- ecc_p256-kyber_level1 interop with OQS OpenSSH following the RFC https://www.ietf.org/id/draft-kampanakis-curdle-ssh-pq-ke-01.html
-- Internal refactor of client apps to simplify them and added X509 support to scpclient
-- wolfSSH_accept now returns WS_SCP_INIT and needs called again to complete the SCP operation
+- ecc_p256-kyber_level1 interop with OQS OpenSSH following the RFC
+  https://www.ietf.org/id/draft-kampanakis-curdle-ssh-pq-ke-01.html
+- Internal refactor of client apps to simplify them and added X509 support
+  to scpclient
+- wolfSSH_accept now returns WS_SCP_INIT and needs called again to complete
+  the SCP operation
 - Update to document Cube Pack dependencies
-- Add carriage return for 'enter' key in the example client with shell connections to windows server
+- Add carriage return for 'enter' key in the example client with shell
+  connections to windows server
 - Stack usage improvement to limit the scope of variables
 - Echoserver example SFTP non blocking improvement for want read cases
 - Increase SFTP performance with throughput
 
 ## Fixes
 
-- Fix for calling chdir after chroot with wolfSSHd when jailing connections on unix environments
+- Fix for calling chdir after chroot with wolfSSHd when jailing connections
+  on unix environments
 - Better handling on the server side for when the client's window is filled up
 - Fix for building the client project on windows when shell support is enabled
-- Sanity check improvements for handling memory management with non blocking connections
+- Sanity check improvements for handling memory management with non blocking
+  connections
 - Fix for support with secondary groups with wolfSSHd
 - Fixes for SFTP edge cases when used with LWiP
 
@@ -579,7 +1092,8 @@
 
 ## New Feature Additions and Improvements
 - Support for Green Hills Software's INTEGRITY
-- wolfSSHd Release (https://github.com/wolfSSL/wolfssh/pull/453 rounds off testing and additions)
+- wolfSSHd Release (https://github.com/wolfSSL/wolfssh/pull/453 rounds off
+  testing and additions)
 - Support for RFC 6187, using X.509 Certificates as public keys
 - OCSP and CRL checking for X.509 Certificates (uses wolfSSL CertManager)
 - Add callback to the server for reporting userauth result
@@ -633,15 +1147,18 @@
 - Update to Visual Studio paths for looking for wolfSSL library
 - SFTP example, reset timeout value with get/put command
 - Add support for flushing file IO using WOLFSCP_FLUSH
-- Add preprocessor guards for RSA/ECC to agent and the example and test applications
+- Add preprocessor guards for RSA/ECC to agent and the example and test
+  applications
 - Initialization of variables to avoid warnings and use with ESP-IDF
 
 ## Fixes
-- When scp receives a string in STDERR, print it out, rather than treating it as an error
+- When scp receives a string in STDERR, print it out, rather than treating
+  it as an error
 - Window adjustment refactor and fix
 - fix check on RSA import size
 - Fix for building with older GCC versions (tested with 4.0.2)
-- SFTP fix handling sent data sz when its size is greater than peer max packet size
+- SFTP fix handling sent data sz when its size is greater than peer max
+  packet size
 - SFTP add error return code for a bad header when sending a packet
 - KCAPI build fixes for macro guards needed
 - SCP fix for handling small and empty message sizes
@@ -670,7 +1187,10 @@
 - Fixes to local port forwarding
 
 ## Vulnerabilities
-- When processing SFTP messages, wolfSSH isn't checking data lengths against the size of the message and is potentially under-allocating, over-reading, and over-writing buffers. Thank you to Michael Randrianantenaina, an independent security researcher, for the report.
+- When processing SFTP messages, wolfSSH isn't checking data lengths against
+  the size of the message and is potentially under-allocating, over-reading,
+  and over-writing buffers. Thank you to Michael Randrianantenaina, an
+  independent security researcher, for the report.
 
 ---
 
@@ -679,11 +1199,13 @@
 ## New Feature Additions and Improvements
 
 - SCP improvements to run on embedded RTOS
-- For SFTP messages, check both minimum bound and maximum bound of the length value
+- For SFTP messages, check both minimum bound and maximum bound of the
+  length value
 - Added option for --enable-small-stack
 - Added SFTP support for FatFs
 - Added 192 and 256 bit support for AES-CBC, AES-CTR, and AES-GCM
-- Added options to disable algorithms. (ie WOLFSSH_NO_ECDSA, WOLFSSH_NO_AES_CBC, etc)
+- Added options to disable algorithms. (ie WOLFSSH_NO_ECDSA,
+  WOLFSSH_NO_AES_CBC, etc)
 - Improved handling of builds without ECC
 
 
@@ -703,7 +1225,8 @@
 
 ## New Feature Additions
 
-- Added optional builds for not using RSA or ECC making the build more modular for resource constrained situations.
+- Added optional builds for not using RSA or ECC making the build more
+  modular for resource constrained situations.
 - MQX IDE build added
 - Command line option added for Agent use with the example client
 
@@ -712,9 +1235,12 @@
 ## Fixes
 
 - Increase the ID list size for interop with some OpenSSH servers
-- In the case of a network error add a close to any open files with SFTP connection
-- Fix for potential memory leak with agent and a case with wolfSHS_SFTP_GetHandle
-- Fuzzing fix for potential out of bounds read in the public key user auth messages
+- In the case of a network error add a close to any open files with SFTP
+  connection
+- Fix for potential memory leak with agent and a case with
+  wolfSHS_SFTP_GetHandle
+- Fuzzing fix for potential out of bounds read in the public key user auth
+  messages
 - MQX build fixes
 - Sanity check that agent was set before setting the agent's channel
 - Fuzzing fix for bounds checking with DoKexDhReply internal function
@@ -726,7 +1252,8 @@
 ## Improvements and Optimizations
 
 - Example timeout added to SFTP example
-- Update wolfSSH_ReadKey_buffer() to handle P-384 and P-521 when reading a key from a buffer
+- Update wolfSSH_ReadKey_buffer() to handle P-384 and P-521 when reading a
+  key from a buffer
 - Use internal version of strdup
 - Use strncmp instead of memcmp for comparint session string type
 
