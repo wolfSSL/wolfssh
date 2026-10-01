@@ -1,0 +1,15 @@
+# Compilers for multi-compiler, code-coverage and the mingw cross build,
+# bundled by ci-deps-image.yml. Kept apart from -tests for its size.
+autoconf
+automake
+clang-14
+clang-15
+clang-17
+clang-18
+gcc-11
+gcc-12
+gcc-13
+gcc-mingw-w64-x86-64
+libclang-rt-18-dev
+libtool
+llvm-18

@@ -43,10 +43,10 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Install dependencies
-        timeout-minutes: 3
-        run: |
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y build-essential autoconf automake libtool pkg-config openssh-server dosfstools
+        uses: ./.github/actions/install-apt-deps
+        with:
+          packages: build-essential autoconf automake libtool pkg-config openssh-server dosfstools expect
+          ghcr-debs-tag: ubuntu-24.04-tests
 
       - name: Build wolfSSL
         uses: wolfSSL/actions-build-autotools-project@v1
@@ -88,12 +88,6 @@ jobs:
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
           echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
-
-      - name: Install expect
-        timeout-minutes: 2
-        run: |
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y expect
 
       - name: Run wolfsftp client to get file
         run: |

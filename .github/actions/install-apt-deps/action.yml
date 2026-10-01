@@ -1,0 +1,181 @@
+name: 'Install apt dependencies'
+description: 'Install apt packages from a prebuilt ghcr .deb bundle, falling back to the apt mirror'
+# Ported from wolfSSL's .github/actions/install-apt-deps.
+inputs:
+  packages:
+    description: 'Space-separated list of apt packages to install'
+    required: true
+  ghcr-debs-tag:
+    description: >
+      Tag of a .deb bundle published to ghcr.io/wolfssl/wolfssh-ci-debs by
+      the ci-deps-image workflow (e.g. "ubuntu-24.04-tests"). The packages
+      are installed from that bundle with no network access. Any failure -
+      bundle missing, not public, or not covering every requested package -
+      falls back to the apt mirror, so it is always safe to set.
+    required: false
+    default: ''
+  retries:
+    description: 'Attempts at the apt mirror fallback'
+    required: false
+    default: '2'
+  budget-seconds:
+    description: >
+      Wall-clock for the whole mirror fallback, split across the attempts as
+      per-command deadlines so a wedged mirror is reported here instead of
+      the job being cancelled around it. It overshoots by retry-delay plus
+      10s of kill grace, and the per-command floors make values below
+      retries*80 inert. This plus pull-timeout has to fit the caller's
+      timeout-minutes.
+    required: false
+    default: '180'
+  pull-timeout:
+    description: 'Deadline in seconds for the ghcr bundle pull'
+    required: false
+    default: '60'
+  retry-delay:
+    description: 'Initial delay between retries (seconds, doubles each attempt)'
+    required: false
+    default: '5'
+  no-install-recommends:
+    description: 'Pass --no-install-recommends to apt-get install'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    # Resolve against ONLY the bundle's own index, through a private
+    # sources.list and lists dir. The runner's lists are frozen into its image
+    # and lag the archive the bundle was built from, so resolving against them
+    # asks for versions the bundle does not carry. The system lists are left
+    # untouched for the fallback below.
+    - name: Install from the ghcr .deb bundle (offline)
+      id: ghcr
+      if: inputs.ghcr-debs-tag != ''
+      shell: bash
+      run: |
+        set -u
+        IMG="ghcr.io/wolfssl/wolfssh-ci-debs:${{ inputs.ghcr-debs-tag }}"
+
+        fallback() {
+          echo "::warning::$IMG: $1; falling back to the apt mirror"
+          echo "apt fallback: \`$IMG\`: $1" \
+            >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 0
+        }
+
+        # A bundle holds .debs for one Ubuntu release.
+        WANT=$(printf '%s' "${{ inputs.ghcr-debs-tag }}" \
+               | sed -n 's/^\(ubuntu-[0-9]*\.[0-9]*\).*/\1/p')
+        HAVE=""
+        if [ -r /etc/os-release ]; then
+          HAVE=$( . /etc/os-release
+                  printf '%s-%s' "${ID:-?}" "${VERSION_ID:-?}" )
+        fi
+        if [ -n "$WANT" ] && [ -n "$HAVE" ] && [ "$WANT" != "$HAVE" ]; then
+          fallback "holds .debs for $WANT, but this job runs on $HAVE"
+        fi
+        command -v docker >/dev/null 2>&1 || fallback "no docker CLI"
+
+        BUNDLE="$RUNNER_TEMP/ghcr-debs"
+        APTD="$RUNNER_TEMP/ghcr-apt"
+        rm -rf "$BUNDLE" "$APTD"
+        mkdir -p "$BUNDLE" "$APTD/etc" "$APTD/lists/partial"
+
+        # The image must be PUBLIC so an anonymous pull works from fork PRs.
+        timeout -k 10 ${{ inputs.pull-timeout }} docker pull -q "$IMG" \
+          >/dev/null 2>&1 || fallback "pull failed or timed out"
+        cid=$(docker create "$IMG" 2>/dev/null) || fallback "cannot open the image"
+        docker cp "$cid:/debs/." "$BUNDLE/" >/dev/null \
+          || fallback "unpacking failed"
+        docker rm "$cid" >/dev/null 2>&1 || true
+        ls "$BUNDLE"/*.deb >/dev/null 2>&1 || fallback "no .debs inside"
+
+        if [ -f "$BUNDLE/bundle-info" ]; then
+          echo "Bundle: $(tr '\n' ' ' < "$BUNDLE/bundle-info")"
+          echo "Runner: image ${ImageOS:-?} ${ImageVersion:-?}"
+        fi
+        [ -s "$BUNDLE/Packages" ] || fallback "no Packages index"
+
+        printf 'deb [trusted=yes] file:%s ./\n' "$BUNDLE" > "$APTD/etc/sources.list"
+        # The bundle is the only repository apt can see. The unroutable proxy
+        # is a tripwire: a non-file: URI fails at once instead of hanging on
+        # the mirror.
+        APT_LOCAL=(-o Dir::Etc::SourceList="$APTD/etc/sources.list"
+                   -o Dir::Etc::SourceParts=/dev/null
+                   -o Dir::State::Lists="$APTD/lists"
+                   -o Acquire::Languages=none
+                   -o Acquire::Retries=0
+                   -o APT::Sandbox::User=root
+                   -o Acquire::http::Proxy=http://127.0.0.1:9
+                   -o Acquire::https::Proxy=http://127.0.0.1:9)
+
+        sudo apt-get "${APT_LOCAL[@]}" update >/dev/null 2>&1 \
+          || fallback "apt could not read the bundle index"
+
+        NO_REC=""
+        if [ "${{ inputs.no-install-recommends }}" = "true" ]; then
+          NO_REC="--no-install-recommends"
+        fi
+        if sudo DEBIAN_FRONTEND=noninteractive apt-get "${APT_LOCAL[@]}" \
+             install -y $NO_REC ${{ inputs.packages }}; then
+          echo "satisfied=true" >> "$GITHUB_OUTPUT"
+          echo "Installed offline from $IMG"
+        else
+          fallback "does not cover ${{ inputs.packages }}"
+        fi
+
+    - name: Install packages
+      if: steps.ghcr.outputs.satisfied != 'true'
+      shell: bash
+      run: |
+        RETRIES=${{ inputs.retries }}
+        DELAY=${{ inputs.retry-delay }}
+        BUDGET=${{ inputs.budget-seconds }}
+        NO_REC=""
+        if [ "${{ inputs.no-install-recommends }}" = "true" ]; then
+          NO_REC="--no-install-recommends"
+        fi
+
+        # A wedged mirror hangs apt rather than failing it. apt drops a
+        # stalled connection after 30s and retries it, `timeout` kills an
+        # apt-get that wedged anyway, and the loop re-runs, re-reading
+        # apt-mirrors.txt so a retry can land on another mirror. apt resumes
+        # from archives/partial/, so a killed transfer is not restarted.
+
+        # No wolfSSH job installs from the runner's Google/Microsoft repos, and
+        # a bad index on either fails apt-get update. Drop them.
+        grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
+          /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -vf || true
+        APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30
+                  -o Acquire::https::Timeout=30)
+
+        DEADLINE=$(($(date +%s) + BUDGET))
+
+        # sudo resets the environment, so DEBIAN_FRONTEND rides along on each
+        # privileged command.
+        for i in $(seq 1 $RETRIES); do
+          # Split what is left over the attempts still to come. update gets
+          # half an attempt, capped at the 90s apt's own retries need.
+          PER=$(( (DEADLINE - $(date +%s)) / (RETRIES - i + 1) ))
+          UPD=$((PER / 2))
+          [ "$UPD" -le 90 ] || UPD=90
+          [ "$UPD" -ge 20 ] || UPD=20
+          INS=$((PER - UPD))
+          [ "$INS" -ge 40 ] || INS=40
+          # A previous attempt killed mid-unpack leaves dpkg needing this.
+          sudo dpkg --configure -a >/dev/null 2>&1 || true
+          if sudo DEBIAN_FRONTEND=noninteractive timeout -k 10 $UPD \
+                 apt-get "${APT_OPTS[@]}" update -q && \
+             sudo DEBIAN_FRONTEND=noninteractive timeout -k 10 $INS \
+                 apt-get "${APT_OPTS[@]}" install -y \
+                 $NO_REC ${{ inputs.packages }}; then
+            exit 0
+          fi
+          if [ "$i" -eq "$RETRIES" ] || [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "::error::apt-get failed after $i attempt(s) in ${BUDGET}s"
+            exit 1
+          fi
+          echo "::warning::apt-get failed (attempt $i/$RETRIES), retrying in ${DELAY}s..."
+          sleep $DELAY
+          DELAY=$((DELAY * 2))
+        done

@@ -56,10 +56,11 @@ jobs:
 
       # clang 18 is the min: -fcoverage-mcdc does not exist before it.
       - name: Install clang and LLVM coverage tools
-        timeout-minutes: 5
-        run: |
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y clang-18 llvm-18 libclang-rt-18-dev
+        uses: ./.github/actions/install-apt-deps
+        with:
+          packages: clang-18 llvm-18 libclang-rt-18-dev
+          ghcr-debs-tag: ubuntu-24.04-compilers
+          budget-seconds: 300
 
       - name: Download wolfSSL
         uses: actions/download-artifact@v8

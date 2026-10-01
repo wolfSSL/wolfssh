@@ -1,0 +1,24 @@
+# Packages for the wolfSSH test workflows, bundled by ci-deps-image.yml.
+# A step's whole package list must be here or it falls back to the mirror.
+autoconf
+autoconf-archive
+automake
+build-essential
+cppcheck
+dosfstools
+expect
+git
+libcmocka-dev
+libglib2.0-dev
+libssl-dev
+libtool
+netcat-traditional
+openssh-client
+openssh-server
+pkg-config
+python3-pip
+sshpass
+tpm2-tools
+uthash-dev
+valgrind
+zlib1g-dev
