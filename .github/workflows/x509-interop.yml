@@ -64,10 +64,11 @@ jobs:
           lookup-only: true
 
       - name: Install build dependencies
+        timeout-minutes: 5
         if: steps.cache-pkixssh.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get -y update
-          sudo apt-get -y install libssl-dev zlib1g-dev
+          sudo apt-get -o Acquire::Retries=3 -y update
+          sudo apt-get -o Acquire::Retries=3 -y install libssl-dev zlib1g-dev
 
       - name: Download, build, and install PKIX-SSH
         if: steps.cache-pkixssh.outputs.cache-hit != 'true'
@@ -108,9 +109,10 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Install test dependencies
+        timeout-minutes: 2
         run: |
-          sudo apt-get -y update
-          sudo apt-get -y install netcat-traditional
+          sudo apt-get -o Acquire::Retries=3 -y update
+          sudo apt-get -o Acquire::Retries=3 -y install netcat-traditional
 
       - uses: actions/checkout@v6
         with:

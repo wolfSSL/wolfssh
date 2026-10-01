@@ -125,12 +125,17 @@ jobs:
           sudo ./run_all_sshd_tests.sh
 
       # could use optimization with caching
+      - name: Install valgrind
+        if: matrix.extra_flags == ''
+        timeout-minutes: 2
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -y update
+          sudo apt-get -o Acquire::Retries=3 -y install valgrind
+
       - name: Test memory after close down
         working-directory: ./wolfssh/
         if: matrix.extra_flags == ''
         run: |
-          sudo apt-get -y update
-          sudo apt-get -y install valgrind
           touch sshd_config.txt
           ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DWOLFSSH_MAX_SFTP_RW=4000000 -DMAX_PATH_SZ=120" --enable-static --disable-shared && make
           # wolfSSHd loads the host key through the secure gate; the daemon runs

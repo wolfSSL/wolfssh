@@ -106,6 +106,12 @@ jobs:
           echo "Echoserver started with PID: $!"
           sleep 2  # Give the server time to start
 
+      - name: Install expect
+        timeout-minutes: 2
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y expect
+
       - name: Run SFTP test
         working-directory: ./wolfssh/
         run: |
@@ -123,9 +129,6 @@ jobs:
           expect eof
           EOF
           chmod +x /tmp/sftp_test.exp
-
-          # Install expect
-          sudo apt-get update && sudo apt-get install -y expect
 
           # Run the expect script
           /tmp/sftp_test.exp

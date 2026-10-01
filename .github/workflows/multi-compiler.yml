@@ -65,9 +65,10 @@ jobs:
 
     steps:
       - name: Install compiler
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.cc }}
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ${{ matrix.cc }}
 
       - name: Checkout wolfSSH
         uses: actions/checkout@v6
