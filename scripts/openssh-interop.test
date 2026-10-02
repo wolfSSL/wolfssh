@@ -33,8 +33,9 @@ run_limit=60
 killer_pid=-1
 # The test keys are not copied into the build directory, so reach them
 # through srcdir the way scripts/fwd.test does, or an out-of-tree build
-# and make distcheck cannot find them.
-keys_dir="${srcdir:-.}/keys"
+# and make distcheck cannot find them. Made absolute because the example
+# client chdirs up to the tree root before it opens the -i and -j files.
+keys_dir=`cd "${srcdir:-.}/keys" && pwd` || exit 1
 
 do_cleanup() {
     if [ $killer_pid != $no_pid ]
