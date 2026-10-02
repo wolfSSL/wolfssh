@@ -2005,6 +2005,11 @@ static void TestAppChannelsLateEnableReturns(void)
     AssertIntEQ(harness.server->acceptState,
             ACCEPT_CLIENT_SESSION_ESTABLISHED);
 
+    /* White box: the handshake's shell holds the session. Clear the grant
+     * before each request so only the mode decides. */
+    AssertNotNull(harness.server->channelList);
+    harness.server->channelList->sessionGranted = 0;
+
     /* Default mode, no callback registered: the request is granted. */
     idx = 0;
     AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
@@ -2017,6 +2022,7 @@ static void TestAppChannelsLateEnableReturns(void)
             ACCEPT_CLIENT_SESSION_ESTABLISHED);
 
     /* Same request, same session, mode now on: refused instead. */
+    harness.server->channelList->sessionGranted = 0;
     idx = 0;
     AssertIntEQ(wolfSSH_TestDoChannelRequest(harness.server, payShell,
             (word32)sizeof(payShell), &idx), WS_SUCCESS);
@@ -7546,6 +7552,84 @@ static void TestSessionReqCallbackMayFreeChannel(void)
     AssertNull(harness.ssh->channelList);
     AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_INVALID_CHANID);
     AssertIntEQ(harness.io.outSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* RFC 4254 sec 6.5: after a granted exec, a second session request is
+ * refused without asking its callback, and the exec stands. */
+static void CheckSecondSessionRequestRefused(const char* type,
+        const char* arg)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    WS_SessionType sessionType;
+    byte in[128];
+    word32 inSz;
+
+    sessionReqCbCalls = 0;
+    sessionReqCbReturn = 0;
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness.ctx,
+                RecordingSessionReqCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "ls", in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, 1);
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, type, 1, arg,
+            in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(sessionReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, 1);
+    sessionType = wolfSSH_ChannelGetSessionType(channel);
+    AssertIntEQ(sessionType, WOLFSSH_SESSION_EXEC);
+    AssertIntEQ(wolfSSH_ChannelGetSessionCommandSz(channel), 2);
+    AssertIntEQ(WSTRCMP(wolfSSH_ChannelGetSessionCommand(channel), "ls"), 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static void TestSecondSessionRequestRefused(void)
+{
+    CheckSecondSessionRequestRefused("exec", "whoami");
+    CheckSecondSessionRequestRefused("shell", NULL);
+    CheckSecondSessionRequestRefused("subsystem", "sftp");
+}
+
+/* A grant from the generic callback does not override the rule. */
+static void TestSecondSessionRequestRefusedOverGenericGrant(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+
+    ResetAnyReqCb(WOLFSSH_REQ_ACCEPT);
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness.ctx,
+                RecordingChannelReqAnyCb), WS_SUCCESS);
+    channel = SeedConfirmedSessionChannel(&harness);
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "ls", in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_SUCCESS);
+    AssertIntEQ(anyReqCbCalls, 1);
+    AssertIntEQ(channel->sessionGranted, 1);
+
+    inSz = BuildChannelStringRequestPacket(channel->channel, "exec", 1,
+            "whoami", in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+    AssertIntEQ(anyReqCbCalls, 2);
+    AssertIntEQ(WSTRCMP(wolfSSH_ChannelGetSessionCommand(channel), "ls"), 0);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -20380,6 +20464,8 @@ int main(int argc, char** argv)
     TestChannelGetSessionGrantedAccessor();
     TestMalformedSessionRequestSkipsCallback();
     TestSessionReqCallbackMayFreeChannel();
+    TestSecondSessionRequestRefused();
+    TestSecondSessionRequestRefusedOverGenericGrant();
     TestAppChannelsAcceptKeepsStopWithPendingOutput();
 #ifdef WOLFSSH_SFTP
     TestSftpAcceptAppChannelsNeedsSession();
