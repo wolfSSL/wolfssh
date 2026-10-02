@@ -469,8 +469,9 @@ WOLFSSH_API word32 wolfSSH_ChannelGetSessionCommandSz(
 WOLFSSH_API int wolfSSH_ChannelIsPty(const WOLFSSH_CHANNEL* channel);
 /* Returns 1 once a shell, exec or subsystem request on the channel has been
  * answered CHANNEL_SUCCESS, 0 while none has been, and WS_BAD_ARGUMENT when
- * channel is NULL. A session-request callback sees this still clear for the
- * request it is answering, so a set flag is an earlier request's grant. */
+ * channel is NULL. Once it is set, a further session request is refused
+ * without a shell, exec or subsystem callback being called, so those
+ * callbacks always see it clear. */
 WOLFSSH_API int wolfSSH_ChannelGetSessionGranted(
         const WOLFSSH_CHANNEL* channel);
 
@@ -526,8 +527,9 @@ typedef enum WS_ReqCbResult {
  * callbacks are not consulted. The library still parses and records what
  * it needs from a request it knows, so a session request accepted here
  * sets the channel's session type and the modes of an accepted pty-req are
- * kept; a request that does not fit its type is refused whatever the
- * callback said. A type the library does not know is answered
+ * kept. A request that does not fit its type, and a shell, exec or
+ * subsystem request on a channel that already has one granted, are refused
+ * whatever the callback said. A type the library does not know is answered
  * CHANNEL_SUCCESS on ACCEPT, where it is otherwise refused. Shares the
  * channel request context.
  *

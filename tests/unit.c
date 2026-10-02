@@ -10892,12 +10892,13 @@ static int test_DoChannelRequest(void)
         int         expectRet;
         byte        expectMsgId;
     } cases[] = {
-        { "shell",
-          payShell,   (word32)sizeof(payShell),
-          WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
         { "exec",
           payExec,    (word32)sizeof(payExec),
           WS_SUCCESS, MSGID_CHANNEL_SUCCESS },
+        /* RFC 4254 sec 6.5: the exec holds the session. */
+        { "shell-after-exec",
+          payShell,   (word32)sizeof(payShell),
+          WS_SUCCESS, MSGID_CHANNEL_FAILURE },
         { "unknown-type",
           payUnknown, (word32)sizeof(payUnknown),
           WS_SUCCESS, MSGID_CHANNEL_FAILURE },
@@ -11112,10 +11113,8 @@ static int test_DoChannelRequest(void)
         }
     }
 
-    /* A refused exec has to put back the command the granted one left:
-     * an earlier grant still stands, and a server reads the command off
-     * the channel. The reject cases above ran on a bare channel, where
-     * the restore had nothing to put back. */
+    /* A second exec is refused without asking the callback and must not
+     * replace the granted command. */
     {
         static const byte payExecOther[] = {
             0x00,0x00,0x00,0x00,              /* channelId = 0   */
@@ -11142,7 +11141,7 @@ static int test_DoChannelRequest(void)
 
         retRej = wolfSSH_TestDoChannelRequest(ssh, (byte*)payExecOther,
                 (word32)sizeof(payExecOther), &idxRej);
-        if (retRej != WS_SUCCESS || s_rejectChanReqCalls != 1) {
+        if (retRej != WS_SUCCESS || s_rejectChanReqCalls != 0) {
             printf("DoChannelRequest[rej-exec-granted]: ret=%d, callback ran "
                     "%d times\n", retRej, s_rejectChanReqCalls);
             result = -506;
@@ -11157,8 +11156,7 @@ static int test_DoChannelRequest(void)
             goto done;
         }
 
-        /* The command the refused request carried is gone, and "ls" is
-         * back whole: the pointer and the length together. */
+        /* "ls" is intact: pointer and length. */
         cmd = wolfSSH_ChannelGetSessionCommand(ch);
         if (cmd == NULL || WSTRCMP(cmd, "ls") != 0
                 || wolfSSH_ChannelGetSessionCommandSz(ch) != 2) {
@@ -11188,8 +11186,7 @@ static int test_DoChannelRequest(void)
         }
     }
 
-    /* A shell request carries no command, so it must leave the one the
-     * exec above set alone rather than release it. */
+    /* The refused shell leaves the exec's command and type alone. */
     {
         word32 idxShell = 0;
         const char* cmd;
@@ -11207,8 +11204,8 @@ static int test_DoChannelRequest(void)
             result = -501;
             goto done;
         }
-        if (wolfSSH_ChannelGetSessionType(ch) != WOLFSSH_SESSION_SHELL) {
-            printf("DoChannelRequest[shell-after-exec]: type not shell\n");
+        if (wolfSSH_ChannelGetSessionType(ch) != WOLFSSH_SESSION_EXEC) {
+            printf("DoChannelRequest[shell-after-exec]: type not exec\n");
             result = -502;
             goto done;
         }
@@ -18920,9 +18917,20 @@ typedef struct RetainedBuf {
 
 static RetainedBuf* retainedFrees = NULL;
 
+/* Set retainWatchSz to have RetainMalloc record in retainWatchPtr the first
+ * block of that size, for a buffer the code under test allocates and frees
+ * without handing it back. */
+static size_t retainWatchSz = 0;
+static void* retainWatchPtr = NULL;
+
 static void* RetainMalloc(size_t size)
 {
-    return malloc(size);
+    void* p = malloc(size);
+
+    if (p != NULL && retainWatchSz != 0 && size == retainWatchSz
+            && retainWatchPtr == NULL)
+        retainWatchPtr = p;
+    return p;
 }
 
 static void RetainFree(void* ptr)
@@ -19159,22 +19167,22 @@ static word32 BuildExecRequestPayload(byte* out, word32 outSz,
 }
 
 
-/* Verify a repeat exec request wipes the command line it replaces.
- * GetStringAlloc() frees the old buffer to take the new one, so without
- * the scrub the earlier command, credentials and all, stays readable in
- * the freed block. Only the last one ever reaches ChannelDelete(). The
- * retain-on-free allocator is installed just around the second request
- * so the freed bytes can be read back. */
-static int test_DoChannelRequest_zeroesReplacedCommand(void)
+/* Verify a refused second exec request wipes the command line it carried.
+ * The channel already has a session, so the request is read into a buffer
+ * of its own and freed; without the scrub the command, credentials and
+ * all, stays readable in the freed block. The retain-on-free allocator is
+ * installed just around the second request, watching for the command's
+ * allocation, so the freed bytes can be read back. */
+static int test_DoChannelRequest_zeroesRefusedCommand(void)
 {
-    static const char first[] = "sh -c 'login --password hunter2'";
+    static const char second[] = "sh -c 'login --password hunter2'";
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
     WOLFSSH_CHANNEL* ch = NULL;
-    const byte* commandBytes;
+    const byte* refused;
     byte payload[128];
     word32 payloadSz;
-    word32 commandSz;
+    word32 secondSz = (word32)WSTRLEN(second);
     word32 idx;
     word32 i;
     int result = 0;
@@ -19206,68 +19214,66 @@ static int test_DoChannelRequest_zeroesReplacedCommand(void)
     }
 
     idx = 0;
-    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), first);
+    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), "ls");
     if (payloadSz == 0) {
         result = -724;
         goto out;
     }
     if (wolfSSH_TestDoChannelRequest(ssh, payload, payloadSz, &idx)
-            != WS_SUCCESS) {
+            != WS_SUCCESS || !ch->sessionGranted) {
         result = -725;
         goto out;
     }
 
-    commandSz = ch->commandSz;
-    commandBytes = (const byte*)ch->command;
-    if (commandBytes == NULL || commandSz != (word32)WSTRLEN(first)) {
+    idx = 0;
+    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), second);
+    if (payloadSz == 0) {
         result = -726;
         goto out;
     }
 
-    idx = 0;
-    payloadSz = BuildExecRequestPayload(payload, sizeof(payload), "ls");
-    if (payloadSz == 0) {
-        result = -727;
-        goto out;
-    }
-
     wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    retainWatchSz = secondSz + 1;
+    retainWatchPtr = NULL;
     /* Allocators unchanged on failure; nothing to restore. */
     if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
                               RetainRealloc) != 0) {
-        result = -728;
+        retainWatchSz = 0;
+        result = -727;
         goto out;
     }
     result = wolfSSH_TestDoChannelRequest(ssh, payload, payloadSz, &idx);
     wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    retainWatchSz = 0;
+    refused = (const byte*)retainWatchPtr;
     if (result != WS_SUCCESS) {
-        result = -729;
+        result = -728;
         goto out;
     }
     result = 0;
 
-    if (!IsRetained((void*)commandBytes)) {
-        result = -730;
+    if (refused == NULL || !IsRetained((void*)refused)) {
+        result = -729;
         goto out;
     }
 
-    for (i = 0; i < commandSz; i++) {
-        if (commandBytes[i] != 0) {
-            result = -731;
+    for (i = 0; i < secondSz; i++) {
+        if (refused[i] != 0) {
+            result = -730;
             goto out;
         }
     }
 
-    /* The replacement arrived whole, so the scrub hit the old buffer
-     * rather than the one in use. */
+    /* The refusal left the granted command whole. */
     if (ch->command == NULL || WSTRCMP(ch->command, "ls") != 0
             || ch->commandSz != 2) {
-        result = -732;
+        result = -731;
         goto out;
     }
 
 out:
     DrainRetained();
+    retainWatchPtr = NULL;
     if (ssh != NULL)
         wolfSSH_free(ssh);
     if (ctx != NULL)
@@ -23856,8 +23862,8 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_TEST_INTERNAL
-    unitResult = test_DoChannelRequest_zeroesReplacedCommand();
-    printf("DoChannelRequest_zeroesReplacedCommand: %s\n",
+    unitResult = test_DoChannelRequest_zeroesRefusedCommand();
+    printf("DoChannelRequest_zeroesRefusedCommand: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

@@ -13318,7 +13318,10 @@ static void SetTerminalSize(WOLFSSH* ssh, word32 widthChar, word32 heightRows,
 
 /* Answers a shell, exec, or subsystem request. Sets the session type and
  * command for the callback to read, and keeps them only if it accepts.
- * A request the generic callback already granted asks no callback. */
+ * A request the generic callback already granted asks no callback, and
+ * one on a channel that already has a session is refused without asking
+ * any. Only the first grant sets a command, so a request that gets past
+ * that check finds the channel with none. */
 static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
         WOLFSSH_CHANNEL* channel, byte sessionType, WS_CallbackChannelReq cb,
         int granted, byte* buf, word32 len, word32* idx, int* rej)
@@ -13326,18 +13329,12 @@ static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
     void* heap = ssh->ctx->heap;
     byte prevType = channel->sessionType;
     byte hasCommand = (sessionType != WOLFSSH_SESSION_SHELL);
-    char* prevCommand = NULL;
-    word32 prevCommandSz = 0;
     char* command = NULL;
     word32 commandSz = 0;
     int ret = WS_SUCCESS;
 
-    /* A shell request carries no command, so it leaves the old one alone.
-     * The others read into a local, so the old survives a refusal. */
+    /* A shell request carries no command. */
     if (hasCommand) {
-        prevCommand = channel->command;
-        prevCommandSz = channel->commandSz;
-
         ret = GetStringAlloc(heap, &command, &commandSz, buf, len, idx);
         if (ret == WS_SUCCESS)
             WLOG(WS_LOG_DEBUG, "  %s = %s",
@@ -13347,6 +13344,15 @@ static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
             WLOG(WS_LOG_DEBUG, "  %s = %s",
                     sessionType == WOLFSSH_SESSION_SUBSYSTEM
                         ? "subsystem" : "command", "<bad value>");
+    }
+
+    /* RFC 4254 sec 6.5: one session request succeeds per channel. Refuse
+     * the rest without asking a callback; the grant stands. */
+    if (ret == WS_SUCCESS && channel->sessionGranted) {
+        WLOG(WS_LOG_DEBUG, "  session already granted, rejecting.");
+        FreeChannelCommand(heap, command, commandSz);
+        *rej = 1;
+        return ret;
     }
 
     if (ret == WS_SUCCESS) {
@@ -13363,28 +13369,30 @@ static int DoChannelRequestSession(WOLFSSH* ssh, word32 channelId,
         else
             *rej = ssh->appChannels;
 
-        /* A callback may free its own channel, so look it up again. */
+        /* A callback may free its own channel, and the command with it,
+         * so look it up again. */
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
-        if (channel == NULL) {
-            /* The new command went with it. */
-            FreeChannelCommand(heap, prevCommand, prevCommandSz);
+        if (channel == NULL)
             return ret;
-        }
     }
 
     if (ret == WS_SUCCESS && !*rej) {
-        FreeChannelCommand(heap, prevCommand, prevCommandSz);
         channel->sessionGranted = 1;
         ssh->clientState = CLIENT_DONE;
     }
-    else {
-        /* A refusal changes nothing, so an earlier grant still stands. */
+    else if (ret == WS_SUCCESS) {
+        /* A refusal leaves the channel as it found it, with no command. */
         if (hasCommand) {
             FreeChannelCommand(heap, command, commandSz);
-            channel->command = prevCommand;
-            channel->commandSz = prevCommandSz;
+            channel->command = NULL;
+            channel->commandSz = 0;
         }
         channel->sessionType = prevType;
+    }
+    else {
+        /* A bad request never reached the channel, which may hold an
+         * earlier grant. */
+        FreeChannelCommand(heap, command, commandSz);
     }
 
     return ret;
