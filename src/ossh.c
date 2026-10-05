@@ -372,7 +372,7 @@ static int GetOpenSshKeyMlDsaComposite(byte keyId, MlDsaKey* mldsa,
 }
 #endif
 
-#ifdef WOLFSSH_TPM
+#if defined(WOLFSSH_TPM) || defined(WOLFSSH_AGENT)
 
 #ifndef WOLFSSH_NO_ECDSA
 static int GetOpenSshPublicKeyEcc(ecc_key* key, const byte* buf, word32 len,
@@ -474,6 +474,16 @@ int GetOpenSshPublicKey(WS_KeySignature *key,
                 ret = GetOpenSshPublicKeyRsa(&key->ks.rsa.key, buf, len, idx);
                 break;
         #endif
+        #if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+            case ID_OSSH_CERT_RSA:
+                /* The certificate's nonce sits between its type and e. */
+                ret = GetSkip(buf, len, idx);
+                if (ret == WS_SUCCESS) {
+                    ret = GetOpenSshPublicKeyRsa(&key->ks.rsa.key, buf, len,
+                            idx);
+                }
+                break;
+        #endif
         #ifndef WOLFSSH_NO_ECDSA
             case ID_ECDSA_SHA2_NISTP256:
             case ID_ECDSA_SHA2_NISTP384:
@@ -510,7 +520,7 @@ int GetOpenSshPublicKey(WS_KeySignature *key,
     return ret;
 }
 
-#endif /* WOLFSSH_TPM */
+#endif /* WOLFSSH_TPM || WOLFSSH_AGENT */
 
 /*
  * Decodes an OpenSSH format key.

@@ -10,6 +10,10 @@
 # peer that disagreed about the counters would fail the first packet that
 # had to authenticate.
 #
+# Part 3 has the wolfSSH client authenticate to sshd with an RSA key held
+# by OpenSSH's ssh-agent. The client has only the public half; the agent
+# makes the signature.
+#
 # The checks read OpenSSH's own debug output, so they are worded the way
 # OpenSSH words them. Strict KEX arrived in OpenSSH 9.6; anything older is
 # skipped.
@@ -17,6 +21,7 @@
 no_pid=-1
 server_pid=$no_pid
 sshd_pid=$no_pid
+agent_pid=$no_pid
 work_dir="`pwd`/openssh_interop_test$$"
 ready_file="$work_dir/ready"
 client_out="$work_dir/client.out"
@@ -52,6 +57,11 @@ do_cleanup() {
     then
         kill -9 $server_pid 2>/dev/null
         server_pid=$no_pid
+    fi
+    if [ $agent_pid != $no_pid ]
+    then
+        kill $agent_pid 2>/dev/null
+        agent_pid=$no_pid
     fi
     rm -rf -- "$work_dir"
 }
@@ -300,16 +310,20 @@ ssh-keygen -q -t ed25519 -N '' -f "$work_dir/hostkey-ed25519" < /dev/null \
 # sshd in the foreground for one connection. ForceCommand stands in for the
 # user's login shell: the client exits with the session's exit status, and
 # whatever the user's dotfiles leave behind is not this test's business.
+# Arguments after the port are passed to sshd.
 start_sshd() {
+    sshd_listen_port=$1
+    shift
     rm -f "$sshd_log"
-    "$sshd_bin" -ddd -f /dev/null -p "$1" -h "$work_dir/hostkey" \
+    "$sshd_bin" -ddd -f /dev/null -p "$sshd_listen_port" \
+        -h "$work_dir/hostkey" \
         -h "$work_dir/hostkey-rsa" -h "$work_dir/hostkey-ed25519" \
         -o "ListenAddress=127.0.0.1" \
         -o "AuthorizedKeysFile=$work_dir/authorized_keys" \
         -o "StrictModes=no" \
         -o "PasswordAuthentication=no" \
         -o "ForceCommand=true" \
-        -o "PidFile=none" > "$sshd_log" 2>&1 &
+        -o "PidFile=none" "$@" > "$sshd_log" 2>&1 &
     sshd_pid=$!
 
     # Its own counter: the loop that calls this one is counting too. A
@@ -386,12 +400,12 @@ run_wolfssh_client() {
 
 # sshd handles one connection per -d run, so it needs restarting between
 # attempts. Wait for the old one to go first, or the restart races it for
-# the port.
+# the port. Any arguments are passed to sshd.
 restart_sshd() {
     kill -9 $sshd_pid 2>/dev/null
     wait $sshd_pid 2>/dev/null
     sshd_pid=$no_pid
-    start_sshd $sshd_port || fail "couldn't restart sshd"
+    start_sshd $sshd_port "$@" || fail "couldn't restart sshd"
 }
 
 run_wolfssh_client "$keys_dir/hansel-key-ecc.der" \
@@ -439,6 +453,91 @@ fi
 
 echo "the wolfSSH client negotiated strict KEX with sshd"
 
+# Part 3 needs the client's agent support and OpenSSH's agent tools.
+if ! ./examples/client/client '-?' 2>&1 | grep -q 'SSH-AGENT'; then
+    echo "the example client has no agent support, skipping the agent half"
+    do_cleanup
+    exit 0
+fi
+if ! command -v ssh-agent > /dev/null 2>&1 ||
+    ! command -v ssh-add > /dev/null 2>&1; then
+    echo "no ssh-agent or ssh-add, skipping the agent half"
+    do_cleanup
+    exit 0
+fi
+
+# The RSA signature algorithms this client was built with; -E lists them
+# without connecting.
+agent_rsa_algs=
+for alg in rsa-sha2-256 rsa-sha2-512; do
+    if ./examples/client/client -E -u x 2>&1 | grep -q ": $alg\$"; then
+        agent_rsa_algs="$agent_rsa_algs $alg"
+    fi
+done
+if [ -z "$agent_rsa_algs" ]; then
+    echo "the client has no rsa-sha2 algorithms, skipping the agent half"
+    do_cleanup
+    exit 0
+fi
+
+echo "Test the wolfSSH client signing through ssh-agent for sshd"
+
+# Run the client with only the public key $1, leaving the signature to the
+# agent. $2 is the authorized_keys file sshd reads.
+run_wolfssh_agent_client() {
+    cat "$2" > "$work_dir/authorized_keys" \
+        || fail "couldn't write the authorized_keys file"
+    chmod 600 "$work_dir/authorized_keys"
+
+    rm -f "$client_out"
+    HOME="$work_dir" ./examples/client/client \
+        -h 127.0.0.1 -p $sshd_port -u "$login_user" -a -j "$1" -x \
+        < /dev/null > "$client_out" 2>&1 &
+    wait_with_limit $!
+}
+
+# Check that the client, which exited with status $1, succeeded and that
+# sshd accepted the agent's signature under pkalg $2, an extended regular
+# expression.
+check_agent_auth() {
+    counter=0
+    while [ "$counter" -lt 50 ]; do
+        grep -q 'Accepted publickey' "$sshd_log" 2>/dev/null && break
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+
+    if [ "$1" -ne 0 ] || ! grep -q 'Accepted publickey' "$sshd_log" ||
+        ! grep -Eq "authenticated 1 pkalg ($2)( |\$)" "$sshd_log"; then
+        cat "$client_out"
+        tail -n 20 "$sshd_log"
+        fail "the client didn't authenticate with $2 signed by ssh-agent"
+    fi
+}
+
+# The agent picks its own socket path; one under work_dir can outgrow
+# sun_path in a deep build directory.
+SSH_AGENT_PID=
+eval `ssh-agent -s` > /dev/null
+[ -n "$SSH_AGENT_PID" ] || fail "couldn't start ssh-agent"
+agent_pid=$SSH_AGENT_PID
+
+# A key of ssh-keygen's default size, which the client doesn't have
+# built in, so only the agent can sign for it.
+ssh-keygen -q -t rsa -N '' -C wolfssh-agent -f "$work_dir/agent-rsa" \
+    < /dev/null || fail "couldn't make an RSA client key"
+ssh-add -q "$work_dir/agent-rsa" 2>/dev/null \
+    || fail "couldn't add the RSA key to ssh-agent"
+
+for alg in $agent_rsa_algs; do
+    restart_sshd -o "PubkeyAcceptedAlgorithms=$alg"
+    run_wolfssh_agent_client "$work_dir/agent-rsa.pub" \
+        "$work_dir/agent-rsa.pub"
+    check_agent_auth $? "$alg"
+done
+
+echo "ssh-agent signed the wolfSSH client's RSA user auth"
+
 do_cleanup
-echo "OpenSSH strict KEX interop tests passed"
+echo "OpenSSH interop tests passed"
 exit 0

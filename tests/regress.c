@@ -8909,23 +8909,11 @@ static void TestClientRefusesForwardRequestsBeforePolicy(void)
 #endif /* !NO_WOLFSSH_CLIENT */
 
 
-#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
-    && !defined(NO_WOLFSSH_CLIENT)
+#if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_CLIENT)
 
-#define AGENT_ED25519_NAME "ssh-ed25519"
-
-/* Canned agent state: the sign response handed back on a read, and the
- * public key blob the user auth callback offers. */
-typedef struct {
-    byte response[128];
-    word32 responseSz;
-    byte pubKeyBlob[64];
-    word32 pubKeyBlobSz;
-    byte sigBlob[128];
-    word32 sigBlobSz;
-} AgentEd25519Ctx;
-
-static int AgentEd25519Cb(WS_AgentCbAction action, void* agentCbCtx)
+/* Shared by the Ed25519 and RSA agent tests; some builds have neither. */
+static WS_MAYBE_UNUSED int AgentSignCb(WS_AgentCbAction action,
+        void* agentCbCtx)
 {
     (void)agentCbCtx;
 
@@ -8937,101 +8925,25 @@ static int AgentEd25519Cb(WS_AgentCbAction action, void* agentCbCtx)
     return WS_AGENT_INVALID_ACTION;
 }
 
-static int AgentEd25519IoCb(WS_AgentIoCbAction action, void* buf,
-        word32 bufSz, void* agentCbCtx)
-{
-    AgentEd25519Ctx* agentCtx = (AgentEd25519Ctx*)agentCbCtx;
-
-    if (action == WOLFSSH_AGENT_IO_WRITE)
-        return (int)bufSz;
-
-    if (bufSz < agentCtx->responseSz)
-        return 0;
-    WMEMCPY(buf, agentCtx->response, agentCtx->responseSz);
-    return (int)agentCtx->responseSz;
-}
-
-/* Offer an Ed25519 public key with no private key, as an agent-backed
- * client does. */
-static int AgentEd25519UserAuth(byte authType, WS_UserAuthData* authData,
-        void* ctx)
-{
-    AgentEd25519Ctx* agentCtx = (AgentEd25519Ctx*)ctx;
-
-    if (authType != WOLFSSH_USERAUTH_PUBLICKEY || authData == NULL)
-        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
-
-    authData->sf.publicKey.publicKeyType = (const byte*)AGENT_ED25519_NAME;
-    authData->sf.publicKey.publicKeyTypeSz =
-            (word32)WSTRLEN(AGENT_ED25519_NAME);
-    authData->sf.publicKey.publicKey = agentCtx->pubKeyBlob;
-    authData->sf.publicKey.publicKeySz = agentCtx->pubKeyBlobSz;
-    authData->sf.publicKey.privateKey = NULL;
-    authData->sf.publicKey.privateKeySz = 0;
-
-    return WOLFSSH_USERAUTH_SUCCESS;
-}
-
-static void InitAgentEd25519Ctx(AgentEd25519Ctx* agentCtx, word32 sigSz)
-{
-    byte pubKey[ED25519_PUB_KEY_SIZE];
-    byte sig[ED25519_SIG_SIZE + 1];
-    byte body[128];
-    word32 idx;
-
-    AssertTrue(sigSz <= (word32)sizeof(sig));
-
-    WMEMSET(agentCtx, 0, sizeof(*agentCtx));
-    WMEMSET(pubKey, 0x5a, sizeof(pubKey));
-    WMEMSET(sig, 0xa5, sizeof(sig));
-
-    idx = AppendString(agentCtx->pubKeyBlob, sizeof(agentCtx->pubKeyBlob), 0,
-            AGENT_ED25519_NAME);
-    idx = AppendUint32(agentCtx->pubKeyBlob, sizeof(agentCtx->pubKeyBlob), idx,
-            (word32)sizeof(pubKey));
-    agentCtx->pubKeyBlobSz = AppendData(agentCtx->pubKeyBlob,
-            sizeof(agentCtx->pubKeyBlob), idx, pubKey, (word32)sizeof(pubKey));
-
-    /* The blob an agent returns holds the algorithm name and signature. */
-    idx = AppendString(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), 0,
-            AGENT_ED25519_NAME);
-    idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
-            sigSz);
-    agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
-            sizeof(agentCtx->sigBlob), idx, sig, sigSz);
-
-    idx = AppendUint32(body, sizeof(body), 0, agentCtx->sigBlobSz);
-    idx = AppendData(body, sizeof(body), idx, agentCtx->sigBlob,
-            agentCtx->sigBlobSz);
-
-    agentCtx->responseSz = AppendUint32(agentCtx->response,
-            sizeof(agentCtx->response), 0, MSG_ID_SZ + idx);
-    agentCtx->responseSz = AppendByte(agentCtx->response,
-            sizeof(agentCtx->response), agentCtx->responseSz,
-            MSGID_AGENT_SIGN_RESPONSE);
-    agentCtx->responseSz = AppendData(agentCtx->response,
-            sizeof(agentCtx->response), agentCtx->responseSz, body, idx);
-}
-
 /* Record the peer's signature algorithms the way a server would, through
  * an EXT_INFO carrying server-sig-algs. */
-static void SetPeerSigAlgs(WOLFSSH* ssh, const char* sigAlgs)
+static WS_MAYBE_UNUSED void SetPeerSigAlgs(WOLFSSH* ssh, const char* sigAlgs)
 {
-    byte payload[128];
+    byte payload[512];
     word32 payloadSz;
     word32 idx = 0;
 
     payloadSz = BuildExtInfoSigAlgs(payload, sizeof(payload), sigAlgs);
     AssertIntEQ(wolfSSH_TestDoExtInfo(ssh, payload, payloadSz, &idx),
             WS_SUCCESS);
-    AssertIntEQ(ssh->peerSigIdSz, 1);
-    AssertIntEQ(ssh->peerSigId[0], ID_ED25519);
+    AssertTrue(ssh->peerSigIdSz > 0);
 }
 
-/* Walk the fields of the sent USERAUTH_REQUEST and hand back the trailing
- * signature. */
-static void ParseUserAuthSignature(const byte* packet, word32 packetSz,
-        word32* sigSz, const byte** sig)
+/* Walk the fields of the sent USERAUTH_REQUEST and hand back its public key
+ * algorithm name, when algo is not NULL, and the trailing signature. */
+static WS_MAYBE_UNUSED void ParseUserAuthSignature(const byte* packet,
+        word32 packetSz, word32* algoSz, const byte** algo, word32* sigSz,
+        const byte** sig)
 {
     const byte* payload;
     const byte* field;
@@ -9059,6 +8971,10 @@ static void ParseUserAuthSignature(const byte* packet, word32 packetSz,
     /* public key algorithm name and public key blob */
     AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz, &idx),
             WS_SUCCESS);
+    if (algo != NULL) {
+        *algoSz = fieldSz;
+        *algo = field;
+    }
     AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz, &idx),
             WS_SUCCESS);
 
@@ -9069,19 +8985,49 @@ static void ParseUserAuthSignature(const byte* packet, word32 packetSz,
     AssertIntEQ(idx, payloadSz);
 }
 
-/* Stand up a client session that authenticates with an Ed25519 key held by
- * the mock agent. */
-static void InitAgentEd25519Session(AgentEd25519Ctx* agentCtx,
-        WOLFSSH_CTX** ctx, WOLFSSH** ssh, MemIo* io, byte* out, word32 outSz)
+/* The public key a mock agent context offers. Each context starts with
+ * one, so AgentUserAuth() can read it whatever the key type. */
+typedef struct {
+    const byte* type;
+    word32 typeSz;
+    const byte* blob;
+    word32 blobSz;
+} AgentOfferedKey;
+
+/* Offer the key at the head of the mock agent context with no private key,
+ * as an agent-backed client does. */
+static WS_MAYBE_UNUSED int AgentUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    const AgentOfferedKey* key = (const AgentOfferedKey*)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_PUBLICKEY || authData == NULL)
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
+    authData->sf.publicKey.publicKeyType = key->type;
+    authData->sf.publicKey.publicKeyTypeSz = key->typeSz;
+    authData->sf.publicKey.publicKey = key->blob;
+    authData->sf.publicKey.publicKeySz = key->blobSz;
+    authData->sf.publicKey.privateKey = NULL;
+    authData->sf.publicKey.privateKeySz = 0;
+
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* Stand up a client session that signs its user auth through the mock
+ * agent answering on ioCb, against a server that sent sigAlgs. */
+static WS_MAYBE_UNUSED void InitAgentSession(void* agentCtx,
+        WS_CallbackAgentIO ioCb, const char* sigAlgs, WOLFSSH_CTX** ctx,
+        WOLFSSH** ssh, MemIo* io, byte* out, word32 outSz)
 {
     *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     AssertNotNull(*ctx);
     wolfSSH_SetIORecv(*ctx, MemRecv);
     wolfSSH_SetIOSend(*ctx, MemSend);
-    wolfSSH_SetUserAuth(*ctx, AgentEd25519UserAuth);
+    wolfSSH_SetUserAuth(*ctx, AgentUserAuth);
     AssertIntEQ(wolfSSH_CTX_AGENT_enable(*ctx, 1), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_CTX_set_agent_cb(*ctx, AgentEd25519Cb,
-            AgentEd25519IoCb), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_set_agent_cb(*ctx, AgentSignCb, ioCb),
+            WS_SUCCESS);
 
     *ssh = wolfSSH_new(*ctx);
     AssertNotNull(*ssh);
@@ -9097,7 +9043,95 @@ static void InitAgentEd25519Session(AgentEd25519Ctx* agentCtx,
 
     (*ssh)->sessionIdSz = WC_SHA256_DIGEST_SIZE;
     WMEMSET((*ssh)->sessionId, 0x33, (*ssh)->sessionIdSz);
-    SetPeerSigAlgs(*ssh, AGENT_ED25519_NAME);
+    SetPeerSigAlgs(*ssh, sigAlgs);
+}
+
+#endif /* WOLFSSH_AGENT && !NO_WOLFSSH_CLIENT */
+
+
+#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
+    && !defined(NO_WOLFSSH_CLIENT)
+
+#define AGENT_ED25519_NAME "ssh-ed25519"
+
+/* Canned agent state: the key offered, which points into pubKeyBlob, and
+ * the sign response handed back on a read. */
+typedef struct {
+    AgentOfferedKey key;
+    byte response[128];
+    word32 responseSz;
+    byte pubKeyBlob[64];
+    byte sigBlob[128];
+    word32 sigBlobSz;
+} AgentEd25519Ctx;
+
+static int AgentEd25519IoCb(WS_AgentIoCbAction action, void* buf,
+        word32 bufSz, void* agentCbCtx)
+{
+    AgentEd25519Ctx* agentCtx = (AgentEd25519Ctx*)agentCbCtx;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE)
+        return (int)bufSz;
+
+    if (bufSz < agentCtx->responseSz)
+        return 0;
+    WMEMCPY(buf, agentCtx->response, agentCtx->responseSz);
+    return (int)agentCtx->responseSz;
+}
+
+static void InitAgentEd25519Ctx(AgentEd25519Ctx* agentCtx, word32 sigSz)
+{
+    byte pubKey[ED25519_PUB_KEY_SIZE];
+    byte sig[ED25519_SIG_SIZE + 1];
+    byte body[128];
+    word32 idx;
+
+    AssertTrue(sigSz <= (word32)sizeof(sig));
+
+    WMEMSET(agentCtx, 0, sizeof(*agentCtx));
+    WMEMSET(pubKey, 0x5a, sizeof(pubKey));
+    WMEMSET(sig, 0xa5, sizeof(sig));
+
+    idx = AppendString(agentCtx->pubKeyBlob, sizeof(agentCtx->pubKeyBlob), 0,
+            AGENT_ED25519_NAME);
+    idx = AppendUint32(agentCtx->pubKeyBlob, sizeof(agentCtx->pubKeyBlob), idx,
+            (word32)sizeof(pubKey));
+    agentCtx->key.blobSz = AppendData(agentCtx->pubKeyBlob,
+            sizeof(agentCtx->pubKeyBlob), idx, pubKey, (word32)sizeof(pubKey));
+    agentCtx->key.blob = agentCtx->pubKeyBlob;
+    agentCtx->key.type = (const byte*)AGENT_ED25519_NAME;
+    agentCtx->key.typeSz = (word32)WSTRLEN(AGENT_ED25519_NAME);
+
+    /* The blob an agent returns holds the algorithm name and signature. */
+    idx = AppendString(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), 0,
+            AGENT_ED25519_NAME);
+    idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+            sigSz);
+    agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
+            sizeof(agentCtx->sigBlob), idx, sig, sigSz);
+
+    idx = AppendUint32(body, sizeof(body), 0, agentCtx->sigBlobSz);
+    idx = AppendData(body, sizeof(body), idx, agentCtx->sigBlob,
+            agentCtx->sigBlobSz);
+
+    agentCtx->responseSz = AppendUint32(agentCtx->response,
+            sizeof(agentCtx->response), 0, MSG_ID_SZ + idx);
+    agentCtx->responseSz = AppendByte(agentCtx->response,
+            sizeof(agentCtx->response), agentCtx->responseSz,
+            MSGID_AGENT_SIGN_RESPONSE);
+    agentCtx->responseSz = AppendData(agentCtx->response,
+            sizeof(agentCtx->response), agentCtx->responseSz, body, idx);
+}
+
+/* Stand up a client session that authenticates with an Ed25519 key held by
+ * the mock agent. */
+static void InitAgentEd25519Session(AgentEd25519Ctx* agentCtx,
+        WOLFSSH_CTX** ctx, WOLFSSH** ssh, MemIo* io, byte* out, word32 outSz)
+{
+    InitAgentSession(agentCtx, AgentEd25519IoCb, AGENT_ED25519_NAME, ctx, ssh,
+            io, out, outSz);
+    AssertIntEQ((*ssh)->peerSigIdSz, 1);
+    AssertIntEQ((*ssh)->peerSigId[0], ID_ED25519);
 }
 
 /* An agent-backed Ed25519 publickey request has to carry the signature the
@@ -9119,7 +9153,7 @@ static void TestAgentEd25519UserAuthEmitsSignature(void)
     AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
             WS_SUCCESS);
 
-    ParseUserAuthSignature(io.out, io.outSz, &sigSz, &sig);
+    ParseUserAuthSignature(io.out, io.outSz, NULL, NULL, &sigSz, &sig);
     AssertIntEQ(sigSz, agentCtx.sigBlobSz);
     AssertIntEQ(WMEMCMP(sig, agentCtx.sigBlob, sigSz), 0);
 
@@ -9173,6 +9207,311 @@ static void TestAgentEd25519UserAuthRejectsOversizeSignature(void)
 }
 
 #endif /* WOLFSSH_AGENT && !WOLFSSH_NO_ED25519 && !NO_WOLFSSH_CLIENT */
+
+
+#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_RSA) \
+    && !defined(NO_WOLFSSH_CLIENT) \
+    && !(defined(WOLFSSH_NO_RSA_SHA2_256) && defined(WOLFSSH_NO_RSA_SHA2_512))
+
+/* keys/hansel-key-rsa.pub */
+static const char agentRsaPubKey[] =
+    "ssh-rsa "
+    "AAAAB3NzaC1yc2EAAAADAQABAAABAQC9P3ZFowOsONXHD5MwWiCciXytBRZGhoMN"
+    "iisWSgUs5HdHcACuHYPi2W6Z1PBFmBWT9odOrGRjoZXJfDDoPi+j8SSfDGsc/hsC"
+    "mc3Gp2yEhUZUEkDhtOXyqjns1ickC9Gh4u80aSVtwHRnJZh9xPhSq5tLOhId4eP6"
+    "1s+a5pwjTjnEhBaIPUJO2C/M0pFnnbZxKgJlX7t1Doy7h5eXxviymOIvaCZKU+x5"
+    "OopfzM/wFkey0EPWNmzI5y/+pzU5afsdeEWdiQDIQc80H6Pz8fsoFPvYSG+s4/wz"
+    "0duu7yeeV1Ypoho65Zr+pEnIf7dO0B8EblgWt+ud+JI8wrAhfE4x"
+    " hansel";
+/* Both test keys are 2048-bit. */
+#define AGENT_RSA_SIG_SZ 256
+
+/* The server-sig-algs OpenSSH 10.3's sshd sends. */
+#define AGENT_RSA_OPENSSH_SIG_ALGS "ssh-ed25519,ecdsa-sha2-nistp256," \
+    "ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,sk-ssh-ed25519@openssh.com," \
+    "sk-ecdsa-sha2-nistp256@openssh.com,rsa-sha2-512,rsa-sha2-256," \
+    "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+/* The client takes the server's first match. */
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    #define AGENT_RSA_OPENSSH_PICK "rsa-sha2-512"
+#else
+    #define AGENT_RSA_OPENSSH_PICK "rsa-sha2-256"
+#endif
+
+/* How the mock agent answers a sign request. */
+enum {
+    AGENT_RSA_REPLY_BY_FLAGS, /* as OpenSSH's ssh-agent does */
+    AGENT_RSA_REPLY_SSH_RSA,  /* as agents before OpenSSH 7.2, which ignore
+                               * the flags */
+    AGENT_RSA_REPLY_FAILURE,  /* as for a key never added with ssh-add */
+    AGENT_RSA_REPLY_OVERSIZE  /* by the flags, one byte past the modulus */
+};
+
+/* Mock agent state: the key offered, how to answer, and the sign response
+ * built from the last sign request. */
+typedef struct {
+    AgentOfferedKey key;
+    int reply;
+    byte response[512];
+    word32 responseSz;
+    byte sigBlob[300];
+    word32 sigBlobSz;
+} AgentRsaCtx;
+
+/* A signature is modulus sized, as a real agent's is. */
+static int AgentRsaIoCb(WS_AgentIoCbAction action, void* buf,
+        word32 bufSz, void* agentCbCtx)
+{
+    AgentRsaCtx* agentCtx = (AgentRsaCtx*)agentCbCtx;
+    const byte* req = (const byte*)buf;
+    const byte* reqKey = NULL;
+    word32 reqKeySz = 0;
+    const char* name = "ssh-rsa";
+    byte sig[AGENT_RSA_SIG_SZ + 1];
+    word32 sigSz = AGENT_RSA_SIG_SZ;
+    word32 flags = 0;
+    word32 idx;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE) {
+        /* A real agent finds the key by the blob the request names, so it
+         * has to be the one the client offered. */
+        AssertTrue(bufSz > UINT32_SZ);
+        AssertIntEQ(req[UINT32_SZ], MSGID_AGENT_SIGN_REQUEST);
+        idx = UINT32_SZ + MSG_ID_SZ;
+        AssertIntEQ(GetStringRef(&reqKeySz, &reqKey, req, bufSz, &idx),
+                WS_SUCCESS);
+        AssertIntEQ(reqKeySz, agentCtx->key.blobSz);
+        AssertIntEQ(WMEMCMP(reqKey, agentCtx->key.blob, reqKeySz), 0);
+        AssertIntEQ(GetSkip(req, bufSz, &idx), WS_SUCCESS);
+        AssertIntEQ(GetUint32(&flags, req, bufSz, &idx), WS_SUCCESS);
+
+        if (agentCtx->reply == AGENT_RSA_REPLY_FAILURE) {
+            idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response),
+                    0, MSG_ID_SZ);
+            agentCtx->responseSz = AppendByte(agentCtx->response,
+                    sizeof(agentCtx->response), idx, MSGID_AGENT_FAILURE);
+            return (int)bufSz;
+        }
+
+        if (agentCtx->reply == AGENT_RSA_REPLY_OVERSIZE)
+            sigSz++;
+        if (agentCtx->reply != AGENT_RSA_REPLY_SSH_RSA) {
+            if (flags & AGENT_SIGN_RSA_SHA2_256)
+                name = "rsa-sha2-256";
+            else if (flags & AGENT_SIGN_RSA_SHA2_512)
+                name = "rsa-sha2-512";
+        }
+
+        WMEMSET(sig, 0xa5, sizeof(sig));
+        idx = AppendString(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), 0,
+                name);
+        idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+                sigSz);
+        agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
+                sizeof(agentCtx->sigBlob), idx, sig, sigSz);
+
+        idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response), 0,
+                MSG_ID_SZ + UINT32_SZ + agentCtx->sigBlobSz);
+        idx = AppendByte(agentCtx->response, sizeof(agentCtx->response), idx,
+                MSGID_AGENT_SIGN_RESPONSE);
+        idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response),
+                idx, agentCtx->sigBlobSz);
+        agentCtx->responseSz = AppendData(agentCtx->response,
+                sizeof(agentCtx->response), idx, agentCtx->sigBlob,
+                agentCtx->sigBlobSz);
+        return (int)bufSz;
+    }
+
+    if (bufSz < agentCtx->responseSz)
+        return 0;
+    WMEMCPY(buf, agentCtx->response, agentCtx->responseSz);
+    return (int)agentCtx->responseSz;
+}
+
+/* Send a publickey request for pubKeyLine, a .pub file's contents, signed by
+ * the mock agent answering as reply, and check the result against expect*. */
+static void RunAgentRsaUserAuth(const char* pubKeyLine, const char* sigAlgs,
+        int reply, int expectRet, const char* expectAlgo,
+        const char* expectSigName)
+{
+    AgentRsaCtx agentCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[4096];
+    byte* pubKey = NULL;
+    word32 pubKeySz = 0;
+    const byte* algo = NULL;
+    const byte* sig = NULL;
+    const byte* sigName = NULL;
+    word32 algoSz = 0;
+    word32 sigSz = 0;
+    word32 sigNameSz = 0;
+    word32 idx = 0;
+
+    WMEMSET(&agentCtx, 0, sizeof(agentCtx));
+    agentCtx.reply = reply;
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)pubKeyLine,
+            (word32)WSTRLEN(pubKeyLine), WOLFSSH_FORMAT_SSH, &pubKey,
+            &pubKeySz, &agentCtx.key.type, &agentCtx.key.typeSz, NULL),
+            WS_SUCCESS);
+    agentCtx.key.blob = pubKey;
+    agentCtx.key.blobSz = pubKeySz;
+
+    InitAgentSession(&agentCtx, AgentRsaIoCb, sigAlgs, &ctx, &ssh, &io, out,
+            (word32)sizeof(out));
+
+    AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
+            expectRet);
+
+    if (expectRet == WS_SUCCESS) {
+        ParseUserAuthSignature(io.out, io.outSz, &algoSz, &algo, &sigSz,
+                &sig);
+        AssertIntEQ(algoSz, WSTRLEN(expectAlgo));
+        AssertIntEQ(WMEMCMP(algo, expectAlgo, algoSz), 0);
+        AssertIntEQ(sigSz, agentCtx.sigBlobSz);
+        AssertIntEQ(WMEMCMP(sig, agentCtx.sigBlob, sigSz), 0);
+
+        /* A server rejects a signature that doesn't use the algorithm the
+         * request names. */
+        AssertIntEQ(GetStringRef(&sigNameSz, &sigName, sig, sigSz, &idx),
+                WS_SUCCESS);
+        AssertIntEQ(sigNameSz, WSTRLEN(expectSigName));
+        AssertIntEQ(WMEMCMP(sigName, expectSigName, sigNameSz), 0);
+    }
+    else {
+        AssertIntEQ(io.outSz, 0);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    WFREE(pubKey, NULL, DYNTYPE_PRIVKEY);
+}
+
+static void TestAgentRsaUserAuthOpenSshServer(void)
+{
+    RunAgentRsaUserAuth(agentRsaPubKey, AGENT_RSA_OPENSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS, AGENT_RSA_OPENSSH_PICK,
+            AGENT_RSA_OPENSSH_PICK);
+}
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+/* A server limited to rsa-sha2-256, as sshd is with
+ * PubkeyAcceptedAlgorithms=rsa-sha2-256. */
+static void TestAgentRsaUserAuthSha256Server(void)
+{
+    RunAgentRsaUserAuth(agentRsaPubKey, "rsa-sha2-256",
+            AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS, "rsa-sha2-256",
+            "rsa-sha2-256");
+}
+#endif
+
+/* An agent without the key refuses to sign. The error has to reach the
+ * caller with nothing sent. */
+static void TestAgentRsaUserAuthAgentWithoutKey(void)
+{
+    RunAgentRsaUserAuth(agentRsaPubKey, AGENT_RSA_OPENSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_FAILURE, WS_AGENT_NO_KEY_E, NULL, NULL);
+}
+
+/* An agent that ignores the flags signs with SHA-1 ssh-rsa, which must not
+ * go out under an rsa-sha2-* request. */
+static void TestAgentRsaUserAuthRefusesIgnoredFlags(void)
+{
+    RunAgentRsaUserAuth(agentRsaPubKey, AGENT_RSA_OPENSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_SSH_RSA, WS_INVALID_ALGO_ID, NULL, NULL);
+}
+
+/* An agent signature one byte longer than the modulus is refused. */
+static void TestAgentRsaUserAuthRejectsOversizeSignature(void)
+{
+    RunAgentRsaUserAuth(agentRsaPubKey, AGENT_RSA_OPENSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_OVERSIZE, WS_BUFFER_E, NULL, NULL);
+}
+
+/* A .pub line that says ssh-rsa over another key type's blob, here
+ * keys/hansel-key-ed25519.pub's, is refused before the blob is decoded. */
+static void TestAgentRsaUserAuthRefusesMismatchedBlob(void)
+{
+    static const char mismatched[] =
+        "ssh-rsa "
+        "AAAAC3NzaC1lZDI1NTE5AAAAIHTSoBZIJBO2V0Jb2OWyMWNbkDd6ReDfKxnrAPlb"
+        "PuCe hansel";
+
+    RunAgentRsaUserAuth(mismatched, AGENT_RSA_OPENSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_BY_FLAGS, WS_INVALID_ALGO_ID, NULL, NULL);
+}
+
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+/* The RSA part of a wolfSSH server's server-sig-algs, which also names the
+ * certificate algorithms. */
+#define AGENT_RSA_WOLFSSH_SIG_ALGS "rsa-sha2-256,rsa-sha2-512," \
+    "ssh-rsa-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com," \
+    "rsa-sha2-512-cert-v01@openssh.com"
+
+/* keys/ossh-user-rsa.pub signed by keys/ossh-ca-rsa: ssh-keygen -s
+ * ossh-ca-rsa -I wolfssh-agent-test -n hansel -V always:forever */
+static const char agentRsaCert[] =
+    "ssh-rsa-cert-v01@openssh.com "
+    "AAAAHHNzaC1yc2EtY2VydC12MDFAb3BlbnNzaC5jb20AAAAga1B4hnmhn37kMGWS"
+    "R3lji74KzQmOj4ZQri6pxSBB+E8AAAADAQABAAABAQDMhB3Xi7lqn3w7bYorlUAx"
+    "BgdjAkmD/j1Sx+nRIqnGqk1YFNFmbl3iQ+JG3S13jwwi/CJyLXrdkVocsBOhHebM"
+    "yyPHN0b7Cgl1Dvtxg+2Zh1K+dkzC2BhTmby/hj4NySnP04EgmY0w9f8uPCZHY0s0"
+    "fq6nsMCJOo9/53JR38HJFAFabI344vY2kbUPFqBIuG45OfIQrJK3KeqQGTcGRzhO"
+    "Ogk5AkkytcIRrLeKbdBCCYYUcCFIEH/RL7fCSkbth54kJ8FWNEdJu5YYbpJY4Yog"
+    "ITeFlZi4Z8sMbO2I53MBaWleMjjntuUtac0Yry9CXWz1fgImAYjCDB7h4wHF/nQ5"
+    "AAAAAAAAAAAAAAABAAAAEndvbGZzc2gtYWdlbnQtdGVzdAAAAAoAAAAGaGFuc2Vs"
+    "AAAAAAAAAAD//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGlu"
+    "ZwAAAAAAAAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1w"
+    "b3J0LWZvcndhcmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11"
+    "c2VyLXJjAAAAAAAAAAAAAAEXAAAAB3NzaC1yc2EAAAADAQABAAABAQDCSZff5o7U"
+    "OUQ9sC4YqX++TYFHRZtrsBWPKKokdo7DPzveiOfHpnMps9/sZB9yiz+A7mGBRPJP"
+    "uCep1G95j1CA57/yb5/4jqvoD6ZSFPUKgHeQ21oIraSFneynw76+lrd87OCrWMkx"
+    "Dh6ogV2kkbNK3+HgzbnkyUdRo/dq7ZS0/DbA2wMGTzD2j+mMgkk3aazWlBdlnazk"
+    "NwjZZdUbyW9CI8tdlnRZ/6j0aH4Te6YkoTTDMN9s0xI5VsJzP8vcVt4RZkMaE6M9"
+    "pJyWfhh2HTsUILui3F232RpwdlxksnBbzptNpSBvaPfYlTeaCtzriuf4w0sYINxj"
+    "xcaoLMResmLhAAABFAAAAAxyc2Etc2hhMi01MTIAAAEAqyoYPA0HxiSIjEZcFw63"
+    "Id1DrawFuPFaLuuoaBu/U/hvpO9T6dmLYYeNSggS4/I3zlQS29dmQWDQDRSikOg4"
+    "q4upCl8LCHtZh7q0mAM4Yc8akdeYeXtoxNdSo04Gor+IlyD78WXlwshH7Nm2qtWD"
+    "mPrQYeciXPn1IN4cn5KR6DuetU2zf9IihN7Ay9jIzId+JUJykWtzegMKcnGQ0bcS"
+    "PeCWclWDyYsZYgrHmDwPxs0gw/+HwEj7ZNHpfj6fyFFnBul8TnX5RlvYdR5dYjCs"
+    "LhC4shipEwdr7CFD6dBzSeEQBF06ao7fThpJ9p/eFQCDwyjF3UOqiqAZNLzi4VAm"
+    "Pg=="
+    " wolfssh-ossh-test-user-rsa";
+
+/* An OpenSSH RSA certificate held by the agent. The request names the
+ * certificate algorithm; the signature names the RSA algorithm under it. */
+static void TestAgentOsshRsaCertUserAuthWolfSshServer(void)
+{
+#ifndef WOLFSSH_NO_RSA_SHA2_512
+    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS,
+            "rsa-sha2-512-cert-v01@openssh.com", "rsa-sha2-512");
+#else
+    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS,
+            "rsa-sha2-256-cert-v01@openssh.com", "rsa-sha2-256");
+#endif
+}
+
+/* An agent signature for the certificate one byte longer than the modulus
+ * is refused. */
+static void TestAgentOsshRsaCertUserAuthRejectsOversizeSignature(void)
+{
+    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_OVERSIZE, WS_BUFFER_E, NULL, NULL);
+}
+
+/* Agents before OpenSSH 7.2 hold certificates but ignore the flags. */
+static void TestAgentOsshRsaCertUserAuthRefusesIgnoredFlags(void)
+{
+    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+            AGENT_RSA_REPLY_SSH_RSA, WS_INVALID_ALGO_ID, NULL, NULL);
+}
+
+#endif /* WOLFSSH_OSSH_CERTS && !WOLFSSH_NO_OSSH_CERT_RSA */
+
+#endif /* WOLFSSH_AGENT && !WOLFSSH_NO_RSA && !NO_WOLFSSH_CLIENT */
 
 
 
@@ -18464,6 +18803,23 @@ int main(int argc, char** argv)
     TestAgentEd25519UserAuthEmitsSignature();
     TestAgentEd25519UserAuthPropagatesAgentError();
     TestAgentEd25519UserAuthRejectsOversizeSignature();
+#endif
+#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_RSA) \
+    && !defined(NO_WOLFSSH_CLIENT) \
+    && !(defined(WOLFSSH_NO_RSA_SHA2_256) && defined(WOLFSSH_NO_RSA_SHA2_512))
+    TestAgentRsaUserAuthOpenSshServer();
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+    TestAgentRsaUserAuthSha256Server();
+#endif
+    TestAgentRsaUserAuthAgentWithoutKey();
+    TestAgentRsaUserAuthRefusesIgnoredFlags();
+    TestAgentRsaUserAuthRefusesMismatchedBlob();
+    TestAgentRsaUserAuthRejectsOversizeSignature();
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    TestAgentOsshRsaCertUserAuthWolfSshServer();
+    TestAgentOsshRsaCertUserAuthRejectsOversizeSignature();
+    TestAgentOsshRsaCertUserAuthRefusesIgnoredFlags();
+#endif
 #endif
 #if defined(WOLFSSH_FWD) && !defined(NO_WOLFSSH_CLIENT)
     TestForwardedTcpipRegisteredIsAccepted();
