@@ -672,6 +672,36 @@ If you used a custom password for keygen you must specify the password you used:
 
     $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel -K <custompassword>
 
+with an OpenSSH user certificate
+--------------------------------
+
+The TPM key can also be offered as an OpenSSH user certificate
+(`ssh-rsa-cert-v01@openssh.com`). The certificate is a file carrying the TPM
+key's public half; the private key stays in the TPM, which makes the
+signature. Build wolfSSH with OpenSSH certificate support as well:
+
+    wolfSSH
+        $ ./configure --enable-tpm --enable-ossh-certs
+
+Create the key and `key.ssh` as above, then have your CA sign the public key.
+`ssh-keygen` names the certificate after its input, so this writes
+`tpmkey-cert.pub`:
+
+    $ cp key.ssh tpmkey.pub
+    $ ssh-keygen -s <CA private key> -I <key id> -n hansel tpmkey.pub
+
+Run the echoserver with `key.ssh` as above, and pass the certificate to the
+client with `-j`:
+
+    $ ./examples/client/client -i ../wolfTPM/keyblob.bin -u hansel \
+        -K ThisIsMyKeyAuth -j tpmkey-cert.pub
+
+Notes:
+
+- RSA keys only, as for the plain TPM key.
+- The certificate must be issued for the key in the TPM, or the server
+  rejects the signature.
+
 TPM SERVER HOST KEY (ECDSA / RSA)
 =================================
 
