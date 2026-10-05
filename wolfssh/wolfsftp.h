@@ -360,6 +360,8 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
             WS_SFTP_FILEATRB* atr, word32* idx);
     WOLFSSH_API int wolfSSH_TestSftpSendCap(WOLFSSH* ssh, word32 cap);
     WOLFSSH_API int wolfSSH_TestSftpStallPending(WOLFSSH* ssh, word32 count);
+    WOLFSSH_API int wolfSSH_TestSftpSendPacketType(WOLFSSH* ssh, byte type,
+           byte* buf, word32 bufSz);
     #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
         WOLFSSH_API int wolfSSH_SFTP_TestRecvStateInit(WOLFSSH* ssh);
         WOLFSSH_API const byte* wolfSSH_SFTP_TestRecvReply(WOLFSSH* ssh,

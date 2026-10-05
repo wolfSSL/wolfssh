@@ -6267,6 +6267,32 @@ static void test_wolfSSH_SFTP_SaveOfst(void)
 }
 
 
+/* SendPacketType must not send a request when negotiation did not succeed */
+static void test_wolfSSH_SFTP_SendPacketType_negotiate(void)
+{
+#ifdef WOLFSSH_TEST_INTERNAL
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    byte         payload[4] = { 0x00, 0x01, 0x02, 0x03 };
+    int          ret;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+
+    ret = wolfSSH_TestSftpSendPacketType(ssh, WOLFSSH_FTP_REALPATH,
+            payload, (word32)sizeof(payload));
+
+    /* The SFTP connection was not established, so negotiation cannot succeed.
+     * SendPacketType() must report that failure instead of returning WS_SUCCESS */
+    AssertIntNE(ret, WS_SUCCESS);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif /* WOLFSSH_TEST_INTERNAL */
+}
+
+
+
 #if !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM) && \
     !defined(WOLFSSH_ZEPHYR)
 
@@ -6690,6 +6716,7 @@ static void test_wolfSSH_SFTP_StartPathNotConfined(void) { ; }
 static void test_wolfSSH_SFTP_SetConfinePath(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
+static void test_wolfSSH_SFTP_SendPacketType_negotiate(void) { ; }
 static void test_wolfSSH_SFTP_PutResume(void) { ; }
 static void test_wolfSSH_SFTP_GetResume(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
@@ -8823,6 +8850,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SetConfinePath();
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
+    test_wolfSSH_SFTP_SendPacketType_negotiate();
     test_wolfSSH_SFTP_PutResume();
     test_wolfSSH_SFTP_GetResume();
 
