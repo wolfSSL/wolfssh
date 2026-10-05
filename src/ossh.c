@@ -127,33 +127,6 @@ static int GetMpintToMp(mp_int* mp,
 }
 
 
-#ifndef RSA_LOW_MEM
-/*
- * For the given RSA key, calculate d mod(p-1) and d mod(q-1).
- * wolfCrypt's RSA code expects them, but the OpenSSH format key
- * doesn't store them.
- */
-static int CalcRsaDX(RsaKey* key)
-{
-    mp_int m;
-    int ret;
-
-    ret = mp_init(&m);
-    if (ret == MP_OKAY) {
-        ret = mp_sub_d(&key->p, 1, &m);
-        if (ret == MP_OKAY)
-            ret = mp_mod(&key->d, &m, &key->dP);
-        if (ret == MP_OKAY)
-            ret = mp_sub_d(&key->q, 1, &m);
-        if (ret == MP_OKAY)
-            ret = mp_mod(&key->d, &m, &key->dQ);
-        mp_forcezero(&m);
-    }
-
-    return ret;
-}
-#endif
-
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
  */
@@ -185,7 +158,7 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 #ifndef RSA_LOW_MEM
     /* Calculate dP and dQ for wolfCrypt. */
     if (ret == WS_SUCCESS)
-        ret = CalcRsaDX(key);
+        ret = wolfSSH_CalcRsaDX(key);
 #endif
 
     if (ret != WS_SUCCESS)

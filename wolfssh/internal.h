@@ -2345,6 +2345,9 @@ WOLFSSH_LOCAL int wolfSSH_RsaVerify(
         const byte *sig, word32 sigSz,
         const byte* encDigest, word32 encDigestSz,
         RsaKey* key, void* heap, const char* loc);
+#ifndef RSA_LOW_MEM
+WOLFSSH_LOCAL int wolfSSH_CalcRsaDX(RsaKey* key);
+#endif
 #endif
 WOLFSSH_LOCAL void DumpOctetString(const byte* input, word32 inputSz);
 WOLFSSH_LOCAL int wolfSSH_oct2dec(WOLFSSH* ssh, byte* oct, word32 octSz);
