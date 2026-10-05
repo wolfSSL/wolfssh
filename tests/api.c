@@ -2357,7 +2357,8 @@ static void test_LoadTpmSshKey_NoTrailingNewline(void)
 
 #endif /* WOLFSSH_TPM && FILESYSTEM && !USER_FILESYSTEM */
 
-#if defined(WOLFSSH_TPM) && defined(WOLFSSH_TEST_INTERNAL)
+#if (defined(WOLFSSH_TPM) || defined(WOLFSSH_AGENT)) && \
+    defined(WOLFSSH_TEST_INTERNAL)
 
 /* The key type is read with GetStringRef(), which sets the length from the
  * wire but leaves the pointer alone when the name runs past the buffer. */
@@ -2382,6 +2383,25 @@ static void test_GetOpenSshPublicKey_type(void)
         0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x01,
         0x00, 0x00, 0x00, 0x09,
         0x00, 0xC5, 0x1A, 0x37, 0x8B, 0x42, 0x9D, 0xE0, 0x6F
+    };
+#endif
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    /* A nonce whose length runs past the buffer. */
+    static const byte rsaCertTruncNonce[] = {
+        0x00, 0x00, 0x00, 0x1C, 's', 's', 'h', '-', 'r', 's', 'a', '-',
+        'c', 'e', 'r', 't', '-', 'v', '0', '1', '@', 'o', 'p', 'e', 'n',
+        's', 's', 'h', '.', 'c', 'o', 'm',
+        0x00, 0x00, 0x00, 0x20, 0xA1, 0xB2
+    };
+    /* An n whose length runs past the buffer. */
+    static const byte rsaCertTruncN[] = {
+        0x00, 0x00, 0x00, 0x1C, 's', 's', 'h', '-', 'r', 's', 'a', '-',
+        'c', 'e', 'r', 't', '-', 'v', '0', '1', '@', 'o', 'p', 'e', 'n',
+        's', 's', 'h', '.', 'c', 'o', 'm',
+        0x00, 0x00, 0x00, 0x04, 0xA1, 0xB2, 0xC3, 0xD4,
+        0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x09,
+        0x00, 0xC5, 0x1A
     };
 #endif
     WS_KeySignature keySig;
@@ -2418,9 +2438,21 @@ static void test_GetOpenSshPublicKey_type(void)
     AssertIntEQ(idx, (word32)sizeof(rsaKey));
     AssertIntEQ(wc_FreeRsaKey(&keySig.ks.rsa.key), 0);
 #endif
+
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    idx = 0;
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, rsaCertTruncNonce,
+                (word32)sizeof(rsaCertTruncNonce), &idx), WS_BUFFER_E);
+
+    idx = 0;
+    AssertIntEQ(wc_InitRsaKey(&keySig.ks.rsa.key, NULL), 0);
+    AssertIntEQ(GetOpenSshPublicKey(&keySig, rsaCertTruncN,
+                (word32)sizeof(rsaCertTruncN), &idx), WS_BUFFER_E);
+    AssertIntEQ(wc_FreeRsaKey(&keySig.ks.rsa.key), 0);
+#endif
 }
 
-#endif /* WOLFSSH_TPM && WOLFSSH_TEST_INTERNAL */
+#endif /* (WOLFSSH_TPM || WOLFSSH_AGENT) && WOLFSSH_TEST_INTERNAL */
 
 
 static void test_wolfSSH_ReadKey_badPad(void)
@@ -8704,7 +8736,8 @@ int wolfSSH_ApiTest(int argc, char** argv)
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
     test_LoadTpmSshKey_NoTrailingNewline();
 #endif
-#if defined(WOLFSSH_TPM) && defined(WOLFSSH_TEST_INTERNAL)
+#if (defined(WOLFSSH_TPM) || defined(WOLFSSH_AGENT)) && \
+    defined(WOLFSSH_TEST_INTERNAL)
     test_GetOpenSshPublicKey_type();
 #endif
     test_wolfSSH_ReadKey_shortBuffer();

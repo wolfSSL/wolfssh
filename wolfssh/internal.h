@@ -1693,7 +1693,10 @@ WOLFSSH_LOCAL void wolfSSH_KEY_clean(WS_KeySignature* key);
 WOLFSSH_LOCAL int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap);
 WOLFSSH_LOCAL int GetOpenSshKey(WS_KeySignature *key,
         const byte* buf, word32 len, word32* idx);
-#ifdef WOLFSSH_TPM
+#if defined(WOLFSSH_TPM) || defined(WOLFSSH_AGENT)
+/* Decodes an SSH-format public key into the key->ks member its type names;
+ * for RSA, key->ks.rsa.key must already be initialized. An OpenSSH RSA
+ * certificate yields its RSA key only, leaving *idx just past n. */
 WOLFSSH_LOCAL int GetOpenSshPublicKey(WS_KeySignature *key,
         const byte* buf, word32 len, word32* idx);
 #endif

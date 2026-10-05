@@ -20272,9 +20272,24 @@ static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
         word32 idx = 0;
         #ifdef WOLFSSH_AGENT
         if (ssh->agentEnabled) {
-            ret = wc_RsaPublicKeyDecode(authData->sf.publicKey.publicKey,
-                    &idx, &keySig->ks.rsa.key,
-                    authData->sf.publicKey.publicKeySz);
+            const byte* blobType = NULL;
+            word32 blobTypeSz = 0;
+
+            /* Decode only a blob of the key type the request names. */
+            ret = GetStringRef(&blobTypeSz, &blobType,
+                    authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, &idx);
+            if (ret == WS_SUCCESS && NameToId((const char*)blobType,
+                    blobTypeSz) != keySig->keyId) {
+                WLOG(WS_LOG_DEBUG, "SUAR: agent key blob type mismatch");
+                ret = WS_INVALID_ALGO_ID;
+            }
+            if (ret == WS_SUCCESS) {
+                idx = 0;
+                ret = GetOpenSshPublicKey(keySig,
+                        authData->sf.publicKey.publicKey,
+                        authData->sf.publicKey.publicKeySz, &idx);
+            }
         }
         else
         #endif /* WOLFSSH_AGENT */
@@ -20306,7 +20321,7 @@ static int PrepareUserAuthRequestRsa(WOLFSSH* ssh, word32* payloadSz,
 
             if (sigSz >= 0) {
                 *payloadSz += (LENGTH_SZ * 3) + (word32)sigSz +
-                        authData->sf.publicKey.publicKeyTypeSz;
+                        keySig->sigNameSz;
                 keySig->sigSz = sigSz;
             }
             else
@@ -20383,14 +20398,40 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
 
     #ifdef WOLFSSH_AGENT
     if (ssh->agentEnabled) {
-        if (ret == WS_SUCCESS)
-            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
-                    output + begin + LENGTH_SZ, &keySig->sigSz,
-                    authData->sf.publicKey.publicKey,
-                    authData->sf.publicKey.publicKeySz, 0);
+        /* Size the agent's reply room from the requested signature algorithm */
+        word32 agentSigSz = (LENGTH_SZ * 2) + keySig->sigSz +
+                (word32)WSTRLEN(IdToName(effSigId));
+        word32 agentFlags = 0;
+        const byte* agentSigName = NULL;
+        word32 agentSigNameSz = 0;
+        word32 nameIdx = 0;
+
+        /* Ask the agent for the signature algorithm the request names. */
+        if (effSigId == ID_RSA_SHA2_256)
+            agentFlags = AGENT_SIGN_RSA_SHA2_256;
+        else if (effSigId == ID_RSA_SHA2_512)
+            agentFlags = AGENT_SIGN_RSA_SHA2_512;
+
         if (ret == WS_SUCCESS) {
-            c32toa(keySig->sigSz, output + begin);
-            begin += LENGTH_SZ + keySig->sigSz;
+            WLOG(WS_LOG_INFO, "Signing with RSA through the agent.");
+            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
+                    output + begin + LENGTH_SZ, &agentSigSz,
+                    authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, agentFlags);
+        }
+        /* An agent that ignores the flags signs with another algorithm. */
+        if (ret == WS_SUCCESS) {
+            ret = GetStringRef(&agentSigNameSz, &agentSigName,
+                    output + begin + LENGTH_SZ, agentSigSz, &nameIdx);
+        }
+        if (ret == WS_SUCCESS && NameToId((const char*)agentSigName,
+                agentSigNameSz) != effSigId) {
+            WLOG(WS_LOG_DEBUG, "SUAR: agent signed with another algorithm");
+            ret = WS_INVALID_ALGO_ID;
+        }
+        if (ret == WS_SUCCESS) {
+            c32toa(agentSigSz, output + begin);
+            begin += LENGTH_SZ + agentSigSz;
         }
     }
     else
