@@ -112,10 +112,27 @@ fail() {
     exit 1
 }
 
+# Set WOLFSSH_TEST_REQUIRE_OPENSSH=1 where every part must run, as in CI;
+# each skip below is then a failure.
+require_openssh=${WOLFSSH_TEST_REQUIRE_OPENSSH:-0}
+
 skip() {
+    if [ "$require_openssh" = "1" ]; then
+        fail "$1; WOLFSSH_TEST_REQUIRE_OPENSSH=1 does not allow skipping"
+    fi
     printf '%s, skipping\n' "$1"
     rm -rf -- "$work_dir"
     exit 77
+}
+
+# Skip the part named by $2, keeping the parts that already passed.
+skip_rest() {
+    if [ "$require_openssh" = "1" ]; then
+        fail "$1; WOLFSSH_TEST_REQUIRE_OPENSSH=1 does not allow skipping $2"
+    fi
+    echo "$1, skipping $2"
+    do_cleanup
+    exit 0
 }
 
 command -v ssh > /dev/null 2>&1 || skip "no ssh in the path"
@@ -279,19 +296,13 @@ if [ -z "$sshd_bin" ]; then
 fi
 
 if [ -z "$sshd_bin" ] || [ ! -x "$sshd_bin" ]; then
-    echo "no sshd on this machine, skipping the wolfSSH client half"
-    do_cleanup
-    exit 0
+    skip_rest "no sshd on this machine" "the wolfSSH client half"
 fi
 if ! command -v ssh-keygen > /dev/null 2>&1; then
-    echo "no ssh-keygen, skipping the wolfSSH client half"
-    do_cleanup
-    exit 0
+    skip_rest "no ssh-keygen" "the wolfSSH client half"
 fi
 if [ ! -x ./examples/client/client ]; then
-    echo "the example client wasn't built, skipping the wolfSSH client half"
-    do_cleanup
-    exit 0
+    skip_rest "the example client wasn't built" "the wolfSSH client half"
 fi
 
 echo "Test the wolfSSH client against OpenSSH's sshd"
@@ -358,10 +369,8 @@ while [ "$counter" -lt 5 ]; do
 done
 
 if [ "$sshd_port" -eq 0 ]; then
-    echo "sshd wouldn't start here, skipping the wolfSSH client half"
     [ -s "$sshd_log" ] && tail -n 5 "$sshd_log"
-    do_cleanup
-    exit 0
+    skip_rest "sshd wouldn't start here" "the wolfSSH client half"
 fi
 
 # The version gate above covered the client. This sshd was found on its own
@@ -372,10 +381,9 @@ sshd_version=`sed -n 's/.*sshd version \(OpenSSH_[^,]*\).*/\1/p' \
     "$sshd_log" | head -n 1`
 has_strict_kex "$sshd_version"
 if [ $? -ne 0 ]; then
-    echo "$sshd_bin is ${sshd_version:-an unreadable version}, no strict KEX,"
-    echo "skipping the wolfSSH client half"
-    do_cleanup
-    exit 0
+    skip_rest \
+        "$sshd_bin is ${sshd_version:-an unreadable version}, no strict KEX" \
+        "the wolfSSH client half"
 fi
 
 # sshd authenticates the user running this test, with one of the canned
@@ -455,15 +463,11 @@ echo "the wolfSSH client negotiated strict KEX with sshd"
 
 # Part 3 needs the client's agent support and OpenSSH's agent tools.
 if ! ./examples/client/client '-?' 2>&1 | grep -q 'SSH-AGENT'; then
-    echo "the example client has no agent support, skipping the agent half"
-    do_cleanup
-    exit 0
+    skip_rest "the example client has no agent support" "the agent half"
 fi
 if ! command -v ssh-agent > /dev/null 2>&1 ||
     ! command -v ssh-add > /dev/null 2>&1; then
-    echo "no ssh-agent or ssh-add, skipping the agent half"
-    do_cleanup
-    exit 0
+    skip_rest "no ssh-agent or ssh-add" "the agent half"
 fi
 
 # The RSA signature algorithms this client was built with; -E lists them
@@ -475,9 +479,7 @@ for alg in rsa-sha2-256 rsa-sha2-512; do
     fi
 done
 if [ -z "$agent_rsa_algs" ]; then
-    echo "the client has no rsa-sha2 algorithms, skipping the agent half"
-    do_cleanup
-    exit 0
+    skip_rest "the client has no rsa-sha2 algorithms" "the agent half"
 fi
 
 echo "Test the wolfSSH client signing through ssh-agent for sshd"

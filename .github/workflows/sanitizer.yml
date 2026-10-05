@@ -102,6 +102,9 @@ jobs:
           make -j$(nproc)
 
       - name: Run tests
+        env:
+          # The runner has OpenSSH, so openssh-interop.test must run in full.
+          WOLFSSH_TEST_REQUIRE_OPENSSH: 1
         run: timeout -k 30 300 make check
 
       - name: Show test logs on failure
