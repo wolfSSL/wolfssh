@@ -110,7 +110,7 @@ jobs:
       run: |
         cd wolfssh
         ./autogen.sh
-        ./configure --enable-tpm --enable-certs
+        ./configure --enable-tpm --enable-certs --enable-ossh-certs
         make
         sudo make install
         sudo ldconfig
@@ -228,6 +228,60 @@ jobs:
         timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth
 
+    # The same TPM key offered as an OpenSSH user certificate. The certificate
+    # is a file carrying the TPM key's public half; the TPM still signs.
+    - name: Test TPM client OpenSSH certificate auth
+      if: matrix.keytype == 'rsa' && matrix.hostkey == 'raw'
+      run: |
+        cd wolfssh
+        ssh-keygen -q -t rsa -N '' -f ossh_ca < /dev/null
+        cp key.ssh tpmkey.pub
+        ssh-keygen -q -s ossh_ca -I tpm-cert -n hansel tpmkey.pub
+        timeout 30 ./examples/echoserver/echoserver -1 -p 22225 -s key.ssh \
+            > ossh_cert_server.txt 2>&1 &
+        SERVER_PID=$!
+        echo "Echoserver (TPM key behind an OpenSSH certificate) PID: $SERVER_PID"
+        sleep 2
+        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+            -u hansel -K ThisIsMyKeyAuth -j tpmkey-cert.pub -p 22225 -x \
+            < /dev/null > ossh_cert_client.txt 2>&1 || {
+            cat ossh_cert_client.txt
+            exit 1
+        }
+        # The one-shot server flushes its output when it exits.
+        wait $SERVER_PID || true
+        echo "----- server -----"; cat ossh_cert_server.txt
+        grep -q "auth = Success" ossh_cert_server.txt
+
+    # Negative test: a certificate for another key. The echoserver accepts
+    # that key, so only the signature check can refuse the TPM's signature.
+    - name: Test TPM client OpenSSH certificate for another key fails
+      if: matrix.keytype == 'rsa' && matrix.hostkey == 'raw'
+      run: |
+        cd wolfssh
+        # Same size as the TPM key, or the client fails before signing. The
+        # comment is cut because the echoserver appends the user name.
+        ssh-keygen -q -t rsa -b 2048 -N '' -f other < /dev/null
+        ssh-keygen -q -s ossh_ca -I other-cert -n hansel other.pub
+        cut -d' ' -f1,2 other.pub > other.ssh
+        timeout 30 ./examples/echoserver/echoserver -1 -p 22226 -s other.ssh \
+            > ossh_cert_server_neg.txt 2>&1 &
+        SERVER_PID=$!
+        echo "Echoserver (another key's certificate) PID: $SERVER_PID"
+        sleep 2
+        if timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+            -u hansel -K ThisIsMyKeyAuth -j other-cert.pub -p 22226 -x \
+            < /dev/null > ossh_cert_client_neg.txt 2>&1; then
+            echo "ERROR: a certificate for another key authenticated"
+            cat ossh_cert_client_neg.txt
+            exit 1
+        fi
+        wait $SERVER_PID || true
+        echo "----- server -----"; cat ossh_cert_server_neg.txt
+        echo "----- client -----"; cat ossh_cert_client_neg.txt
+        # The server took the key and then refused the signature.
+        grep -q "auth = Failure" ossh_cert_server_neg.txt
+
     - name: Archive test artifacts
       if: always()
       uses: actions/upload-artifact@v7
@@ -241,4 +295,8 @@ jobs:
           wolfssh/tpmcert_client.txt
           wolfssh/tpmcert_server_neg.txt
           wolfssh/tpmcert_client_neg.txt
+          wolfssh/ossh_cert_server.txt
+          wolfssh/ossh_cert_client.txt
+          wolfssh/ossh_cert_server_neg.txt
+          wolfssh/ossh_cert_client_neg.txt
           wolfssh/tests/api.log
