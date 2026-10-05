@@ -18031,7 +18031,7 @@ static int RunKexInitKexListCase(const char* kexList, byte* kexIdOut)
     if (kexIdOut != NULL) {
         AssertNotNull(ssh->handshake);
         *kexIdOut = (ret == WS_MATCH_KEX_ALGO_E)
-            ? ID_UNKNOWN : ssh->handshake->kexId;
+            ? (byte)ID_UNKNOWN : ssh->handshake->kexId;
     }
 
     WFREE(payload, NULL, DYNTYPE_BUFFER);
