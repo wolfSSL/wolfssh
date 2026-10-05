@@ -6898,8 +6898,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         /* Defensive, not a live fix: an empty list fails to match below, so
          * the guess is never read. list[] is reused across the fields, so
          * take ID_UNKNOWN over a stale ID if that ever changes. */
-        kexIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
-        kexIdFirst = (cannedListSz > 0) ? cannedList[0] : ID_UNKNOWN;
+        kexIdGuess = (listSz > 0) ? list[0] : (byte)ID_UNKNOWN;
+        kexIdFirst = (cannedListSz > 0) ? cannedList[0] : (byte)ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz,
                 cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
@@ -6989,8 +6989,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
     }
     if (ret == WS_SUCCESS) {
-        pubKeyIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
-        pubKeyIdFirst = (cannedListSz > 0) ? cannedList[0] : ID_UNKNOWN;
+        pubKeyIdGuess = (listSz > 0) ? list[0] : (byte)ID_UNKNOWN;
+        pubKeyIdFirst = (cannedListSz > 0) ? cannedList[0] : (byte)ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");

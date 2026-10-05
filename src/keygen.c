@@ -278,8 +278,10 @@ int wolfSSH_MakeMlDsaKey(byte* out, word32 outSz, word32 level)
 {
 #if !defined(WOLFSSH_NO_MLDSA)
     int ret = WS_SUCCESS;
-    WC_RNG rng = {0};
+    WC_RNG rng;
     byte wc_level;
+
+    WMEMSET(&rng, 0, sizeof(rng));
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeMlDsaKey()");
 

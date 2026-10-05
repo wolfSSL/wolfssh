@@ -825,8 +825,9 @@ static int CheckProfile(DecodedCert* cert, int profile)
         const byte* date;
         int         dateSz;
         byte        dateFormat;
-        struct tm t = { 0 };
+        struct tm t;
 
+        WMEMSET(&t, 0, sizeof(t));
         dateFormat = cert->afterDate[0]; /* i.e ASN_UTC_TIME */
         dateSz     = cert->afterDate[1];
         date       = &cert->afterDate[2];
