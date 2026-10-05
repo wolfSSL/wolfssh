@@ -739,7 +739,12 @@ static int SignHashRsa(WOLFSSH_AGENT_KEY_RSA* rawKey, enum wc_HashType hashType,
         mp_read_unsigned_bin(&key.p, rawKey->p, rawKey->pSz);
         mp_read_unsigned_bin(&key.q, rawKey->q, rawKey->qSz);
         mp_read_unsigned_bin(&key.u, rawKey->iqmp, rawKey->iqmpSz);
-
+    }
+#ifndef RSA_LOW_MEM
+    if (ret == 0)
+        ret = wolfSSH_CalcRsaDX(&key);
+#endif
+    if (ret == 0) {
         encSigSz = wc_EncodeSignature(encSig, digest, digestSz,
                 wc_HashGetOID(hashType));
         if (encSigSz <= 0) {

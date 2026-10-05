@@ -16864,6 +16864,34 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
     return ret;
 }
 
+
+#ifndef RSA_LOW_MEM
+/*
+ * For the given RSA key, calculate d mod(p-1) and d mod(q-1).
+ * wolfCrypt's RSA code expects them, but OpenSSH format keys and
+ * agent keys don't carry them.
+ */
+int wolfSSH_CalcRsaDX(RsaKey* key)
+{
+    mp_int m;
+    int ret;
+
+    ret = mp_init(&m);
+    if (ret == MP_OKAY) {
+        ret = mp_sub_d(&key->p, 1, &m);
+        if (ret == MP_OKAY)
+            ret = mp_mod(&key->d, &m, &key->dP);
+        if (ret == MP_OKAY)
+            ret = mp_sub_d(&key->q, 1, &m);
+        if (ret == MP_OKAY)
+            ret = mp_mod(&key->d, &m, &key->dQ);
+        mp_forcezero(&m);
+    }
+
+    return ret;
+}
+#endif
+
 #endif /* WOLFSSH_NO_RSA */
 
 
