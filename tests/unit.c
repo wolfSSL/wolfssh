@@ -3215,8 +3215,11 @@ static int test_DhGexGroup16KeyAgree(void)
         result = -255;
         goto out;
     }
-    if (wc_DhGenerateKeyPair(&clientKey, ssh->rng, cPriv, &cPrivSz,
-            cPub, &cPubSz) != 0) {
+    PRIVATE_KEY_UNLOCK();
+    ret = wc_DhGenerateKeyPair(&clientKey, ssh->rng, cPriv, &cPrivSz,
+            cPub, &cPubSz);
+    PRIVATE_KEY_LOCK();
+    if (ret != 0) {
         result = -256;
         goto out;
     }
@@ -3240,8 +3243,11 @@ static int test_DhGexGroup16KeyAgree(void)
     }
 
     /* The server's k must be the shared secret the client derives from f. */
-    if (wc_DhAgree(&clientKey, cSecret, &cSecretSz, cPriv, cPrivSz,
-            f, fSz) != 0) {
+    PRIVATE_KEY_UNLOCK();
+    ret = wc_DhAgree(&clientKey, cSecret, &cSecretSz, cPriv, cPrivSz,
+            f, fSz);
+    PRIVATE_KEY_LOCK();
+    if (ret != 0) {
         result = -259;
         goto out;
     }

@@ -16912,9 +16912,12 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
         if (ret == 0)
             ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
                     generator, generatorSz);
-        if (ret == 0)
+        if (ret == 0) {
+            PRIVATE_KEY_UNLOCK();
             ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                     y_ptr, &ySz, f, fSz);
+            PRIVATE_KEY_LOCK();
+        }
         /* Reject a peer public value outside the safe range [2, p-2] before
          * key agreement, independent of the linked wolfSSL's own check. */
         if (ret == 0)
@@ -19243,11 +19246,14 @@ int SendKexDhInit(WOLFSSH* ssh)
             if (ret == 0)
                 ret = wc_DhSetKey(privKey, primeGroup, primeGroupSz,
                                   generator, generatorSz);
-            if (ret == 0)
+            if (ret == 0) {
+                PRIVATE_KEY_UNLOCK();
                 ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                                            ssh->handshake->x,
                                            &ssh->handshake->xSz,
                                            e, &eSz);
+                PRIVATE_KEY_LOCK();
+            }
 #endif
         }
 #if !defined(WOLFSSH_NO_CURVE25519_SHA256) || \
@@ -26126,8 +26132,10 @@ int wolfSSH_TestSetDhKexKey(WOLFSSH* ssh)
                 generator, generatorSz);
     if (ret == WS_SUCCESS) {
         ssh->handshake->xSz = (word32)sizeof(ssh->handshake->x);
+        PRIVATE_KEY_UNLOCK();
         ret = wc_DhGenerateKeyPair(privKey, ssh->rng,
                 ssh->handshake->x, &ssh->handshake->xSz, e, &eSz);
+        PRIVATE_KEY_LOCK();
     }
     if (ret == WS_SUCCESS) {
         /* Mark the DH key live, mirroring the real handshake, so
