@@ -720,7 +720,7 @@ static int run_pubkey_test(PubkeyServerCtx* sCtx, PubkeyClientCtx* cCtx,
 #ifndef WOLFSSH_NO_RSA
 static void test_pubkey_auth_rsa(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[512];
     byte* p = pubKeyBuf;
@@ -733,6 +733,7 @@ static void test_pubkey_auth_rsa(void)
     const byte* privKeyType  = NULL;
     word32      privKeyTypeSz = 0;
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing RSA public key authentication\n");
 
     /* Parse the public key from its OpenSSH text representation */
@@ -878,7 +879,7 @@ static const unsigned int hanselPrivateRsaAltSz =
  * and be rejected by DoUserAuthRequestRsa. */
 static void test_pubkey_auth_rsa_bad_sig(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[512];
     byte* p = pubKeyBuf;
@@ -891,6 +892,7 @@ static void test_pubkey_auth_rsa_bad_sig(void)
     const byte* altPrivType   = NULL;
     word32      altPrivTypeSz = 0;
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing RSA pubkey auth rejection with wrong signing key\n");
 
     AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicRsa,
@@ -1184,7 +1186,7 @@ static const word32 hanselPrivateRsaCertSz = (word32)sizeof(hanselPrivateRsaCert
 
 static void test_pubkey_auth_rsacert(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  privBuf[1300];
     byte* privPtr = privBuf;
@@ -1193,6 +1195,7 @@ static void test_pubkey_auth_rsacert(void)
     word32      privTypeSz = 0;
     static const byte pubKeyType[] = "x509v3-ssh-rsa";
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing RSA certificate public key authentication\n");
 
     /* Server authorizes by SHA-256 of the leaf cert DER. ParseCertChain
@@ -1223,7 +1226,7 @@ static void test_pubkey_auth_rsacert(void)
  * key.  The mismatch must reach and be rejected by DoUserAuthRequestRsaCert. */
 static void test_pubkey_auth_rsacert_bad_sig(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  privBuf[1300];
     byte* privPtr = privBuf;
@@ -1232,6 +1235,7 @@ static void test_pubkey_auth_rsacert_bad_sig(void)
     word32      privTypeSz = 0;
     static const byte pubKeyType[] = "x509v3-ssh-rsa";
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing RSA cert pubkey auth rejection with wrong signing key\n");
 
     AssertIntEQ(wc_Sha256Hash(hanselCertRsa, hanselCertRsaSz, sCtx.hash), 0);
@@ -1258,7 +1262,7 @@ static void test_pubkey_auth_rsacert_bad_sig(void)
 #ifndef WOLFSSH_NO_ECDSA
 static void test_pubkey_auth_ecc(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[256];
     byte* p = pubKeyBuf;
@@ -1271,6 +1275,7 @@ static void test_pubkey_auth_ecc(void)
     const byte* privKeyType   = NULL;
     word32      privKeyTypeSz = 0;
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing ECC public key authentication\n");
 
     AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
@@ -1302,7 +1307,7 @@ static void test_pubkey_auth_ecc(void)
  */
 static void test_pubkey_auth_ecc_bad_sig(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[256];
     byte* p = pubKeyBuf;
@@ -1326,6 +1331,7 @@ static void test_pubkey_auth_ecc_bad_sig(void)
     const int badKeySz = 66;
 #endif
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing ECC pubkey auth rejection with wrong signing key\n");
 
     AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)hanselPublicEcc,
@@ -1370,7 +1376,7 @@ static void test_pubkey_auth_ecc_bad_sig(void)
  */
 static void test_pubkey_auth_wrong_key(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     /* Server expects RSA */
     byte  rsaPubBuf[512];
@@ -1390,6 +1396,7 @@ static void test_pubkey_auth_wrong_key(void)
     const byte* eccPrivType   = NULL;
     word32      eccPrivTypeSz = 0;
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing pubkey auth rejection with wrong key\n");
 
     /* Server hash is for the RSA key */
@@ -1470,7 +1477,7 @@ static void test_pubkey_load_mldsa_privonly_hostkey(void)
  * with neither RSA nor ECDSA compiled in. */
 static void test_pubkey_auth_ed25519_privonly_hostkey(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[256];
     byte* p = pubKeyBuf;
@@ -1487,6 +1494,7 @@ static void test_pubkey_auth_ed25519_privonly_hostkey(void)
     byte hostKeyDer[128];
     int hostKeyDerSz;
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing Ed25519 private-only host key at KEX (issue: derive "
            "fallback)\n");
 
@@ -1530,7 +1538,7 @@ static void test_pubkey_auth_ed25519_privonly_hostkey(void)
  * wc_ecc_make_pub() fallback in SendKexGetSigningKey. */
 static void test_pubkey_auth_ecdsa_privonly_hostkey(void)
 {
-    PubkeyServerCtx sCtx = {0};
+    PubkeyServerCtx sCtx;
     PubkeyClientCtx cCtx;
     byte  pubKeyBuf[512];
     byte* p = pubKeyBuf;
@@ -1556,6 +1564,7 @@ static void test_pubkey_auth_ecdsa_privonly_hostkey(void)
     #error "Enable nistp256, nistp384, nistp521, or disable ECDSA."
 #endif
 
+    WMEMSET(&sCtx, 0, sizeof(sCtx));
     printf("Testing ECDSA private-only host key at KEX (wc_ecc_make_pub "
            "fallback)\n");
 
