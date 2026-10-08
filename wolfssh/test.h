@@ -492,8 +492,11 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
         memcpy(&addr->id.is_ip_addrs, entry->h_addr_list[0],
                 entry->h_length);
 #else
-            memcpy(&addr->sin_addr.s_addr, entry->h_addr_list[0],
-                   entry->h_length);
+            /* h_addr_list isn't always pointer aligned, copy the pointer
+             * out rather than loading it in place */
+            char* hostAddr;
+            memcpy(&hostAddr, &entry->h_addr_list[0], sizeof(hostAddr));
+            memcpy(&addr->sin_addr.s_addr, hostAddr, entry->h_length);
 #endif
             useLookup = 1;
         }

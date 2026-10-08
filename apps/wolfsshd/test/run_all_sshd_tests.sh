@@ -2,7 +2,8 @@
 
 echo "Running all wolfSSHd tests"
 
-# Define an array of test cases
+# Tests that run against the shared wolfSSHd started from sshd_config_test.
+# Driven by the loop in the run section below.
 test_cases=(
  "sshd_port_lease_test.sh"
  "sshd_exec_test.sh"
@@ -17,6 +18,57 @@ test_cases=(
  "sshd_stdin_stall_test.sh"
  "ssh_kex_algos.sh"
 )
+
+# Tests the runner drives outside that loop. Each needs setup of its own -- a
+# different daemon config, its own daemon, or the shared daemon stopped first --
+# so the calls stay in place in the run section rather than moving into the
+# array. They are named here so --match and --exclude reach them too; before
+# this list existed, --match rejected them as unknown and --exclude silently did
+# nothing. Entries without a ".sh" suffix are check functions defined in this
+# file. Order matches the run section. Anything run_test() is handed that is not
+# listed in one of these two arrays is a hard error, so a new test cannot go
+# back to being unreachable by accident.
+extra_test_cases=(
+ "hostkey_perm_check"
+ "sshd_pubkey_reject_test.sh"
+ "strictmodes_authkeys_negative"
+ "sshd_forcedcmd_test.sh"
+ "sshd_match_overlap_test.sh"
+ "sshd_window_full_test.sh"
+ "sshd_stderr_eof_test.sh"
+ "sshd_empty_password_test.sh"
+ "sshd_permitroot_test.sh"
+ "sshd_permitroot_prohibit_password.sh"
+ "sshd_permitroot_forced_cmd.sh"
+ "strictmodes_hostkey_negative"
+ "upn_unenforceable_negative"
+ "sshd_login_grace_test.sh"
+ "sshd_privdrop_fail_test.sh"
+ "sshd_chroot_fail_test.sh"
+ "sshd_x509_test.sh"
+ "sshd_x509_upn_fail.sh"
+ "sshd_mldsa_composite_test.sh"
+ "sshd_ossh_cert_test.sh"
+)
+
+# 0 when $1 names a test this runner knows how to run.
+is_known_test() {
+    local test
+    for test in "${test_cases[@]}" "${extra_test_cases[@]}"; do
+        if [ "$test" == "$1" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+list_test_cases() {
+    local test
+    echo "All test cases:"
+    for test in "${test_cases[@]}" "${extra_test_cases[@]}"; do
+        echo "    $test"
+    done
+}
 
 # Set defaults
 USER=$USER
@@ -57,10 +109,7 @@ while [[ "$#" -gt 0 ]]; do
         *)
             echo "Unknown option: $1"
             echo "Expecting --host <host> | --port <port> | --user <user> | --match <test case> | --exclude <test case>"
-            echo "All test cases:"
-            for test in "${test_cases[@]}"; do
-                echo "    $test"
-            done
+            list_test_cases
             exit 1
             ;;
     esac
@@ -76,6 +125,7 @@ done
 #   +0  shared wolfSSHd (TEST_PORT)    +3  host key ownership/symlink gate
 #   +1  StrictModes negative test      +4  OpenSSH certificate test
 #   +2  AuthorizedUPNDomains negative  +5  privilege-drop test
+#   +6  chroot skip-after-failure test
 #
 # The range deliberately starts above everything else in the repo that binds
 # a port: CI steps bind 22222, 22225 and 22226, and scripts/fwd-bulk.test
@@ -112,6 +162,7 @@ HOSTKEY_PERM_PORT=$((PORT_BASE + 3))
 # probed block even when --port moves the shared daemon off it.
 export WOLFSSHD_TEST_PORT=$((PORT_BASE + 4))
 export WOLFSSHD_PRIVDROP_PORT=$((PORT_BASE + 5))
+export WOLFSSHD_CHROOT_PORT=$((PORT_BASE + 6))
 
 # Registry of the daemons started during this run, appended to by
 # start_wolfsshd in every test script that sources start_sshd.sh. The exit
@@ -156,6 +207,7 @@ run_teardown() {
 trap run_teardown EXIT
 
 TOTAL=0
+PASSED=0
 SKIPPED=0
 # Set as the last statement of each branch that runs tests, and checked before
 # the summary. A shell expansion error (a bad arithmetic expansion, say) unwinds
@@ -164,25 +216,101 @@ SKIPPED=0
 # flag makes that abort exit non-zero instead of going green.
 RUN_COMPLETE=0
 
-# validate the requested test before any setup so a bad name does not leave
-# a wolfSSHd running
-if [[ -n "$MATCH" ]]; then
-    MATCH_FOUND=0
-    for test in "${test_cases[@]}"; do
-        if [[ "$test" == "$MATCH" ]]; then
-            MATCH_FOUND=1
-            break
+# validate the requested tests before any setup so a bad name does not leave
+# a wolfSSHd running. --exclude is checked too: an unrecognized name there used
+# to be accepted and then quietly exclude nothing, so a typo looked like a pass.
+if [[ -n "$MATCH" ]] && ! is_known_test "$MATCH"; then
+    echo "Error: Test '$MATCH' not found."
+    list_test_cases
+    exit 1
+fi
+if [[ -n "$EXCLUDE" ]] && ! is_known_test "$EXCLUDE"; then
+    echo "Error: Test '$EXCLUDE' not found."
+    list_test_cases
+    exit 1
+fi
+
+# --match narrows the run to a single test, --exclude drops one from it. Every
+# test goes through here, the ones called in place as well as the array, so both
+# options reach all of them. Returns 0 when the caller must not run the test.
+should_skip() {
+    if ! is_known_test "$1"; then
+        printf "ERROR: '%s' is in neither test_cases nor extra_test_cases;\n" "$1"
+        printf "add it so that --match and --exclude can reach it.\n"
+        if [ "$USING_LOCAL_HOST" == 1 ]; then
+            stop_wolfsshd
         fi
-    done
-    if [[ "$MATCH_FOUND" -eq 0 ]]; then
-        echo "Error: Test '$MATCH' not found."
-        echo "All test cases:"
-        for test in "${test_cases[@]}"; do
-            echo "    $test"
-        done
         exit 1
     fi
-fi
+    if [ -n "$MATCH" ] && [ "$1" != "$MATCH" ]; then
+        return 0
+    fi
+    if [ "$1" == "$EXCLUDE" ]; then
+        echo "Test '$1' is excluded. Skipping."
+        TOTAL=$((TOTAL+1))
+        SKIPPED=$((SKIPPED+1))
+        return 0
+    fi
+    return 1
+}
+
+# 0 when --match was not given or names this test. Gates the daemon setup that
+# only one test needs, so --match does not start daemons for tests it will not
+# run. Deliberately does not consult --exclude: the test's own call still has to
+# be reached for the exclusion to be reported and counted.
+matches() {
+    [ -z "$MATCH" ] || [ "$1" == "$MATCH" ]
+}
+
+# Counts each named test as skipped, for tests that need a local daemon on a run
+# against an external host. Takes the names rather than a number so the count
+# cannot drift from the tests it stands in for.
+skip_local_only() {
+    local test
+    for test in "$@"; do
+        if matches "$test"; then
+            TOTAL=$((TOTAL+1))
+            SKIPPED=$((SKIPPED+1))
+        fi
+    done
+}
+
+# Collect the directories above $1 that wolfSSHd's StrictModes check will
+# reject: a group or world writable directory anywhere above authorized_keys
+# makes the daemon refuse to read it, unless the directory is sticky. This
+# mirrors the parent walk in wolfSSHD_OpenSecureFile() (apps/wolfsshd/auth.c).
+# A tree unpacked or cloned under a non-022 umask -- 002 is the default where
+# each user has their own group -- has 0775 directories, which fails the whole
+# suite from the first test with nothing but "Couldn't connect SSH stream." on
+# the client side. Only the daemon log names the cause, so report it here.
+STRICTMODES_BAD_DIRS=()
+find_writable_path_dirs() {
+    local dir mode
+
+    STRICTMODES_BAD_DIRS=()
+    # canonical path, the same form realpath() hands the daemon's walk
+    dir=$(cd "$1" 2>/dev/null && pwd -P)
+    if [ -z "$dir" ]; then
+        return
+    fi
+    while : ; do
+        # "ls -ld" mode string: 0 type, 1-3 owner, 4-6 group, 7-9 other, so
+        # group write is index 5 and other write index 8. A sticky directory
+        # shows 't' or 'T' at index 9 and is allowed, as it is in the daemon.
+        mode=$(ls -ld "$dir" 2>/dev/null | awk '{print $1}')
+        if [ -n "$mode" ] && \
+                { [ "${mode:5:1}" == "w" ] || [ "${mode:8:1}" == "w" ]; }; then
+            case "${mode:9:1}" in
+                t|T) ;;
+                *) STRICTMODES_BAD_DIRS+=("$dir") ;;
+            esac
+        fi
+        if [ "$dir" == "/" ]; then
+            break
+        fi
+        dir=$(dirname "$dir")
+    done
+}
 
 # setup
 set -e
@@ -195,6 +323,24 @@ if [ ! -z "$TEST_HOST" ] && [ ! -z "$TEST_PORT" ]; then
     echo "Connecting to external host $TEST_HOST:$TEST_PORT"
 else
     USING_LOCAL_HOST=1
+    # Only meaningful for a local daemon; with an external host the
+    # authorized_keys file it reads is not this tree.
+    find_writable_path_dirs .
+    if [ "${#STRICTMODES_BAD_DIRS[@]}" -ne 0 ]; then
+        echo "Error: these directories above $PWD are group or world writable:"
+        for dir in "${STRICTMODES_BAD_DIRS[@]}"; do
+            echo "    $dir"
+        done
+        echo "wolfSSHd's StrictModes check refuses to read authorized_keys"
+        echo "through a writable directory, so the tests could not authenticate."
+        echo "Fix with 'chmod g-w,o-w <directory>' on each, or re-create the"
+        echo "tree under umask 022."
+        # start_sshd.sh has not been sourced yet, so the EXIT trap must not
+        # take its local-host branch and call teardown functions that do not
+        # exist. Same reason the earlier exits leave USING_LOCAL_HOST unset.
+        USING_LOCAL_HOST=
+        exit 1
+    fi
     source ./start_sshd.sh
     TEST_HOST="127.0.0.1"
     TEST_PORT="$LOCAL_PORT"
@@ -207,6 +353,9 @@ else
 fi
 
 run_test() {
+    if should_skip "$1"; then
+        return
+    fi
     printf "$1 ... "
     ./"$1" "$TEST_HOST" "$TEST_PORT" "$USER" &> stdout.txt
     RESULT=$?
@@ -216,6 +365,7 @@ run_test() {
         SKIPPED=$((SKIPPED+1))
     elif [ "$RESULT" == 0 ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat stdout.txt
@@ -234,6 +384,9 @@ run_test() {
 # "StrictModes no" to prove the gate still rejects. Runs without sudo: privilege
 # separation is off and a high port is used, so no root is needed.
 run_strictmodes_negative_test() {
+    if should_skip "strictmodes_hostkey_negative"; then
+        return
+    fi
     printf "Host key trust-anchor negative test ... "
     # WOLFSSH_NO_HOSTKEY_PERMS hands the mode to the platform, so the readable
     # key loads and there is nothing to assert.
@@ -264,6 +417,7 @@ EOF
     TOTAL=$((TOTAL+1))
     if grep -q "group or world readable" strictmodes_log.txt; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat strictmodes_log.txt
@@ -280,6 +434,9 @@ EOF
 # config-node traversal in SetupCTX is exercised, not just the head node. On
 # an FPKI build the directive is enforced instead of rejected, so skip.
 run_upn_unenforceable_negative_test() {
+    if should_skip "upn_unenforceable_negative"; then
+        return
+    fi
     printf "AuthorizedUPNDomains unenforceable-build negative test ... "
     TOTAL=$((TOTAL+1))
     if wolfssh_has FPKI; then
@@ -319,6 +476,7 @@ EOF
             grep -q "but this build cannot enforce it" upn_nofpki_log.txt &&
             ! grep -q "Refusing to load" upn_nofpki_log.txt; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat upn_nofpki_log.txt
@@ -334,6 +492,9 @@ EOF
 # StrictModes branch in SearchForPubKey). Uses the already-running local sshd,
 # whose AuthorizedKeysFile is ./authorized_keys_test and whose log is ./log.txt.
 run_strictmodes_authkeys_negative_test() {
+    if should_skip "strictmodes_authkeys_negative"; then
+        return
+    fi
     printf "StrictModes negative authorized_keys test ... "
     local tmo=""
     if command -v timeout >/dev/null 2>&1; then
@@ -375,6 +536,7 @@ run_strictmodes_authkeys_negative_test() {
     after=${after:-0}
     if [ "$result" != 0 ] && [ "$after" -gt "$before" ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED! (expected StrictModes rejection: client exit=%s, new log matches=%s)\n" \
             "$result" "$((after - before))"
@@ -394,6 +556,9 @@ run_strictmodes_authkeys_negative_test() {
 # file. Does not use the shared daemon, so it runs the same whether or not one
 # was started.
 run_hostkey_perm_check() {
+    if should_skip "hostkey_perm_check"; then
+        return
+    fi
     printf "host key ownership/symlink gate ... "
     TOTAL=$((TOTAL+1))
 
@@ -453,8 +618,11 @@ EOF
         # When launched via sudo, $HK_PID is the sudo pid, not the daemon, and
         # sudo does not reliably forward the signal, so match the daemon by port.
         # This guarantees a regression cannot leave a root daemon bound to it.
+        # The command line has to be matched here (the shared daemon shares the
+        # process name), so anchor on "/wolfsshd " plus this test's own port and
+        # nothing else can be caught by it.
         if [ -n "$HK_PRE" ]; then
-            $HK_PRE pkill -f "$HK_SSHD.*$HK_PORT" 2>/dev/null
+            $HK_PRE pkill -f "/wolfsshd .*-p $HK_PORT" 2>/dev/null
         else
             kill $HK_PID 2>/dev/null
         fi
@@ -505,6 +673,7 @@ EOF
         rm -rf "$HK_WORK"
         printf "PASSED (mode and owner cases skipped, built with "
         printf "WOLFSSH_NO_HOSTKEY_PERMS)\n"
+        PASSED=$((PASSED+1))
         return
     fi
 
@@ -524,73 +693,93 @@ EOF
 
     rm -rf "$HK_WORK"
     printf "PASSED\n"
+    PASSED=$((PASSED+1))
 }
 
-# Run the tests
+# Run the tests. There is one path whether or not --match was given: every test
+# call below is filtered by should_skip(), so a match runs the test in the same
+# place, with the same daemon set up around it, as a full run would. A separate
+# --match branch could only reach the tests whose setup it duplicated, which is
+# how the tests called in place came to be unselectable in the first place.
 if [[ -n "$MATCH" ]]; then
-    echo "Running test: $MATCH"
-    run_test "$MATCH"
-
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        printf "Shutting down test wolfSSHd\n"
-        stop_wolfsshd
-    fi
-    RUN_COMPLETE=1
+    echo "Running only test: $MATCH"
 else
     echo "Running all tests..."
+fi
 
-    for test in "${test_cases[@]}"; do
-        if [[ "$test" != "$EXCLUDE" ]]; then
-            echo "Running test: $test"
-            run_test "$test"
-        else
-            echo "Test '$test' is excluded. Skipping."
-            SKIPPED=$((SKIPPED+1))
-        fi
+# Every test call runs inside this group, so RUN_COMPLETE is set only by
+# reaching its end. A shell expansion error unwinds bash out of the whole
+# enclosing compound command; with the assignment at top level the unwind
+# would land on it anyway and a run cut short would still report a pass.
+# The body is left unindented: the group is a guard, not a block.
+{
+for test in "${test_cases[@]}"; do
+    run_test "$test"
+done
+
+#Github actions needs resolved for these test cases
+#run_test "error_return.sh"
+
+# Add additional tests here, check on var USING_LOCAL_HOST if can make sshd
+# server start/restart with changes. Add the name to extra_test_cases too, or
+# the run aborts: --match and --exclude are driven off that list.
+
+# trust-anchor ownership/symlink gate (host key, host cert, user CA). Runs a
+# private daemon, so it does not depend on the shared local sshd.
+run_hostkey_perm_check
+
+# a valid keypair whose public key is absent from authorized_keys must be
+# rejected. Reads the local ./log.txt, so only when we own the daemon.
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    run_test "sshd_pubkey_reject_test.sh"
+else
+    skip_local_only "sshd_pubkey_reject_test.sh"
+fi
+
+# exercise the authorized_keys StrictModes path against the running sshd
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    run_strictmodes_authkeys_negative_test
+else
+    skip_local_only "strictmodes_authkeys_negative"
+fi
+
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    printf "Shutting down test wolfSSHd\n"
+    stop_wolfsshd
+fi
+
+# these tests require setting up an sshd
+local_sshd_tests=(
+ "sshd_forcedcmd_test.sh"
+ "sshd_match_overlap_test.sh"
+ "sshd_window_full_test.sh"
+ "sshd_stderr_eof_test.sh"
+ "sshd_empty_password_test.sh"
+ "sshd_permitroot_test.sh"
+ "sshd_permitroot_prohibit_password.sh"
+ "sshd_permitroot_forced_cmd.sh"
+ "strictmodes_hostkey_negative"
+ "upn_unenforceable_negative"
+ "sshd_login_grace_test.sh"
+ "sshd_privdrop_fail_test.sh"
+ "sshd_chroot_fail_test.sh"
+)
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    for test in "${local_sshd_tests[@]}"; do
+        case "$test" in
+            strictmodes_hostkey_negative) run_strictmodes_negative_test ;;
+            upn_unenforceable_negative) run_upn_unenforceable_negative_test ;;
+            *) run_test "$test" ;;
+        esac
     done
+else
+    printf "Skipping tests that need to setup local SSHD\n"
+    skip_local_only "${local_sshd_tests[@]}"
+fi
 
-    #Github actions needs resolved for these test cases
-    #run_test "error_return.sh"
-
-    # add additional tests here, check on var USING_LOCAL_HOST if can make sshd
-    # server start/restart with changes
-
-    # trust-anchor ownership/symlink gate (host key, host cert, user CA). Runs a
-    # private daemon, so it does not depend on the shared local sshd.
-    run_hostkey_perm_check
-
-    # exercise the authorized_keys StrictModes path against the running sshd
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        run_strictmodes_authkeys_negative_test
-    else
-        SKIPPED=$((SKIPPED+1))
-    fi
-
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        printf "Shutting down test wolfSSHd\n"
-        stop_wolfsshd
-    fi
-
-    # these tests require setting up an sshd
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        run_test "sshd_forcedcmd_test.sh"
-        run_test "sshd_match_overlap_test.sh"
-        run_test "sshd_window_full_test.sh"
-        run_test "sshd_stderr_eof_test.sh"
-        run_test "sshd_empty_password_test.sh"
-        run_test "sshd_permitroot_test.sh"
-        run_test "sshd_permitroot_prohibit_password.sh"
-        run_test "sshd_permitroot_forced_cmd.sh"
-        run_strictmodes_negative_test
-        run_upn_unenforceable_negative_test
-        run_test "sshd_login_grace_test.sh"
-        run_test "sshd_privdrop_fail_test.sh"
-    else
-        printf "Skipping tests that need to setup local SSHD\n"
-        SKIPPED=$((SKIPPED+12))
-    fi
-
-    # these tests run with X509 sshd-config loaded
+# these tests run with X509 sshd-config loaded. The matches() guard keeps a
+# --match for some other test from starting a daemon this one alone needs.
+if matches "sshd_x509_test.sh"; then
     if [ "$USING_LOCAL_HOST" == 1 ]; then
         start_wolfsshd "sshd_config_test_x509"
     fi
@@ -599,51 +788,87 @@ else
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
     fi
+fi
 
-    # negative test: a certificate UPN realm outside AuthorizedUPNDomains must
-    # be rejected. Needs the dedicated bad-domain config, so only runs when we
-    # control the local daemon.
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        start_wolfsshd "sshd_config_test_x509_upn_bad"
-        run_test "sshd_x509_upn_fail.sh"
+# negative test: a certificate UPN realm outside AuthorizedUPNDomains must
+# be rejected. Needs the dedicated bad-domain config, so only runs when we
+# control the local daemon.
+if [ "$USING_LOCAL_HOST" != 1 ]; then
+    skip_local_only "sshd_x509_upn_fail.sh"
+elif matches "sshd_x509_upn_fail.sh"; then
+    start_wolfsshd "sshd_config_test_x509_upn_bad"
+    run_test "sshd_x509_upn_fail.sh"
+    printf "Shutting down test wolfSSHd\n"
+    stop_wolfsshd
+fi
+
+# ML-DSA composite host key test. Runs when we control the local daemon.
+# The client side uses an ECC key since we only test the host key here.
+# sshd_config_test_mldsa has no other host key, so an ML-DSA-less build
+# cannot start the daemon; check out here, not in the test script. The check
+# is the composite, not the umbrella: the ECDSA half can be missing on its own.
+if [ "$USING_LOCAL_HOST" != 1 ]; then
+    skip_local_only "sshd_mldsa_composite_test.sh"
+elif matches "sshd_mldsa_composite_test.sh"; then
+    if wolfssh_has MLDSA87_ES384; then
+        start_wolfsshd "sshd_config_test_mldsa"
+        run_test "sshd_mldsa_composite_test.sh"
         printf "Shutting down test wolfSSHd\n"
         stop_wolfsshd
+    else
+        printf "sshd_mldsa_composite_test.sh ... SKIPPED\n"
+        TOTAL=$((TOTAL+1))
+        SKIPPED=$((SKIPPED+1))
     fi
-
-    # ML-DSA composite host key test. Runs when we control the local daemon;
-    # the client uses an ECC key since only the host key is under test.
-    # sshd_config_test_mldsa has no other host key, so an ML-DSA-less build
-    # cannot start the daemon; check out here, not in the test script. The
-    # check is the composite, not the umbrella: the ECDSA half can be missing
-    # on its own.
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        if wolfssh_has MLDSA87_ES384; then
-            start_wolfsshd "sshd_config_test_mldsa"
-            run_test "sshd_mldsa_composite_test.sh"
-            printf "Shutting down test wolfSSHd\n"
-            stop_wolfsshd
-        else
-            printf "sshd_mldsa_composite_test.sh ... SKIPPED\n"
-            TOTAL=$((TOTAL+1))
-            SKIPPED=$((SKIPPED+1))
-        fi
-    fi
-
-    # OpenSSH certificate user-auth test (self-contained: starts its own
-    # wolfSSHd; skips when not built with --enable-ossh-certs). Runs the suite
-    # against the wolfSSH example client and, for interop, the system OpenSSH
-    # client when present.
-    if [ "$USING_LOCAL_HOST" == 1 ]; then
-        run_test "sshd_ossh_cert_test.sh"
-    fi
-    RUN_COMPLETE=1
 fi
+
+# OpenSSH certificate user-auth test (self-contained: starts its own
+# wolfSSHd; skips when not built with --enable-ossh-certs). Runs the suite
+# against the wolfSSH example client and, for interop, the system OpenSSH
+# client when present.
+if [ "$USING_LOCAL_HOST" == 1 ]; then
+    run_test "sshd_ossh_cert_test.sh"
+else
+    skip_local_only "sshd_ossh_cert_test.sh"
+fi
+RUN_COMPLETE=1
+}
 
 if [ "$RUN_COMPLETE" != 1 ]; then
     printf "ERROR: test run aborted before all tests ran\n"
     exit 1
 fi
 
-printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
+# A --match that reached no call site ran nothing and skipped nothing, which
+# would otherwise add up and report a clean "0 run". Every name is counted
+# somewhere -- the local-only ones as skipped against an external host -- so
+# this catches a call site that stopped counting; say so rather than exit 0 on
+# an empty run.
+if [ -n "$MATCH" ] && [ "$TOTAL" -eq 0 ]; then
+    printf "ERROR: --match %s selected no test that could run here\n" "$MATCH"
+    exit 1
+fi
+
+# TOTAL counts every test that was reached, skips included, so it is a "ran"
+# count and not a pass count. Print the three separately, and assert they add
+# up: a skip site that bumps one counter and not the other then fails the run
+# instead of quietly printing a wrong number.
+printf "All tests ran, %d run, %d passed, %d skipped\n" \
+    "$TOTAL" "$PASSED" "$SKIPPED"
+
+if [ "$((PASSED + SKIPPED))" -ne "$TOTAL" ]; then
+    printf "ERROR: counter mismatch (ran %d, passed %d, skipped %d)\n" \
+        "$TOTAL" "$PASSED" "$SKIPPED"
+    exit 1
+fi
+
+# Without --match every known test is reached once, run or skipped, so a
+# name no call site reaches -- one dropped from local_sshd_tests, say --
+# shows up here as a short count.
+KNOWN=$(( ${#test_cases[@]} + ${#extra_test_cases[@]} ))
+if [ -z "$MATCH" ] && [ "$TOTAL" -ne "$KNOWN" ]; then
+    printf "ERROR: %d tests known but %d reached\n" "$KNOWN" "$TOTAL"
+    exit 1
+fi
 
 exit 0

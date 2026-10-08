@@ -3,6 +3,16 @@
 These are separate from the tests in scripts directory because of the need for
 'sudo' when starting up an SSHd server to test against.
 
+## Directory Permissions
+
+wolfSSHd's StrictModes check refuses to read an authorized_keys file if any
+directory above it is group or world writable. A tree unpacked or cloned under
+a umask of 002, the default where each user has their own group, has mode 0775
+directories, so no test can authenticate and the suite fails from the first
+test. `run_all_sshd_tests.sh` checks for this before it starts a daemon and
+names the offending directories; clear the bits with `chmod g-w,o-w` on each,
+or create the tree under `umask 022`.
+
 ## Running Tests
 
 To run all tests do:
@@ -17,9 +27,12 @@ SSHD running on PID 7979
 sshd_exec_test.sh ... PASSED
 Shutting down test wolfSSHd
 Stopping SSHD, killing pid 7979
-All tests ran, 1 passed, 0 skipped
+All tests ran, 1 run, 1 passed, 0 skipped
 
 ```
+
+"run" counts every test reached, skips included. Passed plus skipped must equal
+run; the runner fails if they do not.
 
 To run a specific test do:
 
@@ -69,4 +82,26 @@ after the test files have been setup:
  51 ./create_sshd_config.sh
  52 set +e
 ```
+
+The name also has to be listed in one of the two arrays at the top of
+run_all_sshd_tests.sh, or the run aborts with an error naming it. Use
+`test_cases` if the test runs against the shared daemon, in which case the loop
+over that array calls it and nothing else is needed. Use `extra_test_cases` if
+the test needs setup of its own -- a different daemon config, its own daemon, or
+the shared daemon stopped first -- and keep the `run_test` call where that setup
+happens. Both arrays drive `--match` and `--exclude`, so a test that is missing
+from them cannot be selected or skipped from the command line.
+
+A test that can only run against a daemon the runner starts itself is skipped
+when `--host` and `--port` point at an external one. Pass its name to
+`skip_local_only` on that path, or add it to `local_sshd_tests` if it belongs in
+that block, so the external run still counts it as skipped.
+
+## Selecting Tests
+
+`--match <name>` runs a single test and `--exclude <name>` drops one from a full
+run. Both take any name from the list the runner prints when it is given a name or an
+option it does not recognize, and an unrecognized name is an error rather than a
+silent no-op. `--match` runs the test where it sits in the suite, with the
+daemon it needs set up around it.
 

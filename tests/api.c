@@ -459,7 +459,7 @@ static const char serverKeyEccDer[] =
 #ifndef NO_WOLFSSH_SERVER
 static const byte serverKeyEccCurveId = ID_ECDSA_SHA2_NISTP521;
 #endif
-#endif
+#endif /* ECDSA curve select */
 
 /* ./keys/server-key-ed25519.der */
 #ifndef WOLFSSH_NO_ED25519
@@ -749,7 +749,7 @@ static int load_file(const char* filename, byte** buf, word32* bufSz)
 
     return ret;
 }
-#endif
+#endif /* WOLFSSH_CERTS */
 
 
 #ifdef WOLFSSH_CERTS
@@ -1360,6 +1360,248 @@ static void test_wolfSSH_CTX_UsePrivateKey_buffer_pem(void)
     AssertIntEQ(WS_PARSE_E,
             wolfSSH_CTX_UsePrivateKey_buffer(ctx, (const byte*)zeroLenPemKey,
                 (word32)WSTRLEN(zeroLenPemKey), WOLFSSH_FORMAT_PEM));
+
+    wolfSSH_CTX_free(ctx);
+#endif /* NO_WOLFSSH_SERVER */
+}
+
+
+/* PKCS#8 (OneAsymmetricKey) PEM forms of the keys/server-key-*.der host keys.
+ * Embedded rather than read from keys/, so these assertions do not depend on
+ * load_file(), the working directory, or a filesystem being present. */
+#ifndef NO_WOLFSSH_SERVER
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+/* keys/server-key-ecc.der, rewrapped as PKCS#8. */
+static const char serverKeyEccPkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgYQmZC3nSXyhaD10V\n"
+    "zKFWVPkrOYchLad9hXu4fzjGbdWhRANCAASBE/+kK7ecRXR6g0xh8z+tJs8izamj\n"
+    "vKVhtHzmYtTC91VDmjH7gBEgtRJLJPV41/0i70Y18AVYa19jyNobxPVp\n"
+    "-----END PRIVATE KEY-----\n";
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+#ifndef WOLFSSH_NO_RSA
+/* keys/server-key-rsa.der, rewrapped as PKCS#8. */
+static const char serverKeyRsaPkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDaXa0lFHYVWfNA\n"
+    "/Ty4YjCzbcD57OyLgx6eQpzKQWrTiuFSNOANE2J+1A+uXE0E8Y36xa13qloFyu/4\n"
+    "jav/iikJTATC9RnL7R+xtCnTw2ypI9+joOUI3q2Mcfk0iGztO/BvpQ+sWf9rM/Fw\n"
+    "+4yks0UijZ13euUpX4QU2Znq6s4tUfPjWPpbAg/JtSq8sl7TwjC7PLHD71jzUJQo\n"
+    "i8RlSvcA2ZfZa02NlaGKYga0UBEig7TqKufQqCBHT/9GrsUT4TiL+FSvOk0v+B/X\n"
+    "hJDYkwUGwn2Q2+Oc0MRlWgOtAKxaos3aP4lYN1O/K0Z6rIlBK1ou6HbnXuMphaNj\n"
+    "6uaGYHwtAgMBAAECgf8PkR4Gxq6kVwVAXM03V8ihAfH/3yP9zhsgrR8ATCmRaxUl\n"
+    "Bx/xzq/22qdDhtD2yUGV3wG+xiYkw5LX5UGdtfu27fRo8ZAlOYJI6M8SiZv1ctk+\n"
+    "kPnC6Bz3Jijd1dvuDZfWXa4AW2oZ+ln78/LSyvTiwbW4DsrHaEfCNMEEPjj0ggFZ\n"
+    "8opu92tbCrwFqSc3ufkGgFTocBq0MpNr9SbHhvRYBUP5co/sQqA7ujVizOz0swSi\n"
+    "6648h0CO/o/dFL69g8nJGMqBfAb545ku7CnFJ1bqHpPG6AxEynNoSn+uFiUdEiUU\n"
+    "KuxBaSXDXeau5FmAHfq9nzM2k52I1ojJWyd7C2ECgYEA3gGr+mXS+tJv/j9XbXV/\n"
+    "jOa9/gi9xxM0Yg6Hsnosqc3Kk9gxkYEt1miWqiXjuH6lmKjoFTzAzt71q4Cx9bqv\n"
+    "rJzBs0M0riL3GEGGY6JEjhtBnS11bw1bEBldFKqAH+4CPvi29uxljjiJDQtQ5BFJ\n"
+    "hjmC23PlOg8TIqutoHiblCECgYEA+81MUkk/LICUkUo47A9KfTqOvASQFSWE+9No\n"
+    "ve+gR/7OW78dKpQn/FFw/8npur4roFAl0+GhVzPMXMd9Cfbc+3KUPcpZUnPgbEUK\n"
+    "2dow3ysz11IYQQHw3xsBwdO3myb4HI//yBn9NtATpXJCozBZV7TaKgnlRVo5bXAi\n"
+    "DLpTJo0CgYEAsTzCcPCTxDz2vhMRmEiC4Rlhuwp9gA479sDE4t8ZAyNRREEIKbLo\n"
+    "xlDPX91J9QPe7oaCaloLT9y+YwImkRhOoc6v8Y6I4zD09f9x698jPhRSiMo/A760\n"
+    "4aBuKE6KZXNdhaqIX4+Q8D8AY1KSbNHEUg1eBBd9fKGGVFqdDgzboCECgYEA6v4b\n"
+    "niexh2ywOi+Uk+lpURmXH6z6cmHDi+kutSOu58HLACCJrbT65CV1WaIsORVFTaW+\n"
+    "x9Coa+Nxc5zQ+r2iWiACbPAtECAIb8K3b7yLI5sEFI0PCYwwKWbg6u0VSvzBTJau\n"
+    "1SY8BC2ISD0sJ3P1zT6A4/68M08SjSm6/TneY/kCgYEAix9HopBLgjuJLelr4Sjl\n"
+    "IoeD0N4eDYzMhEM9I42dbLzExtpERHkgtj7vz4rEOLDl2kWsWsx7Yrqpcx+6J1yC\n"
+    "+K0xHt7zN3LLR9LN9/h/ADnbjSrKTsHO4hWJ1jphrp2iMKWFrjjqRnTcAjqs6V+j\n"
+    "xnNPc4GQVsPOd19bumxC8SE=\n"
+    "-----END PRIVATE KEY-----\n";
+#endif /* WOLFSSH_NO_RSA */
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA65)
+/* keys/server-key-mldsa65.der, which is already a OneAsymmetricKey, base64
+ * wrapped. This is the key type from the report behind the fix. */
+static const char serverKeyMlDsa65Pkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "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\n"
+    "+xDx6p/EEmBaHo5PMDTrzQ==\n"
+    "-----END PRIVATE KEY-----\n";
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSH_NO_MLDSA65 */
+
+/* Valid PEM framing around a body that is not base64. */
+static const char badPkcs8Pem[] =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "!!!! this is not base64 !!!!\n"
+    "-----END PRIVATE KEY-----\n";
+
+#endif /* NO_WOLFSSH_SERVER */
+
+
+/* A PEM private key must load without WOLFSSH_CERTS. wolfSSH_ProcessBuffer()
+ * used to keep the whole PEM branch behind that guard, so a no-certs build
+ * answered WS_UNIMPLEMENTED_E for every PEM private key, including the PKCS#8
+ * keys tested here. Nothing in this test may reference WOLFSSH_CERTS, or it
+ * stops covering the configuration it was written for. */
+static void test_wolfSSH_CTX_UsePrivateKey_buffer_pkcs8_pem(void)
+{
+#ifndef NO_WOLFSSH_SERVER
+    WOLFSSH_CTX* ctx = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                (const byte*)serverKeyEccPkcs8Pem,
+                (word32)sizeof(serverKeyEccPkcs8Pem) - 1,
+                WOLFSSH_FORMAT_PEM));
+#endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
+
+#ifndef WOLFSSH_NO_RSA
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                (const byte*)serverKeyRsaPkcs8Pem,
+                (word32)sizeof(serverKeyRsaPkcs8Pem) - 1,
+                WOLFSSH_FORMAT_PEM));
+#endif /* WOLFSSH_NO_RSA */
+
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA65)
+    AssertIntEQ(WS_SUCCESS,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                (const byte*)serverKeyMlDsa65Pkcs8Pem,
+                (word32)sizeof(serverKeyMlDsa65Pkcs8Pem) - 1,
+                WOLFSSH_FORMAT_PEM));
+#endif /* !WOLFSSH_NO_MLDSA && !WOLFSSH_NO_MLDSA65 */
+
+    /* An undecodable body has to fail in the PEM decoder, not be refused
+     * outright the way the guarded build refused every PEM private key. The
+     * decoder reports WS_PARSE_E, the same as for badPemKey above. */
+    AssertIntEQ(WS_PARSE_E,
+            wolfSSH_CTX_UsePrivateKey_buffer(ctx,
+                (const byte*)badPkcs8Pem,
+                (word32)sizeof(badPkcs8Pem) - 1,
+                WOLFSSH_FORMAT_PEM));
 
     wolfSSH_CTX_free(ctx);
 #endif /* NO_WOLFSSH_SERVER */
@@ -8695,6 +8937,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadCert_buffer();
     test_wolfSSH_ReadCert_file();
     test_wolfSSH_CTX_UsePrivateKey_buffer_pem();
+    test_wolfSSH_CTX_UsePrivateKey_buffer_pkcs8_pem();
     test_wolfSSH_CTX_SetWindowPacketSize();
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
