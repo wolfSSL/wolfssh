@@ -40,6 +40,10 @@
 #include <ctype.h>
 /*#include <wolfssh/error.h>*/
 #endif
+#include <errno.h>
+#include <time.h>
+
+#include <wolfssh/ssh.h>
 
 #ifdef WOLFSSH_SCP
     /* for WS_CallbackScpSend used in func_args; test.h is included by sources
@@ -241,8 +245,11 @@
 #endif
 
 
+/* WSHUTDOWN half closes: stop sending, keep receiving until peer EOF. Left
+ * undefined where the stack has no half close. */
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SD_SEND)
     #define WSTARTTCP() do { WSADATA wsd; (void)WSAStartup(0x0002, &wsd); } while(0)
 #elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef MICROCHIP_MPLAB_HARMONY
@@ -254,8 +261,13 @@
 #elif defined(WOLFSSL_NUCLEUS)
     #define WCLOSESOCKET(s) NU_Close_Socket((s))
     #define WSTARTTCP()
+#elif defined(FREESCALE_MQX)
+    /* RTCS shutdown() takes its own flags, not SHUT_WR */
+    #define WCLOSESOCKET(s) close(s)
+    #define WSTARTTCP()
 #else
     #define WCLOSESOCKET(s) close(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SHUT_WR)
     #define WSTARTTCP()
 #endif
 
@@ -823,6 +835,182 @@ static INLINE int tcp_select_write(SOCKET_T socketfd, int to_sec)
     }
 
     return WS_SELECT_FAIL;
+}
+
+
+/* Push out what a short send left queued, half close the socket, then read
+ * until the peer hangs up. The library reads nothing once the session is
+ * over, so the drain reads the socket directly and discards what it gets,
+ * any protocol message still in flight included: collect the exit status
+ * and the like before calling. Flush and drain together give up ten
+ * seconds after the call, plus the one-second select() wait in progress.
+ * Caller still owns and closes the socket. Returns WS_SUCCESS once the
+ * peer has hung up, WS_WANT_READ if it never did, or WS_WANT_WRITE if the
+ * queued output never went out. */
+static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    time_t deadline = WTIME(NULL) + 10;
+    int ret;
+    int sel;
+    int fails = 0;
+#ifdef WSHUTDOWN
+    char buf[1024];
+    int reads = 0;
+    int rcv;
+#endif
+
+    /* The worker flushes after its receive pass, and any of its normal
+     * events is a pass that made progress: wolfSSH_OutputPending() says
+     * when the flush is done. A session that is over or a socket that is
+     * gone ends the flush, and the drain still runs: either way the peer's
+     * hang up is what is left to see. */
+    while (wolfSSH_OutputPending(ssh)) {
+        if (WTIME(NULL) >= deadline)
+            return WS_WANT_WRITE;
+        sel = tcp_select_write(fd, 1);
+        if (sel == WS_SELECT_SEND_READY) {
+            ret = wolfSSH_worker(ssh, NULL);
+            if (ret == WS_FATAL_ERROR)
+                ret = wolfSSH_get_error(ssh);
+            if (ret == WS_DISCONNECT) {
+                /* The worker sends nothing once the session is disconnected.
+                 * A disconnect of our own that a short send left queued is
+                 * the one thing still owed, and this flush-only path sends
+                 * it; it refuses after the peer's disconnect, and then the
+                 * queued output is moot. */
+                ret = wolfSSH_SendDisconnect(ssh,
+                        WOLFSSH_DISCONNECT_BY_APPLICATION);
+                if (ret == WS_FATAL_ERROR)
+                    break;
+            }
+            if (ret != WS_SUCCESS && ret != WS_WANT_READ &&
+                    ret != WS_WANT_WRITE && ret != WS_CHAN_RXD &&
+                    ret != WS_EXTDATA && ret != WS_EOF &&
+                    ret != WS_REKEYING && ret != WS_CHANNEL_CLOSED)
+                break;
+        }
+        else if (sel == WS_SELECT_FAIL) {
+            /* EINTR is a failure too, so a few are waited out, but a
+             * select() that keeps failing must not spin to the deadline */
+            if (++fails >= 10)
+                return WS_WANT_WRITE;
+        }
+        else if (sel != WS_SELECT_TIMEOUT) {
+            /* an exception alone is urgent data, not room to send */
+            return WS_WANT_WRITE;
+        }
+    }
+
+#ifdef WSHUTDOWN
+    WSHUTDOWN(fd);
+    fails = 0;
+    /* The read cap bounds the bytes a streaming peer costs. It covers two
+     * default windows, so a peer that was mid-echo is not reported as never
+     * hanging up. */
+    while (reads < 256 && WTIME(NULL) < deadline) {
+        sel = tcp_select(fd, 1);
+        if (sel == WS_SELECT_TIMEOUT)
+            continue;
+        if (sel == WS_SELECT_FAIL) {
+            if (++fails >= 10)
+                break;
+            continue;
+        }
+        /* an exception alone is urgent data, which recv() would block on */
+        if (sel != WS_SELECT_RECV_READY)
+            break;
+
+        reads++;
+        rcv = (int)recv(fd, buf, (int)sizeof(buf), 0);
+        if (rcv == 0)
+            return WS_SUCCESS;
+        if (rcv < 0) {
+        #ifdef USE_WINDOWS_API
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK || err == WSAEINTR)
+                continue;
+        #else
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                continue;
+        #endif
+            /* a reset, the peer is gone */
+            return WS_SUCCESS;
+        }
+    }
+    return WS_WANT_READ;
+#else
+    (void)fd;
+    return WS_SUCCESS;
+#endif
+}
+
+
+/* Send MSG_DISCONNECT, then HalfCloseAndDrain(). A server ending a session
+ * normally wants the drain alone: the close exchange already ended the
+ * session, and OpenSSH's client fails on a disconnect that lands before it
+ * is done. The send retry gives up after ten one-second waits, so with the
+ * drain a peer that never hangs up costs up to twenty seconds. Returns what
+ * the drain returns, WS_WANT_WRITE if the disconnect is still queued, or
+ * the error that failed the send. The disconnect carries out whatever a
+ * short send left queued before it. */
+static INLINE int SendDisconnectAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    int ret;
+    int sel;
+    int timeouts = 0;
+
+    /* A retry flushes the disconnect a short send left queued. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    while (ret == WS_WANT_WRITE) {
+        sel = tcp_select_write(fd, 1);
+        if (sel == WS_SELECT_SEND_READY) {
+            ret = wolfSSH_SendDisconnect(ssh,
+                    WOLFSSH_DISCONNECT_BY_APPLICATION);
+        }
+        else if (sel == WS_SELECT_TIMEOUT || sel == WS_SELECT_FAIL) {
+            /* select() fails on EINTR too, so a failure gets the same
+             * bounded retry as a timeout. */
+            if (++timeouts >= 10)
+                return WS_WANT_WRITE;
+        }
+        else {
+            /* an exception alone is urgent data, not room to send */
+            return WS_WANT_WRITE;
+        }
+    }
+
+    /* The peer's disconnect ended the session first, so there is nothing
+     * to send, but its hang up is still worth waiting for. */
+    if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_DISCONNECT)
+        ret = WS_SUCCESS;
+    if (ret != WS_SUCCESS)
+        return ret;
+
+    return HalfCloseAndDrain(ssh, fd);
+}
+
+#elif defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)
+
+/* MQX has no half close, so the drain is one flushing worker pass, and no
+ * select helpers to retry with, so the disconnect gets one send. */
+static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    (void)fd;
+    if (wolfSSH_OutputPending(ssh))
+        (void)wolfSSH_worker(ssh, NULL);
+    return WS_SUCCESS;
+}
+
+static INLINE int SendDisconnectAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    int ret;
+
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_DISCONNECT)
+        ret = WS_SUCCESS;
+    if (ret != WS_SUCCESS)
+        return ret;
+    return HalfCloseAndDrain(ssh, fd);
 }
 
 #endif /* WOLFSSH_TEST_SERVER || WOLFSSH_TEST_CLIENT */

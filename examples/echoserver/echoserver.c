@@ -2352,54 +2352,22 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
     }
 
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
-        ret = wolfSSH_shutdown(threadCtx->ssh);
+        (void)wolfSSH_shutdown(threadCtx->ssh);
+        error = wolfSSH_get_error(threadCtx->ssh);
 
         /* peer hung up, stop shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        if (error == WS_SOCKET_ERROR_E) {
             ret = 0;
         }
-
-        /* The peer's close already retired the channel: a completed
-         * shutdown, not a failure. Left non-zero it sets quit, taking the
-         * server down after one session. */
-        if (ret == WS_CHANNEL_CLOSED) {
+        else {
+            /* The close exchange ended the session, and OpenSSH's client
+             * exits 255 on a disconnect that lands before it is done, so
+             * the half close alone says we are finished. */
+            ret = HalfCloseAndDrain(threadCtx->ssh, threadCtx->fd);
+            if (ret == WS_WANT_READ)
+                printf("Gave up waiting for the peer to hang up, "
+                       "closing the socket\n");
             ret = 0;
-        }
-
-        error = wolfSSH_get_error(threadCtx->ssh);
-        if (error != WS_SOCKET_ERROR_E &&
-                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
-            int maxAttempt = 10; /* make 10 attempts max before giving up */
-            int attempt;
-
-            for (attempt = 0; attempt < maxAttempt; attempt++) {
-                ret = wolfSSH_worker(threadCtx->ssh, NULL);
-                error = wolfSSH_get_error(threadCtx->ssh);
-
-                /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
-                    ret = 0;
-                    break;
-                }
-
-                /* peer hung up, stop shutdown */
-                if (ret == WS_SOCKET_ERROR_E) {
-                    ret = 0;
-                    break;
-                }
-
-                if (error == WS_WANT_READ || error == WS_WANT_WRITE) {
-                    /* Wanting read or wanting write. Clear ret. */
-                    ret = 0;
-                }
-                else {
-                    break;
-                }
-            }
-
-            if (attempt == maxAttempt) {
-                printf("Gave up on graceful shutdown, closing the socket\n");
-            }
         }
     }
 
