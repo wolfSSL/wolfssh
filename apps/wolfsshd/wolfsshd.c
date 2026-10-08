@@ -3792,6 +3792,7 @@ static void* HandleConnection(void* arg)
 {
     int ret = WS_SUCCESS;
     int error;
+    int graceExpired = 0;
 #ifdef _WIN32
     byte threaded = 0;
 #endif
@@ -3894,6 +3895,7 @@ static void* HandleConnection(void* arg)
                 ret != WS_SFTP_COMPLETE && ret != WS_SCP_INIT) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Failed login within grace period");
+                graceExpired = 1;
              }
 
     #ifdef _WIN32
@@ -4080,63 +4082,28 @@ static void* HandleConnection(void* arg)
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
         wolfSSH_Log(WS_LOG_INFO, "[SSHD] Attempting to close down connection");
         ret = wolfSSH_shutdown(ssh);
+        error = wolfSSH_get_error(ssh);
 
         /* peer hung up, stop shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        if (ret == WS_SOCKET_ERROR_E || error == WS_SOCKET_ERROR_E) {
             ret = 0;
-        }
-
-        error = wolfSSH_get_error(ssh);
-        if (error != WS_SOCKET_ERROR_E &&
-                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
-            int maxAttempt = 10; /* make 10 attempts max before giving up */
-            int attempt;
-
-            for (attempt = 0; attempt < maxAttempt; attempt++) {
-                ret = wolfSSH_worker(ssh, NULL);
-                error = wolfSSH_get_error(ssh);
-
-                /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
-                    ret = 0;
-                    break;
-                }
-
-                /* peer hung up, stop shutdown */
-                if (ret == WS_SOCKET_ERROR_E) {
-                    ret = 0;
-                    break;
-                }
-
-                if (ret == WS_FATAL_ERROR &&
-                   (error != WS_WANT_READ &&
-                    error != WS_WANT_WRITE)) {
-                    break;
-                }
-            #ifdef _WIN32
-                Sleep(1);
-            #else
-                usleep(100000);
-            #endif
-            }
-
-            if (attempt == maxAttempt) {
-                wolfSSH_Log(WS_LOG_INFO,
-                    "[SSHD] Gave up on graceful shutdown, closing the socket");
-            }
         }
     }
 
-    /* check if there is a response to the shutdown */
+    if (conn != NULL) {
+        /* The close exchange ended the session, so the half close alone
+         * says the daemon is done: OpenSSH's client exits 255 on a
+         * disconnect that lands before it is finished. A peer that let the
+         * grace time run out is not waited on a second time. */
+        if (error != WS_SOCKET_ERROR_E && !graceExpired &&
+                HalfCloseAndDrain(ssh, conn->fd) == WS_WANT_READ) {
+            wolfSSH_Log(WS_LOG_INFO,
+                "[SSHD] Gave up waiting for the peer to hang up, "
+                "closing the socket");
+        }
+    }
     wolfSSH_free(ssh);
     if (conn != NULL) {
-        byte sc[1024];
-        shutdown(conn->fd, 1);
-        /* Spin until socket closes. */
-        do {
-            ret = (int)recv(conn->fd, (char*)sc, 1024, 0);
-        } while (ret > 0);
-
         WCLOSESOCKET(conn->fd);
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);

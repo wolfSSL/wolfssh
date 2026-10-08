@@ -317,22 +317,23 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     }
 
     ret = wolfSSH_shutdown(ssh);
-    /* do not continue on with shutdown process if peer already disconnected.
-     * A peer EOF is not a disconnect: the channel is still open and its close
-     * is still owed, so the drain below is exactly what is wanted. */
-    if (ret != WS_CHANNEL_CLOSED && ret != WS_SOCKET_ERROR_E &&
-            wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E &&
-            wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
-        if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
-            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
-        }
-        else {
-            ret = wolfSSH_worker(ssh, NULL);
-            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED
-                    && ret != WS_EOF) {
-                WLOG(WS_LOG_DEBUG,
-                    "Failed to listen for close messages from the peer.");
-            }
+    /* WS_FATAL_ERROR only says to go look, the session has the detail. */
+    if (ret == WS_FATAL_ERROR)
+        ret = wolfSSH_get_error(ssh);
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_WANT_READ &&
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF &&
+            ret != WS_SOCKET_ERROR_E && ret != WS_DISCONNECT) {
+        WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
+    }
+    ret = WS_SUCCESS;
+
+    /* peer already hung up, just close */
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        ret = SendDisconnectAndDrain(ssh, sockFd);
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+            WLOG(WS_LOG_DEBUG,
+                 "Gave up on a graceful shutdown, closing the socket");
+            ret = WS_SUCCESS;
         }
     }
     WCLOSESOCKET(sockFd);
