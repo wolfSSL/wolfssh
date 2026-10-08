@@ -6702,6 +6702,9 @@ static int test_HighwaterQuietAfterBadPacket(void)
     wolfSSH_SetIOSend(ctx, CountIoSend);
     wolfSSH_SetIORecv(ctx, PacketIoRecv);
     wolfSSH_SetHighwaterCb(ctx, 1, HwTestCb);
+    /* The session is never keyed, and wolfSSH_SendIgnore() refuses an
+     * unkeyed send under strict KEX. */
+    wolfSSH_CTX_SetStrictKex(ctx, 0);
 
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL) { result = -1951; goto done; }
