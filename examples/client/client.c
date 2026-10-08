@@ -762,6 +762,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     char rxBuf[80];
     int ret = 0;
+    int error = 0;
+    int waitRet = WS_SUCCESS;
     int ch;
     int userEcc = 0;
     word16 port = wolfSshPort;
@@ -1250,26 +1252,41 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
-    /* do not continue on with shutdown process if peer already disconnected.
-     * A peer EOF is not a disconnect: the channel is still open and its close
-     * is still owed, so the drain below is exactly what is wanted. */
-    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
-            && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
-        if (ret != WS_SUCCESS && ret != WS_WANT_WRITE) {
-            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
-            wolfSSH_free(ssh);
-            wolfSSH_CTX_free(ctx);
-            err_sys("Sending the shutdown messages failed.");
-        }
-        ret = wolfSSH_worker(ssh, NULL);
-        if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED && ret != WS_EOF) {
-            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
-            wolfSSH_free(ssh);
-            wolfSSH_CTX_free(ctx);
-            err_sys("Failed to listen for close messages from the peer.");
+    error = wolfSSH_get_error(ssh);
+    /* WS_FATAL_ERROR only says to go look, the session has the detail. The
+     * teardown sends are the point of the call, so an unexpected result is
+     * worth a line, but the drain below still runs: the peer's close is
+     * still owed. */
+    if (ret == WS_FATAL_ERROR)
+        ret = error;
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_WANT_READ &&
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF &&
+            ret != WS_SOCKET_ERROR_E && ret != WS_DISCONNECT)
+        printf("Sending the shutdown messages failed, error %d\n", ret);
+    /* The exit status read below comes ahead of the peer's close, and the
+     * drain would discard it. A peer that disconnected, hung up or never
+     * closed still ended the session; any other error broke it. */
+    if (ret != WS_CHANNEL_CLOSED && error != WS_SOCKET_ERROR_E) {
+        waitRet = WaitForChannelClose(ssh, sockFd);
+        if (waitRet == WS_WANT_READ || waitRet == WS_DISCONNECT ||
+                waitRet == WS_SOCKET_ERROR_E)
+            waitRet = WS_SUCCESS;
+    }
+    ret = WS_SUCCESS;
+
+    /* peer already hung up, just close. A peer EOF is not a hang up: the
+     * channel is still open and its close is still owed, so the drain is
+     * exactly what is wanted there. */
+    if (error != WS_SOCKET_ERROR_E) {
+        ret = SendDisconnectAndDrain(ssh, sockFd);
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+            printf("Gave up on a graceful shutdown, "
+                   "closing the socket\n");
+            ret = WS_SUCCESS;
         }
     }
+    if (ret == WS_SUCCESS)
+        ret = waitRet;
     WCLOSESOCKET(sockFd);
 
 #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
