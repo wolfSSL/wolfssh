@@ -650,6 +650,22 @@ static int HashUpdate(wc_HashAlg* hash, enum wc_HashType type,
 }
 
 
+/* Hash an mpint's length and optional 0 pad byte as one update of
+ * LENGTH_SZ + pad bytes. For K the pad is secret: this avoids a branch on
+ * it and a zero-length update, which some hash ports reject. The hashed
+ * length still depends on the pad. */
+static INLINE int HashMpintHeader(wc_HashAlg* hash, enum wc_HashType type,
+    word32 sz, byte pad)
+{
+    byte hdr[LENGTH_SZ + 1];
+
+    pad &= 1;
+    c32toa(sz + pad, hdr);
+    hdr[LENGTH_SZ] = 0;
+    return HashUpdate(hash, type, hdr, LENGTH_SZ + pad);
+}
+
+
 /* returns WS_SUCCESS on success */
 static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
 {
@@ -3535,8 +3551,6 @@ int GenerateKey(byte hashId, byte keyId,
     wc_HashAlg hash;
     enum wc_HashType enmhashId = (enum wc_HashType)hashId;
     byte kPad = 0;
-    byte pad = 0;
-    byte kSzFlat[LENGTH_SZ];
     int digestSz;
     int ret;
 
@@ -3559,17 +3573,14 @@ int GenerateKey(byte hashId, byte keyId,
     /* Data can be define as string and mpint. (see Section 5 of RFC4251).
      * This padding is required in the case of an mpint, but not in the case of
      * a string. */
-    if (doKeyPad && (k[0] & 0x80)) kPad = 1;
-    c32toa(kSz + kPad, kSzFlat);
+    kPad = (byte)((doKeyPad != 0) & (k[0] >> 7));
 
     blocks = keySz / digestSz;
     remainder = keySz % digestSz;
 
     ret = wc_HashInit(&hash, enmhashId);
     if (ret == WS_SUCCESS)
-        ret = HashUpdate(&hash, enmhashId, kSzFlat, LENGTH_SZ);
-    if (ret == WS_SUCCESS && kPad)
-        ret = HashUpdate(&hash, enmhashId, &pad, 1);
+        ret = HashMpintHeader(&hash, enmhashId, kSz, kPad);
     if (ret == WS_SUCCESS)
         ret = HashUpdate(&hash, enmhashId, k, kSz);
     if (ret == WS_SUCCESS)
@@ -3599,10 +3610,7 @@ int GenerateKey(byte hashId, byte keyId,
                     curBlock++) {
                 ret = wc_HashInit(&hash, enmhashId);
                 if (ret != WS_SUCCESS) break;
-                ret = HashUpdate(&hash, enmhashId, kSzFlat, LENGTH_SZ);
-                if (ret != WS_SUCCESS) break;
-                if (kPad)
-                    ret = HashUpdate(&hash, enmhashId, &pad, 1);
+                ret = HashMpintHeader(&hash, enmhashId, kSz, kPad);
                 if (ret != WS_SUCCESS) break;
                 ret = HashUpdate(&hash, enmhashId, k, kSz);
                 if (ret != WS_SUCCESS) break;
@@ -3620,9 +3628,7 @@ int GenerateKey(byte hashId, byte keyId,
                 if (ret == WS_SUCCESS)
                     ret = wc_HashInit(&hash, enmhashId);
                 if (ret == WS_SUCCESS)
-                    ret = HashUpdate(&hash, enmhashId, kSzFlat, LENGTH_SZ);
-                if (ret == WS_SUCCESS && kPad)
-                    ret = HashUpdate(&hash, enmhashId, &pad, 1);
+                    ret = HashMpintHeader(&hash, enmhashId, kSz, kPad);
                 if (ret == WS_SUCCESS)
                     ret = HashUpdate(&hash, enmhashId, k, kSz);
                 if (ret == WS_SUCCESS)
@@ -7058,36 +7064,33 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
  */
 static int CreateMpint(byte* buf, word32* sz, byte* pad)
 {
-    word32 i;
+    word32 i, top, back;
 
     if (buf == NULL || sz == NULL || pad == NULL) {
         WLOG(WS_LOG_ERROR, "Internal argument error with CreateMpint");
         return WS_BAD_ARGUMENT;
     }
 
-    if (*sz == 0)
-        return WS_SUCCESS;
-
     /* check for leading 0's */
     for (i = 0; i < *sz; i++) {
         if (buf[i] != 0x00)
             break;
     }
-    /* all-zero buffer encodes as empty mpint per RFC 4251 */
+    /* empty or all-zero buffer encodes as empty mpint per RFC 4251 */
     if (i == *sz) {
         *pad = 0;
         *sz = 0;
         return WS_SUCCESS;
     }
 
-    *pad = (buf[i] & 0x80) ? 1 : 0;
-
-    /* if padding would be needed and have leading 0's already then do not add
-     * extra 0's */
-    if (i > 0 && *pad == 1) {
-        i = i - 1;
-        *pad = 0;
-    }
+    /* If padding is needed and there is a leading 0 already, keep one 0
+     * instead of adding a pad byte. No branch on the MSB, which is secret
+     * for K. The leading-zero count still shows in the loop above and the
+     * move below; the mpint length depends on it by definition. */
+    top = (word32)buf[i] >> 7;
+    back = top & (word32)(i > 0);
+    i -= back;
+    *pad = (byte)(top ^ back);
 
     /* if i is still greater than 0 then the buffer needs shifted to remove
      * leading 0's */
@@ -8834,13 +8837,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         }
 
         if (ret == 0) {
-            c32toa(ssh->kSz + kPad, scratchLen);
-            ret = HashUpdate(hash, hashId, scratchLen, LENGTH_SZ);
-        }
-
-        if ((ret == 0) && (kPad)) {
-            scratchLen[0] = 0;
-            ret = HashUpdate(hash, hashId, scratchLen, 1);
+            ret = HashMpintHeader(hash, hashId, ssh->kSz, kPad);
         }
 
         if (ret == 0) {
@@ -18558,6 +18555,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             c32toa(fSz + fPad, scratchLen);
             ret = HashUpdate(hash, hashId, scratchLen, LENGTH_SZ);
         }
+        /* f is public, so branching on its pad is fine. */
         if ((ret == 0) && (fPad)) {
             scratchLen[0] = 0;
             ret = HashUpdate(hash, hashId, scratchLen, 1);
@@ -18571,12 +18569,7 @@ int SendKexDhReply(WOLFSSH* ssh)
             ret = CreateMpint(ssh->k, &ssh->kSz, &kPad);
         }
         if (ret == 0) {
-            c32toa(ssh->kSz + kPad, scratchLen);
-            ret = HashUpdate(hash, hashId, scratchLen, LENGTH_SZ);
-        }
-        if ((ret == 0) && (kPad)) {
-            scratchLen[0] = 0;
-            ret = HashUpdate(hash, hashId, scratchLen, 1);
+            ret = HashMpintHeader(hash, hashId, ssh->kSz, kPad);
         }
         if (ret == 0) {
             ret = HashUpdate(hash, hashId, ssh->k, ssh->kSz);
@@ -26049,6 +26042,11 @@ int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz)
 {
     return ChannelPutData(channel, data, dataSz);
+}
+
+int wolfSSH_TestCreateMpint(byte* buf, word32* sz, byte* pad)
+{
+    return CreateMpint(buf, sz, pad);
 }
 
 int wolfSSH_TestBuildNameList(char* buf, word32 bufSz,
