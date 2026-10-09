@@ -1278,6 +1278,16 @@ struct WOLFSSH {
     void*  scpSendCtx;            /* SCP send callback context handle */
     #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     ScpSendCtx scpSendCbCtx;      /* used in default case to for send cb ctx */
+    /* Default receive callback: the directory it writes into, the base path
+     * plus every NEW_DIR entered, kept per session in place of the process
+     * working directory. DEFAULT_SCP_FILE_NAME_SZ bytes. */
+    char*  scpRecvPath;
+    word32 scpRecvBaseSz;         /* length of the base path in scpRecvPath */
+    #ifdef WOLFSSH_HAVE_DIRFD
+    WFD    scpRecvDirFd;          /* that directory, open, or -1 */
+    /* the identities of its ancestors up to the base, nearest first */
+    struct ScpRecvDir* scpRecvDirs;
+    #endif
     #endif
 #endif
     byte connReset;
@@ -2346,6 +2356,7 @@ WOLFSSH_LOCAL int wsScpSendCallback(WOLFSSH* ssh, int state,
                                     byte* buf, word32 bufSz, void* ctx);
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
 WOLFSSH_LOCAL void ScpSendCtxFreeDirs(void* fs, ScpSendCtx* ctx, void* heap);
+WOLFSSH_LOCAL void ScpRecvPathFree(WOLFSSH* ssh, void* heap);
 #endif
 #endif
 
