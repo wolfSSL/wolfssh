@@ -5011,6 +5011,26 @@ static void TestServerUserauthBlockedBeforeKeyed(WOLFSSH* ssh)
 }
 
 
+/* Keyed is not enough: userauth waits for the service request. */
+static void TestServerUserauthBlockedBeforeServiceRequest(WOLFSSH* ssh)
+{
+    ResetSession(ssh);
+    ssh->acceptState = ACCEPT_KEYED;
+
+    AssertFalse(wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV));
+    AssertFalse(wolfSSH_TestIsMessageAllowed(ssh,
+            MSGID_USERAUTH_INFO_RESPONSE, WS_MSG_RECV));
+
+    ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
+
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV));
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh,
+            MSGID_USERAUTH_INFO_RESPONSE, WS_MSG_RECV));
+}
+
+
 /* One packet fed to a keyed but unauthenticated server. The cases below
  * differ only in the packet and the answer it draws. */
 static void RunServerMsgIdAtKeyed(const byte* pkt, word32 pktSz,
@@ -7906,6 +7926,82 @@ static void TestSameUserRetryAllowed(void)
     AssertTrue(harness.io.outSz > 0);
     AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
             MSGID_USERAUTH_FAILURE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static int AcceptPasswordUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+
+    authCbInvoked = 1;
+    return (authType == WOLFSSH_USERAUTH_PASSWORD) ?
+            WOLFSSH_USERAUTH_SUCCESS : WOLFSSH_USERAUTH_FAILURE;
+}
+
+/* A userauth request without a service request draws a disconnect, not a
+ * SERVICE_ACCEPT, even with a password the callback accepts. */
+static void TestUserAuthBeforeServiceRequestDisconnects(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthPasswordRequest("alice", "pw", in, sizeof(in));
+
+    ResetAuthCbRecord();
+    InitChannelOpenHarness(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, AcceptPasswordUserAuthCb);
+    harness.ssh->acceptState = ACCEPT_KEYED;
+
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(authCbInvoked, 0);
+    AssertIntEQ(harness.ssh->acceptState, ACCEPT_KEYED);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+    AssertTrue(harness.ssh->disconnected);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A userauth request queued right behind the service request draws
+ * SERVICE_ACCEPT, then its answer. */
+static void TestUserAuthPipelinedAfterServiceRequest(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[32];
+    byte in[256];
+    word32 inSz;
+    word32 idx = 0;
+    word32 off;
+
+    idx = AppendString(payload, sizeof(payload), idx, "ssh-userauth");
+    inSz = WrapPacket(MSGID_SERVICE_REQUEST, payload, idx, in, sizeof(in));
+    inSz += BuildUserAuthPasswordRequest("alice", "pw",
+            in + inSz, sizeof(in) - inSz);
+
+    ResetAuthCbRecord();
+    InitChannelOpenHarness(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, AcceptPasswordUserAuthCb);
+    harness.ssh->acceptState = ACCEPT_KEYED;
+
+    /* Stops for want of the channel open that would follow. */
+    AssertIntEQ(wolfSSH_accept(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_WANT_READ);
+    AssertIntEQ(authCbInvoked, 1);
+    AssertIntEQ(harness.ssh->acceptState, ACCEPT_SERVER_USERAUTH_SENT);
+    AssertIntEQ(harness.io.inOff, harness.io.inSz);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_SERVICE_ACCEPT);
+    off = NextPacketOffset(harness.io.out, harness.io.outSz);
+    AssertIntEQ(ParseMsgId(harness.io.out + off, harness.io.outSz - off),
+            MSGID_USERAUTH_SUCCESS);
+    off += NextPacketOffset(harness.io.out + off, harness.io.outSz - off);
+    AssertIntEQ(off, harness.io.outSz);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -18823,6 +18919,7 @@ int main(int argc, char** argv)
     TestServerChannelBlockedBeforeAuth(serverSsh);
     TestServerChannelAllowedAfterAuth(serverSsh);
     TestServerUserauthBlockedBeforeKeyed(serverSsh);
+    TestServerUserauthBlockedBeforeServiceRequest(serverSsh);
     TestServerHighMsgIdBeforeAuthDisconnects();
     TestServerUnknownMsgIdBeforeAuthUnimplemented();
     TestServerKnownAuthMsgIdBeforeAuthDisconnects();
@@ -18892,6 +18989,8 @@ int main(int argc, char** argv)
     TestSecondSessionChannelRejected();
     TestUsernameChangeDisconnects();
     TestSameUserRetryAllowed();
+    TestUserAuthBeforeServiceRequestDisconnects();
+    TestUserAuthPipelinedAfterServiceRequest();
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     TestKbInfoResponseCountMismatchSendsFailure();
     TestKbInfoResponseMismatchKeepsFraming();
