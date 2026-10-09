@@ -39,6 +39,7 @@
     #include <wolfssh/agent.h>
 #endif
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 #include "examples/client/client.h"
 #include "apps/wolfssh/common.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
@@ -267,7 +268,7 @@ typedef struct thread_args {
     WOLFSSH* ssh;
     wolfSSL_Mutex lock;
     byte rawMode;
-    byte quit;
+    volatile byte quit; /* set by the main thread, read by the workers */
     int  readError;
 } thread_args;
 
@@ -515,21 +516,29 @@ static int windowMonitor(thread_args* args)
 #endif /* WOLFSSH_TERM */
 
 
-static THREAD_RET readInput(void* in)
+#define INPUT_BUF_SZ 256
+
+#ifdef _POSIX_THREADS
+/* The main thread cancels readInput() inside its read(). */
+static void WipeInput(void* buf)
 {
-    byte buf[256];
-    int  bufSz = sizeof(buf);
-    thread_args* args = (thread_args*)in;
+    wc_ForceZero(buf, INPUT_BUF_SZ);
+}
+#endif
+
+
+static void readInputLoop(thread_args* args, byte* buf, int bufSz)
+{
     int ret = 0;
     int err = 0;
     int queued = 0;
-    int resend = 0;
     word32 sz = 0;
+    word32 off = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
 #endif
 
-    while (ret >= 0) {
+    while (ret >= 0 && !args->quit) {
         WMEMSET(buf, 0, bufSz);
     #ifdef USE_WINDOWS_API
         /* Using A version to avoid potential 2 byte chars */
@@ -540,43 +549,78 @@ static THREAD_RET readInput(void* in)
         ret = (int)read(STDIN_FILENO, buf, bufSz -1);
         sz  = (word32)ret;
     #endif
+        if (args->quit) {
+            /* The session is over and the read was broken to end this
+             * thread. */
+            break;
+        }
         if (ret <= 0) {
             fprintf(stderr, "Error reading stdin\n");
             break;
         }
+        /* A send takes only what the peer's window and packet size allow
+         * and says how much. Send again from there until all of buf is
+         * taken. */
+        off = 0;
         do {
             /* lock SSH structure access */
             wc_LockMutex(&args->lock);
-            ret = wolfSSH_stream_send(args->ssh, buf, sz);
+            ret = wolfSSH_stream_send(args->ssh, buf + off, sz - off);
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
             /* Data taken with a positive return can still be queued in the
              * session, waiting on the socket. */
             queued = (wolfSSH_get_error(args->ssh) == WS_WANT_WRITE);
             wc_UnLockMutex(&args->lock);
-            resend = 0;
-            if (err == WS_REKEYING) {
-                /* give readPeer() the lock to finish the rekey, then
-                 * send this buffer again */
+            if (ret > 0) {
+                off += (word32)ret;
+                if (queued && FlushQueuedSend(args->ssh, &args->lock)
+                        != WS_SUCCESS) {
+                    ret = WS_WANT_WRITE;
+                    break;
+                }
+            }
+            else if (err == WS_REKEYING || err == WS_WINDOW_FULL) {
+                /* give readPeer() the lock to finish the rekey or take the
+                 * peer's window adjust, then send again */
                 PauseForSocket();
-                resend = 1;
             }
-            else if (ret <= 0 && err == WS_WANT_WRITE) {
+            else if (err == WS_WANT_WRITE) {
                 /* None of buf was taken. Push out what is queued, then send
-                 * buf again. */
-                resend = (FlushQueuedSend(args->ssh, &args->lock)
-                        == WS_SUCCESS);
+                 * again. */
+                if (FlushQueuedSend(args->ssh, &args->lock) != WS_SUCCESS) {
+                    break;
+                }
             }
-        } while (resend);
+            else {
+                break;
+            }
+        } while (off < sz && !args->quit);
         if (ret <= 0) {
-            fprintf(stderr, "Couldn't send data\n");
-            break;
-        }
-        if (queued && FlushQueuedSend(args->ssh, &args->lock) != WS_SUCCESS) {
-            fprintf(stderr, "Couldn't send data\n");
+            if (!args->quit) {
+                fprintf(stderr, "Couldn't send data\n");
+            }
             break;
         }
     }
+}
+
+
+/* glibc builds pthread_cleanup_push() on setjmp, so the loop and its locals
+ * stay out of this function. */
+static THREAD_RET readInput(void* in)
+{
+    byte buf[INPUT_BUF_SZ];
+
+    /* What was typed into the session, maybe a password, is still in buf. */
+#ifdef _POSIX_THREADS
+    pthread_cleanup_push(WipeInput, buf);
+    readInputLoop((thread_args*)in, buf, sizeof(buf));
+    pthread_cleanup_pop(1);
+#else
+    readInputLoop((thread_args*)in, buf, sizeof(buf));
+    wc_ForceZero(buf, sizeof(buf));
+#endif
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
@@ -596,6 +640,49 @@ static int AgentRelayHeld(int code, int* wantsWrite)
 
 #endif
 
+
+/* Write all of buf to the output, since one write may take only a prefix
+ * of it. Returns 0, or -1 when a write fails or takes nothing. */
+#ifdef USE_WINDOWS_API
+static int WriteAll(HANDLE out, const byte* buf, DWORD sz)
+{
+    DWORD off = 0;
+    DWORD cnt = 0;
+
+    while (off < sz) {
+        if (WriteFile(out, buf + off, sz - off, &cnt, NULL) == FALSE
+                || cnt == 0) {
+            return -1;
+        }
+        off += cnt;
+    }
+
+    return 0;
+}
+#else
+static int WriteAll(int out, const byte* buf, word32 sz)
+{
+    word32 off = 0;
+    int cnt;
+
+    while (off < sz) {
+        cnt = (int)write(out, buf + off, sz - off);
+        if (cnt > 0) {
+            off += (word32)cnt;
+        }
+        else if (cnt < 0 && errno == EINTR) {
+            continue;
+        }
+        else {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+#endif /* USE_WINDOWS_API */
+
+
 static THREAD_RET readPeer(void* in)
 {
     byte buf[256];
@@ -607,6 +694,7 @@ static THREAD_RET readPeer(void* in)
     int bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
 #endif
     fd_set readSet;
     fd_set writeSet;
@@ -708,11 +796,12 @@ static THREAD_RET readPeer(void* in)
                     ret = wolfSSH_extended_data_read(args->ssh, buf, bufSz - 1);
                     if (ret < 0)
                         err_sys("Extended data read failed.");
-                    buf[bufSz - 1] = '\0';
                 #ifdef USE_WINDOWS_API
-                    fprintf(stderr, "%s", buf);
+                    if (WriteAll(stderrHandle, buf, (DWORD)ret) < 0) {
+                        fprintf(stderr, "Issue with stderr write\n");
+                    }
                 #else
-                    if (write(STDERR_FILENO, buf, ret) < 0) {
+                    if (WriteAll(STDERR_FILENO, buf, (word32)ret) < 0) {
                         perror("Issue with stderr write ");
                     }
                 #endif
@@ -770,16 +859,11 @@ static THREAD_RET readPeer(void* in)
             }
             else {
             #ifdef USE_WINDOWS_API
-                DWORD writtn = 0;
-            #endif
-                buf[bufSz - 1] = '\0';
-
-            #ifdef USE_WINDOWS_API
-                if (WriteFile(stdoutHandle, buf, (DWORD)ret, &writtn, NULL) == FALSE) {
+                if (WriteAll(stdoutHandle, buf, (DWORD)ret) < 0) {
                     err_sys("Failed to write to stdout handle");
                 }
             #else
-                if (write(STDOUT_FILENO, buf, ret) < 0) {
+                if (WriteAll(STDOUT_FILENO, buf, (word32)ret) < 0) {
                     perror("write to stdout error ");
                 }
             #endif
@@ -795,6 +879,8 @@ static THREAD_RET readPeer(void* in)
         if (stop)
             break;
     }
+    /* The last of the session's output is still in buf. */
+    wc_ForceZero(buf, sizeof(buf));
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
@@ -1310,9 +1396,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
         wc_InitMutex(&arg.lock);
         arg.ssh = ssh;
+        arg.quit = 0;
         arg.readError = 0;
 #ifdef WOLFSSH_TERM
-        arg.quit = 0;
         if (!wolfSSH_SEMAPHORE_Init(&windowSem, 0)) {
             err_sys("Couldn't initialize window semaphore.");
         }
@@ -1335,9 +1421,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         pthread_create(&thread[1], NULL, readInput, (void*)&arg);
         pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
         pthread_join(thread[2], NULL);
+        arg.quit = 1;
 #ifdef WOLFSSH_TERM
         /* Wake the windowMonitor thread so it can exit. */
-        arg.quit = 1;
         signal(SIGWINCH, SIG_DFL);
         wolfSSH_SEMAPHORE_Post(&windowSem);
         pthread_join(thread[0], NULL);
@@ -1354,6 +1440,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 
         arg.ssh     = ssh;
         arg.rawMode = rawMode;
+        arg.quit    = 0;
         arg.readError = 0;
         wc_InitMutex(&arg.lock);
 
@@ -1372,6 +1459,14 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         thread[0] = CreateThread(NULL, 0, readInput, (void*)&arg, 0, 0);
         thread[1] = CreateThread(NULL, 0, readPeer, (void*)&arg, 0, 0);
         WaitForSingleObject(thread[1], INFINITE);
+        /* readInput() is blocked in ReadConsoleA() and would use the session
+         * after it is freed. Break the read and wait for the thread to see
+         * quit. The cancel finds nothing while the read is not yet pending,
+         * so repeat it until the thread is gone. */
+        InterlockedOr8((volatile CHAR*)&arg.quit, 1);
+        do {
+            CancelSynchronousIo(thread[0]);
+        } while (WaitForSingleObject(thread[0], 100) == WAIT_TIMEOUT);
         CloseHandle(thread[0]);
         CloseHandle(thread[1]);
         ioErr = arg.readError;
