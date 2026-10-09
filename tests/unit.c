@@ -2277,9 +2277,20 @@ done3:
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_CTR)
+/* Counts receive calls. */
+static int CountRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(sz);
+    (*(word32*)ctx)++;
+    return WS_CBIO_ERR_WANT_READ;
+}
+
 /* Verify DoReceive rejects an AES-CTR packet aligned as a body alone but
  * misaligned with the length field counted. RFC 4253 section 6 covers
- * packet_length too, so a packet_length of 16 is a 20-byte total. */
+ * packet_length too, so a packet_length of 16 is a 20-byte total. It fails
+ * at once, with no CBC-style discard. */
 static int test_DoReceive_RejectsMisalignedCtr(void)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -2296,15 +2307,18 @@ static int test_DoReceive_RejectsMisalignedCtr(void)
     byte pkt[UINT32_SZ + 16];
     byte record[UINT32_SZ + 16];
     word32 totalLen = (word32)sizeof(record);
+    word32 recvCalls = 0;
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
     if (ctx == NULL)
         return -800;
+    wolfSSH_SetIORecv(ctx, CountRecv);
     ssh = wolfSSH_new(ctx);
     if (ssh == NULL) {
         wolfSSH_CTX_free(ctx);
         return -801;
     }
+    wolfSSH_SetIOReadCtx(ssh, &recvCalls);
 
     WMEMSET(key, 0x4B, sizeof(key));
     WMEMSET(iv, 0x27, sizeof(iv));
@@ -2366,6 +2380,10 @@ static int test_DoReceive_RejectsMisalignedCtr(void)
         result = -808;
         goto done5;
     }
+    if (recvCalls != 0) {
+        result = -809;
+        goto done5;
+    }
 
 done5:
     if (aesInited)
@@ -2375,6 +2393,192 @@ done5:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_CTR */
+
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_CBC) && \
+    !defined(WOLFSSH_NO_HMAC_SHA2_256)
+typedef struct {
+    word32 fed;
+    word32 calls;
+    word32 closeAt;
+} CbcDiscardIo;
+
+/* Feeds filler in short reads, with a WS_WANT_READ before each one. Closes
+ * the connection once closeAt bytes are fed, if closeAt is set. */
+static int CbcDiscardRecv(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    CbcDiscardIo* io = (CbcDiscardIo*)ctx;
+
+    WOLFSSH_UNUSED(ssh);
+    if (io->closeAt != 0 && io->fed >= io->closeAt)
+        return WS_CBIO_ERR_CONN_CLOSE;
+    if ((io->calls++ & 1) == 0)
+        return WS_CBIO_ERR_WANT_READ;
+    if (sz > 1000)
+        sz = 1000;
+    WMEMSET(buf, 0x5A, sz);
+    io->fed += sz;
+    return (int)sz;
+}
+
+/* Verify a rejected AES-CBC packet is read out to MAX_PACKET_SZ bytes
+ * before DoReceive fails, whether the length check or the MAC rejects it,
+ * so the failure point does not reveal the decrypted length. A discard cut
+ * short by the peer closing still reports the rejection, and calling again
+ * after the discard reads nothing more. */
+static int test_DoReceive_CbcRejectDiscards(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    Aes encAes;
+    CbcDiscardIo io;
+    int ret;
+    int result = 0;
+    int aesInited = 0;
+    int i;
+    word32 step;
+    word32 fed;
+    byte key[AES_128_KEY_SIZE];
+    byte iv[AES_BLOCK_SIZE];
+    /* Two blocks of packet then a MAC: packet_length=28, padding_length=22,
+     * msgId, uint32 string_len=0, 22 pad bytes. */
+    byte pkt[2 * AES_BLOCK_SIZE];
+    byte record[2 * AES_BLOCK_SIZE + WC_SHA256_DIGEST_SIZE];
+    struct {
+        word32 packetLen;
+        word32 readSz;
+        int error;
+        word32 lead;    /* bytes ahead of the packet in inputBuffer */
+        word32 closeAt; /* peer closes after this many filler bytes */
+    } cases[] = {
+        { 20, AES_BLOCK_SIZE, WS_BUFFER_E, 0, 0 },        /* misaligned */
+        { 0x7FFFFFF0, AES_BLOCK_SIZE, WS_OVERFLOW_E, 0, 0 }, /* too long */
+        { 28, (word32)sizeof(record), WS_VERIFY_MAC_E, 0, 0 }, /* bad MAC */
+        { 20, AES_BLOCK_SIZE, WS_BUFFER_E, 7, 0 },        /* offset start */
+        { 28, (word32)sizeof(record), WS_VERIFY_MAC_E, 0, 5000 } /* closed */
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -840;
+    wolfSSH_SetIORecv(ctx, CbcDiscardRecv);
+    ret = wc_AesInit(&encAes, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        result = -841;
+        goto done6;
+    }
+    aesInited = 1;
+
+    WMEMSET(key, 0x3C, sizeof(key));
+    WMEMSET(iv, 0x61, sizeof(iv));
+
+    for (i = 0; i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            result = -842;
+            goto done6;
+        }
+        WMEMSET(&io, 0, sizeof(io));
+        io.closeAt = cases[i].closeAt;
+        wolfSSH_SetIOReadCtx(ssh, &io);
+
+        WMEMSET(pkt, 0, sizeof(pkt));
+        pkt[0] = (byte)(cases[i].packetLen >> 24);
+        pkt[1] = (byte)(cases[i].packetLen >> 16);
+        pkt[2] = (byte)(cases[i].packetLen >> 8);
+        pkt[3] = (byte)(cases[i].packetLen);
+        pkt[4] = 22;            /* padding_length */
+        pkt[5] = MSGID_IGNORE;
+
+        if (wc_AesSetKey(&encAes, key, sizeof(key), iv,
+                    AES_ENCRYPTION) != 0
+                || wc_AesCbcEncrypt(&encAes, record, pkt,
+                    sizeof(pkt)) != 0) {
+            result = -843;
+            goto done6;
+        }
+        /* The MAC is zeros, which is wrong for any key. */
+        WMEMSET(record + sizeof(pkt), 0, WC_SHA256_DIGEST_SIZE);
+
+        if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+                    INVALID_DEVID) != 0
+                || wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key),
+                    iv, AES_DECRYPTION) != 0) {
+            result = -844;
+            goto done6;
+        }
+        ssh->decryptCipher.isInit = 1;
+        ssh->decryptCipher.cipherType = ID_AES128_CBC;
+        ssh->peerEncryptId = ID_AES128_CBC;
+        ssh->peerAeadMode = 0;
+        ssh->peerBlockSz = AES_BLOCK_SIZE;
+        ssh->peerMacId = ID_HMAC_SHA2_256;
+        ssh->peerMacSz = WC_SHA256_DIGEST_SIZE;
+        WMEMSET(ssh->peerKeys.macKey, 0xA5, WC_SHA256_DIGEST_SIZE);
+        ssh->peerKeys.macKeySz = WC_SHA256_DIGEST_SIZE;
+        ssh->peerSeq = 0;
+        ssh->curSz = 0;
+        ssh->processReplyState = PROCESS_INIT;
+        ssh->error = 0;
+
+        /* Preload what DoReceive reads before it rejects the packet. */
+        ShrinkBuffer(&ssh->inputBuffer, 1);
+        if (GrowBuffer(&ssh->inputBuffer, cases[i].lead + cases[i].readSz)
+                != WS_SUCCESS) {
+            result = -845;
+            goto done6;
+        }
+        WMEMSET(ssh->inputBuffer.buffer, 0xEE, cases[i].lead);
+        WMEMCPY(ssh->inputBuffer.buffer + cases[i].lead, record,
+                cases[i].readSz);
+        ssh->inputBuffer.length = cases[i].lead + cases[i].readSz;
+        ssh->inputBuffer.idx = cases[i].lead;
+
+        step = 0;
+        do {
+            ret = wolfSSH_TestDoReceive(ssh);
+        } while (ret == WS_FATAL_ERROR && ssh->error == WS_WANT_READ
+                && ++step < 1000);
+
+        if (ret != WS_FATAL_ERROR) {
+            result = -846;
+            goto done6;
+        }
+        if (ssh->error != cases[i].error) {
+            result = -847;
+            goto done6;
+        }
+        fed = cases[i].closeAt != 0 ?
+                cases[i].closeAt : MAX_PACKET_SZ - cases[i].readSz;
+        if (io.fed != fed) {
+            result = -848;
+            goto done6;
+        }
+
+        /* Again after the discard: same error, nothing more read. */
+        if (ssh->processReplyState != PROCESS_DISCARD) {
+            result = -849;
+            goto done6;
+        }
+        ret = wolfSSH_TestDoReceive(ssh);
+        if (ret != WS_FATAL_ERROR || ssh->error != cases[i].error
+                || io.fed != fed) {
+            result = -850;
+            goto done6;
+        }
+
+        wolfSSH_free(ssh);
+        ssh = NULL;
+    }
+
+done6:
+    if (aesInited)
+        wc_AesFree(&encAes);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_CBC && HMAC-SHA2-256 */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
@@ -23011,6 +23215,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_CTR)
     unitResult = test_DoReceive_RejectsMisalignedCtr();
     printf("DoReceiveRejectsMisalignedCtr: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_CBC) && \
+    !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    unitResult = test_DoReceive_CbcRejectDiscards();
+    printf("DoReceiveCbcRejectDiscards: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
