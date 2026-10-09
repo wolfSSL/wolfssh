@@ -5696,6 +5696,8 @@ int GetUint32(word32* v, const byte* buf, word32 len, word32* idx)
 {
     int result = WS_BUFFER_E;
 
+    /* The *idx < len test keeps len - *idx from wrapping and leaves
+     * *idx <= len on success; GetSize()'s bound depends on both. */
     if (*idx < len && UINT32_SZ <= len - *idx) {
         ato32(buf + *idx, v);
         *idx += UINT32_SZ;
@@ -5744,15 +5746,8 @@ int GetSkip(const byte* buf, word32 len, word32* idx)
     word32 sz;
 
     result = GetSize(&sz, buf, len, idx);
-
-    if (result == WS_SUCCESS) {
-        result = WS_BUFFER_E;
-
-        if (*idx <= len && sz <= len - *idx) {
-            *idx += sz;
-            result = WS_SUCCESS;
-        }
-    }
+    if (result == WS_SUCCESS)
+        *idx += sz;
 
     return result;
 }
@@ -5878,7 +5873,15 @@ int GetStringRef(word32* strSz, const byte** str,
 
 /* Name-list to IDs. *idListSz is capacity in, count out, and bounds every
  * store. One ID per name at most, and names are capped at
- * WOLFSSH_MAX_NAMELIST_CNT, so an idList that size never trips the bound. */
+ * WOLFSSH_MAX_NAMELIST_CNT, so an idList that size never trips the bound.
+ * An empty element ends the list, silently dropping every name past it, as
+ * OpenSSH's match_list() does with a peer proposal. That is safe for the
+ * library's own lists on two counts: the canned defaults are built one
+ * "name," at a time, so they carry nothing but the trailing comma that
+ * AlgoListSz() strips, and a caller's list reaches those fields only
+ * through the ssh.c setters, which run CheckAlgoList() and reject every
+ * other empty element. A list built at runtime through neither route would
+ * lose algorithms; truncation is not an error, only a debug log. */
 static int GetNameListRaw(byte* idList, word32* idListSz,
         const byte* nameList, word32 nameListSz)
 {
@@ -5904,8 +5907,7 @@ static int GetNameListRaw(byte* idList, word32* idListSz,
      * length of the list. Find the commas, or end of list, and then decode
      * the values. A name has a non-zero length, RFC 4251 section 5, so an
      * empty element -- what a leading, doubled, or trailing comma leaves
-     * behind -- ends the list. Names past it are dropped rather than
-     * rejected, which is what OpenSSH's match_list() does with a peer list.
+     * behind -- ends the list, per the contract above.
      */
 
     for (i = 0; i <= nameListSz; i++) {
@@ -13777,13 +13779,7 @@ static int DoChannelData(WOLFSSH* ssh,
     ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
         ret = GetSize(&dataSz, buf, len, &begin);
-
-    /* Validate dataSz */
-    if (ret == WS_SUCCESS) {
-        if (len < begin) {
-            ret = WS_RECV_OVERFLOW_E;
-        }
-    }
+    /* GetSize() already enforced dataSz <= len - begin. */
 
     if (ret == WS_SUCCESS) {
         *idx = begin + dataSz;

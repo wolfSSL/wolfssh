@@ -127,6 +127,8 @@ enum WS_ErrorCodes {
     WS_CERT_PROFILE_E       = -1086, /* Cert doesn't meet profile reqs */
     WS_CERT_KEY_SIZE_E      = -1087, /* Key size error */
     WS_CTX_KEY_COUNT_E      = -1088, /* Adding too many private keys */
+    /* WS_MATCH_UA_KEY_ID_E is retired: no longer returned, kept so an
+     * application naming it still builds. Do not reuse the value. */
     WS_MATCH_UA_KEY_ID_E    = -1089, /* Match user auth key key fail */
     WS_KEY_AUTH_MAGIC_E     = -1090, /* OpenSSH key auth magic check fail */
     WS_KEY_CHECK_VAL_E      = -1091, /* OpenSSH key check value fail */

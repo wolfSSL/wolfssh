@@ -1724,6 +1724,9 @@ WOLFSSH_LOCAL int GetUint32(word32* v,
 WOLFSSH_LOCAL int GetUint64(word64* v,
         const byte* buf, word32 len, word32* idx);
 #endif
+/* On success *idx has advanced past the length word and *v <= len - *idx,
+ * so *idx + *v never wraps or passes len: a caller may read *v bytes at
+ * buf + *idx without rechecking. Callers rely on this bound. */
 WOLFSSH_LOCAL int GetSize(word32* v,
         const byte* buf, word32 len, word32* idx);
 WOLFSSH_LOCAL int GetSkip(const byte* buf, word32 len, word32* idx);
@@ -1819,9 +1822,11 @@ WOLFSSH_LOCAL int SendExtInfo(WOLFSSH* ssh);
 WOLFSSH_LOCAL int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 WOLFSSH_LOCAL int SendUserAuthKeyboardResponse(WOLFSSH* ssh);
-/* Send an INFO_REQUEST for keyboard-interactive auth. Set counted when the
- * caller already charged a failure for this message, so a declined setup
- * callback doesn't charge it twice. */
+/* Runs the keyboard-interactive setup callback and sends an INFO_REQUEST for
+ * the prompts it returns, marking the exchange outstanding. Counts its own
+ * auth failures, so callers must not charge one: a declined setup sends a
+ * USERAUTH_FAILURE, a rejected setup also returns WS_USER_AUTH_E, and a setup
+ * that would block returns WS_AUTH_PENDING uncharged. */
 WOLFSSH_LOCAL int SendUserAuthKeyboardRequest(WOLFSSH* ssh,
         WS_UserAuthData* authData);
 #endif
