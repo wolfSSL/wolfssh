@@ -39,6 +39,7 @@
     #include <wolfssh/agent.h>
 #endif
 #include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/memory.h>
 #include "examples/client/client.h"
 #include "apps/wolfssh/common.h"
 #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32)
@@ -515,11 +516,19 @@ static int windowMonitor(thread_args* args)
 #endif /* WOLFSSH_TERM */
 
 
-static THREAD_RET readInput(void* in)
+#define INPUT_BUF_SZ 256
+
+#ifdef _POSIX_THREADS
+/* The main thread cancels readInput() inside its read(). */
+static void WipeInput(void* buf)
 {
-    byte buf[256];
-    int  bufSz = sizeof(buf);
-    thread_args* args = (thread_args*)in;
+    wc_ForceZero(buf, INPUT_BUF_SZ);
+}
+#endif
+
+
+static void readInputLoop(thread_args* args, byte* buf, int bufSz)
+{
     int ret = 0;
     int err = 0;
     int queued = 0;
@@ -587,6 +596,24 @@ static THREAD_RET readInput(void* in)
             break;
         }
     }
+}
+
+
+/* glibc builds pthread_cleanup_push() on setjmp, so the loop and its locals
+ * stay out of this function. */
+static THREAD_RET readInput(void* in)
+{
+    byte buf[INPUT_BUF_SZ];
+
+    /* What was typed into the session, maybe a password, is still in buf. */
+#ifdef _POSIX_THREADS
+    pthread_cleanup_push(WipeInput, buf);
+    readInputLoop((thread_args*)in, buf, sizeof(buf));
+    pthread_cleanup_pop(1);
+#else
+    readInputLoop((thread_args*)in, buf, sizeof(buf));
+    wc_ForceZero(buf, sizeof(buf));
+#endif
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
@@ -845,6 +872,8 @@ static THREAD_RET readPeer(void* in)
         if (stop)
             break;
     }
+    /* The last of the session's output is still in buf. */
+    wc_ForceZero(buf, sizeof(buf));
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
