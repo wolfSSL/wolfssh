@@ -9050,18 +9050,69 @@ static void TestClientRefusesForwardRequestsBeforePolicy(void)
 
 #if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_CLIENT)
 
-/* Shared by the Ed25519 and RSA agent tests; some builds have neither. */
+/* Shared by the Ed25519, RSA and ECDSA agent tests; some builds have none
+ * of them. Setup fails while agentSignSetupFails is set, and each cleanup
+ * counts in agentSignCleanupCalls. */
+static WS_MAYBE_UNUSED int agentSignSetupFails;
+static WS_MAYBE_UNUSED int agentSignCleanupCalls;
+
 static WS_MAYBE_UNUSED int AgentSignCb(WS_AgentCbAction action,
         void* agentCbCtx)
 {
     (void)agentCbCtx;
 
-    if (action == WOLFSSH_AGENT_LOCAL_SETUP ||
-            action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+    if (action == WOLFSSH_AGENT_LOCAL_SETUP)
+        return agentSignSetupFails ? WS_AGENT_SETUP_E : WS_AGENT_SUCCESS;
+    if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
+        agentSignCleanupCalls++;
         return WS_AGENT_SUCCESS;
     }
 
     return WS_AGENT_INVALID_ACTION;
+}
+
+/* The canned reply a mock agent hands out as a stream socket would: from
+ * where the last read stopped, at most readChunk bytes at a time when
+ * readChunk is set. */
+typedef struct {
+    byte data[512];
+    word32 dataSz;
+    word32 readIdx;
+    word32 readChunk;
+} AgentReply;
+
+static WS_MAYBE_UNUSED int AgentReplyRead(AgentReply* reply, void* buf,
+        word32 bufSz)
+{
+    word32 avail = (reply->readIdx < reply->dataSz) ?
+            reply->dataSz - reply->readIdx : 0;
+
+    if (avail == 0)
+        return 0;
+    if (avail > bufSz)
+        avail = bufSz;
+    if (reply->readChunk > 0 && avail > reply->readChunk)
+        avail = reply->readChunk;
+    WMEMCPY(buf, reply->data + reply->readIdx, avail);
+    reply->readIdx += avail;
+    return (int)avail;
+}
+
+/* Build a sign response carrying sigBlob. */
+static WS_MAYBE_UNUSED void BuildAgentSignResponse(AgentReply* reply,
+        const byte* sigBlob, word32 sigBlobSz)
+{
+    word32 idx;
+
+    idx = AppendUint32(reply->data, sizeof(reply->data), 0,
+            MSG_ID_SZ + LENGTH_SZ + sigBlobSz);
+    idx = AppendByte(reply->data, sizeof(reply->data), idx,
+            MSGID_AGENT_SIGN_RESPONSE);
+    idx = AppendUint32(reply->data, sizeof(reply->data), idx,
+            sigBlobSz);
+    reply->dataSz = AppendData(reply->data, sizeof(reply->data),
+            idx, sigBlob, sigBlobSz);
+    reply->readIdx = 0;
 }
 
 /* Record the peer's signature algorithms the way a server would, through
@@ -9197,8 +9248,7 @@ static WS_MAYBE_UNUSED void InitAgentSession(void* agentCtx,
  * the sign response handed back on a read. */
 typedef struct {
     AgentOfferedKey key;
-    byte response[128];
-    word32 responseSz;
+    AgentReply reply;
     byte pubKeyBlob[64];
     byte sigBlob[128];
     word32 sigBlobSz;
@@ -9212,17 +9262,13 @@ static int AgentEd25519IoCb(WS_AgentIoCbAction action, void* buf,
     if (action == WOLFSSH_AGENT_IO_WRITE)
         return (int)bufSz;
 
-    if (bufSz < agentCtx->responseSz)
-        return 0;
-    WMEMCPY(buf, agentCtx->response, agentCtx->responseSz);
-    return (int)agentCtx->responseSz;
+    return AgentReplyRead(&agentCtx->reply, buf, bufSz);
 }
 
 static void InitAgentEd25519Ctx(AgentEd25519Ctx* agentCtx, word32 sigSz)
 {
     byte pubKey[ED25519_PUB_KEY_SIZE];
     byte sig[ED25519_SIG_SIZE + 1];
-    byte body[128];
     word32 idx;
 
     AssertTrue(sigSz <= (word32)sizeof(sig));
@@ -9249,17 +9295,8 @@ static void InitAgentEd25519Ctx(AgentEd25519Ctx* agentCtx, word32 sigSz)
     agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
             sizeof(agentCtx->sigBlob), idx, sig, sigSz);
 
-    idx = AppendUint32(body, sizeof(body), 0, agentCtx->sigBlobSz);
-    idx = AppendData(body, sizeof(body), idx, agentCtx->sigBlob,
+    BuildAgentSignResponse(&agentCtx->reply, agentCtx->sigBlob,
             agentCtx->sigBlobSz);
-
-    agentCtx->responseSz = AppendUint32(agentCtx->response,
-            sizeof(agentCtx->response), 0, MSG_ID_SZ + idx);
-    agentCtx->responseSz = AppendByte(agentCtx->response,
-            sizeof(agentCtx->response), agentCtx->responseSz,
-            MSGID_AGENT_SIGN_RESPONSE);
-    agentCtx->responseSz = AppendData(agentCtx->response,
-            sizeof(agentCtx->response), agentCtx->responseSz, body, idx);
 }
 
 /* Stand up a client session that authenticates with an Ed25519 key held by
@@ -9300,9 +9337,10 @@ static void TestAgentEd25519UserAuthEmitsSignature(void)
     wolfSSH_CTX_free(ctx);
 }
 
-/* An agent that answers nothing leaves the request unsigned. The error has
- * to reach the caller instead of a half-built request going out. */
-static void TestAgentEd25519UserAuthPropagatesAgentError(void)
+/* An agent that hangs up without answering leaves the request unsigned.
+ * The error has to reach the caller instead of a half-built request going
+ * out. */
+static void TestAgentEd25519UserAuthAgentHangsUp(void)
 {
     AgentEd25519Ctx agentCtx;
     WOLFSSH_CTX* ctx;
@@ -9311,12 +9349,68 @@ static void TestAgentEd25519UserAuthPropagatesAgentError(void)
     byte out[512];
 
     InitAgentEd25519Ctx(&agentCtx, ED25519_SIG_SIZE);
-    agentCtx.responseSz = 0;
+    agentCtx.reply.dataSz = 0;
     InitAgentEd25519Session(&agentCtx, &ctx, &ssh, &io, out,
             (word32)sizeof(out));
 
     AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
-            WS_AGENT_NO_KEY_E);
+            WS_AGENT_CXN_FAIL);
+    AssertIntEQ(io.outSz, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* A reply that arrives in fragments, as it can from a stream socket, is
+ * read whole before it is parsed. */
+static void TestAgentEd25519UserAuthReassemblesFragmentedReply(void)
+{
+    AgentEd25519Ctx agentCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[512];
+    const byte* sig = NULL;
+    word32 sigSz = 0;
+
+    InitAgentEd25519Ctx(&agentCtx, ED25519_SIG_SIZE);
+    agentCtx.reply.readChunk = 3;
+    InitAgentEd25519Session(&agentCtx, &ctx, &ssh, &io, out,
+            (word32)sizeof(out));
+
+    AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
+            WS_SUCCESS);
+
+    ParseUserAuthSignature(io.out, io.outSz, NULL, NULL, &sigSz, &sig);
+    AssertIntEQ(sigSz, agentCtx.sigBlobSz);
+    AssertIntEQ(WMEMCMP(sig, agentCtx.sigBlob, sigSz), 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* The setup callback answers in WS_AgentCbError, where failure is positive.
+ * Passed up as it is, wolfSSH_connect() would wait for the reply to a
+ * request it never sent. It has to come back as a wolfSSH error with
+ * nothing sent and no cleanup for a setup that never happened. */
+static void TestAgentEd25519UserAuthSetupFailure(void)
+{
+    AgentEd25519Ctx agentCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[512];
+
+    InitAgentEd25519Ctx(&agentCtx, ED25519_SIG_SIZE);
+    InitAgentEd25519Session(&agentCtx, &ctx, &ssh, &io, out,
+            (word32)sizeof(out));
+
+    agentSignSetupFails = 1;
+    agentSignCleanupCalls = 0;
+    AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
+            WS_AGENT_CXN_FAIL);
+    agentSignSetupFails = 0;
+    AssertIntEQ(agentSignCleanupCalls, 0);
     AssertIntEQ(io.outSz, 0);
 
     wolfSSH_free(ssh);
@@ -9391,8 +9485,7 @@ enum {
 typedef struct {
     AgentOfferedKey key;
     int reply;
-    byte response[512];
-    word32 responseSz;
+    AgentReply response;
     byte sigBlob[300];
     word32 sigBlobSz;
 } AgentRsaCtx;
@@ -9425,10 +9518,13 @@ static int AgentRsaIoCb(WS_AgentIoCbAction action, void* buf,
         AssertIntEQ(GetUint32(&flags, req, bufSz, &idx), WS_SUCCESS);
 
         if (agentCtx->reply == AGENT_RSA_REPLY_FAILURE) {
-            idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response),
-                    0, MSG_ID_SZ);
-            agentCtx->responseSz = AppendByte(agentCtx->response,
-                    sizeof(agentCtx->response), idx, MSGID_AGENT_FAILURE);
+            AgentReply* rsp = &agentCtx->response;
+
+            idx = AppendUint32(rsp->data, sizeof(rsp->data), 0,
+                    MSG_ID_SZ);
+            rsp->dataSz = AppendByte(rsp->data, sizeof(rsp->data),
+                    idx, MSGID_AGENT_FAILURE);
+            rsp->readIdx = 0;
             return (int)bufSz;
         }
 
@@ -9449,22 +9545,12 @@ static int AgentRsaIoCb(WS_AgentIoCbAction action, void* buf,
         agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
                 sizeof(agentCtx->sigBlob), idx, sig, sigSz);
 
-        idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response), 0,
-                MSG_ID_SZ + UINT32_SZ + agentCtx->sigBlobSz);
-        idx = AppendByte(agentCtx->response, sizeof(agentCtx->response), idx,
-                MSGID_AGENT_SIGN_RESPONSE);
-        idx = AppendUint32(agentCtx->response, sizeof(agentCtx->response),
-                idx, agentCtx->sigBlobSz);
-        agentCtx->responseSz = AppendData(agentCtx->response,
-                sizeof(agentCtx->response), idx, agentCtx->sigBlob,
+        BuildAgentSignResponse(&agentCtx->response, agentCtx->sigBlob,
                 agentCtx->sigBlobSz);
         return (int)bufSz;
     }
 
-    if (bufSz < agentCtx->responseSz)
-        return 0;
-    WMEMCPY(buf, agentCtx->response, agentCtx->responseSz);
-    return (int)agentCtx->responseSz;
+    return AgentReplyRead(&agentCtx->response, buf, bufSz);
 }
 
 /* Send a publickey request for pubKeyLine, a .pub file's contents, signed by
@@ -9651,6 +9737,183 @@ static void TestAgentOsshRsaCertUserAuthRefusesIgnoredFlags(void)
 #endif /* WOLFSSH_OSSH_CERTS && !WOLFSSH_NO_OSSH_CERT_RSA */
 
 #endif /* WOLFSSH_AGENT && !WOLFSSH_NO_RSA && !NO_WOLFSSH_CLIENT */
+
+
+#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ECDSA) \
+    && !defined(NO_WOLFSSH_CLIENT)
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+/* keys/hansel-key-ecc.pub */
+static const char agentEcdsaP256PubKey[] =
+    "ecdsa-sha2-nistp256 "
+    "AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNkI5JTP6D0l"
+    "F42tbxX19cE87hztUS6FSDoGvPfiU0CgeNSbI+aFdKIzTP5CQEJSvm25qUzgDtH7"
+    "oyaQROUnNvk="
+    " hansel";
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+/* keys/hansel-key-ecc-384.pub */
+static const char agentEcdsaP384PubKey[] =
+    "ecdsa-sha2-nistp384 "
+    "AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBCvZiZ6i2Izx"
+    "0FW8/Xug7zwsahoEcqMEjlIPFNwRo385HpRw0mxtbV1zZYnhtE63GvAWGgrhD5Wu"
+    "TRHDB1x0jpIcc3XbaHj4opHhPc4bikpyzL10w0tDo/RMxebqSW5Rwg=="
+    " hansel";
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+/* keys/hansel-key-ecc-521.pub */
+static const char agentEcdsaP521PubKey[] =
+    "ecdsa-sha2-nistp521 "
+    "AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAET/BOzBb9J"
+    "x9b52VIHFP4g/uk5KceDpz2M+/Ln9WiDjsMfb4NgNCAB+EMNJUX/TNBLFFmqr7c6"
+    "+zUH+QAo2qstvQDsReyFkETRB2vZD//nCZfcAe0RMtKZmgtQLKXzSlimUjXBM4/z"
+    "E5lwE05aXADp88h8nuaT/X4bll9cWJlH0fUykA=="
+    " hansel";
+#endif
+
+/* Mock agent state: the key offered and the sign response canned from the
+ * r and s size the test asks for. */
+typedef struct {
+    AgentOfferedKey key;
+    AgentReply reply;
+    byte sigBlob[256];
+    word32 sigBlobSz;
+} AgentEcdsaCtx;
+
+static int AgentEcdsaIoCb(WS_AgentIoCbAction action, void* buf,
+        word32 bufSz, void* agentCbCtx)
+{
+    AgentEcdsaCtx* agentCtx = (AgentEcdsaCtx*)agentCbCtx;
+
+    if (action == WOLFSSH_AGENT_IO_WRITE)
+        return (int)bufSz;
+
+    return AgentReplyRead(&agentCtx->reply, buf, bufSz);
+}
+
+/* The blob an agent returns for an ECDSA key is the algorithm name over a
+ * string of r and s as mpints, each rsSz bytes here. The client checks the
+ * name against the key's algorithm and copies the rest unparsed. */
+static void BuildAgentEcdsaSignResponse(AgentEcdsaCtx* agentCtx,
+        const char* name, word32 rsSz)
+{
+    byte rs[80];
+    word32 idx;
+
+    AssertTrue(rsSz <= (word32)sizeof(rs));
+    WMEMSET(rs, 0xa5, sizeof(rs));
+
+    idx = AppendString(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), 0,
+            name);
+    idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+            2 * (LENGTH_SZ + rsSz));
+    idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+            rsSz);
+    idx = AppendData(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+            rs, rsSz);
+    idx = AppendUint32(agentCtx->sigBlob, sizeof(agentCtx->sigBlob), idx,
+            rsSz);
+    agentCtx->sigBlobSz = AppendData(agentCtx->sigBlob,
+            sizeof(agentCtx->sigBlob), idx, rs, rsSz);
+
+    BuildAgentSignResponse(&agentCtx->reply, agentCtx->sigBlob,
+            agentCtx->sigBlobSz);
+}
+
+/* Send a publickey request for pubKeyLine, a .pub file's contents, signed
+ * by a mock agent answering with r and s of rsSz bytes each under sigName,
+ * the key's name when NULL, and check the result against expectRet. */
+static void RunAgentEcdsaUserAuth(const char* pubKeyLine, const char* name,
+        const char* sigName, word32 rsSz, int expectRet)
+{
+    AgentEcdsaCtx agentCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[1024];
+    byte* pubKey = NULL;
+    word32 pubKeySz = 0;
+    const byte* algo = NULL;
+    const byte* sig = NULL;
+    word32 algoSz = 0;
+    word32 sigSz = 0;
+
+    WMEMSET(&agentCtx, 0, sizeof(agentCtx));
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)pubKeyLine,
+            (word32)WSTRLEN(pubKeyLine), WOLFSSH_FORMAT_SSH, &pubKey,
+            &pubKeySz, &agentCtx.key.type, &agentCtx.key.typeSz, NULL),
+            WS_SUCCESS);
+    agentCtx.key.blob = pubKey;
+    agentCtx.key.blobSz = pubKeySz;
+    BuildAgentEcdsaSignResponse(&agentCtx,
+            (sigName != NULL) ? sigName : name, rsSz);
+
+    InitAgentSession(&agentCtx, AgentEcdsaIoCb, name, &ctx, &ssh, &io, out,
+            (word32)sizeof(out));
+
+    AssertIntEQ(SendUserAuthRequest(ssh, WOLFSSH_USERAUTH_PUBLICKEY, 1),
+            expectRet);
+
+    if (expectRet == WS_SUCCESS) {
+        ParseUserAuthSignature(io.out, io.outSz, &algoSz, &algo, &sigSz,
+                &sig);
+        AssertIntEQ(algoSz, WSTRLEN(name));
+        AssertIntEQ(WMEMCMP(algo, name, algoSz), 0);
+        AssertIntEQ(sigSz, agentCtx.sigBlobSz);
+        AssertIntEQ(WMEMCMP(sig, agentCtx.sigBlob, sigSz), 0);
+    }
+    else {
+        AssertIntEQ(io.outSz, 0);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    WFREE(pubKey, NULL, DYNTYPE_PRIVKEY);
+}
+
+/* r and s at the curve size is the usual blob an agent returns, and each a
+ * pad byte over it the largest, which has to fit the room the request
+ * reserved. A byte more has to be refused with nothing sent, as is a blob
+ * under another curve's name. */
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+static void TestAgentEcdsaP256UserAuth(void)
+{
+    RunAgentEcdsaUserAuth(agentEcdsaP256PubKey, "ecdsa-sha2-nistp256",
+            NULL, 32, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP256PubKey, "ecdsa-sha2-nistp256",
+            NULL, 32 + 1, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP256PubKey, "ecdsa-sha2-nistp256",
+            NULL, 32 + 2, WS_BUFFER_E);
+    RunAgentEcdsaUserAuth(agentEcdsaP256PubKey, "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384", 32, WS_INVALID_ALGO_ID);
+}
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+static void TestAgentEcdsaP384UserAuth(void)
+{
+    RunAgentEcdsaUserAuth(agentEcdsaP384PubKey, "ecdsa-sha2-nistp384",
+            NULL, 48, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP384PubKey, "ecdsa-sha2-nistp384",
+            NULL, 48 + 1, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP384PubKey, "ecdsa-sha2-nistp384",
+            NULL, 48 + 2, WS_BUFFER_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+static void TestAgentEcdsaP521UserAuth(void)
+{
+    RunAgentEcdsaUserAuth(agentEcdsaP521PubKey, "ecdsa-sha2-nistp521",
+            NULL, 66, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP521PubKey, "ecdsa-sha2-nistp521",
+            NULL, 66 + 1, WS_SUCCESS);
+    RunAgentEcdsaUserAuth(agentEcdsaP521PubKey, "ecdsa-sha2-nistp521",
+            NULL, 66 + 2, WS_BUFFER_E);
+}
+#endif
+
+#endif /* WOLFSSH_AGENT && !WOLFSSH_NO_ECDSA && !NO_WOLFSSH_CLIENT */
 
 
 
@@ -19167,7 +19430,9 @@ int main(int argc, char** argv)
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
     && !defined(NO_WOLFSSH_CLIENT)
     TestAgentEd25519UserAuthEmitsSignature();
-    TestAgentEd25519UserAuthPropagatesAgentError();
+    TestAgentEd25519UserAuthAgentHangsUp();
+    TestAgentEd25519UserAuthReassemblesFragmentedReply();
+    TestAgentEd25519UserAuthSetupFailure();
     TestAgentEd25519UserAuthRejectsOversizeSignature();
 #endif
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_RSA) \
@@ -19185,6 +19450,18 @@ int main(int argc, char** argv)
     TestAgentOsshRsaCertUserAuthWolfSshServer();
     TestAgentOsshRsaCertUserAuthRejectsOversizeSignature();
     TestAgentOsshRsaCertUserAuthRefusesIgnoredFlags();
+#endif
+#endif
+#if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ECDSA) \
+    && !defined(NO_WOLFSSH_CLIENT)
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    TestAgentEcdsaP256UserAuth();
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    TestAgentEcdsaP384UserAuth();
+#endif
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+    TestAgentEcdsaP521UserAuth();
 #endif
 #endif
 #if defined(WOLFSSH_FWD) && !defined(NO_WOLFSSH_CLIENT)

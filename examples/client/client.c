@@ -701,6 +701,8 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
                 ret = WS_AGENT_SETUP_E;
                 err = errno;
                 fprintf(stderr, "connect() = %d", err);
+                close(ctx->fd);
+                ctx->fd = -1;
             }
         }
 
@@ -710,12 +712,15 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
     else if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
         int err;
 
-        err = close(ctx->fd);
-        if (err != 0) {
-            err = errno;
-            fprintf(stderr, "close() = %d", err);
-            if (ret == 0)
-                ret = WS_AGENT_SETUP_E;
+        if (ctx->fd >= 0) {
+            err = close(ctx->fd);
+            ctx->fd = -1;
+            if (err != 0) {
+                err = errno;
+                fprintf(stderr, "close() = %d", err);
+                if (ret == 0)
+                    ret = WS_AGENT_SETUP_E;
+            }
         }
     }
     else
@@ -1017,6 +1022,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #ifdef WOLFSSH_AGENT
     if (useAgent) {
         WMEMSET(&agentCbCtx, 0, sizeof(agentCbCtx));
+        agentCbCtx.fd = -1;
         agentCbCtx.state = AGENT_STATE_INIT;
         wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
     }
