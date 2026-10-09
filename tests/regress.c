@@ -797,6 +797,7 @@ typedef struct DuplexEndpoint {
     /* What this endpoint put in its own plaintext KEXINIT */
     byte sentStrictKexMarker;
     byte sentExtInfoMarker;
+    byte failSendMsgId; /* nonzero: fail the send of a packet with this id */
 } DuplexEndpoint;
 
 typedef struct {
@@ -1505,6 +1506,12 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
         return WS_CBIO_ERR_GENERAL;
     }
 
+    if (endpoint->failSendMsgId != 0 &&
+            outputSz > UINT32_SZ + PAD_LENGTH_SZ &&
+            output[UINT32_SZ + PAD_LENGTH_SZ] == endpoint->failSendMsgId) {
+        return WS_CBIO_ERR_GENERAL;
+    }
+
     if (endpoint->mutator != NULL &&
             endpoint->mutator->enabled &&
             IsTerrapinMode(endpoint->mutator->mode) &&
@@ -1740,17 +1747,35 @@ static void RunKexReplyHandshake(KexReplyHarness* harness,
     result->steps = REGRESS_MAX_HANDSHAKE_STEPS;
 }
 
-static void AssertHandshakeSucceeds(const char* keyAlgo, const char* keyPath)
+/* The shared secret K does not outlive the key exchange. */
+static int KexSecretWiped(const WOLFSSH* ssh)
+{
+    word32 i;
+
+    if (ssh->kSz != 0)
+        return 0;
+    for (i = 0; i < (word32)sizeof(ssh->k); i++) {
+        if (ssh->k[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+/* A NULL kexAlgo uses the harness default. */
+static void AssertHandshakeSucceedsKex(const char* kexAlgo,
+        const char* keyAlgo, const char* keyPath)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 0,
+    InitKexReplyHarnessKex(&harness, kexAlgo, keyAlgo, keyPath, 0,
             REGRESS_MUTATE_SIG_NAME, NULL, 0);
     RunKexReplyHandshake(&harness, &result);
 
     AssertTrue(result.clientSuccess);
     AssertTrue(result.serverSuccess);
+    AssertTrue(KexSecretWiped(harness.client));
+    AssertTrue(KexSecretWiped(harness.server));
     AssertIntEQ(harness.mutator.mutatedPackets, 0);
     AssertIntEQ(harness.client->connectState, CONNECT_SERVER_CHANNEL_REQUEST_DONE);
     AssertIntEQ(harness.server->acceptState, ACCEPT_CLIENT_SESSION_ESTABLISHED);
@@ -1760,6 +1785,11 @@ static void AssertHandshakeSucceeds(const char* keyAlgo, const char* keyPath)
     AssertFalse(harness.serverIo.sawDisconnect);
 
     FreeKexReplyHarness(&harness);
+}
+
+static void AssertHandshakeSucceeds(const char* keyAlgo, const char* keyPath)
+{
+    AssertHandshakeSucceedsKex(NULL, keyAlgo, keyPath);
 }
 
 static void AssertHandshakeRejectsMutatedReply(const char* keyAlgo,
@@ -2159,6 +2189,66 @@ static void AssertHandshakeRejectsCorruptedSig(const char* keyAlgo,
     AssertTrue(result.clientErr != WS_WANT_READ &&
             result.clientErr != WS_WANT_WRITE);
     AssertIntEQ(result.clientErr, expectedErr);
+    /* K was agreed before the verify failed. */
+    AssertTrue(KexSecretWiped(harness.client));
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* Every key agreement, the ML-KEM hybrids included, wipes K on both sides. */
+static void TestKexSecretWipedPerKex(void)
+{
+    static const char* kexAlgos[] = {
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA256
+        "diffie-hellman-group14-sha256",
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+        "diffie-hellman-group-exchange-sha256",
+#endif
+#ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
+        "ecdh-sha2-nistp256",
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        "curve25519-sha256",
+#endif
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+        "mlkem768nistp256-sha256",
+#endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+        "mlkem1024nistp384-sha384",
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+        "mlkem768x25519-sha256",
+#endif
+        NULL
+    };
+    word32 i;
+
+    for (i = 0; kexAlgos[i] != NULL; i++) {
+        printf("    KEX secret wipe with %s.\n", kexAlgos[i]);
+        AssertHandshakeSucceedsKex(kexAlgos[i],
+                REGRESS_DEFAULT_KEY_ALGO, REGRESS_DEFAULT_KEY_PATH);
+    }
+}
+
+/* The server wipes K when sending its KEXDH_REPLY fails after key
+ * agreement. */
+static void TestKexSecretWipedOnServerSendFail(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    harness.serverIo.failSendMsgId = MSGID_KEXDH_REPLY;
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertFalse(result.serverSuccess);
+    AssertTrue(result.serverErr != WS_WANT_READ &&
+            result.serverErr != WS_WANT_WRITE);
+    /* H is hashed over K, so K was agreed. */
+    AssertTrue(harness.server->sessionIdSz > 0);
+    AssertTrue(KexSecretWiped(harness.server));
 
     FreeKexReplyHarness(&harness);
 }
@@ -17191,6 +17281,7 @@ static void TestGenerateKeysSplit(void)
     word32 payloadSz;
     word32 idx;
     byte zeros[AES_256_KEY_SIZE];
+    Keys zeroKeys;
 
     WMEMSET(zeros, 0, sizeof(zeros));
 
@@ -17257,6 +17348,27 @@ static void TestGenerateKeysSplit(void)
     /* C2S and S2C enc keys must be independent (different RFC labels C/D). */
     AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey,
                        ssh->handshake->keys.encKey, AES_128_KEY_SIZE) != 0);
+
+    /* A failed derivation leaves no key material behind but keeps the
+     * negotiated sizes. */
+    AssertTrue(wolfSSH_TestGenerateKeys(ssh, WC_HASH_TYPE_NONE) != WS_SUCCESS);
+    WMEMSET(&zeroKeys, 0, sizeof(zeroKeys));
+    AssertTrue(WMEMCMP(ssh->handshake->keys.iv, zeroKeys.iv,
+                       sizeof(zeroKeys.iv)) == 0);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.encKey, zeroKeys.encKey,
+                       sizeof(zeroKeys.encKey)) == 0);
+    AssertTrue(WMEMCMP(ssh->handshake->keys.macKey, zeroKeys.macKey,
+                       sizeof(zeroKeys.macKey)) == 0);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.iv, zeroKeys.iv,
+                       sizeof(zeroKeys.iv)) == 0);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey, zeroKeys.encKey,
+                       sizeof(zeroKeys.encKey)) == 0);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.macKey, zeroKeys.macKey,
+                       sizeof(zeroKeys.macKey)) == 0);
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, AES_128_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, WC_SHA_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->keys.encKeySz, AES_256_KEY_SIZE);
+    AssertIntEQ(ssh->handshake->keys.macKeySz, WC_SHA256_DIGEST_SIZE);
 
     wolfSSH_free(ssh);
 
@@ -19163,6 +19275,8 @@ int main(int argc, char** argv)
     TestKexDhReplyRejectsEd25519CorruptSig();
     #endif
     TestKexDhReplyRejectsSigNameOverrun();
+    TestKexSecretWipedPerKex();
+    TestKexSecretWipedOnServerSendFail();
     #ifdef REGRESS_TRUNC_KEX_ALGO
     TestKexDhReplyTruncatedFSendsDisconnect();
     TestKexDhInitTruncatedESendsDisconnect();
