@@ -4883,6 +4883,35 @@ done:
     return result;
 }
 
+/* GetBoolean() stores any nonzero wire byte as 1 (RFC 4251 5). */
+static int test_GetBoolean(void)
+{
+    static const byte wire[] = { 0x00, 0x01, 0x02, 0x80, 0xFF };
+    static const byte expect[] = { 0, 1, 1, 1, 1 };
+    word32 idx = 0;
+    word32 i;
+    byte v;
+
+    for (i = 0; i < (word32)sizeof(wire); i++) {
+        v = 0xAA;
+        if (GetBoolean(&v, wire, (word32)sizeof(wire), &idx) != WS_SUCCESS)
+            return -1;
+        if (v != expect[i])
+            return -2;
+        if (idx != i + 1)
+            return -3;
+    }
+
+    /* past the end */
+    v = 0xAA;
+    if (GetBoolean(&v, wire, (word32)sizeof(wire), &idx) != WS_BUFFER_E)
+        return -4;
+    if (v != 0xAA || idx != (word32)sizeof(wire))
+        return -5;
+
+    return 0;
+}
+
 /* DoChannelWindowAdjust adds the peer's advertised bytes to peerWindowSz.
  * A crafted bytesToAdd that would wrap the word32 must be rejected with
  * WS_OVERFLOW_E and leave the window untouched; a value that fits must be
@@ -23136,6 +23165,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_DoChannelWindowAdjust_overflow();
     printf("DoChannelWindowAdjust_overflow: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_GetBoolean();
+    printf("GetBoolean: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_GetString_zeroDestSz();

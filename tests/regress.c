@@ -16054,19 +16054,28 @@ typedef struct {
     const char* keyList;
     byte firstPacketFollows;
     byte expectIgnore;
+    byte endpointType;
 } FirstPacketFollowsCase;
 
 static const FirstPacketFollowsCase firstPacketFollowsCases[] = {
     { "follows=0, guesses irrelevant: flag stays off",
-      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 0, 0 },
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 0, 0,
+      WOLFSSH_ENDPOINT_SERVER },
     { "follows=1, both guesses match: do not skip",
-      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0 },
+      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0, WOLFSSH_ENDPOINT_SERVER },
     { "follows=1, KEX guess wrong: skip",
-      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 1 },
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER },
     { "follows=1, host-key guess wrong: skip", /* regression case */
-      FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1 },
+      FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER },
     { "follows=1, both guesses wrong: skip",
-      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1 },
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER },
+    /* A server never sends a guessed packet; the client ignores the flag. */
+    { "client, server follows=1, both guesses wrong: do not skip",
+      FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 0,
+      WOLFSSH_ENDPOINT_CLIENT },
 };
 
 static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
@@ -16077,7 +16086,7 @@ static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
     word32 payloadSz;
     word32 idx = 0;
 
-    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    ctx = wolfSSH_CTX_new(tc->endpointType, NULL);
     AssertNotNull(ctx);
 
     ssh = wolfSSH_new(ctx);
@@ -16096,6 +16105,11 @@ static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
     (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
 
     AssertNotNull(ssh->handshake);
+    /* The algorithm ids are set only after first_packet_follows is read. */
+    if (ssh->handshake->peerEncryptId == ID_NONE) {
+        Fail(("DoKexInit parses past first_packet_follows (%s)",
+                    tc->description), ("peerEncryptId == ID_NONE"));
+    }
     if (ssh->handshake->ignoreNextKexMsg != tc->expectIgnore) {
         Fail(("ignoreNextKexMsg == %u (%s)",
                     tc->expectIgnore, tc->description),
@@ -16109,10 +16123,10 @@ static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
 typedef int (*FirstPacketFollowsSkipFn)(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx);
 
-/* With ignoreNextKexMsg set, the target Do* handler must consume the packet,
- * clear the flag, and not advance the peer's state past KEXINIT_DONE. */
+/* With ignoreNextKexMsg set, the server's Do* handler must consume the packet,
+ * clear the flag, and not advance the client's state past KEXINIT_DONE. */
 static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
-        const char* label, byte endpointType, byte initState)
+        const char* label)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
@@ -16120,7 +16134,7 @@ static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
     word32 idx = 0;
     int ret;
 
-    ctx = wolfSSH_CTX_new(endpointType, NULL);
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     AssertNotNull(ctx);
 
     ssh = wolfSSH_new(ctx);
@@ -16128,10 +16142,7 @@ static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
     AssertNotNull(ssh->handshake);
 
     ssh->handshake->ignoreNextKexMsg = 1;
-    if (endpointType == WOLFSSH_ENDPOINT_SERVER)
-        ssh->clientState = initState;
-    else
-        ssh->serverState = initState;
+    ssh->clientState = CLIENT_KEXINIT_DONE;
 
     /* Garbage payload that must never be parsed when skipped. */
     WMEMSET(payload, 0xAB, sizeof(payload));
@@ -16142,10 +16153,38 @@ static void RunFirstPacketFollowsSkipCase(FirstPacketFollowsSkipFn fn,
     }
     AssertIntEQ(idx, sizeof(payload));
     AssertIntEQ(ssh->handshake->ignoreNextKexMsg, 0);
-    if (endpointType == WOLFSSH_ENDPOINT_SERVER)
-        AssertIntEQ(ssh->clientState, initState);
-    else
-        AssertIntEQ(ssh->serverState, initState);
+    AssertIntEQ(ssh->clientState, CLIENT_KEXINIT_DONE);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* The client never discards a server KEX message as a guess; even with the
+ * flag forced on, the handler must parse the packet and reject the garbage. */
+static void RunFirstPacketFollowsClientNoSkipCase(FirstPacketFollowsSkipFn fn,
+        const char* label)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[8];
+    word32 idx = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertNotNull(ssh->handshake);
+
+    ssh->handshake->ignoreNextKexMsg = 1;
+    ssh->serverState = SERVER_KEXINIT_DONE;
+    WMEMSET(payload, 0xAB, sizeof(payload));
+
+    ret = fn(ssh, payload, sizeof(payload), &idx);
+    if (ret == WS_SUCCESS)
+        Fail(("%s rejects the packet on a client", label), ("%d", ret));
+    AssertIntEQ(idx, 0);
+    AssertIntEQ(ssh->handshake->ignoreNextKexMsg, 1);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -16198,13 +16237,10 @@ static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
 
 static void TestFirstPacketFollowsSkipped(void)
 {
-    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit,
-            "DoKexDhInit", WOLFSSH_ENDPOINT_SERVER, CLIENT_KEXINIT_DONE);
+    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit, "DoKexDhInit");
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
-            "DoKexDhGexRequest", WOLFSSH_ENDPOINT_SERVER, CLIENT_KEXINIT_DONE);
-    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexGroup,
-            "DoKexDhGexGroup", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
+            "DoKexDhGexRequest");
     /* Guess/negotiation straddling the GEX boundary, both directions. */
 #ifndef NO_WOLFSSH_SERVER
     RunFirstPacketFollowsCrossBoundaryCase(wolfSSH_TestDoKexDhInit,
@@ -16213,8 +16249,12 @@ static void TestFirstPacketFollowsSkipped(void)
             "DoKexDhGexRequest->KEXDH_INIT", MSGID_KEXDH_INIT);
 #endif /* NO_WOLFSSH_SERVER */
 #endif /* WOLFSSH_NO_DH_GEX_SHA256 */
-    RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhReply,
-            "DoKexDhReply", WOLFSSH_ENDPOINT_CLIENT, SERVER_KEXINIT_DONE);
+    RunFirstPacketFollowsClientNoSkipCase(wolfSSH_TestDoKexDhReply,
+            "DoKexDhReply");
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
+    RunFirstPacketFollowsClientNoSkipCase(wolfSSH_TestDoKexDhGexGroup,
+            "DoKexDhGexGroup");
+#endif
 }
 
 static void TestFirstPacketFollows(void)
