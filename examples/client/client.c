@@ -357,6 +357,7 @@ static THREAD_RET readInput(void* in)
     int ret = 0;
     int err = 0;
     word32 sz = 0;
+    word32 off = 0;
     time_t deadline = 0;
 #ifdef USE_WINDOWS_API
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
@@ -377,32 +378,45 @@ static THREAD_RET readInput(void* in)
             fprintf(stderr, "Error reading stdin\n");
             break;
         }
+        /* A send takes only what the peer's window and packet size allow
+         * and says how much. Send again from there until all of buf is
+         * taken. */
+        off = 0;
         deadline = 0;
         do {
             /* lock SSH structure access */
             wc_LockMutex(&args->lock);
-            ret = wolfSSH_stream_send(args->ssh, buf, sz);
+            ret = wolfSSH_stream_send(args->ssh, buf + off, sz - off);
             err = (ret == WS_FATAL_ERROR) ?
                 wolfSSH_get_error(args->ssh) : ret;
             wc_UnLockMutex(&args->lock);
-            /* A rekey restarts the wait on the socket. */
-            if (err == WS_REKEYING) {
+            if (ret > 0) {
+                off += (word32)ret;
                 deadline = 0;
             }
-            else if (err == WS_WANT_WRITE && deadline == 0) {
-                deadline = WTIME(NULL) + SEND_RETRY_TIMEOUT;
-            }
-            if (err == WS_REKEYING || err == WS_WANT_WRITE) {
-                /* give readPeer() the lock to finish the rekey, or let the
-                 * socket drain, then send this buffer again */
+            else {
+                /* A rekey or a full window restarts the wait on the
+                 * socket. */
+                if (err == WS_REKEYING || err == WS_WINDOW_FULL) {
+                    deadline = 0;
+                }
+                else if (err == WS_WANT_WRITE && deadline == 0) {
+                    deadline = WTIME(NULL) + SEND_RETRY_TIMEOUT;
+                }
+                else if (err != WS_WANT_WRITE) {
+                    break;
+                }
+                /* give readPeer() the lock to finish the rekey or take the
+                 * peer's window adjust, or let the socket drain, then send
+                 * again */
             #ifdef USE_WINDOWS_API
                 Sleep(1);
             #else
                 usleep(1000);
             #endif
             }
-        } while (err == WS_REKEYING ||
-                (err == WS_WANT_WRITE && WTIME(NULL) < deadline));
+        } while (off < sz &&
+                (err != WS_WANT_WRITE || WTIME(NULL) < deadline));
         if (ret <= 0) {
             fprintf(stderr, "Couldn't send data\n");
             break;
@@ -426,6 +440,49 @@ static int AgentRelayHeld(int code, int* wantsWrite)
 
 #endif
 
+
+/* Write all of buf to the output, since one write may take only a prefix
+ * of it. Returns 0, or -1 when a write fails or takes nothing. */
+#ifdef USE_WINDOWS_API
+static int WriteAll(HANDLE out, const byte* buf, DWORD sz)
+{
+    DWORD off = 0;
+    DWORD cnt = 0;
+
+    while (off < sz) {
+        if (WriteFile(out, buf + off, sz - off, &cnt, NULL) == FALSE
+                || cnt == 0) {
+            return -1;
+        }
+        off += cnt;
+    }
+
+    return 0;
+}
+#else
+static int WriteAll(int out, const byte* buf, word32 sz)
+{
+    word32 off = 0;
+    int cnt;
+
+    while (off < sz) {
+        cnt = (int)write(out, buf + off, sz - off);
+        if (cnt > 0) {
+            off += (word32)cnt;
+        }
+        else if (cnt < 0 && errno == EINTR) {
+            continue;
+        }
+        else {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+#endif /* USE_WINDOWS_API */
+
+
 static THREAD_RET readPeer(void* in)
 {
     byte buf[256];
@@ -436,6 +493,7 @@ static THREAD_RET readPeer(void* in)
     int  bytes;
 #ifdef USE_WINDOWS_API
     HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
 #endif
     fd_set readSet;
     fd_set writeSet;
@@ -537,11 +595,12 @@ static THREAD_RET readPeer(void* in)
                     ret = wolfSSH_extended_data_read(args->ssh, buf, bufSz - 1);
                     if (ret < 0)
                         err_sys("Extended data read failed.");
-                    buf[bufSz - 1] = '\0';
                 #ifdef USE_WINDOWS_API
-                    fprintf(stderr, "%s", buf);
+                    if (WriteAll(stderrHandle, buf, (DWORD)ret) < 0) {
+                        fprintf(stderr, "Issue with stderr write\n");
+                    }
                 #else
-                    if (write(STDERR_FILENO, buf, ret) < 0) {
+                    if (WriteAll(STDERR_FILENO, buf, (word32)ret) < 0) {
                         perror("Issue with stderr write ");
                     }
                 #endif
@@ -599,16 +658,11 @@ static THREAD_RET readPeer(void* in)
             }
             else {
             #ifdef USE_WINDOWS_API
-                DWORD writtn = 0;
-            #endif
-                buf[bufSz - 1] = '\0';
-
-            #ifdef USE_WINDOWS_API
-                if (WriteFile(stdoutHandle, buf, (DWORD)ret, &writtn, NULL) == FALSE) {
+                if (WriteAll(stdoutHandle, buf, (DWORD)ret) < 0) {
                     err_sys("Failed to write to stdout handle");
                 }
             #else
-                if (write(STDOUT_FILENO, buf, ret) < 0) {
+                if (WriteAll(STDOUT_FILENO, buf, (word32)ret) < 0) {
                     perror("write to stdout error ");
                 }
             #endif
