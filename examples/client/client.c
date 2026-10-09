@@ -177,7 +177,7 @@ typedef struct thread_args {
     WOLFSSH* ssh;
     wolfSSL_Mutex lock;
     byte rawMode;
-    byte quit;
+    volatile byte quit; /* set by the main thread, read by the workers */
 } thread_args;
 
 #ifdef _POSIX_THREADS
@@ -372,7 +372,7 @@ static void readInputLoop(thread_args* args, byte* buf, int bufSz)
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
 #endif
 
-    while (ret >= 0) {
+    while (ret >= 0 && !args->quit) {
         WMEMSET(buf, 0, bufSz);
     #ifdef USE_WINDOWS_API
         /* Using A version to avoid potential 2 byte chars */
@@ -383,6 +383,11 @@ static void readInputLoop(thread_args* args, byte* buf, int bufSz)
         ret = (int)read(STDIN_FILENO, buf, bufSz -1);
         sz  = (word32)ret;
     #endif
+        if (args->quit) {
+            /* The session is over and the read was broken to end this
+             * thread. */
+            break;
+        }
         if (ret <= 0) {
             fprintf(stderr, "Error reading stdin\n");
             break;
@@ -424,10 +429,12 @@ static void readInputLoop(thread_args* args, byte* buf, int bufSz)
                 usleep(1000);
             #endif
             }
-        } while (off < sz &&
+        } while (off < sz && !args->quit &&
                 (err != WS_WANT_WRITE || WTIME(NULL) < deadline));
         if (ret <= 0) {
-            fprintf(stderr, "Couldn't send data\n");
+            if (!args->quit) {
+                fprintf(stderr, "Couldn't send data\n");
+            }
             break;
         }
     }
@@ -1251,9 +1258,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         pthread_create(&thread[1], NULL, readInput, (void*)&arg);
         pthread_create(&thread[2], NULL, readPeer, (void*)&arg);
         pthread_join(thread[2], NULL);
+        arg.quit = 1;
 #ifdef WOLFSSH_TERM
         /* Wake the windowMonitor thread so it can exit. */
-        arg.quit = 1;
         signal(SIGWINCH, SIG_DFL);
         wolfSSH_SEMAPHORE_Post(&windowSem);
         pthread_join(thread[0], NULL);
@@ -1269,6 +1276,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
         arg.ssh     = ssh;
         arg.rawMode = rawMode;
+        arg.quit    = 0;
         wc_InitMutex(&arg.lock);
 
         if (cmd) {
@@ -1285,6 +1293,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         thread[0] = CreateThread(NULL, 0, readInput, (void*)&arg, 0, 0);
         thread[1] = CreateThread(NULL, 0, readPeer, (void*)&arg, 0, 0);
         WaitForSingleObject(thread[1], INFINITE);
+        /* readInput() is blocked in ReadConsoleA() and would use the session
+         * after it is freed. Break the read and wait for the thread to see
+         * quit. The cancel finds nothing while the read is not yet pending,
+         * so repeat it until the thread is gone. */
+        InterlockedOr8((volatile CHAR*)&arg.quit, 1);
+        do {
+            CancelSynchronousIo(thread[0]);
+        } while (WaitForSingleObject(thread[0], 100) == WAIT_TIMEOUT);
         CloseHandle(thread[0]);
         CloseHandle(thread[1]);
     #else
