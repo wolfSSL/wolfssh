@@ -1454,6 +1454,8 @@ struct WOLFSSH {
     WS_UserAuthData_Keyboard kbAuth;
     byte kbAuthAttempts;
     byte kbSetupPending; /* server sent INFO_REQUEST, awaiting a response */
+    byte kbRequestSent;  /* client asked for keyboard-interactive, may be
+                          * prompted until the server's SUCCESS or FAILURE */
 #endif
 #ifdef WOLFSSH_TPM
     byte tpmPubkeyTried; /* client tried TPM publickey; allow auth fallback */
@@ -2113,6 +2115,8 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     WOLFSSH_API int wolfSSH_TestDoUserAuthInfoResponse(WOLFSSH* ssh, byte* buf,
+            word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestDoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
 #endif
     WOLFSSH_API int wolfSSH_TestSendUserAuthFailure(WOLFSSH* ssh,

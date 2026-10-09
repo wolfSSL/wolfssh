@@ -894,6 +894,7 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 {
     /* Only the client should send these messages, never receive. */
     if (msg == MSGID_SERVICE_REQUEST || msg == MSGID_USERAUTH_REQUEST ||
+            msg == MSGID_USERAUTH_INFO_RESPONSE ||
             msg == MSGID_KEXDH_INIT || /* 30: also ECDH, KEM, GEX_REQ_OLD */
             msg == MSGID_KEXDH_GEX_INIT ||
             msg == MSGID_KEXDH_GEX_REQUEST) {
@@ -9941,6 +9942,13 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         ret = WS_BAD_ARGUMENT;
     }
 
+    if ((ret == WS_SUCCESS) && (ssh->ctx->side != WOLFSSH_ENDPOINT_SERVER)) {
+        /* The filter refuses this on a client; keep the handler honest too,
+         * else a peer's responses reach the callback as if to check. */
+        WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse on a client");
+        ret = WS_FATAL_ERROR;
+    }
+
     if ((ret == WS_SUCCESS) && (ssh->authId != ID_USERAUTH_KEYBOARD)) {
         WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse on non-keyboard auth");
         ret = WS_FATAL_ERROR;
@@ -10048,6 +10056,11 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     if (allocatedCount) {
         WFREE(kb->responseLengths, NULL, 0);
         WFREE(kb->responses, NULL, 0);
+    }
+    if (kb != NULL) {
+        /* The next round's setup callback gets a clean slate, not the
+         * freed arrays and their count. */
+        WMEMSET(kb, 0, sizeof(*kb));
     }
 
     if (ret == WS_SUCCESS || ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
@@ -11969,6 +11982,12 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         word32 i;
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        /* The verdict ends the exchange; the next request below may open
+         * another one. */
+        ssh->kbRequestSent = 0;
+#endif
+
         /* check authList to see if authId is there */
         for (i = 0; i < authListSz; i++) {
             word32 j;
@@ -12029,6 +12048,9 @@ static int DoUserAuthSuccess(WOLFSSH* ssh,
     }
 
     ssh->serverState = SERVER_USERAUTH_ACCEPT_DONE;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    ssh->kbRequestSent = 0;
+#endif
 
     WLOG(WS_LOG_DEBUG, "Leaving DoUserAuthSuccess(), ret = %d", ret);
     return ret;
@@ -12082,10 +12104,18 @@ static int DoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
     if (ssh == NULL || buf == NULL || len == 0 || idx == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    if (ret == WS_SUCCESS && (ssh->ctx->side != WOLFSSH_ENDPOINT_CLIENT ||
+                !ssh->kbRequestSent)) {
+        /* A prompt the client didn't ask for would still draw a credential
+         * out of the callback. The server filter stops this message before
+         * dispatch; refuse it here too. */
+        WLOG(WS_LOG_DEBUG, "DUAIR: unsolicited keyboard-interactive request");
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        ret = WS_INVALID_STATE_E;
+    }
+
     if (ret == WS_SUCCESS) {
-        if (ssh->ctx != NULL) {
-            heap = ssh->ctx->heap;
-        }
+        heap = ssh->ctx->heap;
         begin = *idx;
         ret = GetStringAlloc(heap, (char**)&authName, NULL, buf, len, &begin);
     }
@@ -22464,6 +22494,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_UserAuthData authData;
     WS_KeySignature *keySig_ptr = NULL;
     byte authId = ID_NONE;
+    int delivered = 0;
 
     WOLFSSH_UNUSED(addSig);
 
@@ -22646,11 +22677,23 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         wolfSSH_KEY_clean(keySig_ptr);
 
     if (ret == WS_SUCCESS) {
+        word32 flushes = ssh->txFlushCount;
+
         ret = wolfSSH_SendPacket(ssh);
+        delivered = SendPacketDelivered(ssh, flushes, ret);
     }
 
-    if (ret != WS_WANT_WRITE && ret != WS_SUCCESS)
+    if (delivered) {
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        /* On the wire or buffered, whatever the highwater check made of
+         * it; prompts may follow. */
+        if (authId == ID_USERAUTH_KEYBOARD)
+            ssh->kbRequestSent = 1;
+#endif
+    }
+    else {
         PurgePacket(ssh);
+    }
 
     WS_FORCEZERO(&authData, sizeof(WS_UserAuthData));
     WLOG(WS_LOG_DEBUG, "Leaving SendUserAuthRequest(), ret = %d", ret);
@@ -26166,6 +26209,12 @@ int wolfSSH_TestDoUserAuthInfoResponse(WOLFSSH* ssh, byte* buf, word32 len,
         word32* idx)
 {
     return DoUserAuthInfoResponse(ssh, buf, len, idx);
+}
+
+int wolfSSH_TestDoUserAuthInfoRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoUserAuthInfoRequest(ssh, buf, len, idx);
 }
 #endif
 

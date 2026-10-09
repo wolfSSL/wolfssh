@@ -749,7 +749,8 @@ typedef struct WS_UserAuthData {
  * decision. WOLFSSH_USERAUTH_PARTIAL_SUCCESS reports that one factor of
  * a multi-method authentication passed, WOLFSSH_USERAUTH_SUCCESS_ANOTHER
  * reports that a keyboard-interactive round passed and asks for the next
- * round, WOLFSSH_USERAUTH_WOULD_BLOCK asks for the request to be
+ * round (its WOLFSSH_USERAUTH_KEYBOARD_SETUP call starts from cleared
+ * keyboard fields), WOLFSSH_USERAUTH_WOULD_BLOCK asks for the request to be
  * retried, and WOLFSSH_USERAUTH_REJECTED is a hard rejection: the server
  * answers with USERAUTH_FAILURE, then ends the session. Any other value
  * is treated as an ordinary failure.
