@@ -1871,6 +1871,14 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->scpIsRecursive  = 0;
     ssh->scpDirection    = WOLFSSH_SCP_DIR_NONE;
     ssh->scpDirDepth     = 0;
+    #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
+    ssh->scpRecvPath     = NULL;
+    ssh->scpRecvBaseSz   = 0;
+    #ifdef WOLFSSH_HAVE_DIRFD
+    ssh->scpRecvDirFd    = -1;
+    ssh->scpRecvDirs     = NULL;
+    #endif
+    #endif
 #endif
 
 #ifdef WOLFSSH_SFTP
@@ -1980,6 +1988,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     /* free send-side dir stack from any aborted recursive transfer */
     ScpSendCtxFreeDirs(ssh->fs, &ssh->scpSendCbCtx, heap);
+    ScpRecvPathFree(ssh, heap);
     #endif
 #endif
 #ifdef WOLFSSH_SFTP

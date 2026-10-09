@@ -276,18 +276,18 @@ else
     # additionally exercised through the SFTP confinement unit test
     # (test_wolfSSH_SFTP_Confinement), so the detection logic shared by all sinks
     # is covered even though the SCP recursive wiring is not driven e2e.
-    scp_secret=$PWD/scripts/scp_secret_$$
-    scp_symlink=$PWD/scp_symlink_$$
-    scp_symlink_out=$PWD/scp_symlink_out_$$
-    echo "TOP SECRET SYMLINK TARGET" > $scp_secret
+    scp_secret="$PWD/scripts/scp_secret_$$"
+    scp_symlink="$PWD/scp_symlink_$$"
+    scp_symlink_out="$PWD/scp_symlink_out_$$"
+    echo "TOP SECRET SYMLINK TARGET" > "$scp_secret"
     # A symlink whose target exists would, without the fix, be opened and its
     # contents streamed to the client. The fix must reject it instead.
-    ln -s $scp_secret $scp_symlink
-    if test -L $scp_symlink; then
+    ln -s "$scp_secret" "$scp_symlink"
+    if test -L "$scp_symlink"; then
         ./examples/echoserver/echoserver -1 -R $ready_file &
         server_pid=$!
         create_port
-        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $scp_symlink:$scp_symlink_out
+        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S "$scp_symlink:$scp_symlink_out"
         RESULT=$?
         remove_ready_file
         stop_server
@@ -302,16 +302,46 @@ else
         # is already proven by the "basic copy from server to local" case
         # above, which uses the same mechanism and aborts the whole script on
         # failure, so this cannot pass vacuously.
-        if test -e $scp_symlink_out; then
-            rm -f $scp_symlink_out $scp_secret $scp_symlink
+        if test -e "$scp_symlink_out"; then
+            rm -f "$scp_symlink_out" "$scp_secret" "$scp_symlink"
             echo -e "\n\nserver followed a symlink, confinement bypass"
+            do_cleanup
+            exit 1
+        fi
+
+        echo "Test that the server refuses to write through a symlink (local to server)"
+        # The default receive callback opens the destination file no-follow,
+        # so a pre-planted symlink at the destination name must leave its
+        # target untouched rather than be truncated and overwritten.
+        ./examples/echoserver/echoserver -1 -R $ready_file &
+        server_pid=$!
+        create_port
+        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L "$PWD/scripts/scp.test:$scp_symlink"
+        RESULT=$?
+        remove_ready_file
+        stop_server
+        check_timeout $RESULT "symlink write refusal"
+
+        # The client exits non-zero on the server's abort, and the "basic
+        # copy from local to server" case above proves the same transfer
+        # succeeds against a real destination, so an untouched target cannot
+        # mean the transfer never reached the server.
+        if test $RESULT -eq 0; then
+            rm -f "$scp_symlink_out" "$scp_secret" "$scp_symlink"
+            echo -e "\n\nserver accepted a write through a symlink"
+            do_cleanup
+            exit 1
+        fi
+        if ! grep -qx "TOP SECRET SYMLINK TARGET" "$scp_secret" || ! test -L "$scp_symlink"; then
+            rm -f "$scp_symlink_out" "$scp_secret" "$scp_symlink"
+            echo -e "\n\nserver wrote through a symlink, confinement bypass"
             do_cleanup
             exit 1
         fi
     else
         echo "symlink not supported on this filesystem, skipping symlink test"
     fi
-    rm -f $scp_secret $scp_symlink $scp_symlink_out
+    rm -f "$scp_secret" "$scp_symlink" "$scp_symlink_out"
 fi
 
 echo -e "\nALL Tests Passed"
