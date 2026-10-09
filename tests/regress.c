@@ -3864,6 +3864,345 @@ static void TestClientBannerBehindServiceAccept(void)
 }
 
 
+/* The keyboard-interactive INFO_RESPONSE only ever goes to a server, so the
+ * client refuses it in every state, the auth window included. */
+static void TestClientInfoResponseNeverAllowed(WOLFSSH* ssh)
+{
+    static const byte states[] = {
+        CONNECT_KEYED,
+        CONNECT_CLIENT_USERAUTH_REQUEST_SENT,
+        CONNECT_SERVER_USERAUTH_REQUEST_DONE,
+        CONNECT_CLIENT_USERAUTH_SENT,
+        CONNECT_SERVER_USERAUTH_ACCEPT_DONE,
+    };
+    word32 i;
+    int allowed;
+
+    for (i = 0; i < sizeof(states)/sizeof(*states); i++) {
+        ResetSession(ssh);
+        ssh->connectState = states[i];
+        allowed = wolfSSH_TestIsMessageAllowed(ssh,
+                MSGID_USERAUTH_INFO_RESPONSE, WS_MSG_RECV);
+        AssertFalse(allowed);
+        AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    }
+}
+
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* The auth types the client callback was asked for, ORed. */
+static byte clientAuthCbTypes;
+
+/* Answers a password and every keyboard prompt with "secret"; declines a
+ * key. */
+static int ClientKbUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static byte secret[] = "secret";
+    static byte* responses[2];
+    static word32 responseLengths[2];
+    word32 i;
+
+    (void)ctx;
+    clientAuthCbTypes |= authType;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        authData->sf.password.password = secret;
+        authData->sf.password.passwordSz = (word32)sizeof(secret) - 1;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        if (authData->sf.keyboard.promptCount > 2)
+            return WOLFSSH_USERAUTH_FAILURE;
+        for (i = 0; i < authData->sf.keyboard.promptCount; i++) {
+            responses[i] = secret;
+            responseLengths[i] = (word32)sizeof(secret) - 1;
+        }
+        authData->sf.keyboard.responseCount =
+            authData->sf.keyboard.promptCount;
+        authData->sf.keyboard.responses = responses;
+        authData->sf.keyboard.responseLengths = responseLengths;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+}
+
+/* Builds a plaintext SSH_MSG_USERAUTH_INFO_REQUEST with promptCount
+ * hidden "Password: " prompts. */
+static word32 BuildUserAuthInfoRequest(word32 promptCount,
+        byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+    word32 i;
+
+    idx = AppendString(payload, sizeof(payload), idx, "name");
+    idx = AppendString(payload, sizeof(payload), idx, "instruction");
+    idx = AppendString(payload, sizeof(payload), idx, ""); /* language */
+    idx = AppendUint32(payload, sizeof(payload), idx, promptCount);
+    for (i = 0; i < promptCount; i++) {
+        idx = AppendString(payload, sizeof(payload), idx, "Password: ");
+        idx = AppendByte(payload, sizeof(payload), idx, 0); /* no echo */
+    }
+
+    return WrapPacket(MSGID_USERAUTH_INFO_REQUEST, payload, idx, out, outSz);
+}
+
+/* A client past its first userauth request with no keyboard-interactive
+ * exchange open. */
+static void InitClientUserAuthHarness(ChannelOpenHarness* harness,
+        byte* in, word32 inSz)
+{
+    InitChannelOpenHarnessClient(harness, in, inSz);
+    wolfSSH_SetUserAuth(harness->ctx, ClientKbUserAuthCb);
+    AssertIntEQ(wolfSSH_SetUsername(harness->ssh, "user"), WS_SUCCESS);
+    harness->ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
+    harness->ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
+    clientAuthCbTypes = 0;
+}
+
+/* A server that opened a keyboard-interactive exchange then sends the
+ * client an INFO_RESPONSE of its own. The filter refuses the client-only
+ * message, and the handler refuses it on its own too, so the callback is
+ * never handed a peer's responses to check. */
+static void TestClientInfoResponseRejected(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[32];
+    byte in[64];
+    word32 payloadSz;
+    word32 inSz;
+    word32 idx = 0;
+
+    payloadSz = AppendUint32(payload, sizeof(payload), 0, 1);
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, "secret");
+    inSz = WrapPacket(MSGID_USERAUTH_INFO_RESPONSE, payload, payloadSz,
+            in, sizeof(in));
+
+    InitClientUserAuthHarness(&harness, in, inSz);
+    /* As left by the legitimate INFO_REQUEST before it. */
+    harness.ssh->kbRequestSent = 1;
+    harness.ssh->authId = ID_USERAUTH_KEYBOARD;
+    harness.ssh->kbAuth.promptCount = 1;
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(clientAuthCbTypes, 0);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_BEGIN);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+    AssertTrue(harness.ssh->disconnected);
+
+    /* The handler on its own, as if the filter had let it through. */
+    harness.ssh->disconnected = 0;
+    AssertIntEQ(wolfSSH_TestDoUserAuthInfoResponse(harness.ssh,
+                payload, payloadSz, &idx), WS_FATAL_ERROR);
+    AssertIntEQ(clientAuthCbTypes, 0);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_BEGIN);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* An INFO_REQUEST the client never asked for, here after its first request
+ * went out for another method, draws a disconnect and never reaches the
+ * callback. */
+static void TestClientUnsolicitedInfoRequestRefused(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthInfoRequest(1, in, sizeof(in));
+    InitClientUserAuthHarness(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_STATE_E);
+    AssertIntEQ(clientAuthCbTypes, 0);
+    AssertTrue(harness.ssh->authId != ID_USERAUTH_KEYBOARD);
+    AssertTrue(harness.ssh->disconnected);
+    /* The disconnect is all that went out; no INFO_RESPONSE. */
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+    AssertIntEQ(NextPacketOffset(harness.io.out, harness.io.outSz),
+            harness.io.outSz);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The exchange the client opens is answered round after round until the
+ * server's verdict closes it. After the client moves on to password, a
+ * prompt is unsolicited again. */
+static void TestClientSolicitedInfoRequestAnswered(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    byte inFail[64];
+    byte payload[32];
+    word32 inReqSz;
+    word32 inFailSz;
+    word32 payloadSz;
+
+    inReqSz = BuildUserAuthInfoRequest(1, inReq, sizeof(inReq));
+    payloadSz = AppendString(payload, sizeof(payload), 0, "password");
+    payloadSz = AppendByte(payload, sizeof(payload), payloadSz, 0);
+    inFailSz = WrapPacket(MSGID_USERAUTH_FAILURE, payload, payloadSz,
+            inFail, sizeof(inFail));
+
+    InitClientUserAuthHarness(&harness, inReq, inReqSz);
+
+    /* The client asks for keyboard-interactive. */
+    AssertIntEQ(SendUserAuthRequest(harness.ssh, WOLFSSH_USERAUTH_KEYBOARD,
+                0), WS_SUCCESS);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_REQUEST);
+    AssertIntEQ(clientAuthCbTypes, 0);
+
+    /* Two rounds of prompts, each answered. */
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_KEYBOARD);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_RESPONSE);
+
+    clientAuthCbTypes = 0;
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_KEYBOARD);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_RESPONSE);
+
+    /* The server's failure names password only; the client moves to it. */
+    clientAuthCbTypes = 0;
+    RepointHarnessInput(&harness, inFail, inFailSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_PASSWORD);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_REQUEST);
+
+    /* A prompt now is one the client didn't ask for. */
+    clientAuthCbTypes = 0;
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_STATE_E);
+    AssertIntEQ(clientAuthCbTypes, 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The server's SUCCESS closes the exchange as well; a prompt after it is
+ * unsolicited. */
+static void TestClientInfoRequestAfterSuccessRefused(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    byte inOk[32];
+    word32 inReqSz;
+    word32 inOkSz;
+
+    inReqSz = BuildUserAuthInfoRequest(1, inReq, sizeof(inReq));
+    inOkSz = BuildPacket(MSGID_USERAUTH_SUCCESS, inOk, sizeof(inOk));
+
+    InitClientUserAuthHarness(&harness, inReq, inReqSz);
+    AssertIntEQ(SendUserAuthRequest(harness.ssh, WOLFSSH_USERAUTH_KEYBOARD,
+                0), WS_SUCCESS);
+
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_KEYBOARD);
+
+    RepointHarnessInput(&harness, inOk, inOkSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(harness.ssh->serverState, SERVER_USERAUTH_ACCEPT_DONE);
+
+    clientAuthCbTypes = 0;
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_INVALID_STATE_E);
+    AssertIntEQ(clientAuthCbTypes, 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* A keyboard-interactive request the socket wouldn't take yet is still
+ * the client's own; the prompt it draws is answered and both packets go
+ * out together. */
+static void TestClientInfoRequestAfterBlockedRequestAnswered(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    word32 inReqSz;
+    word32 next;
+
+    inReqSz = BuildUserAuthInfoRequest(1, inReq, sizeof(inReq));
+    InitClientUserAuthHarness(&harness, inReq, inReqSz);
+
+    harness.io.blockNext = 1;
+    AssertIntEQ(SendUserAuthRequest(harness.ssh, WOLFSSH_USERAUTH_KEYBOARD,
+                0), WS_WANT_WRITE);
+    AssertIntEQ(harness.io.outSz, 0);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_KEYBOARD);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_REQUEST);
+    next = NextPacketOffset(harness.io.out, harness.io.outSz);
+    AssertTrue(next < harness.io.outSz);
+    AssertIntEQ(ParseMsgId(harness.io.out + next, harness.io.outSz - next),
+            MSGID_USERAUTH_INFO_RESPONSE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static int KbMemoryErrorHighwaterCb(byte side, void* ctx)
+{
+    WOLFSSH_UNUSED(side);
+    WOLFSSH_UNUSED(ctx);
+
+    /* What a rekey that cannot allocate its handshake state returns. */
+    return WS_MEMORY_E;
+}
+
+/* A highwater check that fails after the request's last byte is out does
+ * not make the server's prompt unsolicited. */
+static void TestClientInfoRequestAfterHighwaterErrorAnswered(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    word32 inReqSz;
+
+    inReqSz = BuildUserAuthInfoRequest(1, inReq, sizeof(inReq));
+    InitClientUserAuthHarness(&harness, inReq, inReqSz);
+
+    wolfSSH_SetHighwaterCb(harness.ctx, 1, KbMemoryErrorHighwaterCb);
+    /* Cross the mark on the request's own send. */
+    harness.ssh->highwaterMark = 1;
+    harness.ssh->txCount = 1;
+
+    AssertIntEQ(SendUserAuthRequest(harness.ssh, WOLFSSH_USERAUTH_KEYBOARD,
+                0), WS_MEMORY_E);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_REQUEST);
+
+    RepointHarnessInput(&harness, inReq, inReqSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(clientAuthCbTypes, WOLFSSH_USERAUTH_KEYBOARD);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_RESPONSE);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
  * connectState: no channel created, and the only thing sent back is the
  * disconnect RFC 4252 section 6 asks for. The connectState gate does the
@@ -7998,6 +8337,108 @@ static void TestKbSameUserResponseSucceeds(void)
     AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
     AssertIntEQ(authCbInvoked, 1);
     AssertStrEQ(authCbUserName, "alice");
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* What round two's setup callback was handed. */
+static int kbRound;
+static word32 kbSetupResponseCount;
+static byte** kbSetupResponses;
+static word32* kbSetupResponseLengths;
+
+/* Asks for a second round after the first response, then accepts. */
+static int MultiRoundKbUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        if (kbRound > 0) {
+            kbSetupResponseCount = authData->sf.keyboard.responseCount;
+            kbSetupResponses = authData->sf.keyboard.responses;
+            kbSetupResponseLengths = authData->sf.keyboard.responseLengths;
+        }
+        return RecordUserAuthCb(authType, authData, ctx);
+    }
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        kbRound++;
+        return kbRound == 1 ? WOLFSSH_USERAUTH_SUCCESS_ANOTHER
+                            : WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+}
+
+/* A callback that wants another round gets round two's setup call with the
+ * response arrays gone, not pointing at freed memory. */
+static void TestKbSecondRoundSetupSeesNoResponses(void)
+{
+    ChannelOpenHarness harness;
+    byte inReq[128];
+    byte inResp[128];
+    word32 inReqSz;
+    word32 inRespSz;
+
+    inReqSz = BuildUserAuthKeyboardRequest("alice", inReq, sizeof(inReq));
+    inRespSz = BuildUserAuthInfoResponse("secret", inResp, sizeof(inResp));
+
+    kbRound = 0;
+    kbSetupResponseCount = 99;
+    kbSetupResponses = NULL;
+    kbSetupResponseLengths = NULL;
+    ResetAuthCbRecord();
+    InitUserAuthHarness(&harness, inReq, inReqSz);
+    wolfSSH_SetUserAuth(harness.ctx, MultiRoundKbUserAuthCb);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_REQUEST);
+
+    /* Round one wants another, so a second INFO_REQUEST follows. */
+    RepointHarnessInput(&harness, inResp, inRespSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(kbRound, 1);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_USERAUTH_INFO_REQUEST);
+    AssertIntEQ(kbSetupResponseCount, 0);
+    AssertNull(kbSetupResponses);
+    AssertNull(kbSetupResponseLengths);
+
+    /* Round two completes the authentication. */
+    RepointHarnessInput(&harness, inResp, inRespSz);
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(kbRound, 2);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_USERAUTH_DONE);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* The handler refuses a server session on its own, as if the filter had
+ * let an INFO_REQUEST through and the client-side flag were somehow set. */
+static void TestKbInfoRequestOnServerRefused(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[64];
+    byte none[1];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    payloadSz = AppendString(payload, sizeof(payload), 0, "name");
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, "");
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, "");
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 1);
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, "Password: ");
+    payloadSz = AppendByte(payload, sizeof(payload), payloadSz, 0);
+
+    ResetAuthCbRecord();
+    InitUserAuthHarness(&harness, none, 0);
+    harness.ssh->kbRequestSent = 1;
+
+    AssertIntEQ(wolfSSH_TestDoUserAuthInfoRequest(harness.ssh, payload,
+                payloadSz, &idx), WS_INVALID_STATE_E);
+    AssertIntEQ(authCbInvoked, 0);
+    AssertTrue(harness.ssh->disconnected);
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -18775,11 +19216,18 @@ int main(int argc, char** argv)
     TestClientOnlyKexMsgsBlocked(ssh);
     TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestClientUserauthReplyBeforeRequest(ssh);
+    TestClientInfoResponseNeverAllowed(ssh);
     TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_SUCCESS);
     TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_FAILURE);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     /* Id 60 is only a known id as INFO_REQUEST. */
     TestClientUnsolicitedUserauthReplyRejected(MSGID_USERAUTH_PK_OK);
+    TestClientInfoResponseRejected();
+    TestClientUnsolicitedInfoRequestRefused();
+    TestClientSolicitedInfoRequestAnswered();
+    TestClientInfoRequestAfterSuccessRefused();
+    TestClientInfoRequestAfterBlockedRequestAnswered();
+    TestClientInfoRequestAfterHighwaterErrorAnswered();
 #endif
     TestClientBannerBehindServiceAccept();
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
@@ -19244,6 +19692,8 @@ int main(int argc, char** argv)
     #ifndef NO_WOLFSSH_SERVER
     TestKbUsernameChangeDisconnects();
     TestKbSameUserResponseSucceeds();
+    TestKbSecondRoundSetupSeesNoResponses();
+    TestKbInfoRequestOnServerRefused();
     #endif
 #endif
 
