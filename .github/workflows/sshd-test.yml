@@ -118,6 +118,14 @@ jobs:
         working-directory: ./wolfssh/
         run: make check
 
+      # For sshd_channel_close_test.sh. The suite runs as root, which does not
+      # see a per-user pip install, so use the distro package.
+      - name: Install paramiko
+        uses: ./wolfssh/.github/actions/install-apt-deps
+        with:
+          packages: python3-paramiko
+          ghcr-debs-tag: ubuntu-24.04-tests
+
       - name: Run wolfSSHd tests
         working-directory: ./wolfssh/apps/wolfsshd/test
         run: |
