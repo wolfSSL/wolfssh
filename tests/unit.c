@@ -38,6 +38,9 @@
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
+#ifdef WOLFSSL_HAVE_MLKEM
+    #include <wolfssl/wolfcrypt/wc_mlkem.h>
+#endif
 #ifndef WOLFSSH_NO_RSA
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
@@ -19911,6 +19914,308 @@ out:
 }
 #endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
 
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+typedef struct {
+    byte kexId;
+    int mlKemType;
+    enum wc_HashType hashId;
+    word32 classicSz;   /* classical shared secret size */
+} MlKemClientCase;
+
+static const MlKemClientCase mlKemClientCases[] = {
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    { ID_CURVE25519_MLKEM768_SHA256, WC_ML_KEM_768, WC_HASH_TYPE_SHA256,
+        CURVE25519_KEYSIZE },
+#endif
+#ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
+    { ID_NISTP256_MLKEM768_SHA256, WC_ML_KEM_768, WC_HASH_TYPE_SHA256, 32 },
+#endif
+#ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
+    { ID_NISTP384_MLKEM1024_SHA384, WC_ML_KEM_1024, WC_HASH_TYPE_SHA384, 48 },
+#endif
+};
+
+/* Largest classical public key in f: an uncompressed P-384 point. */
+#define MLKEM_CLIENT_PEER_SZ (1 + 2 * 48)
+
+/* Run KeyAgreeEcdhMlKem_client for tc with a fresh client key pair, ssh->kSz
+ * set to kSz on entry. With corrupt set, one byte of the encoded private
+ * key's stored H(ek) is flipped and *decodeRet gets what
+ * wc_MlKemKey_DecodePrivateKey returns for those bytes. *kMatch is set when
+ * ssh->k is Hash(ss || classical secret), the secrets computed peer side. */
+static int mlKemClientAgree(const MlKemClientCase* tc, word32 kSz,
+        int corrupt, int* agreeRet, int* decodeRet, int* kMatch)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    MlKemKey kem;
+    MlKemKey scratch;
+    byte f[WC_ML_KEM_MAX_CIPHER_TEXT_SIZE + MLKEM_CLIENT_PEER_SZ];
+    byte cPub[MLKEM_CLIENT_PEER_SZ];
+    byte expected[WC_ML_KEM_SS_SZ + MLKEM_CLIENT_PEER_SZ];
+    byte digest[WC_MAX_DIGEST_SIZE];
+    word32 ctSz = 0, privSz = 0;
+    word32 pubSz = MLKEM_CLIENT_PEER_SZ, cPubSz = sizeof(cPub);
+    word32 classicSz = MLKEM_CLIENT_PEER_SZ;
+    int digestSz;
+    int kemInit = 0;
+    int result = 0;
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    curve25519_key peer25519, client25519;
+    int peer25519Init = 0, client25519Init = 0;
+#endif
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    ecc_key peerEcc, clientEcc;
+    int peerEccInit = 0, clientEccInit = 0;
+    int curveId = (tc->classicSz == 48) ? ECC_SECP384R1 : ECC_SECP256R1;
+#endif
+
+    *agreeRet = WS_FATAL_ERROR;
+    *decodeRet = 0;
+    *kMatch = 0;
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -7300;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -7301;
+        goto out;
+    }
+    ssh->handshake->kexId = tc->kexId;
+    ssh->handshake->useMlKem = 1;
+
+    /* Client ML-KEM key, encoded into handshake->x. */
+    if (wc_MlKemKey_Init(&kem, tc->mlKemType, NULL, INVALID_DEVID) != 0) {
+        result = -7303;
+        goto out;
+    }
+    kemInit = 1;
+    if (wc_MlKemKey_MakeKey(&kem, ssh->rng) != 0
+            || wc_MlKemKey_PrivateKeySize(&kem, &privSz) != 0
+            || wc_MlKemKey_CipherTextSize(&kem, &ctSz) != 0
+            || privSz > sizeof(ssh->handshake->x)
+            || wc_MlKemKey_EncodePrivateKey(&kem, ssh->handshake->x,
+                privSz) != 0
+            || wc_MlKemKey_Encapsulate(&kem, f, expected, ssh->rng) != 0) {
+        result = -7304;
+        goto out;
+    }
+    ssh->handshake->xSz = privSz;
+
+    /* Client ephemeral classical key, as SendKexDhInit makes it, and the
+     * peer key whose public part follows the ciphertext in f. The expected
+     * classical secret is computed from the peer side. */
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    if (tc->kexId == ID_CURVE25519_MLKEM768_SHA256) {
+        ssh->handshake->useCurve25519 = 1;
+        if (wc_curve25519_init(&ssh->handshake->privKey.curve25519) != 0
+                || wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
+                    &ssh->handshake->privKey.curve25519) != 0) {
+            result = -7302;
+            goto out;
+        }
+        if (wc_curve25519_init(&peer25519) != 0) {
+            result = -7305;
+            goto out;
+        }
+        peer25519Init = 1;
+        if (wc_curve25519_init(&client25519) != 0) {
+            result = -7305;
+            goto out;
+        }
+        client25519Init = 1;
+        if (wc_curve25519_make_key(ssh->rng, CURVE25519_KEYSIZE,
+                    &peer25519) != 0
+                || wc_curve25519_export_public_ex(&peer25519, f + ctSz,
+                    &pubSz, EC25519_LITTLE_ENDIAN) != 0
+                || wc_curve25519_export_public_ex(
+                    &ssh->handshake->privKey.curve25519, cPub, &cPubSz,
+                    EC25519_LITTLE_ENDIAN) != 0
+                || wc_curve25519_import_public_ex(cPub, cPubSz,
+                    &client25519, EC25519_LITTLE_ENDIAN) != 0
+                || wc_curve25519_shared_secret_ex(&peer25519, &client25519,
+                    expected + WC_ML_KEM_SS_SZ, &classicSz,
+                    EC25519_LITTLE_ENDIAN) != 0) {
+            result = -7306;
+            goto out;
+        }
+    }
+    else
+#endif
+    {
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+        ssh->handshake->useEcdh = 1;
+        if (wc_ecc_init(&ssh->handshake->privKey.ecc) != 0) {
+            result = -7302;
+            goto out;
+        }
+    #ifdef HAVE_WC_ECC_SET_RNG
+        if (wc_ecc_set_rng(&ssh->handshake->privKey.ecc, ssh->rng) != 0) {
+            result = -7302;
+            goto out;
+        }
+    #endif
+        if (wc_ecc_make_key_ex(ssh->rng, (int)tc->classicSz,
+                &ssh->handshake->privKey.ecc, curveId) != 0) {
+            result = -7302;
+            goto out;
+        }
+        if (wc_ecc_init(&peerEcc) != 0) {
+            result = -7305;
+            goto out;
+        }
+        peerEccInit = 1;
+        if (wc_ecc_init(&clientEcc) != 0) {
+            result = -7305;
+            goto out;
+        }
+        clientEccInit = 1;
+    #ifdef HAVE_WC_ECC_SET_RNG
+        if (wc_ecc_set_rng(&peerEcc, ssh->rng) != 0) {
+            result = -7305;
+            goto out;
+        }
+    #endif
+        if (wc_ecc_make_key_ex(ssh->rng, (int)tc->classicSz, &peerEcc,
+                    curveId) != 0
+                || wc_ecc_export_x963(&peerEcc, f + ctSz, &pubSz) != 0
+                || wc_ecc_export_x963(&ssh->handshake->privKey.ecc, cPub,
+                    &cPubSz) != 0
+                || wc_ecc_import_x963_ex(cPub, cPubSz, &clientEcc,
+                    curveId) != 0
+                || wc_ecc_shared_secret(&peerEcc, &clientEcc,
+                    expected + WC_ML_KEM_SS_SZ, &classicSz) != 0) {
+            result = -7306;
+            goto out;
+        }
+#endif
+    }
+    if (classicSz != tc->classicSz) {
+        result = -7308;
+        goto out;
+    }
+
+    if (corrupt) {
+        /* dk ends with H(ek) || z; flip a byte of H(ek). */
+        ssh->handshake->x[privSz - 2 * WC_ML_KEM_SYM_SZ] ^= 0x01;
+        if (wc_MlKemKey_Init(&scratch, tc->mlKemType, NULL,
+                INVALID_DEVID) != 0) {
+            result = -7307;
+            goto out;
+        }
+        *decodeRet = wc_MlKemKey_DecodePrivateKey(&scratch,
+                ssh->handshake->x, privSz);
+        wc_MlKemKey_Free(&scratch);
+    }
+
+    ssh->kSz = kSz;
+    *agreeRet = wolfSSH_TestKeyAgreeEcdhMlKem_client(ssh, (byte)tc->hashId,
+            f, ctSz + pubSz);
+
+    digestSz = wc_HashGetDigestSize(tc->hashId);
+    if (digestSz <= 0 || wc_Hash(tc->hashId, expected,
+            WC_ML_KEM_SS_SZ + classicSz, digest, (word32)digestSz) != 0) {
+        result = -7309;
+        goto out;
+    }
+    *kMatch = (ssh->kSz == (word32)digestSz)
+            && (WMEMCMP(ssh->k, digest, (word32)digestSz) == 0);
+
+out:
+#ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
+    if (peer25519Init)
+        wc_curve25519_free(&peer25519);
+    if (client25519Init)
+        wc_curve25519_free(&client25519);
+#endif
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384)
+    if (peerEccInit)
+        wc_ecc_free(&peerEcc);
+    if (clientEccInit)
+        wc_ecc_free(&clientEcc);
+#endif
+    if (kemInit)
+        wc_MlKemKey_Free(&kem);
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The classical secret lands after the ML-KEM secret in ssh->k, so only the
+ * remaining capacity may be offered to it, and a private-key decode failure
+ * must be the error returned rather than a later decapsulation error. */
+static int test_KeyAgreeEcdhMlKem_client(void)
+{
+    word32 i;
+    int agreeRet;
+    int decodeRet;
+    int kMatch;
+    int ret;
+
+    for (i = 0; i < sizeof(mlKemClientCases) / sizeof(mlKemClientCases[0]);
+            i++) {
+        const MlKemClientCase* tc = &mlKemClientCases[i];
+        word32 fitSz = WC_ML_KEM_SS_SZ + tc->classicSz;
+
+        /* Control: full capacity agrees. */
+        ret = mlKemClientAgree(tc, MAX_KEX_KEY_SZ, 0, &agreeRet, &decodeRet,
+                &kMatch);
+        if (ret != 0)
+            return ret;
+        if (agreeRet != WS_SUCCESS || !kMatch)
+            return -7310;
+
+        /* Exact fit for both secrets agrees. */
+        ret = mlKemClientAgree(tc, fitSz, 0, &agreeRet, &decodeRet, &kMatch);
+        if (ret != 0)
+            return ret;
+        if (agreeRet != WS_SUCCESS || !kMatch)
+            return -7311;
+
+        /* No room past the ML-KEM secret is rejected before any agreement. */
+        ret = mlKemClientAgree(tc, WC_ML_KEM_SS_SZ, 0, &agreeRet, &decodeRet,
+                &kMatch);
+        if (ret != 0)
+            return ret;
+        if (agreeRet != WS_BUFFER_E)
+            return -7314;
+        ret = mlKemClientAgree(tc, 0, 0, &agreeRet, &decodeRet, &kMatch);
+        if (ret != 0)
+            return ret;
+        if (agreeRet != WS_BUFFER_E)
+            return -7315;
+
+        /* One byte short for the classical secret must fail. */
+        ret = mlKemClientAgree(tc, fitSz - 1, 0, &agreeRet, &decodeRet,
+                &kMatch);
+        if (ret != 0)
+            return ret;
+        if (agreeRet == WS_SUCCESS)
+            return -7312;
+
+        /* Corrupt private key: a decode error is returned as is. A decode
+         * that does not check H(ek) leaves decapsulation to reject
+         * implicitly, which agrees on a different secret. */
+        ret = mlKemClientAgree(tc, MAX_KEX_KEY_SZ, 1, &agreeRet, &decodeRet,
+                &kMatch);
+        if (ret != 0)
+            return ret;
+        if (kMatch || (decodeRet != 0 ? agreeRet != decodeRet
+                                      : agreeRet != WS_SUCCESS))
+            return -7313;
+    }
+
+    return 0;
+}
+#endif
+
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
     !defined(NO_FILESYSTEM) && !defined(WOLFSSL_NUCLEUS) && \
     !defined(_WIN32) && !defined(WOLFSSH_ZEPHYR)
@@ -23910,6 +24215,15 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
+
+#if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
+    !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
+    !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
+    unitResult = test_KeyAgreeEcdhMlKem_client();
+    printf("KeyAgreeEcdhMlKem_client: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #endif
 
