@@ -47,6 +47,8 @@
 #include <wolfssl/wolfcrypt/asn_public.h>
 
 #define WOLFSSH_TEST_HEX2BIN
+/* The socket helpers, for the drain tests. */
+#define WOLFSSH_TEST_CLIENT
 #include <wolfssh/test.h>
 #include "unit.h"
 
@@ -9255,6 +9257,139 @@ done:
     return result;
 }
 #endif /* NO_WOLFSSH_CLIENT */
+
+#if !defined(NO_WOLFSSH_CLIENT) && defined(WSHUTDOWN) && \
+    !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+/* The drain helpers run over a real socket, so these use a socket pair with
+ * the session on one end and the test playing the peer on the other. The
+ * send callback optionally reports one would-block first. */
+static int s_drainWantWrites = 0;
+
+static int DrainSocketIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    ssize_t n;
+
+    (void)ssh;
+    if (s_drainWantWrites > 0) {
+        s_drainWantWrites--;
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+    n = send(*(SOCKET_T*)ctx, buf, sz, 0);
+    return (n < 0) ? WS_CBIO_ERR_GENERAL : (int)n;
+}
+
+enum {
+    DRAIN_PEER_HANGS_UP,
+    DRAIN_SHORT_SEND,
+    DRAIN_ALREADY_DISCONNECTED,
+    DRAIN_HALF_CLOSE_ONLY,
+    DRAIN_QUEUED_DISCONNECT
+};
+
+/* Returns 0 when the helper returned want and the peer saw the disconnect
+ * on the wire, or saw nothing where nothing was meant to be sent. */
+static int RunDrainCase(int mode, int want, int base)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    SOCKET_T     sv[2] = { -1, -1 };
+    byte         buf[256];
+    int          result = 0;
+    int          ret;
+    ssize_t      n;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        return base;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) { result = base - 1; goto done; }
+    wolfSSH_SetIOSend(ctx, DrainSocketIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = base - 2; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+    wolfSSH_SetIOWriteCtx(ssh, &sv[0]);
+
+    (void)shutdown(sv[1], SHUT_WR);  /* the peer hangs up */
+    if (mode == DRAIN_SHORT_SEND)
+        s_drainWantWrites = 1;
+    if (mode == DRAIN_ALREADY_DISCONNECTED)
+        ssh->disconnected = 1;  /* the peer's disconnect came first */
+    if (mode == DRAIN_QUEUED_DISCONNECT) {
+        /* a short send leaves our own disconnect queued */
+        s_drainWantWrites = 1;
+        ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+        if (ret != WS_WANT_WRITE || !wolfSSH_OutputPending(ssh)) {
+            result = base - 7;
+            goto done;
+        }
+    }
+
+    if (mode == DRAIN_HALF_CLOSE_ONLY || mode == DRAIN_QUEUED_DISCONNECT)
+        ret = HalfCloseAndDrain(ssh, sv[0]);
+    else
+        ret = SendDisconnectAndDrain(ssh, sv[0]);
+    /* the would-block was consumed, so the retry loop really ran */
+    if (s_drainWantWrites != 0) { result = base - 6; goto done; }
+    if (ret != want) { result = base - 3; goto done; }
+
+    /* The helper half closed its end, so the peer reads what was sent
+     * and then EOF. */
+    n = recv(sv[1], buf, sizeof(buf), MSG_DONTWAIT);
+    if (mode == DRAIN_ALREADY_DISCONNECTED || mode == DRAIN_HALF_CLOSE_ONLY) {
+        if (n != 0) { result = base - 4; goto done; }
+    }
+    else if (n <= 0) {
+        result = base - 5;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    if (sv[0] != -1)
+        close(sv[0]);
+    if (sv[1] != -1)
+        close(sv[1]);
+    return result;
+}
+
+/* The disconnect goes out and the peer's hang up ends the drain. */
+static int test_DrainPeerHangsUp(void)
+{
+    return RunDrainCase(DRAIN_PEER_HANGS_UP, WS_SUCCESS, -2100);
+}
+
+/* A would-block on the first send leaves the disconnect queued; the retry
+ * flushes it and the drain still completes. */
+static int test_DrainRetriesShortSend(void)
+{
+    return RunDrainCase(DRAIN_SHORT_SEND, WS_SUCCESS, -2110);
+}
+
+/* The peer disconnected first, so nothing is sent but its hang up is still
+ * waited for and reported as success. */
+static int test_DrainPeerAlreadyDisconnected(void)
+{
+    return RunDrainCase(DRAIN_ALREADY_DISCONNECTED, WS_SUCCESS, -2120);
+}
+
+/* The server's path: nothing goes out, the half close alone ends the
+ * session and the peer's hang up is still seen. */
+static int test_DrainHalfCloseOnly(void)
+{
+    return RunDrainCase(DRAIN_HALF_CLOSE_ONLY, WS_SUCCESS, -2130);
+}
+
+/* A disconnect of our own that a short send left queued still has to go
+ * out, though the session is already disconnected and the worker refuses
+ * to send on it. */
+static int test_DrainFlushesQueuedDisconnect(void)
+{
+    return RunDrainCase(DRAIN_QUEUED_DISCONNECT, WS_SUCCESS, -2140);
+}
+#endif /* !NO_WOLFSSH_CLIENT && WSHUTDOWN && !USE_WINDOWS_API &&
+          !WOLFSSH_ZEPHYR */
+
 
 #ifndef NO_WOLFSSH_CLIENT
 /* SendChannelEof() addresses the channel by peer id, and peerChannel is 0
@@ -23455,6 +23590,30 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_CLIENT */
+
+#if !defined(NO_WOLFSSH_CLIENT) && defined(WSHUTDOWN) && \
+    !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
+    unitResult = test_DrainPeerHangsUp();
+    printf("DrainPeerHangsUp: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainRetriesShortSend();
+    printf("DrainRetriesShortSend: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainPeerAlreadyDisconnected();
+    printf("DrainPeerAlreadyDisconnected: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainHalfCloseOnly();
+    printf("DrainHalfCloseOnly: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainFlushesQueuedDisconnect();
+    printf("DrainFlushesQueuedDisconnect: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #ifndef NO_WOLFSSH_CLIENT
     unitResult = test_SendChannelEofWantWrite();

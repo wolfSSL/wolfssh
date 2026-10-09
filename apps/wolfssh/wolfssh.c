@@ -1389,50 +1389,27 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
     if (ret == WS_FATAL_ERROR) {
         ret = wolfSSH_get_error(ssh);
     }
+    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_WANT_READ &&
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF &&
+            ret != WS_SOCKET_ERROR_E && ret != WS_DISCONNECT) {
+        WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
+    }
 
     /* do not continue on with shutdown process if peer already disconnected */
     if (ret != WS_SOCKET_ERROR_E
             && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
-#ifndef WOLFSSL_NUCLEUS
-        if (ret == WS_WANT_WRITE) {
-            /* The close messages are queued and the threads are done, no
-             * one else is going to send them. */
-            ret = FlushQueuedSend(ssh, NULL);
-            if (ret == WS_WANT_WRITE) {
-                /* The peer stopped reading. The socket closes next, there is
-                 * nothing left to push the messages out with. */
-                ret = WS_SUCCESS;
-            }
-        }
-#endif
-
-        if (ret == WS_SUCCESS) {
-            ret = wolfSSH_worker(ssh, NULL);
-            if (ret == WS_FATAL_ERROR) {
-                ret = wolfSSH_get_error(ssh);
-            }
-            if (ret == WS_WANT_WRITE) {
-                /* The close messages are already out, whatever the drain
-                 * still wants to send is a reply to the peer. */
-                ret = WS_SUCCESS;
-            }
-        }
-        else if (ret != WS_CHANNEL_CLOSED && ret != WS_WANT_READ
-                && ret != WS_EOF) {
-            WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
-        }
-
-        if (ret == WS_CHANNEL_CLOSED || ret == WS_WANT_READ
-                || ret == WS_EOF) {
-            /* Shutting down. The channel closing or the peer's EOF isn't a
-             * fail, and neither is the peer having nothing ready on this
-             * non-blocking socket; either way there is nothing left to wait
-             * for. */
+        /* The close messages a short send left queued go out with the
+         * disconnect: the threads are done, no one else is going to send
+         * them. */
+        ret = SendDisconnectAndDrain(ssh, sockFd);
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+            /* The socket closes next, so there is nothing left to push a
+             * queued disconnect out with, and a peer that never hung up is
+             * not a fail. */
             ret = WS_SUCCESS;
         }
         else if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG,
-                "Failed to listen for close messages from the peer.");
+            WLOG(WS_LOG_DEBUG, "Sending the disconnect failed.");
         }
     }
     WCLOSESOCKET(sockFd);

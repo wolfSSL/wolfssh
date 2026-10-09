@@ -1940,51 +1940,18 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
     WFREE(workingDir, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     if (ret == WS_SUCCESS) {
-        int err;
-        ret = wolfSSH_shutdown(ssh);
+        int error;
 
-        /* peer hung up or channel already closed, stop trying.
-         * wolfSSH_shutdown() folds a peer EOF into WS_SUCCESS itself, so
-         * there is no WS_EOF to test for here. */
-        if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR ||
-                ret == WS_CHANNEL_CLOSED) {
-            ret = 0;
-        }
+        (void)wolfSSH_shutdown(ssh);
+        error = wolfSSH_get_error(ssh);
 
-        err = wolfSSH_get_error(ssh);
-        if (err != WS_SOCKET_ERROR_E &&
-                (err == WS_WANT_READ || err == WS_WANT_WRITE)) {
-            int maxAttempt = 10; /* make 10 attempts max before giving up */
-            int attempt;
-
-            for (attempt = 0; attempt < maxAttempt; attempt++) {
-                ret = wolfSSH_worker(ssh, NULL);
-                err  = wolfSSH_get_error(ssh);
-
-                /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
-                    ret = 0;
-                    break;
-                }
-
-                /* peer hung up, stop shutdown */
-                if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR) {
-                    ret = 0;
-                    break;
-                }
-
-                if (err == WS_WANT_READ || err == WS_WANT_WRITE) {
-                    /* Wanting read or wanting write. Clear ret. */
-                    ret = 0;
-                }
-                else {
-                    break;
-                }
-            }
-
-            if (attempt == maxAttempt) {
-                printf("SFTP client gave up on graceful shutdown,"
+        /* peer already hung up, just close */
+        if (error != WS_SOCKET_ERROR_E) {
+            ret = SendDisconnectAndDrain(ssh, sockFd);
+            if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+                printf("SFTP client gave up on a graceful shutdown, "
                        "closing the socket\n");
+                ret = WS_SUCCESS;
             }
         }
     }

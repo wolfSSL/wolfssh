@@ -934,10 +934,21 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     }
 
     ret = wolfSSH_shutdown(ssh);
-    /* The socket closes next, so a queued write and a retired channel are
-     * both done as far as this teardown is concerned. */
+    /* A queued write and a retired channel are both done as far as this
+     * teardown is concerned: the disconnect carries the write out. */
     if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_CHANNEL_CLOSED)
         err_sys("Closing port forward stream failed.");
+
+    /* peer already hung up, just close */
+    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+        ret = SendDisconnectAndDrain(ssh, sshFd);
+        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+            printf("Gave up on a graceful shutdown, closing the socket\n");
+            ret = WS_SUCCESS;
+        }
+        else if (ret != WS_SUCCESS)
+            err_sys("Sending the disconnect failed.");
+    }
 
     WCLOSESOCKET(sshFd);
     if (listenFd != (SOCKET_T)-1)
