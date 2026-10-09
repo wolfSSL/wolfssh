@@ -7131,11 +7131,7 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
     char file2[300];
     /* wolfSSH_SCP_from() mutates its src/dst buffers in place (e.g.
      * ScpCheckForRename() writes a NUL into the path), so these cannot be
-     * string literals. The client thread chdir()s into dstDir while
-     * receiving a directory; since the client and server here share one
-     * process (and thus one cwd), srcBuf must be absolute so the server
-     * thread's concurrent directory walk does not resolve relative to
-     * whatever directory the client just chdir()ed into. */
+     * string literals. */
     char srcBuf[256];
     char dstBuf[32];
     THREAD_TYPE serThread;

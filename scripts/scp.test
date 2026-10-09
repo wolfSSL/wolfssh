@@ -308,6 +308,36 @@ else
             do_cleanup
             exit 1
         fi
+
+        echo "Test that the server refuses to write through a symlink (local to server)"
+        # The default receive callback opens the destination file no-follow,
+        # so a pre-planted symlink at the destination name must leave its
+        # target untouched rather than be truncated and overwritten.
+        ./examples/echoserver/echoserver -1 -R $ready_file &
+        server_pid=$!
+        create_port
+        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$scp_symlink
+        RESULT=$?
+        remove_ready_file
+        stop_server
+        check_timeout $RESULT "symlink write refusal"
+
+        # The client exits non-zero on the server's abort, and the "basic
+        # copy from local to server" case above proves the same transfer
+        # succeeds against a real destination, so an untouched target cannot
+        # mean the transfer never reached the server.
+        if test $RESULT -eq 0; then
+            rm -f $scp_symlink_out $scp_secret $scp_symlink
+            echo -e "\n\nserver accepted a write through a symlink"
+            do_cleanup
+            exit 1
+        fi
+        if ! grep -qx "TOP SECRET SYMLINK TARGET" $scp_secret || ! test -L $scp_symlink; then
+            rm -f $scp_symlink_out $scp_secret $scp_symlink
+            echo -e "\n\nserver wrote through a symlink, confinement bypass"
+            do_cleanup
+            exit 1
+        fi
     else
         echo "symlink not supported on this filesystem, skipping symlink test"
     fi

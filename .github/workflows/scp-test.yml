@@ -110,3 +110,19 @@ jobs:
           # check that the directory and file do not exist
           [ ! -d /tmp/non_existent_folder ]
           [ ! -f /tmp/non_existent_folder/test.txt ]
+
+      # The receive callback's path-based fallback is what ports without
+      # openat() build; WOLFSSH_NO_DIRFD selects it here so the suite covers
+      # both halves.
+      - name: configure, path-based receive fallback
+        working-directory: ./wolfssh/
+        run : |
+          ./configure --enable-all LDFLAGS="-L${{ github.workspace }}/build-dir/lib" CPPFLAGS="-I${{ github.workspace }}/build-dir/include -DWOLFSSH_NO_FPKI -DWOLFSSH_NO_SFTP_TIMEOUT -DMAX_PATH_SZ=120 -DWOLFSSH_NO_DIRFD"
+
+      - name: make and test, path-based receive fallback
+        working-directory: ./wolfssh/
+        run: |
+          make
+          make tests/unit.test
+          ./tests/unit.test
+          ./scripts/scp.test

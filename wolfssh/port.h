@@ -473,7 +473,9 @@ extern "C" {
          * (POSIX.1-2008) when the build detected it, immune to a symlink
          * swapped in over the path. The SCP code passes a timeval pair
          * (matching WUTIMES), so convert it to the timespec pair futimens()
-         * expects. Falls back to the path-based WUTIMES when futimens() is not
+         * expects. The BSD futimes() takes the pair as is, and covers the
+         * hosts that have openat() but not futimens(), such as macOS before
+         * 10.13. Falls back to the path-based WUTIMES when neither is
          * present. */
         #ifdef HAVE_FUTIMENS
             #include <sys/stat.h>
@@ -489,8 +491,11 @@ extern "C" {
                 return futimens(fd, ts);
             }
             #define WFUTIMES(fd,t)    wFutimes((fd),(t))
+        #elif defined(HAVE_FUTIMES)
+            #include <sys/time.h>
+            #define WFUTIMES(fd,t)    futimes((fd),(t))
         #endif
-        /* Path-based fallback for builds without futimens(): utimensat() with
+        /* Path-based fallback for builds without either: utimensat() with
          * AT_SYMLINK_NOFOLLOW so a swapped symlink is not followed. Converts
          * the timeval pair (matching WUTIMES) to the timespec utimensat wants. */
         #ifdef HAVE_UTIMENSAT
@@ -1635,6 +1640,38 @@ extern "C" {
     #define WOPEN(fs,f,m,p) open((f),(m),(p))
     #define WCLOSE(fs,fd) close((fd))
     #define WFDOPEN(fs,f,fd,m) ((*(f) = fdopen((fd),(m))) == NULL)
+    /* Directory-descriptor-relative open and mkdir (POSIX.1-2008). An
+     * operation relative to a held descriptor cannot be redirected by a
+     * later change to the path that reached it. WOLFSSH_HAVE_DIRFD marks
+     * the builds that have them; the SCP receive callback walks its
+     * destination tree through one. WOLFSSH_NO_DIRFD opts out, for
+     * building the path-based fallback on a POSIX host. The flag adds
+     * fields to struct WOLFSSH, so it follows configure's probe alone and
+     * not the headers as this translation unit's feature macros expose
+     * them; configure probed O_DIRECTORY with openat(). */
+    #if defined(HAVE_OPENAT) && !defined(WOLFSSH_NO_DIRFD)
+        #define WOLFSSH_HAVE_DIRFD
+        #define WOLFSSH_O_DIRECTORY O_DIRECTORY
+        /* Open a directory to use as a descriptor base. O_SEARCH checks
+         * search permission on it, as chdir() did. Linux's O_PATH (declared
+         * under _GNU_SOURCE) checks nothing, and O_RDONLY checks read
+         * permission instead, so with those WDIRFD_SEARCHABLE() asks
+         * afterward whether the directory may be searched. */
+        #if defined(O_SEARCH)
+            #define WOLFSSH_O_SEARCH O_SEARCH
+            #define WDIRFD_SEARCHABLE(fs,fd) 1
+        #else
+            #ifdef O_PATH
+                #define WOLFSSH_O_SEARCH O_PATH
+            #else
+                #define WOLFSSH_O_SEARCH O_RDONLY
+            #endif
+            #define WDIRFD_SEARCHABLE(fs,fd) \
+                (faccessat((fd), ".", X_OK, AT_EACCESS) == 0)
+        #endif
+        #define WOPENAT(fs,d,f,m,p) openat((d),(f),(m),(p))
+        #define WMKDIRAT(fs,d,p,m)  mkdirat((d),(p),(m))
+    #endif
     int wPwrite(WFD fd, unsigned char* buf, unsigned int sz,
             const unsigned int* shortOffset);
     int wPread(WFD fd, unsigned char* buf, unsigned int sz,
@@ -1708,10 +1745,12 @@ extern "C" {
     #endif
     /* Require the opened path to be a directory; pairs with O_NOFOLLOW so a
      * symlinked directory leaf is refused atomically.  0 where unavailable. */
-    #ifdef O_DIRECTORY
-        #define WOLFSSH_O_DIRECTORY O_DIRECTORY
-    #else
-        #define WOLFSSH_O_DIRECTORY 0
+    #ifndef WOLFSSH_O_DIRECTORY
+        #ifdef O_DIRECTORY
+            #define WOLFSSH_O_DIRECTORY O_DIRECTORY
+        #else
+            #define WOLFSSH_O_DIRECTORY 0
+        #endif
     #endif
 #endif /* WOLFSSH_HAVE_SYMLINK */
 
@@ -1738,6 +1777,8 @@ extern "C" {
 #if defined(WOLFSSH_HAVE_SYMLINK) && \
     (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP))
     WOLFSSH_LOCAL int wIsSymlink(const char* path);
+    /* Is path a directory, and not a link to one. */
+    WOLFSSH_LOCAL int wIsDirNoFollow(const char* path);
 
     /* Open a file for reading without following a final-component symlink.
      * Returns 0 on success, non-zero on failure, matching the wfopen

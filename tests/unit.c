@@ -20051,7 +20051,9 @@ static int test_ScpRecvCallback_EndDirDepthGuard(void)
         goto cleanup;
     }
 
-    if (getcwd(cwd, sizeof(cwd)) == NULL || !pathsMatch(cwd, basePath)) {
+    /* the callback keeps its destination per session, never in the process
+     * working directory */
+    if (getcwd(cwd, sizeof(cwd)) == NULL || !pathsMatch(cwd, origCwd)) {
         result = -811;
         goto cleanup;
     }
@@ -20071,7 +20073,7 @@ static int test_ScpRecvCallback_EndDirDepthGuard(void)
         goto cleanup;
     }
 
-    if (getcwd(cwd, sizeof(cwd)) == NULL || !pathsMatch(cwd, basePath)) {
+    if (getcwd(cwd, sizeof(cwd)) == NULL || !pathsMatch(cwd, origCwd)) {
         result = -814;
         goto cleanup;
     }
@@ -20097,23 +20099,28 @@ cleanup:
     return result;
 }
 
-static int test_ScpRecvCallback_NewDirChdirFail(void)
+static int test_ScpRecvCallback_NewDirEnterFail(void)
 {
     char tmpDir[] = "/tmp/wolfssh_scpXXXXXX";
     char basePathRaw[PATH_MAX];
     char noexecSubPath[PATH_MAX];
+    char plainFilePath[PATH_MAX];
     char origCwd[PATH_MAX];
     char* basePath = NULL;
+    struct stat st;
+    FILE* plainFp;
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
     int baseMkdirDone = 0;
     int noexecCreated = 0;
+    int plainCreated = 0;
     int origCwdSaved = 0;
     int ret;
     int result = 0;
 
     basePathRaw[0] = '\0';
     noexecSubPath[0] = '\0';
+    plainFilePath[0] = '\0';
 
     if (getcwd(origCwd, sizeof(origCwd)) == NULL)
         return -820;
@@ -20146,6 +20153,12 @@ static int test_ScpRecvCallback_NewDirChdirFail(void)
         result = -825;
         goto cleanup;
     }
+    ret = snprintf(plainFilePath, sizeof(plainFilePath), "%s/plain",
+            basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(plainFilePath))) {
+        result = -834;
+        goto cleanup;
+    }
 
     ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
     if (ctx == NULL) {
@@ -20165,25 +20178,70 @@ static int test_ScpRecvCallback_NewDirChdirFail(void)
         goto cleanup;
     }
 
-    /* pre-create noexec_sub with mode 0000 so WCHDIR fails after WMKDIR
-     * gets EEXIST and continues */
+    /* a regular file of the directory's name is nothing to enter, however
+     * mkdir reports it */
+    plainFp = fopen(plainFilePath, "wb");
+    if (plainFp == NULL) {
+        result = -835;
+        goto cleanup;
+    }
+    fclose(plainFp);
+    plainCreated = 1;
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "plain", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -836;
+        goto cleanup;
+    }
+    if (ssh->scpDirDepth != 0) {
+        result = -837;
+        goto cleanup;
+    }
+    if (stat(plainFilePath, &st) != 0 || !S_ISREG(st.st_mode)) {
+        result = -838;
+        goto cleanup;
+    }
+
+    /* pre-create noexec_sub with mode 0000 so the directory cannot be
+     * entered after mkdir gets EEXIST and continues */
     if (mkdir(noexecSubPath, 0000) != 0) {
         result = -829;
         goto cleanup;
     }
     noexecCreated = 1;
 
-    /* root bypasses directory permission checks; skip the wchdir-fail
+    /* root bypasses directory permission checks; skip the enter-fail
      * sub-test to avoid a false failure */
     if (geteuid() == 0)
         goto cleanup;
 
     ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
             "noexec_sub", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+#ifdef WOLFSSH_HAVE_DIRFD
     if (ret != WS_SCP_ABORT) {
         result = -830;
         goto cleanup;
     }
+#else
+    /* the path-based fallback does not enter directories, so the refusal
+     * only comes with the first create below it */
+    if (ret != WS_SCP_CONTINUE) {
+        result = -830;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "f.txt", 0644, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -832;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_END_DIR, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -833;
+        goto cleanup;
+    }
+#endif
 
     if (ssh->scpDirDepth != 0) {
         result = -831;
@@ -20200,11 +20258,13 @@ cleanup:
         (void)chmod(noexecSubPath, 0755);
         (void)rmdir(noexecSubPath);
     }
+    if (plainCreated)
+        (void)remove(plainFilePath);
     if (baseMkdirDone)
         (void)rmdir(basePathRaw);
     (void)rmdir(tmpDir);
     if (origCwdSaved && chdir(origCwd) != 0 && result == 0)
-        result = -832;
+        result = -839;
     return result;
 }
 
@@ -20223,6 +20283,7 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
     char linkDirPath[PATH_MAX];
     char linkFilePath[PATH_MAX];
     char leakedPath[PATH_MAX];
+    char linkBasePath[PATH_MAX];
     char origCwd[PATH_MAX];
     char* basePath = NULL;
     struct stat st;
@@ -20232,6 +20293,7 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
     int outsideMkdirDone = 0;
     int linkDirDone = 0;
     int linkFileDone = 0;
+    int linkBaseDone = 0;
     int origCwdSaved = 0;
     int ret;
     int result = 0;
@@ -20241,6 +20303,7 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
     linkDirPath[0] = '\0';
     linkFilePath[0] = '\0';
     leakedPath[0] = '\0';
+    linkBasePath[0] = '\0';
 
     if (getcwd(origCwd, sizeof(origCwd)) == NULL)
         return -840;
@@ -20305,7 +20368,7 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
         goto cleanup;
     }
 
-    /* NEW_REQUEST changes the working directory into basePath */
+    /* NEW_REQUEST takes basePath as the destination */
     ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, basePath,
             NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
     if (ret != WS_SCP_CONTINUE) {
@@ -20320,8 +20383,8 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
     }
     linkDirDone = 1;
 
-    /* WMKDIR returns EEXIST for the existing symlink; the callback must
-     * refuse to chdir through it rather than escape basePath */
+    /* mkdir returns EEXIST for the existing symlink; the callback must
+     * refuse to enter it rather than escape basePath */
     ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
             "linkdir", 0755, 0, 0, 0, NULL, 0, 0, NULL);
     if (ret != WS_SCP_ABORT) {
@@ -20354,20 +20417,58 @@ static int test_ScpRecvCallback_SymlinkGuard(void)
         goto cleanup;
     }
 
+    /* a destination whose leaf is a symlink is refused when the request
+     * arrives, as the request parser refuses it, so a link swapped in
+     * between the two is not followed; the refusal leaves no destination
+     * behind for a file to land in */
+    ret = snprintf(linkBasePath, sizeof(linkBasePath), "%s/linkbase",
+            tmpDir);
+    if (!scpTestSnprintfOk(ret, sizeof(linkBasePath))) {
+        result = -860;
+        goto cleanup;
+    }
+    if (symlink(outsidePath, linkBasePath) != 0) {
+        result = -861;
+        goto cleanup;
+    }
+    linkBaseDone = 1;
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, linkBasePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -862;
+        goto cleanup;
+    }
+    if (ssh->scpRecvPath != NULL) {
+        result = -863;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, linkBasePath,
+            "leaked.txt", 0644, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_ABORT) {
+        result = -864;
+        goto cleanup;
+    }
+    if (stat(leakedPath, &st) == 0) {
+        (void)remove(leakedPath);
+        result = -865;
+        goto cleanup;
+    }
+
 cleanup:
     if (ssh != NULL)
         wolfSSH_free(ssh);
     if (ctx != NULL)
         wolfSSH_CTX_free(ctx);
     free(basePath);
-    /* NEW_REQUEST changed the process CWD into basePath, so leave it before
-     * removing the created directories or the rmdir calls would fail */
+    /* the callback must not have moved the process out of its directory */
     if (origCwdSaved && chdir(origCwd) != 0 && result == 0)
         result = -857;
     if (linkDirDone)
         (void)remove(linkDirPath);
     if (linkFileDone)
         (void)remove(linkFilePath);
+    if (linkBaseDone)
+        (void)remove(linkBasePath);
     if (outsideMkdirDone)
         (void)rmdir(outsidePath);
     if (baseMkdirDone)
@@ -20375,6 +20476,287 @@ cleanup:
     (void)rmdir(tmpDir);
     return result;
 #endif /* WOLFSSH_HAVE_SYMLINK */
+}
+
+/* A recursive receive must land each file in the directory last entered
+ * without the callback touching the process working directory, which every
+ * session in the process shares. A directory moved out from under the
+ * transfer must not carry the rest of it along. */
+static int test_ScpRecvCallback_SessionPath(void)
+{
+    char tmpDir[] = "/tmp/wolfssh_scpXXXXXX";
+    char origCwd[PATH_MAX];
+    char cwd[PATH_MAX];
+    char outerPath[PATH_MAX];
+    char innerPath[PATH_MAX];
+    char innerFile[PATH_MAX];
+    char baseFile[PATH_MAX];
+    char otherPath[PATH_MAX];
+    char movedOuter[PATH_MAX];
+    char movedInner[PATH_MAX];
+    char movedFile[PATH_MAX];
+    char strayFile[PATH_MAX];
+    char hFile[PATH_MAX];
+    char* basePath = NULL;
+    const char data[] = "nested";
+    struct stat st;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int baseReady = 0;
+    int ret;
+    int result = 0;
+
+    outerPath[0] = '\0';
+    innerPath[0] = '\0';
+    innerFile[0] = '\0';
+    baseFile[0] = '\0';
+    otherPath[0] = '\0';
+    movedOuter[0] = '\0';
+    movedInner[0] = '\0';
+    movedFile[0] = '\0';
+    strayFile[0] = '\0';
+    hFile[0] = '\0';
+
+    if (getcwd(origCwd, sizeof(origCwd)) == NULL)
+        return -870;
+
+    if (mkdtemp(tmpDir) == NULL)
+        return -871;
+    baseReady = 1;
+
+    basePath = realpath(tmpDir, NULL);
+    if (basePath == NULL) {
+        result = -872;
+        goto cleanup;
+    }
+
+    ret = snprintf(outerPath, sizeof(outerPath), "%s/outer", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(outerPath))) {
+        result = -873;
+        goto cleanup;
+    }
+    ret = snprintf(innerPath, sizeof(innerPath), "%s/inner", outerPath);
+    if (!scpTestSnprintfOk(ret, sizeof(innerPath))) {
+        result = -874;
+        goto cleanup;
+    }
+    ret = snprintf(innerFile, sizeof(innerFile), "%s/f.txt", innerPath);
+    if (!scpTestSnprintfOk(ret, sizeof(innerFile))) {
+        result = -875;
+        goto cleanup;
+    }
+    ret = snprintf(baseFile, sizeof(baseFile), "%s/g.txt", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(baseFile))) {
+        result = -876;
+        goto cleanup;
+    }
+    ret = snprintf(otherPath, sizeof(otherPath), "%s/other", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(otherPath))) {
+        result = -892;
+        goto cleanup;
+    }
+    ret = snprintf(movedOuter, sizeof(movedOuter), "%s/outer", otherPath);
+    if (!scpTestSnprintfOk(ret, sizeof(movedOuter))) {
+        result = -893;
+        goto cleanup;
+    }
+    ret = snprintf(movedInner, sizeof(movedInner), "%s/inner", movedOuter);
+    if (!scpTestSnprintfOk(ret, sizeof(movedInner))) {
+        result = -894;
+        goto cleanup;
+    }
+    ret = snprintf(movedFile, sizeof(movedFile), "%s/f.txt", movedInner);
+    if (!scpTestSnprintfOk(ret, sizeof(movedFile))) {
+        result = -903;
+        goto cleanup;
+    }
+    ret = snprintf(strayFile, sizeof(strayFile), "%s/h.txt", otherPath);
+    if (!scpTestSnprintfOk(ret, sizeof(strayFile))) {
+        result = -896;
+        goto cleanup;
+    }
+    ret = snprintf(hFile, sizeof(hFile), "%s/h.txt", basePath);
+    if (!scpTestSnprintfOk(ret, sizeof(hFile))) {
+        result = -904;
+        goto cleanup;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL) {
+        result = -877;
+        goto cleanup;
+    }
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -878;
+        goto cleanup;
+    }
+
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_REQUEST, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -879;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "outer", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -880;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "inner", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE || ssh->scpDirDepth != 2) {
+        result = -881;
+        goto cleanup;
+    }
+
+    /* a file two levels down */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "f.txt", 0644, 0, 0, sizeof(data) - 1, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -882;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, basePath,
+            "f.txt", 0644, 0, 0, sizeof(data) - 1, (byte*)data,
+            sizeof(data) - 1, 0, wolfSSH_GetScpRecvCtx(ssh));
+    if (ret != WS_SCP_CONTINUE) {
+        result = -883;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, basePath,
+            "f.txt", 0644, 0, 0, sizeof(data) - 1, NULL, 0, 0,
+            wolfSSH_GetScpRecvCtx(ssh));
+    if (ret != WS_SCP_CONTINUE) {
+        result = -884;
+        goto cleanup;
+    }
+    if (stat(innerFile, &st) != 0 || st.st_size != (off_t)(sizeof(data) - 1)) {
+        result = -885;
+        goto cleanup;
+    }
+
+    /* back up to the base, where the next file lands */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_END_DIR, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -886;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_END_DIR, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE || ssh->scpDirDepth != 0) {
+        result = -887;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "g.txt", 0644, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -888;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, basePath,
+            "g.txt", 0644, 0, 0, 0, NULL, 0, 0, wolfSSH_GetScpRecvCtx(ssh));
+    if (ret != WS_SCP_CONTINUE) {
+        result = -889;
+        goto cleanup;
+    }
+    if (stat(baseFile, &st) != 0) {
+        result = -890;
+        goto cleanup;
+    }
+
+    /* none of it moved the process working directory */
+    if (getcwd(cwd, sizeof(cwd)) == NULL || !pathsMatch(cwd, origCwd)) {
+        result = -891;
+        goto cleanup;
+    }
+
+    /* go back down, then move the tree being written out from under the
+     * callback: leaving inner still reaches outer, the directory it was
+     * entered from, but leaving outer no longer reaches the base */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "outer", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -895;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_DIR, basePath,
+            "inner", 0755, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -897;
+        goto cleanup;
+    }
+    if (mkdir(otherPath, 0755) != 0 || rename(outerPath, movedOuter) != 0) {
+        result = -898;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_END_DIR, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -899;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_END_DIR, basePath,
+            NULL, 0, 0, 0, 0, NULL, 0, 0, NULL);
+#ifdef WOLFSSH_HAVE_DIRFD
+    /* the parent found is not the one entered from, so the transfer ends
+     * rather than carrying on in it */
+    if (ret != WS_SCP_ABORT || ssh->scpDirDepth != 1) {
+        result = -900;
+        goto cleanup;
+    }
+#else
+    /* the path names the base throughout; the next file lands there, not
+     * where the moved directory's parent now is */
+    if (ret != WS_SCP_CONTINUE || ssh->scpDirDepth != 0) {
+        result = -900;
+        goto cleanup;
+    }
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, basePath,
+            "h.txt", 0644, 0, 0, 0, NULL, 0, 0, NULL);
+    if (ret != WS_SCP_CONTINUE) {
+        result = -901;
+        goto cleanup;
+    }
+    (void)wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, basePath,
+            "h.txt", 0644, 0, 0, 0, NULL, 0, 0, wolfSSH_GetScpRecvCtx(ssh));
+    if (stat(strayFile, &st) == 0) {
+        result = -902;
+        goto cleanup;
+    }
+#endif
+
+cleanup:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    if (baseFile[0] != '\0')
+        (void)remove(baseFile);
+    if (hFile[0] != '\0')
+        (void)remove(hFile);
+    if (strayFile[0] != '\0')
+        (void)remove(strayFile);
+    if (innerFile[0] != '\0')
+        (void)remove(innerFile);
+    if (movedFile[0] != '\0')
+        (void)remove(movedFile);
+    if (innerPath[0] != '\0')
+        (void)rmdir(innerPath);
+    if (outerPath[0] != '\0')
+        (void)rmdir(outerPath);
+    if (movedInner[0] != '\0')
+        (void)rmdir(movedInner);
+    if (movedOuter[0] != '\0')
+        (void)rmdir(movedOuter);
+    if (otherPath[0] != '\0')
+        (void)rmdir(otherPath);
+    free(basePath);
+    if (baseReady)
+        (void)rmdir(tmpDir);
+    return result;
 }
 
 /* Drive the default SCP receive callback through a full single-file receive
@@ -23797,13 +24179,18 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
-    unitResult = test_ScpRecvCallback_NewDirChdirFail();
-    printf("ScpRecvCallback_NewDirChdirFail: %s\n",
+    unitResult = test_ScpRecvCallback_NewDirEnterFail();
+    printf("ScpRecvCallback_NewDirEnterFail: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_ScpRecvCallback_SymlinkGuard();
     printf("ScpRecvCallback_SymlinkGuard: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpRecvCallback_SessionPath();
+    printf("ScpRecvCallback_SessionPath: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
