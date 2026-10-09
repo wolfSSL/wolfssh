@@ -100,6 +100,10 @@ echo_payload_size=0
 echo_pause_after=1000000
 echo_pause_secs=10
 echo_stall_limit=20
+# Once the phase stalls, seconds to keep sampling its sockets before failing,
+# and seconds between samples.
+echo_capture_secs=60
+echo_capture_step=10
 echo_entry_port=0
 echo_target_port=0
 # Phase 4. The second connection's payload, and seconds to wait for it.
@@ -151,6 +155,46 @@ do_dump_logs() {
         [ -f "$log" ] || continue
         echo "--- `basename "$log"` ---"
         cat "$log" 2>/dev/null
+    done
+}
+
+# A Phase 3 stall that clears on its own is the kernel backing off a
+# retransmit on loopback. One that does not clear is the forward hung. Keep
+# sampling the byte count and the phase's sockets for a while to tell which,
+# and leave echo_moved at 1 if any bytes came back meanwhile.
+do_echo_stall_capture() {
+    ssh_port=`cat "$echo_ready_file" 2>/dev/null`
+    filter="( sport = :$echo_entry_port or dport = :$echo_entry_port"
+    filter="$filter or sport = :$echo_target_port"
+    filter="$filter or dport = :$echo_target_port"
+    filter="$filter or sport = :$ssh_port or dport = :$ssh_port )"
+    echo_moved=0
+    waited=0
+    echo "--- stall capture, kernel `uname -r` ---"
+    while :
+    do
+        now=`wc -c < "$echo_received" 2>/dev/null | tr -d ' '`
+        [ -z "$now" ] && now=0
+        [ "$now" -ne "$got" ] && echo_moved=1
+        echo "--- ${waited}s after the stall: echoed $now ---"
+        command -v ss > /dev/null 2>&1 && ss -tnoi "$filter" 2>&1
+        [ "$now" -ge "$echo_payload_size" ] && break
+        [ "$waited" -ge "$echo_capture_secs" ] && break
+        sleep $echo_capture_step
+        waited=`expr $waited + $echo_capture_step`
+    done
+    [ -d /proc ] || return
+    for entry in "echoserver:$echo_server_pid" "ssh:$echo_ssh_pid" \
+            "target:$echo_target_pid" "client:$echo_client_pid"
+    do
+        pid=${entry#*:}
+        if [ ! -d "/proc/$pid" ]
+        then
+            echo "--- ${entry%%:*} pid $pid: exited"
+            continue
+        fi
+        echo "--- ${entry%%:*} pid $pid: `grep '^State' /proc/$pid/status \
+            2>/dev/null`, wchan `cat /proc/$pid/wchan 2>/dev/null`"
     done
 }
 
@@ -509,8 +553,17 @@ do
     fi
 done
 
-[ "$got" -eq "$echo_payload_size" ] \
-    || do_fail "two-way forward stalled: sent $echo_payload_size, echoed $got"
+if [ "$got" -ne "$echo_payload_size" ]
+then
+    do_echo_stall_capture
+    if [ "$echo_moved" -eq 1 ]
+    then
+        do_fail "two-way forward stalled: sent $echo_payload_size, echoed\
+ $got, then $now within ${waited}s more (it resumed)"
+    fi
+    do_fail "two-way forward stalled: sent $echo_payload_size, echoed $got,\
+ nothing more in ${waited}s (it hung)"
+fi
 cmp -s "$echo_payload" "$echo_received" \
     || do_fail "the echoed data does not match what was sent"
 
