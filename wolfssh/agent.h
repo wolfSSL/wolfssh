@@ -216,6 +216,18 @@ WOLFSSH_API int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
  * or WS_REKEYING the peer. Call again until WS_SUCCESS. Any other
  * non-success code leaves the channel unusable. */
 WOLFSSH_API int wolfSSH_AGENT_RelayChannel(WOLFSSH* ssh, word32 channelId);
+/* Client side. Asks the local agent to sign digest with the key keyBlob
+ * names, flags being the AGENT_SIGN_* bits, and copies the signature blob
+ * it answers with into sig. On entry *sigSz is the room in sig, on return
+ * the blob's size, or 0 on failure. Returns WS_SUCCESS; WS_SSH_NULL_E,
+ * WS_AGENT_NULL_E or WS_BAD_ARGUMENT for a missing session, agent, sig or
+ * sigSz, or a NULL digest or keyBlob with a nonzero size;
+ * WS_AGENT_CXN_FAIL when the agent cannot be set up, hangs up, or the
+ * exchange fails part way; WS_MEMORY_E; WS_BUFFER_E when the reply declares
+ * a length over WOLFSSH_AGENT_MAX_MSG_SZ or the blob is larger than *sigSz;
+ * WS_AGENT_NO_KEY_E when it answers with anything but a signature; or what
+ * decoding a malformed reply reports, such as WS_OVERFLOW_E, WS_PARSE_E,
+ * WS_RSA_E or WS_ECC_E. */
 WOLFSSH_API int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
         const byte* digest, word32 digestSz,
         byte* sig, word32* sigSz,

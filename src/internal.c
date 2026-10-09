@@ -20959,7 +20959,21 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
 
     if (ret == WS_SUCCESS) {
         if (authData->sf.publicKey.hasSignature) {
-            int sigSz = wc_ecc_sig_size(&keySig->ks.ecc.key);
+            int sigSz;
+
+        #ifdef WOLFSSH_AGENT
+            if (ssh->agentEnabled) {
+                /* The agent answers with r and s as mpints, each at most a
+                 * pad byte over the curve size. */
+                sigSz = wc_ecc_size(&keySig->ks.ecc.key);
+                if (sigSz > 0)
+                    sigSz = 2 * (sigSz + 1);
+                else
+                    sigSz = WS_ECC_E;
+            }
+            else
+        #endif
+            sigSz = wc_ecc_sig_size(&keySig->ks.ecc.key);
 
             if (sigSz >= 0) {
                 *payloadSz += (LENGTH_SZ * 5) + (word32)sigSz +
@@ -20976,8 +20990,9 @@ static int PrepareUserAuthRequestEcc(WOLFSSH* ssh, word32* payloadSz,
 }
 
 
-/* outputSz bounds the variable-length r/s mpint encoding; the fixed-size
- * builders (RSA, Ed25519, ML-DSA) fit PreparePacket()'s estimate unbounded. */
+/* outputSz bounds the variable-length r/s mpint encoding and the agent's
+ * blob; the fixed-size builders (RSA, Ed25519, ML-DSA) fit PreparePacket()'s
+ * estimate unbounded. */
 static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
         byte* output, word32 outputSz, word32* idx,
         const WS_UserAuthData* authData,
@@ -21046,23 +21061,64 @@ static int BuildUserAuthRequestEcc(WOLFSSH* ssh,
 
     #ifdef WOLFSSH_AGENT
     if (ssh->agentEnabled) {
-        if (ret == WS_SUCCESS)
-            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
-                    sig_ptr, &sigSz,
-                    authData->sf.publicKey.publicKey,
-                    authData->sf.publicKey.publicKeySz, 0);
-        if (ret == WS_SUCCESS) {
-            /* begin indexes into output, whose capacity is outputSz. */
-            if (outputSz <= begin || outputSz - begin < LENGTH_SZ + sigSz) {
-                WLOG(WS_LOG_DEBUG, "SUAR: ECDSA agent sig doesn't fit output");
-                ret = WS_BUFFER_E;
-            }
+        /* The room PrepareUserAuthRequestEcc() reserved for the agent's
+         * signature blob: the algorithm name and the r and s mpints. */
+        word32 agentSigSz = (LENGTH_SZ * 4) + keySig->sigSz +
+                authData->sf.publicKey.publicKeyTypeSz;
+        const byte* agentSigName = NULL;
+        word32 agentSigNameSz = 0;
+        word32 nameIdx = 0;
+        byte effSigId = keySig->sigId;
+
+    #ifdef WOLFSSH_OSSH_CERTS
+        /* An OpenSSH certificate is dispatched by its cert id, but the
+         * agent signs under the curve's own name. */
+        switch (keySig->sigId) {
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+            case ID_OSSH_CERT_ECDSA_SHA2_NISTP256:
+                effSigId = ID_ECDSA_SHA2_NISTP256;
+                break;
+        #endif
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+            case ID_OSSH_CERT_ECDSA_SHA2_NISTP384:
+                effSigId = ID_ECDSA_SHA2_NISTP384;
+                break;
+        #endif
+        #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+            case ID_OSSH_CERT_ECDSA_SHA2_NISTP521:
+                effSigId = ID_ECDSA_SHA2_NISTP521;
+                break;
+        #endif
+            default:
+                break;
+        }
+    #endif
+
+        if (ret == WS_SUCCESS && (outputSz <= begin ||
+                outputSz - begin < LENGTH_SZ + agentSigSz)) {
+            WLOG(WS_LOG_DEBUG, "SUAR: ECDSA agent sig doesn't fit output");
+            ret = WS_BUFFER_E;
         }
         if (ret == WS_SUCCESS) {
-            c32toa(sigSz, output + begin);
-            begin += LENGTH_SZ;
-            XMEMCPY(output + begin, sig_ptr, sigSz);
-            begin += sigSz;
+            WLOG(WS_LOG_INFO, "Signing with ECDSA through the agent.");
+            ret = wolfSSH_AGENT_SignRequest(ssh, checkData, checkDataSz,
+                    output + begin + LENGTH_SZ, &agentSigSz,
+                    authData->sf.publicKey.publicKey,
+                    authData->sf.publicKey.publicKeySz, 0);
+        }
+        /* An agent may answer under another algorithm or curve. */
+        if (ret == WS_SUCCESS) {
+            ret = GetStringRef(&agentSigNameSz, &agentSigName,
+                    output + begin + LENGTH_SZ, agentSigSz, &nameIdx);
+        }
+        if (ret == WS_SUCCESS && NameToId((const char*)agentSigName,
+                agentSigNameSz) != effSigId) {
+            WLOG(WS_LOG_DEBUG, "SUAR: agent signed with another algorithm");
+            ret = WS_INVALID_ALGO_ID;
+        }
+        if (ret == WS_SUCCESS) {
+            c32toa(agentSigSz, output + begin);
+            begin += LENGTH_SZ + agentSigSz;
         }
     }
     else

@@ -66,12 +66,6 @@
 #endif
 
 
-/* Read buffer size for a reply from an agent. Covers a signature and its
- * message header for any key up to RSA-8192. */
-#ifndef WOLFSSH_AGENT_MAX_RSP_SZ
-    #define WOLFSSH_AGENT_MAX_RSP_SZ 2048
-#endif
-
 /* Largest agent message this build will handle. The peer declares the
  * length, so it is bounded before it drives an allocation. */
 #ifndef WOLFSSH_AGENT_MAX_MSG_SZ
@@ -2289,9 +2283,10 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
         word32 flags)
 {
     int ret = WS_SUCCESS;
-    byte* rxBuf = NULL;
-    int rxSz;
+    byte* rsp = NULL;
+    word32 rspSz = 0;
     word32 idx = 0;
+    byte setUp = 0;
     WOLFSSH_AGENT_CTX* agent = NULL;
 
     WLOG_ENTER();
@@ -2305,15 +2300,10 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        if (sigSz == NULL)
+        if (sig == NULL || sigSz == NULL
+                || (digest == NULL && digestSz != 0)
+                || (keyBlob == NULL && keyBlobSz != 0))
             ret = WS_BAD_ARGUMENT;
-    }
-
-    if (ret == WS_SUCCESS) {
-        rxBuf = (byte*)WMALLOC(WOLFSSH_AGENT_MAX_RSP_SZ,
-                ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
-        if (rxBuf == NULL)
-            ret = WS_MEMORY_E;
     }
 
     if (ret == WS_SUCCESS) {
@@ -2323,84 +2313,69 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
         agent->msg = NULL;
         agent->msgSz = 0;
         agent->lastMsgId = 0;
-        if (ssh->ctx->agentCb)
-            ret = ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP, ssh->agentCbCtx);
+        if (ssh->ctx->agentCb) {
+            /* The callback answers in WS_AgentCbError, where failure is
+             * positive. */
+            if (ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_SETUP, ssh->agentCbCtx)
+                    != WS_AGENT_SUCCESS) {
+                ret = WS_AGENT_CXN_FAIL;
+            }
+            else
+                setUp = 1;
+        }
     }
 
     if (ret == WS_SUCCESS)
         ret = SendSignRequest(agent, digest, digestSz,
                 keyBlob, keyBlobSz, flags);
 
-    if (ret == WS_SUCCESS) {
-        int wrote;
-
-        wrote = ssh->ctx->agentIoCb(WOLFSSH_AGENT_IO_WRITE,
-                agent->msg, agent->msgSz, ssh->agentCbCtx);
-        if (wrote != (int)agent->msgSz) {
-            WLOG(WS_LOG_AGENT, "agent write incomplete");
-            ret = WS_AGENT_CXN_FAIL;
-        }
-    }
+    if (ret == WS_SUCCESS)
+        ret = AgentWriteAll(ssh, agent->msg, agent->msgSz, NULL);
 
     if (agent != NULL && agent->msg != NULL) {
-        WFREE(ssh->agent->msg, ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
-        ssh->agent->msg = NULL;
-        ssh->agent->msgSz = 0;
+        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
+        agent->msg = NULL;
+        agent->msgSz = 0;
     }
 
-    if (ret == WS_SUCCESS) {
-        rxSz = ssh->ctx->agentIoCb(WOLFSSH_AGENT_IO_READ,
-                rxBuf, WOLFSSH_AGENT_MAX_RSP_SZ, ssh->agentCbCtx);
-        if (rxSz > 0) {
-            ret = DoMessage(ssh->agent, rxBuf, rxSz, &idx);
-            if (ret == WS_SUCCESS) {
-                if (ssh->agent->lastMsgId != MSGID_AGENT_SIGN_RESPONSE) {
-                    WLOG(WS_LOG_AGENT,
-                        "agent response was not a signature message");
-                    ret = WS_AGENT_NO_KEY_E;
-                }
-                else {
-                    if (ssh->agent->requestFailure ||
-                            ssh->agent->msg == NULL ||
-                            ssh->agent->msgSz == 0) {
-                        ssh->agent->requestFailure = 0;
-                        ret = WS_AGENT_NO_KEY_E;
-                    }
-                    else {
-                        word32 maxSigSz = *sigSz;
+    if (ret == WS_SUCCESS)
+        ret = AgentReadMessage(ssh, &rsp, &rspSz);
 
-                        if (ssh->agent->msgSz > maxSigSz) {
-                            WLOG(WS_LOG_AGENT,
-                                "agent signature too large for caller buffer");
-                            ret = WS_BUFFER_E;
-                        }
-                        else {
-                            WMEMCPY(sig, ssh->agent->msg, ssh->agent->msgSz);
-                            *sigSz = ssh->agent->msgSz;
-                        }
-                    }
-                }
-            }
+    if (ret == WS_SUCCESS)
+        ret = DoMessage(agent, rsp, rspSz, &idx);
+
+    if (ret == WS_SUCCESS) {
+        if (agent->lastMsgId != MSGID_AGENT_SIGN_RESPONSE) {
+            WLOG(WS_LOG_AGENT, "agent response was not a signature message");
+            ret = WS_AGENT_NO_KEY_E;
         }
-        else ret = WS_AGENT_NO_KEY_E;
+        else if (agent->requestFailure || agent->msg == NULL ||
+                agent->msgSz == 0) {
+            agent->requestFailure = 0;
+            ret = WS_AGENT_NO_KEY_E;
+        }
+        else if (agent->msgSz > *sigSz) {
+            WLOG(WS_LOG_AGENT, "agent signature too large for caller buffer");
+            ret = WS_BUFFER_E;
+        }
+        else {
+            WMEMCPY(sig, agent->msg, agent->msgSz);
+            *sigSz = agent->msgSz;
+        }
     }
 
     if (ret != WS_SUCCESS && sigSz != NULL)
         *sigSz = 0;
 
     if (agent != NULL) {
+        /* The reply was parsed in place out of rxBuf. */
         agent->msg = NULL;
         agent->msgSz = 0;
+        AgentBufferReset(agent->rxBuf);
     }
 
-    if (ssh != NULL && ssh->ctx != NULL && ssh->ctx->agentCb != NULL) {
+    if (setUp)
         ssh->ctx->agentCb(WOLFSSH_AGENT_LOCAL_CLEANUP, ssh->agentCbCtx);
-    }
-
-    /* The agent's message was parsed in place out of this buffer, so it is
-     * freed after the last use of agent->msg. */
-    if (rxBuf != NULL)
-        WFREE(rxBuf, ssh->agent->heap, DYNTYPE_AGENT_BUFFER);
 
     WLOG_LEAVE(ret);
     return ret;

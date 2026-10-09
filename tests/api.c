@@ -3092,26 +3092,131 @@ static word32 build_mpint(byte* out, const byte* val, word32 valSz)
 
 #endif
 
-static void test_wolfSSH_agent_signrequest_partial_write(void)
+/* A short write is followed up, not reported as a failure. */
+static void test_wolfSSH_agent_signrequest_short_write(void)
 {
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
     AgentTestCtx io;
     byte digest[16] = {0};
     byte keyBlob[8] = {0};
-    byte sig[8];
+    byte signatureData[8];
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0xa5, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    io.partialWrite = 1;
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(sigSz, sizeof(signatureData));
+    AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
+    AssertIntEQ(io.writeCalls, 2);
+    AssertIntEQ(io.readCalls, 2);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* A reply arriving a byte at a time is read until the declared length is
+ * complete, not parsed from the first fragment. */
+static void test_wolfSSH_agent_signrequest_fragmented_response(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte signatureData[8];
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(signatureData, 0xa5, sizeof(signatureData));
+    memset(&io, 0, sizeof(io));
+    io.readChunk = 1;
+    build_sign_response(&io, signatureData, sizeof(signatureData));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(sigSz, sizeof(signatureData));
+    AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
+    AssertIntEQ(io.readCalls, (int)io.responseSz);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* The setup callback answers in WS_AgentCbError, where failure is positive.
+ * That has to come back as a wolfSSH error with nothing written. */
+static void test_wolfSSH_agent_signrequest_setup_failure(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
     word32 sigSz = sizeof(sig);
     int ret;
 
     memset(&io, 0, sizeof(io));
-    io.partialWrite = 1;
+    io.failSetupCall = 1;
     setup_agent_test(&ctx, &ssh, &io);
 
     ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
         sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
     AssertIntEQ(ret, WS_AGENT_CXN_FAIL);
     AssertIntEQ(sigSz, 0);
-    AssertIntEQ(io.writeCalls, 1);
+    AssertIntEQ(io.writeCalls, 0);
+    AssertIntEQ(io.readCalls, 0);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+/* Missing buffers are refused before the agent is set up. */
+static void test_wolfSSH_agent_signrequest_bad_args(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        NULL, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+    AssertIntEQ(sigSz, 0);
+
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, NULL, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, NULL, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+    AssertIntEQ(sigSz, 0);
+
+    sigSz = sizeof(sig);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, NULL, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+    AssertIntEQ(sigSz, 0);
+
+    AssertIntEQ(io.setupCalls, 0);
+    AssertIntEQ(io.writeCalls, 0);
     AssertIntEQ(io.readCalls, 0);
 
     cleanup_agent_test(ctx, ssh);
@@ -3137,7 +3242,7 @@ static void test_wolfSSH_agent_signrequest_wrong_message(void)
     AssertIntEQ(ret, WS_AGENT_NO_KEY_E);
     AssertIntEQ(sigSz, 0);
     AssertIntEQ(io.writeCalls, 1);
-    AssertIntEQ(io.readCalls, 1);
+    AssertIntEQ(io.readCalls, 2);
 
     cleanup_agent_test(ctx, ssh);
 }
@@ -3164,13 +3269,13 @@ static void test_wolfSSH_agent_signrequest_signature_too_large(void)
     AssertIntEQ(ret, WS_BUFFER_E);
     AssertIntEQ(sigSz, 0);
     AssertIntEQ(io.writeCalls, 1);
-    AssertIntEQ(io.readCalls, 1);
+    AssertIntEQ(io.readCalls, 2);
 
     cleanup_agent_test(ctx, ssh);
 }
 
-/* An RSA-4096 signature makes a 521 byte reply, more than the agent
- * read buffer held before it was sized from WOLFSSH_AGENT_MAX_RSP_SZ. */
+/* An RSA-4096 signature makes a 521 byte reply, more than the fixed read
+ * buffer the sign path once held. */
 static void test_wolfSSH_agent_signrequest_large_response(void)
 {
     WOLFSSH_CTX* ctx;
@@ -3193,7 +3298,7 @@ static void test_wolfSSH_agent_signrequest_large_response(void)
     AssertIntEQ(ret, WS_SUCCESS);
     AssertIntEQ(sigSz, sizeof(signatureData));
     AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
-    AssertIntEQ(io.readCalls, 1);
+    AssertIntEQ(io.readCalls, 2);
 
     cleanup_agent_test(ctx, ssh);
 }
@@ -3221,7 +3326,7 @@ static void test_wolfSSH_agent_signrequest_success(void)
     AssertIntEQ(sigSz, sizeof(signatureData));
     AssertTrue(memcmp(sig, signatureData, sizeof(signatureData)) == 0);
     AssertIntEQ(io.writeCalls, 1);
-    AssertIntEQ(io.readCalls, 1);
+    AssertIntEQ(io.readCalls, 2);
 
     cleanup_agent_test(ctx, ssh);
 }
@@ -8754,7 +8859,10 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_FwdRemote_badArgs();
 #endif
 #ifdef WOLFSSH_AGENT
-    test_wolfSSH_agent_signrequest_partial_write();
+    test_wolfSSH_agent_signrequest_short_write();
+    test_wolfSSH_agent_signrequest_fragmented_response();
+    test_wolfSSH_agent_signrequest_setup_failure();
+    test_wolfSSH_agent_signrequest_bad_args();
     test_wolfSSH_agent_signrequest_wrong_message();
     test_wolfSSH_agent_signrequest_signature_too_large();
     test_wolfSSH_agent_signrequest_success();
