@@ -16,6 +16,7 @@ netcat-traditional
 openssh-client
 openssh-server
 pkg-config
+python3-paramiko
 python3-pip
 sshpass
 tpm2-tools

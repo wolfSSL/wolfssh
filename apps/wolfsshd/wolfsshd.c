@@ -2672,6 +2672,12 @@ static int SHELL_SetNonBlocking(int fd)
 #ifndef WOLFSSHD_SHELL_FLUSH_WAIT_US
     #define WOLFSSHD_SHELL_FLUSH_WAIT_US 50000
 #endif
+#ifndef WOLFSSHD_CHILD_REAP_TRIES
+    #define WOLFSSHD_CHILD_REAP_TRIES 10
+#endif
+#ifndef WOLFSSHD_CHILD_REAP_WAIT_US
+    #define WOLFSSHD_CHILD_REAP_WAIT_US 50000
+#endif
 
 /* Send out the last of a shell's output once the child has been reaped. The
  * SSH socket is non blocking, so retry a bounded number of times on a full
@@ -2784,6 +2790,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                            * destructive, so what a short write leaves is
                            * carried to the next pass.  */
     int   childInIdx = 0; /* How much of those the child has taken.  */
+    int   drainPipes = 1;
 
     backlog.len = 0;
     backlog.state = SHELL_SEND_READY;
@@ -2862,6 +2869,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    /* Before the fork, so a child that exits at once clears ChildRunning */
+    signal(SIGCHLD, ChildSig);
     ChildRunning = 1;
     childPid = forkpty(&childFd, NULL, NULL, NULL);
     if (childPid < 0) {
@@ -3039,7 +3048,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         return WS_FATAL_ERROR;
     }
 
-    signal(SIGCHLD, ChildSig);
     signal(SIGINT, SIG_DFL);
 
     rc = tcgetattr(childFd, &tios);
@@ -3487,7 +3495,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 /* Treat a 0 return as EOF so the loop can shut down. */
                 if (cnt_r < 0) {
                     int err = errno;
-                    if (err != EINTR && err != EAGAIN
+                    if (err == EIO) {
+                        stdoutEmpty = 1;  /* no process has the terminal open */
+                    }
+                    else if (err != EINTR && err != EAGAIN
                             && err != EWOULDBLOCK) {
                         break;
                     }
@@ -3535,14 +3546,45 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    /* Nothing more reaches the child's stdin, so let a reader see EOF */
+    if (stdinPipe[1] != -1 && (!ptyReq || forcedCmd)) {
+        close(stdinPipe[1]);
+        stdinPipe[1] = -1;
+    }
+
+    /* Close the pty master so the shell gets SIGHUP and can exit on its own */
+    if (childFd >= 0) {
+        close(childFd);
+        childFd = -1;
+    }
+
     /* get return value of child process */
     {
         int waitStatus;
+        int tries = 0;
 
         do {
-            rc = waitpid(childPid, &waitStatus, 0);
+            rc = waitpid(childPid, &waitStatus, WNOHANG);
+            if (rc == 0 && tries < WOLFSSHD_CHILD_REAP_TRIES) {
+                usleep(WOLFSSHD_CHILD_REAP_WAIT_US);
+                tries++;
+            }
+            else if (rc == 0) {
+                /* Child did not exit in time; force it with SIGKILL. */
+                if (kill(childPid, SIGKILL) == 0) {
+                    rc = waitpid(childPid, &waitStatus, 0);
+                }
+                else {
+                    int err = errno;
+
+                    wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to kill child "
+                        "process %d, errno %d", (int)childPid, err);
+                    errno = err;
+                    rc = -1;
+                }
+            }
             /* if the waitpid experienced an interrupt then try again */
-        } while (rc < 0 && errno == EINTR);
+        } while (rc == 0 || (rc < 0 && errno == EINTR));
 
         if (rc < 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue waiting for child's exit "
@@ -3557,13 +3599,25 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
     }
 
+    /* A break can leave unsent shell output in shellBuffer; send it before
+     * the pipe drain reads into shellBuffer. */
+    if (backlog.len > 0) {
+        if (backlog.state == SHELL_SEND_NEVER
+                || SHELL_FlushOut(ssh, sshFd, shellChannelId, shellBuffer,
+                    backlog.len, backlog.ext) != 0) {
+            /* later pipe output would leave a gap in the stream */
+            drainPipes = 0;
+        }
+        backlog.len = 0;
+    }
+
     /* check for any left over data in pipes then close them */
     if (!ptyReq || forcedCmd) {
         int readSz;
 
         /* when the pipe can not be made non blocking skip the drain, a
          * blocking read here could hang the connection process */
-        if (SHELL_SetNonBlocking(stdoutPipe[0]) == 0) {
+        if (drainPipes && SHELL_SetNonBlocking(stdoutPipe[0]) == 0) {
             readSz = (int)read(stdoutPipe[0], shellBuffer, sizeof shellBuffer);
             if (readSz > 0) {
                 SHELL_FlushOut(ssh, sshFd, shellChannelId, shellBuffer, readSz,
@@ -3571,7 +3625,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
-        if (SHELL_SetNonBlocking(stderrPipe[0]) == 0) {
+        if (drainPipes && SHELL_SetNonBlocking(stderrPipe[0]) == 0) {
             readSz = (int)read(stderrPipe[0], shellBuffer, sizeof shellBuffer);
             if (readSz > 0) {
                 SHELL_FlushOut(ssh, sshFd, shellChannelId, shellBuffer, readSz,
