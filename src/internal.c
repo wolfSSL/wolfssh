@@ -1513,6 +1513,9 @@ void CtxResourceFree(WOLFSSH_CTX* ctx)
                 ctx->privateKey[i].key = NULL;
                 ctx->privateKey[i].keySz = 0;
             }
+            #ifndef WOLFSSH_NO_MLDSA
+            ClearMlDsaHostPubKey(&ctx->privateKey[i], ctx->heap);
+            #endif
             #ifdef WOLFSSH_CERTS
             if (ctx->privateKey[i].cert != NULL) {
                 WFREE(ctx->privateKey[i].cert, ctx->heap, DYNTYPE_CERT);
@@ -2028,6 +2031,53 @@ static int IsCompositeMlDsaId(byte id)
 #endif
 
 
+/* Free a private-key IdentifyAsn1Key() result. NULL safe. */
+static void FreeKeySignature(WS_KeySignature* key, void* heap)
+{
+    if (key != NULL) {
+        wolfSSH_KEY_clean(key);
+        WFREE(key, heap, DYNTYPE_PRIVKEY);
+    }
+}
+
+
+#ifndef WOLFSSH_NO_MLDSA
+/* Nonzero when keyId is an ML-DSA level wolfSSH was built without. */
+static int MlDsaIdDisabled(byte keyId)
+{
+    WOLFSSH_UNUSED(keyId);
+    return
+    #ifdef WOLFSSH_NO_MLDSA44
+        keyId == ID_MLDSA44 ||
+    #endif
+    #ifdef WOLFSSH_NO_MLDSA65
+        keyId == ID_MLDSA65 ||
+    #endif
+    #ifdef WOLFSSH_NO_MLDSA87
+        keyId == ID_MLDSA87 ||
+    #endif
+        0;
+}
+
+
+/* MlDsaIdDisabled() for a decoded key. */
+static int MlDsaLevelDisabled(MlDsaKey* key)
+{
+    byte level = 0;
+
+    if (wc_MlDsaKey_GetParams(key, &level) != 0)
+        return 0;
+    if (level == WC_ML_DSA_44)
+        return MlDsaIdDisabled(ID_MLDSA44);
+    if (level == WC_ML_DSA_65)
+        return MlDsaIdDisabled(ID_MLDSA65);
+    if (level == WC_ML_DSA_87)
+        return MlDsaIdDisabled(ID_MLDSA87);
+    return 0;
+}
+#endif
+
+
 void wolfSSH_KEY_clean(WS_KeySignature* key)
 {
     if (key != NULL) {
@@ -2097,10 +2147,14 @@ void wolfSSH_KEY_clean(WS_KeySignature* key)
  * fails try to load it as if ECDSA. Both public and private keys can be
  * decoded. For RSA keys, the key format is described as "ssh-rsa".
  *
- * Private-only ML-DSA keys are rejected (WS_CRYPTO_FAILED) as public keys
- * cannot be derived. ECDSA derives and validates the public key here.
+ * Private-only ML-DSA keys have their public key derived here when
+ * WOLFSSH_HAVE_MLDSA_DERIVE_PUB is set; otherwise, or when derivation
+ * fails, they are rejected (WS_CRYPTO_FAILED, or WS_MEMORY_E if it ran
+ * out of memory). A private ML-DSA key of a level disabled in wolfSSH is
+ * rejected with WS_UNIMPLEMENTED_E. ECDSA derives and validates the public
+ * key here.
  * Ed25519 allows missing public keys if HAVE_ED25519_MAKE_KEY is defined
- * (derived later at KEX); otherwise rejected like ML-DSA.
+ * (derived later at KEX); otherwise rejected.
  *
  * @param in        key to identify
  * @param inSz      size of key
@@ -2117,8 +2171,9 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
     word32 idx;
     int ret;
     int dynType = isPrivate ? DYNTYPE_PRIVKEY : DYNTYPE_PUBKEY;
-    /* Set to WS_CRYPTO_FAILED if ML-DSA key lacks derivable public key.
-     * Prevents Ed25519 fallback decode. */
+    /* Set to the rejection code when a private key lacks a derivable
+     * public key or is of a disabled ML-DSA level. Prevents a fallback
+     * decode as another key type. */
     int noPubKeyRet = 0;
 #ifndef WOLFSSH_NO_MLDSA
     byte mlDsaLevel = 0;
@@ -2235,14 +2290,32 @@ int IdentifyAsn1Key(const byte* in, word32 inSz, int isPrivate, void* heap,
                 if (isPrivate) {
                     ret = wc_MlDsaKey_PrivateKeyDecode(&key->ks.mldsa.key,
                                                        in, inSz, &idx);
-                    if (ret == 0) {
-                        /* Priv-only decode can succeed with no derivable
-                         * public key; reject here instead of at first
-                         * handshake. */
-                        if (!key->ks.mldsa.key.pubKeySet) {
-                            WLOG(WS_LOG_ERROR,
-                                "ML-DSA priv-only key rejected; no derivable pubkey");
-                            ret = WS_CRYPTO_FAILED;
+                    if (ret == 0 && MlDsaLevelDisabled(&key->ks.mldsa.key)) {
+                        /* Either DER form; before paying for derivation. */
+                        WLOG(WS_LOG_ERROR, "ML-DSA level not enabled in "
+                            "this build");
+                        ret = WS_UNIMPLEMENTED_E;
+                        noPubKeyRet = ret;
+                    }
+                    else if (ret == 0 && !key->ks.mldsa.key.pubKeySet) {
+                        /* Derive the public key now so underivable keys
+                         * are rejected at load time instead of handshake. */
+                        #ifdef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+                        int makeRet = wc_MlDsaKey_MakePublicKey(
+                                &key->ks.mldsa.key);
+                        #else
+                        int makeRet = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
+                        #endif
+                        if (makeRet != 0) {
+                            WLOG(WS_LOG_ERROR, "ML-DSA priv-only key "
+                                "rejected; no derivable pubkey (%d)",
+                                makeRet);
+                            if (makeRet == WC_NO_ERR_TRACE(MEMORY_E)) {
+                                ret = WS_MEMORY_E;
+                            }
+                            else {
+                                ret = WS_CRYPTO_FAILED;
+                            }
                             noPubKeyRet = ret;
                         }
                     }
@@ -2619,6 +2692,76 @@ WOLFSSH_LOCAL void RefreshPublicKeyAlgo(WOLFSSH_CTX* ctx)
 }
 
 
+#ifndef WOLFSSH_NO_MLDSA
+static INLINE int KeyIdToMlDsaLevel(byte id);
+
+/* Also used by CommitCertStoreSlot() in ssh.c. */
+WOLFSSH_LOCAL void ClearMlDsaHostPubKey(WOLFSSH_PVT_KEY* pvtKey, void* heap)
+{
+    if (pvtKey->mldsaPub != NULL) {
+        WFREE(pvtKey->mldsaPub, heap, DYNTYPE_PUBKEY);
+        pvtKey->mldsaPub = NULL;
+        pvtKey->mldsaPubSz = 0;
+    }
+}
+
+
+/* Export the raw public key of the key IdentifyAsn1Key() decoded, for the
+ * slot cache. Caller owns *pubOut. No-op for a non-ML-DSA keyId. */
+static int ExportMlDsaHostPubKey(byte keyId, WS_KeySignature* keySig,
+        void* heap, byte** pubOut, word32* pubOutSz)
+{
+    MlDsaKey* key;
+    int ret;
+    int pubLen = 0;
+    word32 pubSz;
+    byte* pub;
+
+    if (KeyIdToMlDsaLevel(keyId) < 0) {
+        return WS_SUCCESS;
+    }
+    /* KEX needs the cache. Defensive: the public API always passes a
+     * matching one. */
+    if (keySig == NULL || keySig->keyId != keyId) {
+        WLOG(WS_LOG_ERROR, "ExportMlDsaHostPubKey: ML-DSA decoded key "
+            "missing or does not match");
+        return WS_BAD_ARGUMENT;
+    }
+    key = &keySig->ks.mldsa.key;
+
+    ret = wc_MlDsaKey_GetPubLen(key, &pubLen);
+    if (ret != 0 || pubLen <= 0) {
+        WLOG(WS_LOG_ERROR,
+            "ExportMlDsaHostPubKey: ML-DSA public key length failed %d",
+            ret);
+        return WS_CRYPTO_FAILED;
+    }
+    pubSz = (word32)pubLen;
+
+    pub = (byte*)WMALLOC(pubSz, heap, DYNTYPE_PUBKEY);
+    if (pub == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    ret = wc_MlDsaKey_ExportPubRaw(key, pub, &pubSz);
+    if (ret != 0) {
+        WLOG(WS_LOG_ERROR,
+            "ExportMlDsaHostPubKey: ML-DSA public key export failed %d",
+            ret);
+        WFREE(pub, heap, DYNTYPE_PUBKEY);
+        return WS_CRYPTO_FAILED;
+    }
+
+    *pubOut = pub;
+    *pubOutSz = pubSz;
+
+    return WS_SUCCESS;
+}
+
+
+#endif /* !WOLFSSH_NO_MLDSA */
+
+
 #ifdef WOLFSSH_CERTS
 
 WOLFSSH_LOCAL byte CertTypeForId(byte id)
@@ -2943,10 +3086,15 @@ static int CertStoreSlotConflict(const WOLFSSH_CTX* ctx, word32 destIdx,
 
 
 static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
-        byte keyId, byte* der, word32 derSz, int dynamicType)
+        byte keyId, byte* der, word32 derSz, int dynamicType,
+        WS_KeySignature* keySig)
 {
     word32 destIdx = 0;
     int ret = WS_SUCCESS;
+#ifndef WOLFSSH_NO_MLDSA
+    byte* mldsaPub = NULL;
+    word32 mldsaPubSz = 0;
+#endif
 
      /* Look for the specified keyId. Add it if not present,
      * replace it if present. Call UpdateHostCertificate().
@@ -2978,6 +3126,23 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         ret = WS_BAD_ARGUMENT;
     }
 #endif
+#ifndef WOLFSSH_NO_MLDSA
+    /* Defensive: IdentifyAsn1Key() already refuses a disabled level. */
+    else if (MlDsaIdDisabled(keyId)) {
+        WLOG(WS_LOG_ERROR, "SetHostPrivateKey: ML-DSA level not enabled "
+             "in this build");
+        WS_FORCEZERO(der, derSz);
+        WFREE(der, ctx->heap, dynamicType);
+        ret = WS_UNIMPLEMENTED_E;
+    }
+    /* Before the slot is touched, so a failure leaves the CTX as it was. */
+    else if ((ret = ExportMlDsaHostPubKey(keyId, keySig, ctx->heap,
+                    &mldsaPub, &mldsaPubSz)) != WS_SUCCESS) {
+        /* der not taken on this path; free it to avoid a leak */
+        WS_FORCEZERO(der, derSz);
+        WFREE(der, ctx->heap, dynamicType);
+    }
+#endif
     else {
         WOLFSSH_PVT_KEY* pvtKey = ctx->privateKey + destIdx;
 
@@ -3000,6 +3165,12 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
         pvtKey->isTpm = 0;
         #endif
 
+        #ifndef WOLFSSH_NO_MLDSA
+        ClearMlDsaHostPubKey(pvtKey, ctx->heap);
+        pvtKey->mldsaPub = mldsaPub;
+        pvtKey->mldsaPubSz = mldsaPubSz;
+        #endif
+
         #ifdef WOLFSSH_CERTS
         if (ret == WS_SUCCESS) {
             ret = UpdateHostCertificates(ctx, destIdx, WOLFSSH_MAX_PVT_KEYS);
@@ -3011,6 +3182,7 @@ static int SetHostPrivateKey(WOLFSSH_CTX* ctx,
     }
 
     WOLFSSH_UNUSED(dynamicType);
+    WOLFSSH_UNUSED(keySig);
 
     return ret;
 }
@@ -3063,6 +3235,9 @@ int wolfSSH_SetHostTpmKey(WOLFSSH_CTX* ctx, byte keyId)
         pvtKey->key = NULL;
         pvtKey->keySz = 0;
         pvtKey->isTpm = 1;
+        #ifndef WOLFSSH_NO_MLDSA
+        ClearMlDsaHostPubKey(pvtKey, ctx->heap);
+        #endif
     #ifdef WOLFSSH_WINDOWS_CERT_STORE
         /* Defensive only: the else-if above already rejects a cert-store
          * slot, so this can only clear a slot in a state no writer
@@ -3439,10 +3614,13 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
     /* Maybe decrypt */
 
     if (type == BUFTYPE_PRIVKEY) {
+        /* Decoded ML-DSA key for SetHostPrivateKey()'s cache; else NULL. */
+        WS_KeySignature* keySig = NULL;
+
         if (format == WOLFSSH_FORMAT_OPENSSH)
             ret = IdentifyOpenSshKey(der, derSz, ctx->heap);
         else
-            ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap, NULL);
+            ret = IdentifyAsn1Key(der, derSz, 1, ctx->heap, &keySig);
         if (ret < 0) {
             if (der != NULL) {
                 WS_FORCEZERO(der, derSz);
@@ -3451,6 +3629,14 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             return ret;
         }
         keyId = (byte)ret;
+#ifndef WOLFSSH_NO_MLDSA
+        /* Only the ML-DSA slot cache needs the decoded key. */
+        if (KeyIdToMlDsaLevel(keyId) < 0)
+#endif
+        {
+            FreeKeySignature(keySig, ctx->heap);
+            keySig = NULL;
+        }
         /* Only composite parsers can walk the stored openssh-key-v1
          * envelope; reject other key types now instead of at handshake. */
         if (format == WOLFSSH_FORMAT_OPENSSH
@@ -3462,7 +3648,8 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
             WFREE(der, heap, dynamicType);
             return WS_UNIMPLEMENTED_E;
         }
-        ret = SetHostPrivateKey(ctx, keyId, der, derSz, dynamicType);
+        ret = SetHostPrivateKey(ctx, keyId, der, derSz, dynamicType, keySig);
+        FreeKeySignature(keySig, ctx->heap);
     }
     #ifdef WOLFSSH_CERTS
     else if (type == BUFTYPE_CERT) {
@@ -16364,11 +16551,25 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                         &sigKeyBlock_ptr->sk.mldsa.key,
                         ssh->ctx->privateKey[keyIdx].key,
                         ssh->ctx->privateKey[keyIdx].keySz, &scratch);
-            if (ret == 0)
-                ret = wc_MlDsaKey_ExportPubRaw(
-                        &sigKeyBlock_ptr->sk.mldsa.key,
-                        sigKeyBlock_ptr->sk.mldsa.q,
-                        &sigKeyBlock_ptr->sk.mldsa.qSz);
+            /* Use the cached public key; deriving it is a keygen per KEX.
+             * x509v3 sends the certificate instead. A missing cache is
+             * defensive: the load refuses a key it cannot cache. */
+            if (ret == 0 && !isCert) {
+                const WOLFSSH_PVT_KEY* pvtKey =
+                        &ssh->ctx->privateKey[keyIdx];
+
+                if (pvtKey->mldsaPub != NULL &&
+                        pvtKey->mldsaPubSz <= sigKeyBlock_ptr->sk.mldsa.qSz) {
+                    WMEMCPY(sigKeyBlock_ptr->sk.mldsa.q, pvtKey->mldsaPub,
+                            pvtKey->mldsaPubSz);
+                    sigKeyBlock_ptr->sk.mldsa.qSz = pvtKey->mldsaPubSz;
+                }
+                else {
+                    WLOG(WS_LOG_ERROR, "SendKexGetSigningKey: ML-DSA host "
+                         "key has no cached public key");
+                    ret = WS_INVALID_STATE_E;
+                }
+            }
 
             /* Hash in raw public key only for non-cert path. */
             if (!isCert) {

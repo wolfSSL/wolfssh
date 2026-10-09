@@ -153,6 +153,19 @@ extern "C" {
     #define WOLFSSH_NO_MLDSA
 #endif
 
+/* Check if the wc_MlDsaKey_MakePublicKey API is available.
+ * A private-only key needs this call made explicitly before its
+ * public half is read. Set by configure, by wolfSSL's own
+ * WC_MLDSA_HAVE_MAKE_PUBLIC_KEY, or predefined. */
+#if defined(WC_MLDSA_HAVE_MAKE_PUBLIC_KEY) && \
+    !defined(WOLFSSH_HAVE_MLDSA_DERIVE_PUB)
+    #define WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+#endif
+#if defined(WOLFSSH_NO_MLDSA) || defined(WOLFSSL_MLDSA_ASSIGN_KEY) || \
+    defined(WOLFSSL_MLDSA_NO_MAKE_KEY) || defined(WOLFSSL_MLDSA_VERIFY_ONLY)
+    #undef WOLFSSH_HAVE_MLDSA_DERIVE_PUB
+#endif
+
 #ifdef NO_SHA
     #undef WOLFSSH_NO_SHA1
     #define WOLFSSH_NO_SHA1
@@ -872,6 +885,11 @@ typedef struct WOLFSSH_PVT_KEY {
     byte publicKeyFmt;
         /* Public key format for the private key. Note, some public key
          * formats are used with multiple public key signing algorithms. */
+#ifndef WOLFSSH_NO_MLDSA
+    byte* mldsaPub;
+        /* Raw ML-DSA public key, exported once at load time. Owned by CTX. */
+    word32 mldsaPubSz;
+#endif /* !WOLFSSH_NO_MLDSA */
 #ifdef WOLFSSH_TPM
     byte isTpm;
         /* When set, the host key material lives in the TPM and key/keySz are
@@ -885,6 +903,11 @@ typedef struct WOLFSSH_PVT_KEY {
          * Owned by CTX, must be freed with CertFreeCertificateContext. */
 #endif /* WOLFSSH_WINDOWS_CERT_STORE */
 } WOLFSSH_PVT_KEY;
+
+#ifndef WOLFSSH_NO_MLDSA
+/* Free a slot's cached ML-DSA public key. Every slot writer calls it. */
+WOLFSSH_LOCAL void ClearMlDsaHostPubKey(WOLFSSH_PVT_KEY* pvtKey, void* heap);
+#endif
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Returns 1 when the value is exactly one assigned CERT_SYSTEM_STORE_*
