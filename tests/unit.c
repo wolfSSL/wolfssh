@@ -17984,7 +17984,8 @@ static int certmanForgeChild(const byte* issuerCert, word32 issuerCertSz,
     return ret;
 }
 
-/* Forge a cert with the given subject CN. When isCA is set the cert asserts
+/* Forge a cert with the given subject CN, or with issuerCert's subject name
+ * when cn is NULL (a self-issued cert). When isCA is set the cert asserts
  * basicConstraints CA=TRUE. When keyUsage is non-NULL the cert carries a
  * KeyUsage extension with the named usage(s) (e.g. "keyCertSign" or
  * "digitalSignature"); NULL omits the extension entirely. extKeyUsage does
@@ -18013,12 +18014,17 @@ static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
         /* wc_InitCert zeroed the struct, so leaving the final byte untouched
          * keeps the name NUL-terminated and avoids a strncpy truncation
          * warning on the runtime cn pointer. */
-        WSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE - 1);
-        WSTRNCPY(cert.subject.commonName, cn, CTC_NAME_SIZE - 1);
+        if (cn != NULL) {
+            WSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE - 1);
+            WSTRNCPY(cert.subject.commonName, cn, CTC_NAME_SIZE - 1);
+        }
+        else {
+            ret = wc_SetSubjectBuffer(&cert, issuerCert, (int)issuerCertSz);
+        }
         cert.sigType = CTC_SHA256wECDSA;
         cert.daysValid = 365;
         cert.isCA = isCA;
-        if (keyUsage != NULL) {
+        if (ret == 0 && keyUsage != NULL) {
         #ifdef WOLFSSL_CERT_EXT
             ret = wc_SetKeyUsage(&cert, keyUsage);
         #else
@@ -18203,6 +18209,25 @@ done:
     return result;
 }
 
+/* Returns 1 when der's issuer name equals its subject name. Compares the name
+ * hashes, since DecodedCert.selfSigned also requires a self-signature in
+ * some wolfSSL versions. */
+static int certmanIsSelfIssued(const byte* der, word32 derSz)
+{
+    DecodedCert decoded;
+    int ret = 0;
+
+    wc_InitDecodedCert(&decoded, der, derSz, NULL);
+    if (wc_ParseCert(&decoded, CERT_TYPE, NO_VERIFY, NULL) == 0 &&
+            WMEMCMP(decoded.issuerHash, decoded.subjectHash,
+                sizeof(decoded.subjectHash)) == 0) {
+        ret = 1;
+    }
+    wc_FreeDecodedCert(&decoded);
+
+    return ret;
+}
+
 /* Drives CertManIntermediateIsCA through a forged [leaf <- intermediate] chain
  * with only the root trusted, so the intermediate CA must be promoted for the
  * leaf to find a signer.
@@ -18215,6 +18240,12 @@ done:
  *   "digitalSignature" has KeyUsage but lacks keyCertSign: intermediate
  *                     CA must be demoted (keyCertSign-rejection branch).
  *
+ * selfIssued gives the intermediate the root's subject name while it keeps its
+ * own key and the root's signature, the shape of a CA key rollover cert.
+ *
+ * appendRoot also sends the trusted root at the end of the chain, so it goes
+ * through CertManIntermediateIsCA too and must be promoted as well.
+ *
  * expectPromote==1 asserts the intermediate was promoted (verify returns
  * anything but WS_CERT_NO_SIGNER_E); ==0 asserts it was not (verify returns
  * WS_CERT_NO_SIGNER_E). Promotion is the unit under test, not full chain
@@ -18222,8 +18253,8 @@ done:
  * synthetic leaf is rejected later with WS_CERT_PROFILE_E, which is
  * orthogonal -- hence the "anything but WS_CERT_NO_SIGNER_E" success criterion
  * mirroring the negative test's sanity check. */
-static int certmanCheckIntermediate(const char* interKeyUsage,
-                                     int expectPromote)
+static int certmanCheckIntermediate(const char* interKeyUsage, int selfIssued,
+                                     int appendRoot, int expectPromote)
 {
     int result = 0;
     int ret;
@@ -18284,11 +18315,16 @@ static int certmanCheckIntermediate(const char* interKeyUsage,
     }
 
     /* Intermediate CA signed by the root. */
-    ret = certmanForgeCert("IntermediateCA", 1, interKeyUsage, NULL,
-            root, rootSz, &rootKey, &interKey, inter, &interSz);
+    ret = certmanForgeCert(selfIssued ? NULL : "IntermediateCA", 1,
+            interKeyUsage, NULL, root, rootSz, &rootKey, &interKey, inter,
+            &interSz);
     if (ret != 0) {
         printf("CertMan: forge intermediate failed, ret=%d\n", ret);
         result = -929; goto done;
+    }
+    if (selfIssued && !certmanIsSelfIssued(inter, interSz)) {
+        printf("CertMan: forged intermediate is not self-issued\n");
+        result = -935; goto done;
     }
 
     /* Leaf signed by the intermediate. */
@@ -18313,7 +18349,12 @@ static int certmanCheckIntermediate(const char* interKeyUsage,
             leaf, leafSz);
     chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
             inter, interSz);
-    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+    if (appendRoot) {
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+                root, rootSz);
+    }
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz,
+            appendRoot ? 3 : 2);
     if (expectPromote && ret == WS_CERT_NO_SIGNER_E) {
         printf("CertMan: valid intermediate CA not promoted, ret=%d\n", ret);
         result = -933; goto done;
@@ -18345,16 +18386,25 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
     int result;
 
     /* A CA intermediate with no KeyUsage extension must still be promoted. */
-    result = certmanCheckIntermediate(NULL, 1);
+    result = certmanCheckIntermediate(NULL, 0, 0, 1);
+    /* A peer may send the trusted root too; it asserts keyCertSign, so it is
+     * promoted like any other CA. */
+    if (result == 0)
+        result = certmanCheckIntermediate(NULL, 0, 1, 1);
 #ifdef WOLFSSL_CERT_EXT
     /* As must a CA intermediate that explicitly asserts keyCertSign. */
     if (result == 0)
-        result = certmanCheckIntermediate("keyCertSign", 1);
+        result = certmanCheckIntermediate("keyCertSign", 0, 0, 1);
+    if (result == 0)
+        result = certmanCheckIntermediate("keyCertSign", 1, 0, 1);
 #ifndef ALLOW_INVALID_CERTSIGN
     /* But a CA intermediate carrying a KeyUsage extension that omits
-     * keyCertSign must be rejected (the keyCertSign-rejection branch). */
+     * keyCertSign must be rejected (the keyCertSign-rejection branch),
+     * self-issued or not. */
     if (result == 0)
-        result = certmanCheckIntermediate("digitalSignature", 0);
+        result = certmanCheckIntermediate("digitalSignature", 0, 0, 0);
+    if (result == 0)
+        result = certmanCheckIntermediate("digitalSignature", 1, 0, 0);
 #endif
 #endif
     return result;

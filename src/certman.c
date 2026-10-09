@@ -313,8 +313,9 @@ enum {
     #define MAX_CHAIN_DEPTH 9
 #endif
 
-/* Returns 1 if der is a CA: isCA set and, unless self-signed, keyCertSign
- * set. Already signature-verified by the caller, so parse NO_VERIFY. */
+/* Returns 1 if der is a CA: isCA set and, when a KeyUsage extension is
+ * present, keyCertSign set. Already signature-verified by the caller, so
+ * parse NO_VERIFY. */
 static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
         const unsigned char* der, word32 derSz)
 {
@@ -336,7 +337,7 @@ static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
         if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, NULL) == 0) {
             isCA = decoded->isCA;
         #ifndef ALLOW_INVALID_CERTSIGN
-            if (isCA && !decoded->selfSigned && decoded->extKeyUsageSet &&
+            if (isCA && decoded->extKeyUsageSet &&
                     (decoded->extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
                 /* If a KeyUsage extension is present, an intermediate CA must
                  * assert the keyCertSign bit. */
