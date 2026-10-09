@@ -795,6 +795,31 @@ int wIsSymlink(const char* path)
     return isLink;
 }
 
+/* Returns 1 if path is a directory and not a symbolic link to one, otherwise
+ * 0, so a mkdir() that found an existing entry can confirm what it found.
+ * Looks up the entry as wIsSymlink does: lstat on POSIX, and the attribute
+ * query on Windows, which reports a reparse point's own attributes. */
+int wIsDirNoFollow(const char* path)
+{
+    int isDir = 0;
+#ifdef USE_WINDOWS_API
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+
+    if (path != NULL && WS_GetFileAttributesExA(path, &attrs, NULL) != 0 &&
+            (attrs.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+            (attrs.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+        isDir = 1;
+    }
+#else
+    WSTAT_T lst;
+
+    if (path != NULL && WLSTAT(NULL, path, &lst) == 0 && S_ISDIR(lst.st_mode)) {
+        isDir = 1;
+    }
+#endif
+    return isDir;
+}
+
 /* Open path for reading without following a final-component symbolic link.
  * On POSIX this is atomic through O_NOFOLLOW: the open itself fails if the leaf
  * is a link, closing the check-then-open race.  Where no such primitive exists

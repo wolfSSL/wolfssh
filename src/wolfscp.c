@@ -27,6 +27,13 @@
  */
 
 
+#ifdef __linux__
+    /* O_PATH, the descriptor-base open flag, is declared under _GNU_SOURCE */
+    #ifndef _GNU_SOURCE
+        #define _GNU_SOURCE
+    #endif
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -2368,6 +2375,282 @@ static int SetTimestampInfo(WFILE* fp, const char* fileName,
     return ret;
 }
 
+/* The default receive callback keeps the directory it writes into in
+ * ssh->scpRecvPath, the base path plus every NEW_DIR entered, rather than in
+ * the process working directory, which every session in the process shares.
+ * The path is capped at DEFAULT_SCP_FILE_NAME_SZ like the send side's. With
+ * WOLFSSH_HAVE_DIRFD it also holds that directory open and creates each file
+ * and directory relative to the descriptor with O_NOFOLLOW, so a symlink
+ * swapped into the destination tree is neither entered nor written through;
+ * leaving a directory reopens its parent and confirms it is the one entered
+ * from, so a directory moved mid-transfer cannot redirect what follows. Other
+ * ports open by the full path after a wIsDirNoFollow() screen, which leaves
+ * the check-then-open window. */
+
+#ifdef WOLFSSH_HAVE_DIRFD
+typedef struct ScpRecvDir {
+    dev_t dev; /* identity of a parent of the receive directory */
+    ino_t ino;
+    struct ScpRecvDir* next; /* its parent in turn */
+} ScpRecvDir;
+#endif
+
+/* Release the receive path, its descriptor and its parent record. */
+void ScpRecvPathFree(WOLFSSH* ssh, void* heap)
+{
+    if (ssh == NULL)
+        return;
+#ifdef WOLFSSH_HAVE_DIRFD
+    if (ssh->scpRecvDirFd >= 0) {
+        WCLOSE(ssh->fs, ssh->scpRecvDirFd);
+        ssh->scpRecvDirFd = -1;
+    }
+    while (ssh->scpRecvDirs != NULL) {
+        ScpRecvDir* dir = ssh->scpRecvDirs;
+
+        ssh->scpRecvDirs = dir->next;
+        WFREE(dir, heap, DYNTYPE_SCPDIR);
+    }
+#endif
+    if (ssh->scpRecvPath != NULL) {
+        WFREE(ssh->scpRecvPath, heap, DYNTYPE_BUFFER);
+        ssh->scpRecvPath = NULL;
+    }
+    ssh->scpRecvBaseSz = 0;
+}
+
+#ifndef WOLFSSL_NUCLEUS
+/* Start the receive path over at basePath. */
+static int ScpRecvPathSet(WOLFSSH* ssh, const char* basePath)
+{
+    word32 sz;
+
+    ScpRecvPathFree(ssh, ssh->ctx->heap);
+    if (basePath == NULL)
+        return WS_BAD_ARGUMENT;
+    sz = (word32)WSTRLEN(basePath);
+    if (sz >= DEFAULT_SCP_FILE_NAME_SZ)
+        return WS_BUFFER_E;
+    ssh->scpRecvPath = (char*)WMALLOC(DEFAULT_SCP_FILE_NAME_SZ,
+            ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (ssh->scpRecvPath == NULL)
+        return WS_MEMORY_E;
+    WMEMCPY(ssh->scpRecvPath, basePath, sz + 1);
+    ssh->scpRecvBaseSz = sz;
+    return WS_SUCCESS;
+}
+
+/* Append name as the last component of the receive path. */
+static int ScpRecvPathJoin(WOLFSSH* ssh, const char* name)
+{
+    word32 pathSz;
+    word32 nameSz;
+    int delim = 0;
+
+    if (ssh->scpRecvPath == NULL || name == NULL)
+        return WS_BAD_ARGUMENT;
+    pathSz = (word32)WSTRLEN(ssh->scpRecvPath);
+    nameSz = (word32)WSTRLEN(name);
+    if (pathSz > 0 && ssh->scpRecvPath[pathSz - 1] != '/' &&
+            ssh->scpRecvPath[pathSz - 1] != '\\') {
+        delim = 1;
+    }
+    if (pathSz + delim + nameSz >= DEFAULT_SCP_FILE_NAME_SZ)
+        return WS_BUFFER_E;
+    if (delim)
+        ssh->scpRecvPath[pathSz++] = WS_DELIM;
+    WMEMCPY(ssh->scpRecvPath + pathSz, name, nameSz + 1);
+    return WS_SUCCESS;
+}
+
+/* Drop the last component of the receive path, never cutting into the base
+ * path. */
+static void ScpRecvPathUp(WOLFSSH* ssh)
+{
+    word32 i;
+
+    if (ssh->scpRecvPath == NULL)
+        return;
+    i = (word32)WSTRLEN(ssh->scpRecvPath);
+    while (i > ssh->scpRecvBaseSz && ssh->scpRecvPath[i - 1] != '/' &&
+            ssh->scpRecvPath[i - 1] != '\\') {
+        i--;
+    }
+    if (i > ssh->scpRecvBaseSz)
+        i--; /* the delimiter the join added */
+    ssh->scpRecvPath[i] = '\0';
+}
+
+/* Open the directory the receive path names, which is the base path. */
+static int ScpRecvDirOpen(WOLFSSH* ssh)
+{
+#ifdef WOLFSSH_HAVE_DIRFD
+    WFD fd;
+
+    /* ParseBasePathHelper() screened the base path before the request got
+     * here, refusing a link at its leaf; the open refuses one too, so a link
+     * swapped in since is not followed either */
+    fd = WOPEN(ssh->fs, ssh->scpRecvPath,
+            WOLFSSH_O_SEARCH | WOLFSSH_O_DIRECTORY | WOLFSSH_O_NOFOLLOW, 0);
+    if (fd < 0)
+        return WS_INVALID_PATH_E;
+    if (!WDIRFD_SEARCHABLE(ssh->fs, fd)) {
+        WCLOSE(ssh->fs, fd);
+        return WS_INVALID_PATH_E;
+    }
+    ssh->scpRecvDirFd = fd;
+#else
+    /* ParseBasePathHelper() screened the base path; repeat its leaf check
+     * here, and leave a destination that is not usable after all to the
+     * first create below it */
+    #ifdef WOLFSSH_HAVE_SYMLINK
+    if (!wIsDirNoFollow(ssh->scpRecvPath))
+        return WS_INVALID_PATH_E;
+    #else
+    WOLFSSH_UNUSED(ssh);
+    #endif
+#endif
+    return WS_SUCCESS;
+}
+
+/* Create directory name below the receive path, unless it exists, and make
+ * it the receive path. */
+static int ScpRecvDirEnter(WOLFSSH* ssh, const char* name, int mode)
+{
+    int ret;
+#ifdef WOLFSSH_HAVE_DIRFD
+    WSTAT_T st;
+    ScpRecvDir* dir;
+    WFD fd;
+
+    if (ssh->scpRecvDirFd < 0)
+        return WS_INVALID_STATE_E;
+    ret = ScpRecvPathJoin(ssh, name);
+    if (ret != WS_SUCCESS)
+        return ret;
+    if (WMKDIRAT(ssh->fs, ssh->scpRecvDirFd, name, mode) != 0 &&
+            wolfSSH_LastError() != EEXIST) {
+        ScpRecvPathUp(ssh);
+        return WS_INVALID_PATH_E;
+    }
+    /* the open itself refuses a link, whether mkdir found one or one was
+     * swapped in since */
+    fd = WOPENAT(ssh->fs, ssh->scpRecvDirFd, name,
+            WOLFSSH_O_SEARCH | WOLFSSH_O_DIRECTORY | WOLFSSH_O_NOFOLLOW, 0);
+    if (fd < 0) {
+        ScpRecvPathUp(ssh);
+        return WS_INVALID_PATH_E;
+    }
+    /* record the parent, for leaving to confirm */
+    dir = NULL;
+    if (WDIRFD_SEARCHABLE(ssh->fs, fd) &&
+            WFSTAT(ssh->fs, ssh->scpRecvDirFd, &st) == 0) {
+        dir = (ScpRecvDir*)WMALLOC(sizeof(ScpRecvDir), ssh->ctx->heap,
+                DYNTYPE_SCPDIR);
+    }
+    if (dir == NULL) {
+        WCLOSE(ssh->fs, fd);
+        ScpRecvPathUp(ssh);
+        return WS_INVALID_PATH_E;
+    }
+    dir->dev = st.st_dev;
+    dir->ino = st.st_ino;
+    dir->next = ssh->scpRecvDirs;
+    ssh->scpRecvDirs = dir;
+    WCLOSE(ssh->fs, ssh->scpRecvDirFd);
+    ssh->scpRecvDirFd = fd;
+    return WS_SUCCESS;
+#else
+    WOLFSSH_UNUSED(mode); /* some ports' mkdir takes none */
+
+    ret = ScpRecvPathJoin(ssh, name);
+    if (ret != WS_SUCCESS)
+        return ret;
+    if (WMKDIR(ssh->fs, ssh->scpRecvPath, mode) != 0 &&
+            wolfSSH_LastError() != EEXIST) {
+        ret = WS_INVALID_PATH_E;
+    }
+    #ifdef WOLFSSH_HAVE_SYMLINK
+    /* what mkdir found may be a link out of the destination, or not a
+     * directory at all */
+    if (ret == WS_SUCCESS && !wIsDirNoFollow(ssh->scpRecvPath))
+        ret = WS_INVALID_PATH_E;
+    #endif
+    if (ret != WS_SUCCESS)
+        ScpRecvPathUp(ssh);
+    return ret;
+#endif
+}
+
+/* Make the parent of the receive path the receive path. */
+static int ScpRecvDirLeave(WOLFSSH* ssh)
+{
+#ifdef WOLFSSH_HAVE_DIRFD
+    WSTAT_T st;
+    ScpRecvDir* dir = ssh->scpRecvDirs;
+    WFD fd;
+
+    if (ssh->scpRecvDirFd < 0 || dir == NULL)
+        return WS_SCP_DIR_STACK_EMPTY_E;
+    /* the directory may have been moved since it was entered, in which case
+     * its parent now is not the one it was entered from */
+    fd = WOPENAT(ssh->fs, ssh->scpRecvDirFd, "..",
+            WOLFSSH_O_SEARCH | WOLFSSH_O_DIRECTORY, 0);
+    if (fd < 0)
+        return WS_INVALID_PATH_E;
+    if (WFSTAT(ssh->fs, fd, &st) != 0 ||
+            st.st_dev != dir->dev || st.st_ino != dir->ino) {
+        WCLOSE(ssh->fs, fd);
+        return WS_INVALID_PATH_E;
+    }
+    ssh->scpRecvDirs = dir->next;
+    WFREE(dir, ssh->ctx->heap, DYNTYPE_SCPDIR);
+    WCLOSE(ssh->fs, ssh->scpRecvDirFd);
+    ssh->scpRecvDirFd = fd;
+#endif
+    ScpRecvPathUp(ssh);
+    return WS_SUCCESS;
+}
+
+/* Create or truncate file name below the receive path and open it for
+ * writing. */
+static int ScpRecvFileOpen(WOLFSSH* ssh, const char* name, WFILE** fp)
+{
+#ifdef WOLFSSH_HAVE_DIRFD
+    WFD fd;
+
+    if (ssh->scpRecvDirFd < 0)
+        return WS_INVALID_STATE_E;
+    /* the mode is that of a "wb" fopen; the open itself refuses a link */
+    fd = WOPENAT(ssh->fs, ssh->scpRecvDirFd, name,
+            WOLFSSH_O_WRONLY | WOLFSSH_O_CREAT | WOLFSSH_O_TRUNC |
+            WOLFSSH_O_NOFOLLOW, 0666);
+    if (fd < 0)
+        return WS_BAD_FILE_E;
+    if (WFDOPEN(ssh->fs, fp, fd, "wb") != 0) {
+        WCLOSE(ssh->fs, fd);
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+#else
+    int ret;
+
+    ret = ScpRecvPathJoin(ssh, name);
+    if (ret != WS_SUCCESS)
+        return ret;
+    #ifdef WOLFSSH_HAVE_SYMLINK
+    if (wIsSymlink(ssh->scpRecvPath))
+        ret = WS_BAD_FILE_E;
+    #endif
+    if (ret == WS_SUCCESS && WFOPEN(ssh->fs, fp, ssh->scpRecvPath, "wb") != 0)
+        ret = WS_BAD_FILE_E;
+    ScpRecvPathUp(ssh);
+    return ret;
+#endif
+}
+#endif /* !WOLFSSL_NUCLEUS */
+
+
 /* Default SCP receive callback, called by wolfSSH when application has called
  * wolfSSH_accept() and a new SCP request has been received for an incoming
  * file or directory.
@@ -2432,6 +2715,9 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
     WFILE* fp = NULL;
     int ret = WS_SCP_CONTINUE;
     word32 bytes;
+#ifndef WOLFSSL_NUCLEUS
+    int err;
+#endif
 #ifdef WOLFSCP_FLUSH
     static word32 flush_bytes = 0;
     #ifndef WRITE_FLUSH_SIZE
@@ -2453,7 +2739,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
         case WOLFSSH_SCP_NEW_REQUEST:
 
-            /* cd into requested root path */
+            /* open the requested root path */
      #ifdef WOLFSSL_NUCLEUS
             {
                 DSTAT stat;
@@ -2492,9 +2778,13 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 ssh->scpDirDepth = 0;
             }
     #else
-            if (WCHDIR(ssh->fs, basePath) != 0) {
-                WLOG(WS_LOG_ERROR,
-                    "scp: invalid destination directory, abort");
+            err = ScpRecvPathSet(ssh, basePath);
+            if (err == WS_SUCCESS)
+                err = ScpRecvDirOpen(ssh);
+            if (err != WS_SUCCESS) {
+                ScpRecvPathFree(ssh, ssh->ctx->heap);
+                WLOG(WS_LOG_ERROR, scpError,
+                    "invalid destination directory, abort", err);
                 wolfSSH_SetScpErrorMsg(ssh, "invalid destination directory");
                 ret = WS_SCP_ABORT;
             }
@@ -2515,18 +2805,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             wolfSSH_CleanPath(ssh, abslut, WOLFSSH_MAX_FILENAME);
             if (WFOPEN(ssh->fs, &fp, abslut, "wb") != 0) {
         #else
-        #ifdef WOLFSSH_HAVE_SYMLINK
-            /* refuse to write through a pre-existing symlink, which would
-             * escape the destination directory */
-            if (wIsSymlink(fileName)) {
-                WLOG(WS_LOG_ERROR,
-                    "scp: refusing to write through symlink, abort");
-                wolfSSH_SetScpErrorMsg(ssh, "symlink target rejected");
-                ret = WS_SCP_ABORT;
-                break;
-            }
-        #endif
-            if (WFOPEN(ssh->fs, &fp, fileName, "wb") != 0) {
+            if (ScpRecvFileOpen(ssh, fileName, &fp) != WS_SUCCESS) {
         #endif
                 WLOG(WS_LOG_ERROR,
                     "scp: unable to open file for writing, abort");
@@ -2610,7 +2889,16 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 #ifndef WOLFSSH_SCP_FD_UTIMES
                 /* no descriptor-based update available, set by path now that
                  * the file is closed so the close cannot overwrite the time */
+    #ifdef WOLFSSL_NUCLEUS
                 ret = SetTimestampInfo(NULL, fileName, mTime, aTime);
+    #else
+                ret = ScpRecvPathJoin(ssh, fileName);
+                if (ret == WS_SUCCESS) {
+                    ret = SetTimestampInfo(NULL, ssh->scpRecvPath,
+                            mTime, aTime);
+                    ScpRecvPathUp(ssh);
+                }
+    #endif
 #endif
                 if (ret == WS_SUCCESS) {
                     ret = WS_SCP_CONTINUE;
@@ -2644,40 +2932,17 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
 
                     }
                 }
-            #else
-                if (WMKDIR(ssh->fs, fileName, fileMode) != 0) {
-                    if (wolfSSH_LastError() != EEXIST) {
-                        WLOG(WS_LOG_ERROR,
-                            "scp: error creating directory, abort");
-                        wolfSSH_SetScpErrorMsg(ssh, "error creating directory");
-                        ret = WS_SCP_ABORT;
-                        break;
-                    }
-                }
-            #endif
-
                 /* cd into directory */
-            #ifdef WOLFSSL_NUCLEUS
                 WSTRNCAT((char*)basePath, "/", WOLFSSH_MAX_FILENAME);
                 WSTRNCAT((char*)basePath, fileName, WOLFSSH_MAX_FILENAME);
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
                 ssh->scpDirDepth++;
             #else
-            #ifdef WOLFSSH_HAVE_SYMLINK
-                /* WMKDIR returning EEXIST above may have matched a pre-existing
-                 * symlink; refuse to follow it out of the destination dir */
-                if (wIsSymlink(fileName)) {
-                    WLOG(WS_LOG_ERROR,
-                        "scp: refusing to enter symlinked directory, abort");
-                    wolfSSH_SetScpErrorMsg(ssh, "symlink in destination path");
-                    ret = WS_SCP_ABORT;
-                    break;
-                }
-            #endif
-                if (WCHDIR(ssh->fs, fileName) != 0) {
-                    WLOG(WS_LOG_ERROR,
-                            "scp: unable to cd into directory, abort");
-                    wolfSSH_SetScpErrorMsg(ssh, "unable to cd into directory");
+                err = ScpRecvDirEnter(ssh, fileName, fileMode);
+                if (err != WS_SUCCESS) {
+                    WLOG(WS_LOG_ERROR, scpError,
+                            "unable to enter directory, abort", err);
+                    wolfSSH_SetScpErrorMsg(ssh, "unable to enter directory");
                     ret = WS_SCP_ABORT;
                 }
                 else {
@@ -2705,10 +2970,11 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 wolfSSH_CleanPath(ssh, (char*)basePath, WOLFSSH_MAX_FILENAME);
                 ssh->scpDirDepth--;
         #else
-            if (WCHDIR(ssh->fs, "..") != 0) {
-                WLOG(WS_LOG_ERROR,
-                            "scp: unable to cd out of directory, abort");
-                wolfSSH_SetScpErrorMsg(ssh, "unable to cd out of directory");
+            err = ScpRecvDirLeave(ssh);
+            if (err != WS_SUCCESS) {
+                WLOG(WS_LOG_ERROR, scpError,
+                            "unable to leave directory, abort", err);
+                wolfSSH_SetScpErrorMsg(ssh, "unable to leave directory");
                 ret = WS_SCP_ABORT;
             }
             else {

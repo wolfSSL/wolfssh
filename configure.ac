@@ -101,6 +101,14 @@ AC_LINK_IFELSE(
    AC_MSG_RESULT([yes])],
   [AC_MSG_RESULT([no])])
 
+AC_MSG_CHECKING([for futimes])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <sys/time.h>]],
+                   [[struct timeval tv[2]; (void)futimes(0, tv);]])],
+  [AC_DEFINE([HAVE_FUTIMES], [1], [futimes() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
 AC_MSG_CHECKING([for utimensat])
 AC_LINK_IFELSE(
   [AC_LANG_PROGRAM([[#include <fcntl.h>
@@ -109,6 +117,22 @@ AC_LINK_IFELSE(
                    [[struct timespec ts[2];
                      (void)utimensat(AT_FDCWD, "x", ts, AT_SYMLINK_NOFOLLOW);]])],
   [AC_DEFINE([HAVE_UTIMENSAT], [1], [utimensat() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
+# The layout of struct WOLFSSH depends on this result through
+# WOLFSSH_HAVE_DIRFD, so port.h keys on it alone; O_DIRECTORY is probed here
+# rather than tested per translation unit, where feature macros could differ.
+AC_MSG_CHECKING([for openat, mkdirat, faccessat and O_DIRECTORY])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>]],
+                   [[(void)openat(AT_FDCWD, "x", O_RDONLY | O_DIRECTORY, 0);
+                     (void)mkdirat(AT_FDCWD, "x", 0755);
+                     (void)faccessat(AT_FDCWD, "x", X_OK, AT_EACCESS);]])],
+  [AC_DEFINE([HAVE_OPENAT], [1],
+             [openat(), mkdirat(), faccessat() and O_DIRECTORY available])
    AC_MSG_RESULT([yes])],
   [AC_MSG_RESULT([no])])
 
