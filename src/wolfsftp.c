@@ -6917,7 +6917,7 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
                 state->state = SFTP_SEND_PACKET;
             }
             else {
-                if(!NoticeError(ssh)) {
+                if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_SEND);
                 }
                 return ret;
