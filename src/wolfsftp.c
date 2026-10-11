@@ -711,6 +711,15 @@ int wolfSSH_TestSftpRecvSizeCheck(int sz)
 {
     return SFTP_CheckRecvSz(sz);
 }
+
+
+/* Test hook: exposes the static SendPacketType() so the unit tests can
+ * check that no request is sent when SFTP negotiation did not succeed. */
+int wolfSSH_TestSftpSendPacketType(WOLFSSH* ssh, byte type, byte* buf,
+        word32 bufSz)
+{
+    return SendPacketType(ssh, type, buf, bufSz);
+}
 #endif
 
 
@@ -6905,8 +6914,15 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
 
                 /* reset state for sending data */
                 wolfSSH_SFTP_buffer_rewind(&state->buffer);
+                state->state = SFTP_SEND_PACKET;
             }
-            state->state = SFTP_SEND_PACKET;
+            else {
+                if(!NoticeError(ssh)){
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_SEND);
+                }
+                return ret;
+            }
+
             FALL_THROUGH;
 
         case SFTP_SEND_PACKET:
