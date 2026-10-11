@@ -6283,12 +6283,179 @@ static void test_wolfSSH_SFTP_SendPacketType_negotiate(void)
             payload, (word32)sizeof(payload));
 
     /* The SFTP connection was not established, so negotiation cannot succeed.
-     * SendPacketType() must report that failure instead of returning WS_SUCCESS */
+     * SendPacketType() must report that failure instead of returning 
+     * WS_SUCCESS */
     AssertIntNE(ret, WS_SUCCESS);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 #endif /* WOLFSSH_TEST_INTERNAL */
+}
+
+/* Same as sftp_client_connect(), but stops before wolfSSH_SFTP_connect() and
+ * leaves the socket non-blocking. The first SFTP request then has to drive
+ * the SSH handshake and the SFTP negotiation itself. */
+static void wolfSSH_SFTP_connect_nonblock(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+{
+    SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T clientAddr;
+    socklen_t clientAddrSz = sizeof(clientAddr);
+    int ret;
+    char* host = (char*)wolfSshIp;
+    const char* username = "jill";
+    const char* password = "upthehill";
+
+    if (ctx == NULL || ssh == NULL) {
+        return;
+    }
+
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (*ctx == NULL) {
+        return;
+    }
+
+    wolfSSH_CTX_SetPublicKeyCheck(*ctx, AcceptAnyServerHostKey);
+    wolfSSH_SetUserAuth(*ctx, sftpUserAuth);
+    *ssh = wolfSSH_new(*ctx);
+    if (*ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        return;
+    }
+
+    build_addr(&clientAddr, host, port);
+    tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+    if (sockFd < 0) {
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    ret = connect(sockFd, (const struct sockaddr *)&clientAddr, clientAddrSz);
+    if (ret != 0) {
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    wolfSSH_SetUserAuthCtx(*ssh, (void*)password);
+    ret = wolfSSH_SetUsername(*ssh, username);
+    if (ret == WS_SUCCESS)
+        ret = wolfSSH_set_fd(*ssh, (int)sockFd);
+
+    if (ret != WS_SUCCESS) {
+        WCLOSESOCKET(sockFd);
+        wolfSSH_free(*ssh);
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+        *ssh = NULL;
+        return;
+    }
+
+    /* no wolfSSH_connect() or wolfSSH_SFTP_connect() here; the caller's first
+     * SFTP request negotiates over the non-blocking socket */
+    tcp_set_nonblocking(&sockFd);
+}
+
+/* Upper bound on non-blocking retry iterations. Each wait is at most 1s, so a
+ * regression fails the AssertIntLE below instead of hanging CI. */
+#define SFTP_MAX_NEGOTIATION_TRIES 100
+
+/* The retryable half of the SendPacketType() negotiation fix. Without
+ * wolfSSH_SFTP_connect(), the first request on a non-blocking socket must
+ * negotiate first. Negotiation returns WS_WANT_READ/WS_WANT_WRITE, the send
+ * state is kept, and a later call finishes negotiating and actually sends the
+ * request. Before the fix the first call failed with WS_BUFFER_E instead. */
+static void test_wolfSSH_SFTP_SendPacketType_negotiation_non_block(void)
+{
+    func_args       ser;
+    tcp_ready       ready;
+    int             argsCount;
+    WS_SOCKET_T     clientFd;
+    const char*     args[10];
+    WOLFSSH_CTX*    ctx   = NULL;
+    WOLFSSH*        ssh   = NULL;
+    WS_SFTPNAME*    name = NULL;
+    THREAD_TYPE     serThread;
+    int             sawPartial = 0;
+    int             err;
+    int             tries = 0;
+
+    /* one-shot echoserver on a free port */
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv = (char**)args;
+    ser.argc = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    wolfSSH_SFTP_connect_nonblock(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+    clientFd = wolfSSH_get_fd(ssh);
+
+    /* RealPath(".") goes through　SendPacketType(). Retry it until
+     * the negotiation completes and the server answers with a name. */
+    do {
+        name = wolfSSH_SFTP_RealPath(ssh, (char*)".");
+        err = wolfSSH_get_error(ssh);
+        if (name == NULL && (err == WS_WANT_READ || err == WS_WANT_WRITE)) {
+            sawPartial = 1;
+            tcp_select(clientFd, 1);
+        }
+        tries++;
+    } while (name == NULL && (err == WS_WANT_READ || err == WS_WANT_WRITE) &&
+            tries <= SFTP_MAX_NEGOTIATION_TRIES);
+
+    AssertIntLE(tries, SFTP_MAX_NEGOTIATION_TRIES);
+    AssertIntEQ(sawPartial, 1);
+    AssertNotNull(name);
+    AssertNotNull(name->fName);
+    wolfSSH_SFTPNAME_list_free(name);
+
+    /* shut down over the non-blocking socket, retrying the same way */
+    tries = 0;
+    do {
+        argsCount = wolfSSH_shutdown(ssh);
+        err = wolfSSH_get_error(ssh);
+        if (argsCount != WS_SUCCESS && (err == WS_WANT_READ ||
+            err == WS_WANT_WRITE || err == WS_REKEYING)) {
+            tcp_select(clientFd, 1);
+        }
+        tries++;
+    } while (argsCount != WS_SUCCESS && (err == WS_WANT_READ ||
+            err == WS_WANT_WRITE || err == WS_REKEYING) &&
+            tries <= SFTP_MAX_NEGOTIATION_TRIES);
+
+    AssertIntLE(tries, SFTP_MAX_NEGOTIATION_TRIES);
+    argsCount = AbsorbBenignReset(ssh, argsCount);
+
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_ZEPHYR
+    k_sleep(Z_TIMEOUT_TICKS(100));
+#endif
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
 }
 
 
@@ -6717,6 +6884,7 @@ static void test_wolfSSH_SFTP_SetConfinePath(void) { ; }
 static void test_wolfSSH_SFTP_SetDefaultPath(void) { ; }
 static void test_wolfSSH_SFTP_SaveOfst(void) { ; }
 static void test_wolfSSH_SFTP_SendPacketType_negotiate(void) { ; }
+static void test_wolfSSH_SFTP_SendPacketType_negotiation_non_block(void) { ; }
 static void test_wolfSSH_SFTP_PutResume(void) { ; }
 static void test_wolfSSH_SFTP_GetResume(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
@@ -8851,6 +9019,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SetDefaultPath();
     test_wolfSSH_SFTP_SaveOfst();
     test_wolfSSH_SFTP_SendPacketType_negotiate();
+    test_wolfSSH_SFTP_SendPacketType_negotiation_non_block();
     test_wolfSSH_SFTP_PutResume();
     test_wolfSSH_SFTP_GetResume();
 
