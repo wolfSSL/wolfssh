@@ -6283,7 +6283,7 @@ static void test_wolfSSH_SFTP_SendPacketType_negotiate(void)
             payload, (word32)sizeof(payload));
 
     /* The SFTP connection was not established, so negotiation cannot succeed.
-     * SendPacketType() must report that failure instead of returning 
+     * SendPacketType() must report that failure instead of returning
      * WS_SUCCESS */
     AssertIntNE(ret, WS_SUCCESS);
 
@@ -6295,7 +6295,8 @@ static void test_wolfSSH_SFTP_SendPacketType_negotiate(void)
 /* Same as sftp_client_connect(), but stops before wolfSSH_SFTP_connect() and
  * leaves the socket non-blocking. The first SFTP request then has to drive
  * the SSH handshake and the SFTP negotiation itself. */
-static void wolfSSH_SFTP_connect_nonblock(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port)
+static void sftp_client_connect_nonblock(WOLFSSH_CTX** ctx, WOLFSSH** ssh,
+                                        int port)
 {
     SOCKET_T sockFd = WOLFSSH_SOCKET_INVALID;
     SOCKADDR_IN_T clientAddr;
@@ -6370,7 +6371,8 @@ static void wolfSSH_SFTP_connect_nonblock(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int 
  * wolfSSH_SFTP_connect(), the first request on a non-blocking socket must
  * negotiate first. Negotiation returns WS_WANT_READ/WS_WANT_WRITE, the send
  * state is kept, and a later call finishes negotiating and actually sends the
- * request. Before the fix the first call failed with WS_BUFFER_E instead. */
+ * request. Before the fix the empty request was "sent" and the client
+ * waited for a reply that never came, until the retry bound tripped. */
 static void test_wolfSSH_SFTP_SendPacketType_negotiation_non_block(void)
 {
     func_args       ser;
@@ -6400,12 +6402,12 @@ static void test_wolfSSH_SFTP_SendPacketType_negotiation_non_block(void)
     ThreadStart(echoserver_test, (void*)&ser, &serThread);
     WaitTcpReady(&ready);
 
-    wolfSSH_SFTP_connect_nonblock(&ctx, &ssh, ready.port);
+    sftp_client_connect_nonblock(&ctx, &ssh, ready.port);
     AssertNotNull(ctx);
     AssertNotNull(ssh);
     clientFd = wolfSSH_get_fd(ssh);
 
-    /* RealPath(".") goes through　SendPacketType(). Retry it until
+    /* RealPath(".") goes through SendPacketType(). Retry it until
      * the negotiation completes and the server answers with a name. */
     do {
         name = wolfSSH_SFTP_RealPath(ssh, (char*)".");
