@@ -1011,7 +1011,7 @@ char* myoptarg = NULL;
 
 #endif /* NO_MAIN_DRIVER */
 #else
-int main()
+int main(void)
 {
     printf("NO_WOLFSSH_CLIENT macro used, wolfSSH client not compiled in.\n");
     return -1;
