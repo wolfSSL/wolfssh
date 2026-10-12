@@ -3084,7 +3084,8 @@ static void test_wolfSSH_SCP_SendSymlinkReject(void) { ; }
 #endif
 
 #if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
-    !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSH_DIR)
+    !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSH_DIR) && \
+    defined(WOLFSSH_TEST_INTERNAL)
 
 static int scpStageRecurFile(const char* name, const byte* buf, word32 sz)
 {
