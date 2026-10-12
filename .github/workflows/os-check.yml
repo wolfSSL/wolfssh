@@ -73,6 +73,8 @@ jobs:
           '--enable-all',
           '--enable-all CFLAGS=-DWOLFSSH_LOCAL_PREAD_PWRITE',
           '--enable-all --enable-ossh-certs',
+          '--enable-all --disable-server',
+          '--enable-all --disable-client',
           '--enable-sftp',
           '--enable-sftp --disable-sftp-zeroize',
           '--enable-scp',
