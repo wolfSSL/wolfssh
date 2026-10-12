@@ -106,19 +106,23 @@ AC_ARG_WITH(wolfssl,
 # Probe the wolfSSL functions through their headers. AC_CHECK_LIB and
 # AC_CHECK_FUNCS declare the symbol without extern "C", so with CC=g++ the
 # link looks for a mangled name and fails.
-AC_MSG_CHECKING([for wolfCrypt_Init in -lwolfssl])
+# The cache variable keeps AC_CHECK_LIB's name so a preset
+# ac_cv_lib_wolfssl_wolfCrypt_Init=yes still skips the link test.
 LIBS="-lwolfssl $LIBS"
-AC_LINK_IFELSE(
-  [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
-                     #include <wolfssl/wolfcrypt/settings.h>
-                     #else
-                     #include <wolfssl/options.h>
-                     #endif
-                     #include <wolfssl/wolfcrypt/wc_port.h>]],
-                   [[return wolfCrypt_Init();]])],
-  [AC_MSG_RESULT([yes])],
-  [AC_MSG_RESULT([no])
-   AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
+AC_CACHE_CHECK([for wolfCrypt_Init in -lwolfssl],
+  [ac_cv_lib_wolfssl_wolfCrypt_Init],
+  [AC_LINK_IFELSE(
+    [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                       #include <wolfssl/wolfcrypt/settings.h>
+                       #else
+                       #include <wolfssl/options.h>
+                       #endif
+                       #include <wolfssl/wolfcrypt/wc_port.h>]],
+                     [[return wolfCrypt_Init();]])],
+    [ac_cv_lib_wolfssl_wolfCrypt_Init=yes],
+    [ac_cv_lib_wolfssl_wolfCrypt_Init=no])])
+AS_IF([test "x$ac_cv_lib_wolfssl_wolfCrypt_Init" != "xyes"],
+  [AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
 
 AC_MSG_CHECKING([for wc_ecc_set_rng])
 AC_LINK_IFELSE(
