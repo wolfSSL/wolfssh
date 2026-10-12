@@ -2000,7 +2000,10 @@ static int AgentReadMessage(WOLFSSH* ssh, byte** msg, word32* msgSz)
     if (ret == WS_SUCCESS) {
         word32 begin = 0;
 
-        GetUint32(&payloadSz, hdr, (word32)sizeof(hdr), &begin);
+        ret = GetUint32(&payloadSz, hdr, (word32)sizeof(hdr), &begin);
+    }
+
+    if (ret == WS_SUCCESS) {
         if (payloadSz == 0 || payloadSz > WOLFSSH_AGENT_MAX_MSG_SZ) {
             WLOG(WS_LOG_AGENT, "agent message size %u out of range", payloadSz);
             ret = WS_BUFFER_E;
@@ -2234,7 +2237,9 @@ int wolfSSH_AGENT_RelayChannel(WOLFSSH* ssh, word32 channelId)
 
         while (ret == WS_SUCCESS && in->length - in->idx >= LENGTH_SZ) {
             begin = in->idx;
-            GetUint32(&msgSz, in->buffer, in->length, &begin);
+            ret = GetUint32(&msgSz, in->buffer, in->length, &begin);
+            if (ret != WS_SUCCESS)
+                break;
             if (msgSz == 0 || msgSz > WOLFSSH_AGENT_MAX_MSG_SZ) {
                 WLOG(WS_LOG_AGENT, "agent message size %u out of range", msgSz);
                 AgentBufferReset(in);
