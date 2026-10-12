@@ -387,7 +387,7 @@ char* myoptarg = NULL;
 
 #endif /* NO_MAIN_DRIVER */
 #else
-int main()
+int main(void)
 {
     printf("wolfSSH built with NO_WOLFSSH_CLIENT\n");
     printf("SCP client unavailable\n");

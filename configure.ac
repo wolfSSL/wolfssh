@@ -262,6 +262,18 @@ AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
       [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes])
+
+# The apps need the side of the library they run on. Asking for one outright
+# without its side is an error; getting it from --enable-all only drops it.
+AS_IF([test "x$ENABLED_SERVER" = "xno" && test "x$ENABLED_SSHD" = "xyes"],
+      [AS_IF([test "x$enable_sshd" = "xyes"],
+             [AC_MSG_ERROR([--enable-sshd requires the server, leave out --disable-server.])],
+             [ENABLED_SSHD=no])])
+AS_IF([test "x$ENABLED_CLIENT" = "xno" && test "x$ENABLED_SSHCLIENT" = "xyes"],
+      [AS_IF([test "x$enable_sshclient" = "xyes"],
+             [AC_MSG_ERROR([--enable-sshclient requires the client, leave out --disable-client.])],
+             [ENABLED_SSHCLIENT=no])])
+
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
