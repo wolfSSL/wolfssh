@@ -12,6 +12,8 @@
 # much the loop reads first is a race, so this repeats. Anything but the
 # payload is never correct, so a failure is always real.
 #
+# A pty session has no stderr pipe; the last check covers its exit.
+#
 # The client's own "Error reading stdin" lands in the same capture, possibly
 # mid-line, so it is cut out before the compare.
 
@@ -36,6 +38,7 @@ TEST_LINE="wolfsshd-stderr-drain"
 TEST_LINES=9000
 TEST_ITERS=40
 TEST_TIMEOUT=60
+TEST_PTY_TIMEOUT=15
 TEST_PIPE_SZ=1048576
 
 # The shell cannot resize a pipe, so the child is perl.
@@ -49,8 +52,10 @@ fi
 # Degraded rather than skipped where "timeout" is missing, matching
 # run_all_sshd_tests.sh.
 TIMEOUT=""
+PTY_TIMEOUT=""
 if command -v timeout >/dev/null 2>&1; then
     TIMEOUT="timeout $TEST_TIMEOUT"
+    PTY_TIMEOUT="timeout $TEST_PTY_TIMEOUT"
 fi
 
 source ./start_sshd.sh
@@ -149,6 +154,26 @@ for i in `seq 1 $TEST_ITERS`; do
         break
     fi
 done
+
+# A pty session has no stderr pipe, so the drain must start out satisfied.
+# Seeded wrong, the loop waits for an EOF that never comes and the shell's
+# exit never ends the session. The exit status proves the session ended and
+# carried the shell's own code back.
+if [ "$RESULT" = 0 ]; then
+    printf 'exit 3\n' | $PTY_TIMEOUT $TEST_CLIENT -t \
+        -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT \
+        > /dev/null 2>&1
+    CLIENT_RESULT=$?
+
+    if [ "$CLIENT_RESULT" = 124 ]; then
+        echo "pty session never ended after the shell exited"
+        echo "the client was still running after $TEST_PTY_TIMEOUT seconds"
+        RESULT=1
+    elif [ "$CLIENT_RESULT" != 3 ]; then
+        echo "pty session exit status $CLIENT_RESULT, expected 3"
+        RESULT=1
+    fi
+fi
 
 rm -rf "$TEST_TMP"
 cd apps/wolfsshd/test
