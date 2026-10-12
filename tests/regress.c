@@ -208,6 +208,14 @@ static word32 AppendData(byte* buf, word32 bufSz, word32 idx,
     return idx;
 }
 
+/* Callers sit in separate conditional blocks; some builds have none. */
+static WS_MAYBE_UNUSED word32 AppendBlob(byte* buf, word32 bufSz, word32 idx,
+        const byte* data, word32 dataSz)
+{
+    idx = AppendUint32(buf, bufSz, idx, dataSz);
+    return AppendData(buf, bufSz, idx, data, dataSz);
+}
+
 /* A string of any bytes, for the names a C string cannot hold. */
 static word32 AppendStringSz(byte* buf, word32 bufSz, word32 idx,
         const char* value, word32 valueSz)
@@ -840,13 +848,6 @@ static int ReadStringRef(word32* strSz, const byte** str,
     *idx += *strSz;
 
     return WS_SUCCESS;
-}
-
-static word32 AppendBlob(byte* buf, word32 bufSz, word32 idx,
-        const byte* data, word32 dataSz)
-{
-    idx = AppendUint32(buf, bufSz, idx, dataSz);
-    return AppendData(buf, bufSz, idx, data, dataSz);
 }
 
 static int RegressionClientUserAuth(byte authType,
