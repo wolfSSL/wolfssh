@@ -6420,6 +6420,13 @@ static void test_wolfSSH_SFTP_SendPacketType_negotiation_non_block(void)
     } while (name == NULL && (err == WS_WANT_READ || err == WS_WANT_WRITE) &&
             tries <= SFTP_MAX_NEGOTIATION_TRIES);
 
+    /* the asserts below show only the flag, so say how the retries ended */
+    if (name == NULL || !sawPartial) {
+        printf("RealPath stopped after %d tries: name %s, error %d (%s)\n",
+                tries, (name == NULL) ? "NULL" : "returned", err,
+                wolfSSH_ErrorToName(err));
+    }
+
     AssertIntLE(tries, SFTP_MAX_NEGOTIATION_TRIES);
     AssertIntEQ(sawPartial, 1);
     AssertNotNull(name);
