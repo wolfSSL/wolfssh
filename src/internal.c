@@ -6818,6 +6818,8 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     byte cannedList[WOLFSSH_KEXINIT_ID_LIST_MAX] = {ID_NONE};
     byte kexIdGuess = ID_NONE;
     byte pubKeyIdGuess = ID_NONE;
+    byte kexIdFirst = ID_NONE;
+    byte pubKeyIdFirst = ID_NONE;
     byte kexPacketFollows = 0;
     word32 listSz;
     word32 cannedListSz;
@@ -6897,6 +6899,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
          * the guess is never read. list[] is reused across the fields, so
          * take ID_UNKNOWN over a stale ID if that ever changes. */
         kexIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
+        kexIdFirst = (cannedListSz > 0) ? cannedList[0] : ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz,
                 cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
@@ -6987,6 +6990,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     }
     if (ret == WS_SUCCESS) {
         pubKeyIdGuess = (listSz > 0) ? list[0] : ID_UNKNOWN;
+        pubKeyIdFirst = (cannedListSz > 0) ? cannedList[0] : ID_UNKNOWN;
         algoId = MatchIdLists(side, list, listSz, cannedList, cannedListSz);
         if (algoId == ID_UNKNOWN) {
             WLOG(WS_LOG_DEBUG, "Unable to negotiate Server Host Key Algo");
@@ -7148,8 +7152,13 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
             if (kexPacketFollows && side != WOLFSSH_ENDPOINT_SERVER) {
                 WLOG(WS_LOG_DEBUG, " ignoring server's packet follows flag");
             }
+            /* RFC 4253 section 7: the guess is right only when both
+             * sides list the same algorithm first. The negotiated id
+             * check also rejects a first choice neither side knows. */
             else if (kexPacketFollows
-                    && (kexIdGuess != ssh->handshake->kexId
+                    && (kexIdGuess != kexIdFirst
+                        || pubKeyIdGuess != pubKeyIdFirst
+                        || kexIdGuess != ssh->handshake->kexId
                         || pubKeyIdGuess != ssh->handshake->pubKeyId)) {
                 ssh->handshake->ignoreNextKexMsg = 1;
             }
