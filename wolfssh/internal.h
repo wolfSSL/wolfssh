@@ -2136,6 +2136,8 @@ enum WS_MessageIdLimits {
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
+    WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
+            word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel,
             byte* data, word32 dataSz);
     WOLFSSH_API int wolfSSH_TestCreateMpint(byte* buf, word32* sz, byte* pad);
@@ -2189,8 +2191,6 @@ enum WS_MessageIdLimits {
 #endif
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     WOLFSSH_API int wolfSSH_TestSendKexDhGexRequest(WOLFSSH* ssh);
-    WOLFSSH_API int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf,
-            word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf,
             word32 len, word32* idx);
     WOLFSSH_API int wolfSSH_TestValidateKexDhGexGroup(const byte* primeGroup,
