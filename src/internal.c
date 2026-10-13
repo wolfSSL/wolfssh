@@ -9408,6 +9408,26 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
+#ifdef WOLFSSH_NO_DH_GEX_SHA256
+/* Without GEX, a KEXDH_GEX_REQUEST is only the guessed packet of a client
+ * that listed GEX first; skip that one and refuse any other. */
+static int DoKexDhGexRequest(WOLFSSH* ssh,
+                             byte* buf, word32 len, word32* idx)
+{
+    if (ssh == NULL || ssh->handshake == NULL || buf == NULL || len == 0 ||
+            idx == NULL)
+        return WS_BAD_ARGUMENT;
+
+    if (SkipGuessedKexMsg(ssh, "client's KEXDH_GEX_REQUEST message",
+            len, idx))
+        return WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "KEXDH_GEX_REQUEST without GEX support");
+    return WS_MSGID_NOT_ALLOWED_E;
+}
+#endif /* WOLFSSH_NO_DH_GEX_SHA256 */
+
+
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
 static int DoKexDhGexRequest(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
@@ -14194,9 +14214,7 @@ INLINE static int MsgIdKnown(byte msg)
         case MSGID_NEWKEYS:
         case MSGID_KEXDH_INIT:
         case MSGID_KEXDH_REPLY:
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
         case MSGID_KEXDH_GEX_REQUEST:
-#endif
         case MSGID_KEXDH_GEX_INIT:
         case MSGID_KEXDH_GEX_REPLY:
         case MSGID_SERVICE_REQUEST:
@@ -14413,12 +14431,10 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             }
             break;
 
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
         case MSGID_KEXDH_GEX_REQUEST:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_REQUEST");
             ret = DoKexDhGexRequest(ssh, buf + idx, payloadSz, &payloadIdx);
             break;
-#endif
 
         case MSGID_KEXDH_GEX_INIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXDH_GEX_INIT");
@@ -26517,6 +26533,12 @@ int wolfSSH_TestDoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     return DoKexDhReply(ssh, buf, len, idx);
 }
 
+int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
+        word32* idx)
+{
+    return DoKexDhGexRequest(ssh, buf, len, idx);
+}
+
 int wolfSSH_TestChannelPutData(WOLFSSH_CHANNEL* channel, byte* data,
         word32 dataSz)
 {
@@ -26701,12 +26723,6 @@ int wolfSSH_TestKeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
 int wolfSSH_TestSendKexDhGexRequest(WOLFSSH* ssh)
 {
     return SendKexDhGexRequest(ssh);
-}
-
-int wolfSSH_TestDoKexDhGexRequest(WOLFSSH* ssh, byte* buf, word32 len,
-        word32* idx)
-{
-    return DoKexDhGexRequest(ssh, buf, len, idx);
 }
 
 int wolfSSH_TestDoKexDhGexGroup(WOLFSSH* ssh, byte* buf, word32 len,

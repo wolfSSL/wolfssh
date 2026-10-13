@@ -17780,12 +17780,49 @@ static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
 }
 #endif /* WOLFSSH_NO_DH_GEX_SHA256 && NO_WOLFSSH_SERVER */
 
+#ifndef NO_WOLFSSH_SERVER
+/* A client that lists GEX first may guess a KEXDH_GEX_REQUEST. DoReceive must
+ * discard it, with GEX compiled out too, rather than answer UNIMPLEMENTED and
+ * leave the skip armed for the real KEXDH_INIT. */
+static void TestFirstPacketFollowsGexRequestDispatch(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[3 * UINT32_SZ];
+    byte in[64];
+    word32 payloadSz = 0;
+    word32 inSz;
+
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 2048);
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 3072);
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 8192);
+    inSz = WrapPacket(MSGID_KEXDH_GEX_REQUEST, payload, payloadSz,
+            in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    harness.ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+    harness.ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+    AssertNotNull(harness.ssh->handshake);
+    harness.ssh->handshake->kexId = ID_DH_GROUP14_SHA256;
+    harness.ssh->handshake->expectMsgId = MSGID_NONE;
+    harness.ssh->handshake->ignoreNextKexMsg = 1;
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(harness.ssh->handshake->ignoreNextKexMsg, 0);
+    AssertIntEQ(harness.ssh->handshake->expectMsgId, MSGID_KEXDH_INIT);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* !NO_WOLFSSH_SERVER */
+
 static void TestFirstPacketFollowsSkipped(void)
 {
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit, "DoKexDhInit");
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
             "DoKexDhGexRequest");
+#ifndef NO_WOLFSSH_SERVER
+    TestFirstPacketFollowsGexRequestDispatch();
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
     /* Guess/negotiation straddling the GEX boundary, both directions. */
 #ifndef NO_WOLFSSH_SERVER
     RunFirstPacketFollowsCrossBoundaryCase(wolfSSH_TestDoKexDhInit,
