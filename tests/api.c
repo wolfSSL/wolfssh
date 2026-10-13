@@ -4330,6 +4330,9 @@ static const byte ossh_vec_ed[] = {
   0xc9, 0xbd, 0x7f, 0xc0, 0x78, 0x0c
 };
 
+/* The remaining vectors are only used by the OsshCert_* tests. */
+#ifdef WOLFSSH_TEST_INTERNAL
+
 /* CA signature is rsa-sha2-512. */
 #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_512)
 #define WOLFSSH_TEST_OSSH_VEC_RSA
@@ -4547,6 +4550,8 @@ static const byte ossh_vec_ecc[] = {
 };
 #endif /* WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 
+#endif /* WOLFSSH_TEST_INTERNAL */
+
 #ifdef WOLFSSL_BASE64_ENCODE
 
 /* Renders a blob as the "name base64" line an authorized_keys style file
@@ -4664,6 +4669,10 @@ static void test_wolfSSH_ReadCert_file_ossh(void)
 static void test_wolfSSH_ReadCert_file_ossh(void) { ; }
 
 #endif /* WOLFSSH_TEST_OSSH_CERT_FILE */
+
+/* The OsshCert_* tests call WOLFSSH_LOCAL functions, which the winvs DLL
+ * configurations do not export; the autotools build links the test library. */
+#ifdef WOLFSSH_TEST_INTERNAL
 
 /* Parse, verify the CA signature, and validate the options of each committed
  * certificate vector; then flip the final signature byte and confirm the
@@ -4828,7 +4837,18 @@ static void test_wolfSSH_OsshCert_malformed(void)
     }
 }
 
+#else /* WOLFSSH_TEST_INTERNAL */
+static void test_wolfSSH_OsshCert_valid(void) { ; }
+#ifdef WOLFSSH_TEST_OSSH_VEC_ECC
+static void test_wolfSSH_OsshCert_ecc_curve_mismatch(void) { ; }
+#endif
+static void test_wolfSSH_OsshCert_checktype(void) { ; }
+static void test_wolfSSH_OsshCert_malformed(void) { ; }
+#endif /* WOLFSSH_TEST_INTERNAL */
+
 #endif /* !WOLFSSH_NO_ED25519 */
+
+#ifdef WOLFSSH_TEST_INTERNAL
 
 /* Direct coverage for OsshCertCheckOptions: strict critical options vs.
  * tolerant extensions. Layout: a name string, then a data string. */
@@ -5022,6 +5042,11 @@ static void test_wolfSSH_OsshCert_rsasigid(void)
 #endif
 }
 
+#else /* WOLFSSH_TEST_INTERNAL */
+static void test_wolfSSH_OsshCert_options(void) { ; }
+static void test_wolfSSH_OsshCert_baseid(void) { ; }
+static void test_wolfSSH_OsshCert_rsasigid(void) { ; }
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 #endif /* WOLFSSH_OSSH_CERTS */
 
@@ -9153,7 +9178,9 @@ static void test_wolfSSH_KeyboardInteractive(void)
 static void test_wolfSSH_KeyboardInteractive(void) { ; }
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 
-#ifndef NO_WOLFSSH_SERVER
+/* SendUserAuthKeyboardRequest() is WOLFSSH_LOCAL, which the winvs DLL
+ * configurations do not export. */
+#if !defined(NO_WOLFSSH_SERVER) && defined(WOLFSSH_TEST_INTERNAL)
 
 /* Supplies the prompt set the test installed as the userAuth context. */
 static int emptyPromptUserAuth(byte authType, WS_UserAuthData* authData,
@@ -9227,9 +9254,9 @@ static void test_wolfSSH_KeyboardInteractive_emptyPrompt(void)
     wolfSSH_CTX_free(ctx);
 }
 
-#else /* NO_WOLFSSH_SERVER */
+#else /* !NO_WOLFSSH_SERVER && WOLFSSH_TEST_INTERNAL */
 static void test_wolfSSH_KeyboardInteractive_emptyPrompt(void) { ; }
-#endif /* NO_WOLFSSH_SERVER */
+#endif /* !NO_WOLFSSH_SERVER && WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 #endif /* WOLFSSH_TEST_BLOCK */
