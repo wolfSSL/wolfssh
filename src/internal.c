@@ -5590,11 +5590,6 @@ static int SendPacketFlush(WOLFSSH* ssh)
                     break;
 
                 case WS_CBIO_ERR_GENERAL:
-                    /* plainSz counts plaintext the caller was told was
-                     * accepted, so it goes with the packet being discarded.
-                     * Left standing, it has SendChannelData() flush an empty
-                     * buffer and call that a success. */
-                    ssh->outputBuffer.plainSz = 0;
                     ShrinkBuffer(&ssh->outputBuffer, 1);
             }
             ssh->error = WS_SOCKET_ERROR_E;
@@ -5609,8 +5604,6 @@ static int SendPacketFlush(WOLFSSH* ssh)
 
         ssh->outputBuffer.idx += sent;
     }
-
-    ssh->outputBuffer.plainSz = 0;
 
     /* The buffer is empty, so our disconnect, if one was in it, has gone
      * out and no flush is owed. Leaving this set hands the next teardown
@@ -15347,7 +15340,6 @@ static void PurgePacket(WOLFSSH* ssh)
     if (ssh != NULL) {
         ssh->packetStartIdx = 0;
         ssh->outputBuffer.idx = 0;
-        ssh->outputBuffer.plainSz = 0;
         ShrinkBuffer(&ssh->outputBuffer, 1);
     }
 }
@@ -23531,25 +23523,20 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->isKeying)
+        if (ssh->isKeying) {
+            ssh->error = WS_REKEYING;
             ret = WS_REKEYING;
-    }
-
-    /* if already having data pending try to flush it first and do not continue
-     * to que more on fail */
-    if (ret == WS_SUCCESS && ssh->outputBuffer.plainSz > 0) {
-        WLOG(WS_LOG_DEBUG, "Flushing out want write data");
-        ret = wolfSSH_SendPacket(ssh);
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
-            return ret;
         }
-
     }
 
-    if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
-            ret = wolfSSH_SendPacket(ssh);
+    /* Flush earlier output before framing new data */
+    if (ret == WS_SUCCESS && wolfSSH_OutputPending(ssh))
+        ret = wolfSSH_SendPacket(ssh);
+
+    /* The flush can start a key exchange */
+    if (ret == WS_SUCCESS && ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        ret = WS_REKEYING;
     }
 
     if (ret == WS_SUCCESS) {
@@ -23621,16 +23608,12 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
     }
 
-    /* at this point the data has been loaded into WOLFSSH structure and is
-     * considered consumed */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
-
-    if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
-        ret = dataSz;
-
-    if (ssh && ssh->error == WS_WANT_WRITE)
-        ssh->outputBuffer.plainSz = dataSz;
+        /* The packet is framed, so a blocked flush still took the data */
+        if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
+            ret = dataSz;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
     return ret;
@@ -23651,25 +23634,20 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->isKeying)
+        if (ssh->isKeying) {
+            ssh->error = WS_REKEYING;
             ret = WS_REKEYING;
-    }
-
-    /* if already having data pending try to flush it first and do not continue
-     * to que more on fail */
-    if (ret == WS_SUCCESS && ssh->outputBuffer.plainSz > 0) {
-        WLOG(WS_LOG_DEBUG, "Flushing out want write data");
-        ret = wolfSSH_SendPacket(ssh);
-        if (ret != WS_SUCCESS) {
-            WLOG(WS_LOG_DEBUG, "Leaving SendChannelData(), ret = %d", ret);
-            return ret;
         }
-
     }
 
-    if (ret == WS_SUCCESS) {
-        if (ssh->outputBuffer.length != 0)
-            ret = wolfSSH_SendPacket(ssh);
+    /* Flush earlier output before framing new data */
+    if (ret == WS_SUCCESS && wolfSSH_OutputPending(ssh))
+        ret = wolfSSH_SendPacket(ssh);
+
+    /* The flush can start a key exchange */
+    if (ret == WS_SUCCESS && ssh->isKeying) {
+        ssh->error = WS_REKEYING;
+        ret = WS_REKEYING;
     }
 
     if (ret == WS_SUCCESS) {
@@ -23744,16 +23722,12 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         WLOG(WS_LOG_INFO, "  update peerWindowSz = %u", channel->peerWindowSz);
     }
 
-    /* at this point the data has been loaded into WOLFSSH structure and is
-     * considered consumed */
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_SendPacket(ssh);
-
-    if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
-        ret = dataSz;
-
-    if (ssh && ssh->error == WS_WANT_WRITE)
-        ssh->outputBuffer.plainSz = dataSz;
+        /* The packet is framed, so a blocked flush still took the data */
+        if (ret == WS_SUCCESS || ret == WS_WANT_WRITE)
+            ret = dataSz;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendChannelExtendedData(), ret = %d", ret);
     return ret;

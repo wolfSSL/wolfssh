@@ -935,14 +935,14 @@ WOLFSSH_API int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz);
  * from wolfSSH_get_error() means the adjust is queued; it goes out on the
  * next send or the next wolfSSH_worker(). Others failed. */
 WOLFSSH_API int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Return the bytes framed, which may still be queued. WS_WANT_WRITE or a
+ * rekey in progress means none of buf was taken; send it again. */
 WOLFSSH_API int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
-/* Half-closes the first channel in the list. See wolfSSH_ChannelSendEof().
- * Unlike wolfSSH_stream_send(), which returns WS_FATAL_ERROR with the cause
- * latched, this reports WS_REKEYING itself, the way wolfSSH_stream_peek()
- * does. */
+WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
+/* Half-closes the first channel in the list. Returns WS_REKEYING during a
+ * key exchange. */
 WOLFSSH_API int wolfSSH_stream_send_eof(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
-WOLFSSH_API int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz);
 /* Reads the buffered stderr of the first channel in the channel list into out;
  * returns the number of bytes read (>= 0) or a negative WS_ error. outSz of 0
  * is WS_BAD_ARGUMENT. This is the stderr counterpart of wolfSSH_stream_read(),

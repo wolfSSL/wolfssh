@@ -2955,7 +2955,7 @@ static void TestStrictKexHoldsSendIgnore(void)
 static int IsPumpRetryable(int err)
 {
     return IsHandshakeRetryable(err) || err == WS_CHAN_RXD ||
-            err == WS_REKEYING;
+            err == WS_EXTDATA || err == WS_REKEYING;
 }
 
 /* Run both ends until their queues are empty and neither is keying. Only
@@ -5428,10 +5428,9 @@ static void TestServerServiceRequestRejectedDuringKeying(void)
 }
 
 
-/* A send the transport refuses discards the packet it had framed, and plainSz
- * counted that packet's plaintext. Left standing over an emptied buffer, it
- * has the next SendChannelData() flush nothing and call that a success. */
-static void TestFailedSendClearsPendingPlaintext(void)
+/* A send the transport refuses discards the packet it had framed, and the
+ * next send frames and writes its own data. */
+static void TestFailedSendDiscardsQueuedPacket(void)
 {
     ChannelOpenHarness harness;
     WOLFSSH_CHANNEL* channel;
@@ -5450,7 +5449,6 @@ static void TestFailedSendClearsPendingPlaintext(void)
     harness.io.blockNext = 1;
     AssertIntEQ(wolfSSH_stream_send(harness.ssh, payload, sizeof(payload)),
             (int)sizeof(payload));
-    AssertIntEQ(harness.ssh->outputBuffer.plainSz, (int)sizeof(payload));
     AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 1);
 
     /* The next call flushes that packet first, and this send fails outright,
@@ -5459,10 +5457,14 @@ static void TestFailedSendClearsPendingPlaintext(void)
     AssertIntEQ(wolfSSH_stream_send(harness.ssh, payload, sizeof(payload)),
             WS_SOCKET_ERROR_E);
 
-    /* Nothing is framed any more, so nothing may still be counted as
-     * pending. */
     AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 0);
-    AssertIntEQ(harness.ssh->outputBuffer.plainSz, 0);
+
+    /* With room again, a send reports its data taken only if it wrote it. */
+    harness.io.outSz = 0;
+    AssertIntEQ(wolfSSH_stream_send(harness.ssh, payload, sizeof(payload)),
+            (int)sizeof(payload));
+    AssertTrue(harness.io.outSz > 0);
+    AssertIntEQ(wolfSSH_OutputPending(harness.ssh), 0);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -14772,6 +14774,273 @@ static void TestWorkerReadsWhenSendWouldBlock(void)
 #endif /* !NO_WOLFSSH_CLIENT */
 
 
+#ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
+/* If queued output cannot be sent, a send takes none of the new data. After
+ * a retry, the peer gets the data once. */
+static void TestChannelSendPreFlushWantWrite(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    byte p1[16], p2[16], p3[16], p4[16];
+    byte rx[64];
+    word32 length;
+    word32 window;
+
+    WMEMSET(p1, 'a', sizeof(p1));
+    WMEMSET(p2, 'b', sizeof(p2));
+    WMEMSET(p3, 'c', sizeof(p3));
+    WMEMSET(p4, 'd', sizeof(p4));
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    channel = harness.client->channelList;
+    AssertNotNull(channel);
+
+    /* An IGNORE queued ahead, so no channel data is waiting */
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    length = harness.client->outputBuffer.length;
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p3, sizeof(p3)),
+            WS_WANT_WRITE);
+    AssertIntEQ(harness.client->outputBuffer.length, length);
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p3, sizeof(p3)),
+            sizeof(p3));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_read(harness.server, rx, sizeof(rx)),
+            sizeof(p3));
+    AssertIntEQ(WMEMCMP(rx, p3, sizeof(p3)), 0);
+    AssertTrue(wolfSSH_stream_read(harness.server, rx, sizeof(rx)) <= 0);
+    AssertIntEQ(wolfSSH_get_error(harness.server), WS_WANT_READ);
+
+    /* The same for extended data */
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    length = harness.client->outputBuffer.length;
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_extended_data_send(harness.client, p4, sizeof(p4)),
+            WS_WANT_WRITE);
+    AssertIntEQ(harness.client->outputBuffer.length, length);
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    AssertIntEQ(wolfSSH_extended_data_send(harness.client, p4, sizeof(p4)),
+            sizeof(p4));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_extended_data_read(harness.server, rx, sizeof(rx)),
+            sizeof(p4));
+    AssertIntEQ(WMEMCMP(rx, p4, sizeof(p4)), 0);
+    AssertIntEQ(wolfSSH_extended_data_read(harness.server, rx, sizeof(rx)), 0);
+
+    /* Channel data queued ahead */
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p1, sizeof(p1)),
+            sizeof(p1));
+    length = harness.client->outputBuffer.length;
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p2, sizeof(p2)),
+            WS_WANT_WRITE);
+    AssertIntEQ(harness.client->outputBuffer.length, length);
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p2, sizeof(p2)),
+            sizeof(p2));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_read(harness.server, rx, sizeof(rx)),
+            sizeof(p1) + sizeof(p2));
+    AssertIntEQ(WMEMCMP(rx, p1, sizeof(p1)), 0);
+    AssertIntEQ(WMEMCMP(rx + sizeof(p1), p2, sizeof(p2)), 0);
+    AssertTrue(wolfSSH_stream_read(harness.server, rx, sizeof(rx)) <= 0);
+    AssertIntEQ(wolfSSH_get_error(harness.server), WS_WANT_READ);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* A flush of earlier output that crosses the highwater mark starts a key
+ * exchange, and the send then frames nothing behind the KEXINIT. */
+static void TestChannelSendPreFlushStartsRekey(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    byte p[16];
+    byte rx[64];
+    word32 window;
+
+    WMEMSET(p, 'e', sizeof(p));
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    channel = harness.client->channelList;
+    AssertNotNull(channel);
+
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 1), WS_SUCCESS);
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p, sizeof(p)),
+            WS_REKEYING);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    AssertTrue(wolfSSH_RekeyPending(harness.client));
+    AssertFalse(wolfSSH_OutputPending(harness.client));
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, DEFAULT_HIGHWATER_MARK),
+            WS_SUCCESS);
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p, sizeof(p)), sizeof(p));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_read(harness.server, rx, sizeof(rx)),
+            sizeof(p));
+    AssertIntEQ(WMEMCMP(rx, p, sizeof(p)), 0);
+
+    /* The same for extended data */
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 1), WS_SUCCESS);
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_extended_data_send(harness.client, p, sizeof(p)),
+            WS_REKEYING);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    AssertTrue(wolfSSH_RekeyPending(harness.client));
+    AssertFalse(wolfSSH_OutputPending(harness.client));
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, DEFAULT_HIGHWATER_MARK),
+            WS_SUCCESS);
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_extended_data_send(harness.client, p, sizeof(p)),
+            sizeof(p));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_extended_data_read(harness.server, rx, sizeof(rx)),
+            sizeof(p));
+    AssertIntEQ(WMEMCMP(rx, p, sizeof(p)), 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static int duplexSendBudget;
+
+/* Passes duplexSendBudget writes to the peer, then reports would-block. */
+static int DuplexSendThenBlock(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    if (duplexSendBudget == 0)
+        return WS_CBIO_ERR_WANT_WRITE;
+    duplexSendBudget--;
+    return DuplexSend(ssh, buf, sz, ctx);
+}
+
+/* If the KEXINIT that the queued output starts cannot be sent either, a send
+ * takes none of the new data, and the next send waits for the exchange. */
+static void TestChannelSendPreFlushRekeyBlocks(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    byte p[16];
+    byte rx[64];
+    word32 window;
+
+    WMEMSET(p, 'f', sizeof(p));
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    channel = harness.client->channelList;
+    AssertNotNull(channel);
+
+    /* The queued IGNORE goes out, then the KEXINIT it starts is refused */
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 1), WS_SUCCESS);
+    duplexSendBudget = 1;
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSendThenBlock);
+    window = channel->peerWindowSz;
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p, sizeof(p)),
+            WS_WANT_WRITE);
+    AssertTrue(wolfSSH_RekeyPending(harness.client));
+    AssertTrue(wolfSSH_OutputPending(harness.client));
+    AssertIntEQ(channel->peerWindowSz, window);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_WANT_WRITE);
+
+    /* Channel sends refuse at entry while the exchange runs */
+    AssertIntEQ(wolfSSH_ChannelIdSend(harness.client, channel->channel, p,
+            sizeof(p)), WS_REKEYING);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    harness.client->error = WS_WANT_WRITE;
+    AssertIntEQ(wolfSSH_ChannelIdSendExt(harness.client, channel->channel, p,
+            sizeof(p)), WS_REKEYING);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p, sizeof(p)),
+            WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    AssertIntEQ(channel->peerWindowSz, window);
+
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, DEFAULT_HIGHWATER_MARK),
+            WS_SUCCESS);
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_send(harness.client, p, sizeof(p)), sizeof(p));
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_read(harness.server, rx, sizeof(rx)),
+            sizeof(p));
+    AssertIntEQ(WMEMCMP(rx, p, sizeof(p)), 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+#ifdef WOLFSSH_SFTP
+/* If sending queued output starts a key exchange while SFTP sends its INIT,
+ * the caller sees WS_REKEYING and a later call sends the INIT. */
+static void TestSftpConnectPreFlushStartsRekey(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    wolfSSH_SetIOSend(harness.clientCtx, WantWriteSend);
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, NULL, 0), WS_WANT_WRITE);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 1), WS_SUCCESS);
+    wolfSSH_SetIOSend(harness.clientCtx, DuplexSend);
+    AssertIntEQ(wolfSSH_SFTP_connect(harness.client), WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_REKEYING);
+    AssertTrue(wolfSSH_RekeyPending(harness.client));
+    AssertIntEQ(harness.client->sftpState, SFTP_BEGIN);
+
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, DEFAULT_HIGHWATER_MARK),
+            WS_SUCCESS);
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_SFTP_connect(harness.client), WS_FATAL_ERROR);
+    AssertIntEQ(harness.client->sftpState, SFTP_RECV);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* WOLFSSH_SFTP */
+#endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
+
+
 #ifdef WOLFSSH_SFTP
 /* Test that wolfSSH_SFTP_buffer_send() properly handles WS_WANT_WRITE when
  * SSH output buffer has pending data. This is a regression test for
@@ -19334,7 +19603,7 @@ int main(int argc, char** argv)
     TestServerOnlyKexMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
     TestServerServiceRequestRejectedDuringKeying();
-    TestFailedSendClearsPendingPlaintext();
+    TestFailedSendDiscardsQueuedPacket();
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestChannelReqCallbackSeesRequestAndRefuses();
     TestChannelReqCallbackGrantsUnknownType();
@@ -19706,6 +19975,12 @@ int main(int argc, char** argv)
     TestStrictKexHoldsSendIgnore();
     #ifndef WOLFSSH_NO_AES_GCM
     TestPreKexInitInjectionAcceptedWithoutStrictKex();
+    #endif
+    TestChannelSendPreFlushWantWrite();
+    TestChannelSendPreFlushStartsRekey();
+    TestChannelSendPreFlushRekeyBlocks();
+    #ifdef WOLFSSH_SFTP
+    TestSftpConnectPreFlushStartsRekey();
     #endif
 #endif
 
