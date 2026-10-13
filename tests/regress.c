@@ -17497,27 +17497,43 @@ typedef struct {
     byte firstPacketFollows;
     byte expectIgnore;
     byte endpointType;
+    /* Our own lists, first choice first; NULL is the good id alone. */
+    const char* ourKexList;
+    const char* ourKeyList;
 } FirstPacketFollowsCase;
 
 static const FirstPacketFollowsCase firstPacketFollowsCases[] = {
     { "follows=0, guesses irrelevant: flag stays off",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 0, 0,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, both guesses match: do not skip",
-      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0, WOLFSSH_ENDPOINT_SERVER },
+      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0, WOLFSSH_ENDPOINT_SERVER,
+      NULL, NULL },
     { "follows=1, KEX guess wrong: skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, host-key guess wrong: skip", /* regression case */
       FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, both guesses wrong: skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
+    /* RFC 4253 section 7: a guess is right only when both sides list the
+     * same first choice, even if the client's first choice is negotiated. */
+    { "follows=1, same first choices, longer lists: do not skip",
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD "," FPF_KEY_BAD, 1, 0,
+      WOLFSSH_ENDPOINT_SERVER,
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD "," FPF_KEY_BAD },
+    { "follows=1, KEX first choices differ, guess negotiated: skip",
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER, FPF_KEX_BAD "," FPF_KEX_GOOD, NULL },
+    { "follows=1, host-key first choices differ, guess negotiated: skip",
+      FPF_KEX_GOOD, FPF_KEY_GOOD "," FPF_KEY_BAD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER, NULL, FPF_KEY_BAD "," FPF_KEY_GOOD },
     /* A server never sends a guessed packet; the client ignores the flag. */
     { "client, server follows=1, both guesses wrong: do not skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 0,
-      WOLFSSH_ENDPOINT_CLIENT },
+      WOLFSSH_ENDPOINT_CLIENT, NULL, NULL },
 };
 
 static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
@@ -17534,8 +17550,10 @@ static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
 
-    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, tc->ourKexList != NULL ?
+            tc->ourKexList : FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, tc->ourKeyList != NULL ?
+            tc->ourKeyList : FPF_KEY_GOOD), WS_SUCCESS);
 
     payloadSz = BuildKexInitPayload(ssh, tc->kexList, tc->keyList,
             tc->firstPacketFollows, payload, sizeof(payload));
