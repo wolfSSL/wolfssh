@@ -3111,7 +3111,9 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
     usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL,
             NULL, NULL, NULL);
     if (usrConf == NULL) {
-        ret = 0;
+        /* The user did not resolve. Advertise the global methods anyway: an
+         * empty name-list would tell the peer the account does not exist. */
+        ret = wolfSSHD_GetUserAuthTypes(authCtx->conf);
     }
     else {
         ret = wolfSSHD_GetUserAuthTypes(usrConf);
