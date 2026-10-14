@@ -5855,6 +5855,90 @@ static int test_DefaultUserAuthTypesNullArgs(void)
     return ret;
 }
 
+/* A username with no local account must advertise the same methods as a real
+ * one, so the USERAUTH_FAILURE name-list does not tell an unauthenticated peer
+ * which accounts exist. Compares the advertisement for a bogus user against
+ * the global mask, so it is checked to track the configuration rather than a
+ * fixed list. */
+static int test_DefaultUserAuthTypesUnknownUser(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+
+    static const struct {
+        const char* desc;
+        const char* line; /* extra directive, NULL for the stock config */
+    } vectors[] = {
+        {"stock config advertises both methods for an unknown user", NULL},
+        {"PasswordAuthentication no is honored for an unknown user",
+            "PasswordAuthentication no"},
+    };
+    const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int expected;
+    /* long enough that a real account by this name is implausible */
+    static const char usr[] = "nonexistent_test_user_xyz";
+    /* keeps the permission drop in wolfSSHD_AuthCreateUser a no-op; see
+     * test_DefaultUserAuthPasswordNotTerminated */
+    static const char privSep[] = "UsePrivilegeSeparation no";
+
+    for (i = 0; i < numVectors && ret == WS_SUCCESS; ++i) {
+        Log("    Testing scenario: %s.", vectors[i].desc);
+
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            Log(" FAILED.\n");
+            return WS_MEMORY_E;
+        }
+
+        ret = ParseConfigLine(&conf, privSep, (int)WSTRLEN(privSep), 0);
+        if (ret == WS_SUCCESS && vectors[i].line != NULL) {
+            ret = ParseConfigLine(&conf, vectors[i].line,
+                    (int)WSTRLEN(vectors[i].line), 0);
+        }
+        if (ret != WS_SUCCESS) {
+            Log(" FAILED.\n");
+            wolfSSHD_ConfigFree(conf);
+            break;
+        }
+
+        authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (authCtx == NULL) {
+            Log("    Skipping test: wolfSSHD_AuthCreateUser failed (likely missing 'sshd' user).\n");
+            wolfSSHD_ConfigFree(conf);
+            break;
+        }
+
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        ssh = (ctx != NULL) ? wolfSSH_new(ctx) : NULL;
+        if (ssh == NULL || wolfSSH_SetUsername(ssh, usr) != WS_SUCCESS) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            expected = wolfSSHD_GetUserAuthTypes(conf);
+            if (expected == 0 ||
+                    DefaultUserAuthTypes(ssh, authCtx) != expected) {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+            }
+            else {
+                Log(" PASSED.\n");
+            }
+        }
+
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        wolfSSHD_AuthFreeUser(authCtx);
+        wolfSSHD_ConfigFree(conf);
+    }
+
+    return ret;
+}
+
 #ifndef _WIN32
 /* report a single secure-open scenario; returns WS_SUCCESS when the observed
  * result matches expectation (wantOk != 0 means expect acceptance) */
@@ -7498,6 +7582,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigIncludeMatchChain),
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_DefaultUserAuthTypesNullArgs),
+    TEST_DECL(test_DefaultUserAuthTypesUnknownUser),
     TEST_DECL(test_ConfigSetAuthKeysFile),
     TEST_DECL(test_ResolveAuthKeysPath),
     TEST_DECL(test_ConfigFree),
