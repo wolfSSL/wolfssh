@@ -15008,11 +15008,19 @@ static void TestChannelSendPreFlushRekeyBlocks(void)
 
 #ifdef WOLFSSH_SFTP
 /* If sending queued output starts a key exchange while SFTP sends its INIT,
- * the caller sees WS_REKEYING and a later call sends the INIT. */
+ * the caller sees WS_REKEYING, and calling connect again finishes the exchange
+ * and sends the INIT once. */
 static void TestSftpConnectPreFlushStartsRekey(void)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
+    word32 step;
+    byte stderrMsg[8];
+    byte rx[64];
+    const byte init[] = { 0, 0, 0, 5, WOLFSSH_FTP_INIT, 0, 0, 0,
+        WOLFSSH_SFTP_VERSION };
+
+    WMEMSET(stderrMsg, 'h', sizeof(stderrMsg));
 
     InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
             REGRESS_DEFAULT_KEY_PATH, 0, NULL);
@@ -15029,11 +15037,33 @@ static void TestSftpConnectPreFlushStartsRekey(void)
     AssertTrue(wolfSSH_RekeyPending(harness.client));
     AssertIntEQ(harness.client->sftpState, SFTP_BEGIN);
 
+    /* Stderr arriving during the exchange does not stop it */
+    AssertIntEQ(wolfSSH_extended_data_send(harness.server, stderrMsg,
+            sizeof(stderrMsg)), sizeof(stderrMsg));
+
+    /* Only connect drives the client, as an application's retry loop does */
     AssertIntEQ(wolfSSH_SetHighwater(harness.client, DEFAULT_HIGHWATER_MARK),
             WS_SUCCESS);
-    PumpDuplexPair(&harness);
-    AssertIntEQ(wolfSSH_SFTP_connect(harness.client), WS_FATAL_ERROR);
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS &&
+            harness.client->sftpState == SFTP_BEGIN; step++) {
+        AssertIntEQ(wolfSSH_SFTP_connect(harness.client), WS_FATAL_ERROR);
+        AssertTrue(IsPumpRetryable(wolfSSH_get_error(harness.client)));
+        if (wolfSSH_worker(harness.server, NULL) < WS_SUCCESS) {
+            AssertTrue(IsPumpRetryable(wolfSSH_get_error(harness.server)));
+        }
+    }
     AssertIntEQ(harness.client->sftpState, SFTP_RECV);
+    AssertFalse(wolfSSH_RekeyPending(harness.client));
+    AssertIntEQ(wolfSSH_extended_data_read(harness.client, rx, sizeof(rx)),
+            sizeof(stderrMsg));
+    AssertIntEQ(WMEMCMP(rx, stderrMsg, sizeof(stderrMsg)), 0);
+
+    PumpDuplexPair(&harness);
+    AssertIntEQ(wolfSSH_stream_read(harness.server, rx, sizeof(rx)),
+            sizeof(init));
+    AssertIntEQ(WMEMCMP(rx, init, sizeof(init)), 0);
+    AssertTrue(wolfSSH_stream_read(harness.server, rx, sizeof(rx)) <= 0);
+    AssertIntEQ(wolfSSH_get_error(harness.server), WS_WANT_READ);
 
     FreeKexReplyHarness(&harness);
 }

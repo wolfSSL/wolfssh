@@ -6793,6 +6793,14 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
 
     switch (ssh->sftpState) {
         case SFTP_BEGIN:
+            /* Finish a running key exchange; a send cannot until it is done */
+            while (ssh->isKeying) {
+                ret = wolfSSH_worker(ssh, NULL);
+                if (ret < 0 && ret != WS_REKEYING && ret != WS_CHAN_RXD
+                        && ret != WS_EXTDATA && ret != WS_EOF) {
+                    return ret;
+                }
+            }
             if (SFTP_ClientSendInit(ssh) != WS_SUCCESS) {
                 return WS_FATAL_ERROR;
             }
