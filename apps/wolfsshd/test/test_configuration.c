@@ -20,6 +20,7 @@
 #ifndef _WIN32
     #include <unistd.h>
     #include <pwd.h>
+    #include <errno.h>
 #endif
 #if !defined(_WIN32) && !(defined(__OSX__) || defined(__APPLE__))
     #include <shadow.h>
@@ -5855,89 +5856,167 @@ static int test_DefaultUserAuthTypesNullArgs(void)
     return ret;
 }
 
-/* A username with no local account must advertise the same methods as a real
- * one, so the USERAUTH_FAILURE name-list does not tell an unauthenticated peer
- * which accounts exist. Compares the advertisement for a bogus user against
- * the global mask, so it is checked to track the configuration rather than a
- * fixed list. */
+/* Probed name; also the Match User target below. */
+#define UNKNOWN_USER "nonexistent_test_user_xyz"
+
+/* Stubbed account lookup for the probed name, independent of the host */
+enum {
+    ADV_NO_ACCOUNT,   /* getpwnam: no such account */
+    ADV_LOOKUP_ERROR, /* getpwnam: lookup error */
+    ADV_GROUPS_FAIL,  /* account exists, its group list cannot be read */
+    ADV_RESOLVED      /* account exists with a readable group list */
+};
+
+#ifndef _WIN32
+static int s_adv_mode;
+static struct passwd s_adv_pw;
+
+static struct passwd* stub_getpwnam_adv(const char* name)
+{
+    (void)name;
+    switch (s_adv_mode) {
+        case ADV_NO_ACCOUNT:
+            return NULL;
+        case ADV_LOOKUP_ERROR:
+            errno = EIO;
+            return NULL;
+        default:
+            WMEMSET(&s_adv_pw, 0, sizeof(s_adv_pw));
+            s_adv_pw.pw_name   = (char*)UNKNOWN_USER;
+            s_adv_pw.pw_uid    = 1002;
+            s_adv_pw.pw_gid    = 1002;
+            s_adv_pw.pw_passwd = (char*)"x";
+            return &s_adv_pw;
+    }
+}
+#endif
+
+/* An unknown name advertises what the global directives and Match User
+ * blocks offer it, so the reply does not reveal which accounts exist. A
+ * lookup error or unreadable group list advertises nothing. */
 static int test_DefaultUserAuthTypesUnknownUser(void)
 {
     int ret = WS_SUCCESS;
-    int i;
+    int i, j;
 
     static const struct {
         const char* desc;
-        const char* line; /* extra directive, NULL for the stock config */
+        int mode;
+        const char* lines[3]; /* directives, NULL terminated */
+        int expected;
     } vectors[] = {
-        {"stock config advertises both methods for an unknown user", NULL},
-        {"PasswordAuthentication no is honored for an unknown user",
-            "PasswordAuthentication no"},
+        {"stock config advertises both methods", ADV_NO_ACCOUNT, {NULL},
+            WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+        {"global PasswordAuthentication no advertises pubkey only",
+            ADV_NO_ACCOUNT, {"PasswordAuthentication no", NULL},
+            WOLFSSH_USERAUTH_PUBLICKEY},
+        {"Match User on the probed name applies", ADV_NO_ACCOUNT,
+            {"Match User " UNKNOWN_USER, "PasswordAuthentication no", NULL},
+            WOLFSSH_USERAUTH_PUBLICKEY},
+        {"Match User on another name does not apply", ADV_NO_ACCOUNT,
+            {"Match User someone_else", "PasswordAuthentication no", NULL},
+            WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+        {"Match Group does not apply to a name with no account",
+            ADV_NO_ACCOUNT,
+            {"Match Group somegroup", "PasswordAuthentication no", NULL},
+            WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+#ifndef _WIN32
+        {"account lookup error advertises nothing", ADV_LOOKUP_ERROR,
+            {NULL}, 0},
+        {"unreadable group list advertises nothing", ADV_GROUPS_FAIL,
+            {NULL}, 0},
+        {"resolved account takes its Match User block", ADV_RESOLVED,
+            {"Match User " UNKNOWN_USER, "PasswordAuthentication no", NULL},
+            WOLFSSH_USERAUTH_PUBLICKEY},
+#endif
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
+    const int maxLines = (int)(sizeof(vectors[0].lines) /
+            sizeof(*vectors[0].lines));
+    WOLFSSHD_CONFIG* head;
     WOLFSSHD_CONFIG* conf;
     WOLFSSHD_AUTH* authCtx;
     WOLFSSH_CTX* ctx;
     WOLFSSH* ssh;
-    int expected;
-    /* long enough that a real account by this name is implausible */
-    static const char usr[] = "nonexistent_test_user_xyz";
+#ifndef _WIN32
+    struct passwd* (*savedGetpwnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+#endif
     /* keeps the permission drop in wolfSSHD_AuthCreateUser a no-op; see
-     * test_DefaultUserAuthPasswordNotTerminated */
+     * test_DefaultUserAuth_OOBRead */
     static const char privSep[] = "UsePrivilegeSeparation no";
 
     for (i = 0; i < numVectors && ret == WS_SUCCESS; ++i) {
         Log("    Testing scenario: %s.", vectors[i].desc);
 
-        conf = wolfSSHD_ConfigNew(NULL);
-        if (conf == NULL) {
+        head = wolfSSHD_ConfigNew(NULL);
+        if (head == NULL) {
             Log(" FAILED.\n");
             return WS_MEMORY_E;
         }
+        /* a Match line moves 'conf' to the new block; keep the list head */
+        conf = head;
 
+        /* goes in before any Match line so it lands in the global section */
         ret = ParseConfigLine(&conf, privSep, (int)WSTRLEN(privSep), 0);
-        if (ret == WS_SUCCESS && vectors[i].line != NULL) {
-            ret = ParseConfigLine(&conf, vectors[i].line,
-                    (int)WSTRLEN(vectors[i].line), 0);
+        for (j = 0; ret == WS_SUCCESS && j < maxLines &&
+                vectors[i].lines[j] != NULL; ++j) {
+            ret = ParseConfigLine(&conf, vectors[i].lines[j],
+                    (int)WSTRLEN(vectors[i].lines[j]), 0);
         }
         if (ret != WS_SUCCESS) {
             Log(" FAILED.\n");
-            wolfSSHD_ConfigFree(conf);
+            wolfSSHD_ConfigFree(head);
             break;
         }
 
-        authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+        authCtx = wolfSSHD_AuthCreateUser(NULL, head);
         if (authCtx == NULL) {
-            Log("    Skipping test: wolfSSHD_AuthCreateUser failed (likely missing 'sshd' user).\n");
-            wolfSSHD_ConfigFree(conf);
+            Log(" FAILED.\n");
+            wolfSSHD_ConfigFree(head);
+            ret = WS_FATAL_ERROR;
             break;
         }
+
+#ifndef _WIN32
+        s_adv_mode = vectors[i].mode;
+        savedGetpwnam = wsshd_getpwnam_cb;
+        wsshd_getpwnam_cb = stub_getpwnam_adv;
+        InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+        s_grouplist_always_fail = (vectors[i].mode == ADV_GROUPS_FAIL);
+#endif
 
         ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
         ssh = (ctx != NULL) ? wolfSSH_new(ctx) : NULL;
-        if (ssh == NULL || wolfSSH_SetUsername(ssh, usr) != WS_SUCCESS) {
+        if (ssh == NULL ||
+                wolfSSH_SetUsername(ssh, UNKNOWN_USER) != WS_SUCCESS) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else if (DefaultUserAuthTypes(ssh, authCtx) != vectors[i].expected) {
             Log(" FAILED.\n");
             ret = WS_FATAL_ERROR;
         }
         else {
-            expected = wolfSSHD_GetUserAuthTypes(conf);
-            if (expected == 0 ||
-                    DefaultUserAuthTypes(ssh, authCtx) != expected) {
-                Log(" FAILED.\n");
-                ret = WS_FATAL_ERROR;
-            }
-            else {
-                Log(" PASSED.\n");
-            }
+            Log(" PASSED.\n");
         }
 
+#ifndef _WIN32
+        wsshd_getpwnam_cb = savedGetpwnam;
+        wsshd_getgrouplist_cb = savedGrouplist;
+        wsshd_setgroups_cb = savedSetgroups;
+#endif
         wolfSSH_free(ssh);
         wolfSSH_CTX_free(ctx);
         wolfSSHD_AuthFreeUser(authCtx);
-        wolfSSHD_ConfigFree(conf);
+        wolfSSHD_ConfigFree(head);
     }
 
     return ret;
 }
+
+#undef UNKNOWN_USER
 
 #ifndef _WIN32
 /* report a single secure-open scenario; returns WS_SUCCESS when the observed
