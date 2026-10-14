@@ -3110,10 +3110,18 @@ int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx)
     usr     = wolfSSH_GetUsername(ssh);
     usrConf = wolfSSHD_AuthGetUserConf(authCtx, usr, NULL, NULL,
             NULL, NULL, NULL);
+    if (usrConf == NULL && usr != NULL && authCtx->checkUserCb != NULL &&
+            authCtx->checkUserCb(usr) == WSSHD_AUTH_FAILURE) {
+        /* No such account: compose on the name alone, so Match User
+         * applies and Match Group cannot. Other failures stay closed. */
+        usrConf = wolfSSHD_GetUserConf(authCtx->conf, usr, NULL, 0,
+                NULL, NULL, NULL, NULL, NULL);
+    }
+
     if (usrConf == NULL) {
-        /* The user did not resolve. Advertise the global methods anyway: an
-         * empty name-list would tell the peer the account does not exist. */
-        ret = wolfSSHD_GetUserAuthTypes(authCtx->conf);
+        wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] No user configuration; advertising no methods");
+        ret = 0;
     }
     else {
         ret = wolfSSHD_GetUserAuthTypes(usrConf);
