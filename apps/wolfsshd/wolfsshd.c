@@ -1734,6 +1734,47 @@ static const char* GetCertForcedCmd(WOLFSSHD_CONNECTION* conn)
 #endif
 }
 
+
+static const char internalSftp[] = "internal-sftp";
+#define INTERNAL_SFTP_SZ ((word32)(sizeof(internalSftp) - 1))
+
+/* 1 when 'forcedCmd' is "internal-sftp". Only the first token is matched;
+ * sshd_config(5) permits options after it. */
+static int ForcedCmdIsInternalSftp(const char* forcedCmd)
+{
+    return forcedCmd != NULL &&
+        WSTRNCMP(forcedCmd, internalSftp, INTERNAL_SFTP_SZ) == 0 &&
+        (forcedCmd[INTERNAL_SFTP_SZ] == '\0' ||
+            WISSPACE((unsigned char)forcedCmd[INTERNAL_SFTP_SZ]));
+}
+
+
+/* 1 when 'forcedCmd' is set to anything but a bare "internal-sftp". No
+ * internal-sftp option is applied, so one given denies SFTP rather than
+ * being ignored. NULL forbids nothing. */
+static int ForcedCmdDeniesSftp(const char* forcedCmd)
+{
+    const char* opt;
+
+    if (forcedCmd == NULL) {
+        return 0;
+    }
+    if (!ForcedCmdIsInternalSftp(forcedCmd)) {
+        return 1;
+    }
+
+    for (opt = forcedCmd + INTERNAL_SFTP_SZ; *opt != '\0'; opt++) {
+        if (!WISSPACE((unsigned char)*opt)) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] internal-sftp options are not supported: %s",
+                forcedCmd);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 #ifdef WOLFSSH_SCP
 static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
@@ -2147,7 +2188,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     /* @TODO check for conpty support LoadLibrary()and GetProcAddress(). */
 
-    if (forcedCmd != NULL && WSTRCMP(forcedCmd, "internal-sftp") == 0) {
+    if (ForcedCmdIsInternalSftp(forcedCmd)) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Only SFTP connections allowed for user "
             "%s", wolfSSH_GetUsername(ssh));
@@ -2818,7 +2859,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         forcedCmd = subCmd;
     }
 
-    if (forcedCmd != NULL && WSTRCMP(forcedCmd, "internal-sftp") == 0) {
+    if (ForcedCmdIsInternalSftp(forcedCmd)) {
         wolfSSH_Log(WS_LOG_ERROR,
                                 "[SSHD] Only SFTP connections allowed for user "
                                 "%s", wolfSSH_GetUsername(ssh));
@@ -3755,10 +3796,10 @@ static int UserAuthResult(byte result,
 }
 
 #if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
-/* Returns 1 if root's forced-commands-only ForceCommand isn't
- * "internal-sftp": SFTP/SCP never honor ForceCommand (only SHELL_Subsystem
- * does), so this blocks the confinement bypass. No-op on Windows
- * (pPasswd is NULL there). */
+/* 1 when root is under forced-commands-only and its ForceCommand isn't a
+ * bare "internal-sftp". The dispatch denies SCP under any ForceCommand
+ * before this, so root never gets SCP there. No-op on Windows (pPasswd is
+ * NULL there). */
 static int IsRootTransferBlocked(WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
 {
 #ifdef _WIN32
@@ -3777,7 +3818,7 @@ static int IsRootTransferBlocked(WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf)
     }
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
-    return (forcedCmd == NULL || WSTRCMP(forcedCmd, "internal-sftp") != 0);
+    return forcedCmd == NULL || ForcedCmdDeniesSftp(forcedCmd);
 #endif
 }
 
@@ -3787,8 +3828,8 @@ static int RejectRootTransfer(WPASSWD* pPasswd, WOLFSSHD_CONFIG* usrConf,
         const char* what)
 {
     if (IsRootTransferBlocked(pPasswd, usrConf)) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] %s for root requires ForceCommand "
-            "internal-sftp under forced-commands-only", what);
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] %s for root is not allowed "
+            "under forced-commands-only", what);
         return 1;
     }
     return 0;
@@ -3929,7 +3970,8 @@ static void* HandleConnection(void* arg)
         WPASSWD* pPasswd = NULL;
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
-        const char* forcedCmd = NULL;
+        const char* certCmd = NULL;
+        const char* confCmd = NULL;
 
         /* get configuration for user */
         usr     = wolfSSH_GetUsername(ssh);
@@ -3971,14 +4013,15 @@ static void* HandleConnection(void* arg)
                     break;
 
                 case WOLFSSH_SESSION_SUBSYSTEM:
-                    /* A certificate force-command overrides the requested
-                     * subsystem. "internal-sftp" still permits SFTP; any other
-                     * command denies file transfer (fail closed). */
-                    forcedCmd = GetCertForcedCmd(conn);
-                    if (forcedCmd != NULL &&
-                            WSTRCMP(forcedCmd, "internal-sftp") != 0) {
+                    /* A force-command, configured or from a certificate,
+                     * overrides the requested subsystem. Only
+                     * "internal-sftp" still permits SFTP. */
+                    certCmd = GetCertForcedCmd(conn);
+                    confCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+                    if (ForcedCmdDeniesSftp(certCmd) ||
+                            ForcedCmdDeniesSftp(confCmd)) {
                         wolfSSH_Log(WS_LOG_ERROR,
-                            "[SSHD] Cert force-command set for user %s; "
+                            "[SSHD] Force-command set for user %s; "
                             "denying subsystem request",
                             wolfSSH_GetUsername(ssh));
                         ret = WS_FATAL_ERROR;
@@ -4005,11 +4048,11 @@ static void* HandleConnection(void* arg)
 
                         case WS_SCP_INIT:
                         #ifdef WOLFSSH_SCP
-                            /* any certificate force-command, including
-                             * internal-sftp, denies SCP */
-                            if (forcedCmd != NULL) {
+                            /* any force-command, including internal-sftp,
+                             * denies SCP */
+                            if (certCmd != NULL || confCmd != NULL) {
                                 wolfSSH_Log(WS_LOG_ERROR,
-                                    "[SSHD] Cert force-command set for user "
+                                    "[SSHD] Force-command set for user "
                                     "%s; denying SCP",
                                     wolfSSH_GetUsername(ssh));
                                 ret = WS_FATAL_ERROR;
@@ -4054,11 +4097,12 @@ static void* HandleConnection(void* arg)
                     /* SCP can be an exec type */
                     if (ret == WS_SCP_INIT) {
                     #ifdef WOLFSSH_SCP
-                        /* any certificate force-command denies SCP */
-                        forcedCmd = GetCertForcedCmd(conn);
-                        if (forcedCmd != NULL) {
+                        /* any force-command denies SCP */
+                        certCmd = GetCertForcedCmd(conn);
+                        confCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
+                        if (certCmd != NULL || confCmd != NULL) {
                             wolfSSH_Log(WS_LOG_ERROR,
-                                "[SSHD] Cert force-command set for user %s; "
+                                "[SSHD] Force-command set for user %s; "
                                 "denying SCP", wolfSSH_GetUsername(ssh));
                             ret = WS_FATAL_ERROR;
                         }
