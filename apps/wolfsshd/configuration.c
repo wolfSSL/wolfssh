@@ -462,8 +462,6 @@ void wolfSSHD_ConfigFree(WOLFSSHD_CONFIG* conf)
     }
 }
 
-#define MAX_LINE_SIZE 160
-
 typedef struct {
     int tag;
     const char* name;
@@ -1739,7 +1737,7 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
     WFILE *f;
     WOLFSSHD_CONFIG* currentConfig;
     int ret = WS_SUCCESS;
-    char buf[MAX_LINE_SIZE];
+    char buf[WOLFSSHD_MAX_LINE_SIZE];
     const char* current;
 
     if (conf == NULL || filename == NULL)
@@ -1761,8 +1759,25 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
     depth++;
 
     currentConfig = conf;
-    while ((current = XFGETS(buf, MAX_LINE_SIZE, f)) != NULL) {
+    while ((current = XFGETS(buf, WOLFSSHD_MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
+
+        /* A full buffer with no newline is a cut line, and its leftover is
+         * read as a line of its own, so going on applies a truncated
+         * directive. One more byte tells a cut line from one that ends at
+         * the buffer: a newline, or the end of the file. */
+        if (currentSz == WOLFSSHD_MAX_LINE_SIZE - 1 &&
+                buf[currentSz - 1] != '\n') {
+            char next;
+
+            if (WFREAD(NULL, &next, 1, 1, f) == 1 && next != '\n') {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Config line longer than %d in %s",
+                    WOLFSSHD_MAX_LINE_SIZE - 1, filename);
+                ret = WS_FATAL_ERROR;
+                break;
+            }
+        }
 
         /* remove leading spaces and tabs */
         while (currentSz > 0 &&

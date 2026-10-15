@@ -1354,6 +1354,130 @@ static int test_IncludeRecursionBound(void)
     return ret;
 }
 
+/* Writes 'path' holding one ForceCommand line 'lineSz' bytes long before any
+ * newline, padded with leading blanks, which the loader strips. */
+static int WriteForceCommandLine(const char* path, const char* cmd,
+        int lineSz, int newline)
+{
+    static const char key[] = "ForceCommand ";
+    char contents[WOLFSSHD_MAX_LINE_SIZE + 8];
+    int keySz = (int)WSTRLEN(key);
+    int cmdSz = (int)WSTRLEN(cmd);
+    int padSz = lineSz - keySz - cmdSz;
+
+    if (padSz < 0 || lineSz + 2 > (int)sizeof(contents)) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    WMEMSET(contents, ' ', padSz);
+    WMEMCPY(contents + padSz, key, keySz);
+    WMEMCPY(contents + padSz + keySz, cmd, cmdSz);
+    if (newline) {
+        contents[lineSz++] = '\n';
+    }
+    contents[lineSz] = '\0';
+
+    return WriteConfigFile(path, contents);
+}
+
+/* Loads 'path' into a new config. Returns WS_SUCCESS when the load succeeds
+ * and the forced command is 'expect', or when 'expect' is NULL and the load
+ * fails. */
+static int LoadForcedCmd(const char* path, const char* expect)
+{
+    WOLFSSHD_CONFIG* conf;
+    char* cmd;
+    int ret;
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    ret = wolfSSHD_ConfigLoad(conf, path);
+    if (expect == NULL) {
+        ret = (ret == WS_SUCCESS) ? WS_FATAL_ERROR : WS_SUCCESS;
+    }
+    else if (ret == WS_SUCCESS) {
+        cmd = wolfSSHD_ConfigGetForcedCmd(conf);
+        if (cmd == NULL || WSTRCMP(cmd, expect) != 0) {
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* A config line longer than the loader's buffer must fail the load, not take
+ * effect truncated. A line that fits loads whole, up to the last byte. */
+static int test_ConfigLineTooLong(void)
+{
+    const char* path = "./line_size.conf";
+    const int lastSz = WOLFSSHD_MAX_LINE_SIZE - 1;
+    char cmd[256];
+    int ret = WS_SUCCESS;
+
+    /* longer than the old 160 byte buffer */
+    WMEMCPY(cmd, "/bin/echo ", 10);
+    WMEMSET(cmd + 10, 'X', 200);
+    cmd[210] = '\0';
+
+    Log("    Testing scenario: long config line kept whole.");
+    if (WriteForceCommandLine(path, cmd, 230, 1) == WS_SUCCESS &&
+            LoadForcedCmd(path, cmd) == WS_SUCCESS) {
+        Log(" PASSED.\n");
+    }
+    else {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: line filling the buffer loads.");
+        if (WriteForceCommandLine(path, "/bin/echo edge", lastSz, 1)
+                    == WS_SUCCESS &&
+                LoadForcedCmd(path, "/bin/echo edge") == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: last line filling the buffer loads.");
+        if (WriteForceCommandLine(path, "/bin/echo eof", lastSz, 0)
+                    == WS_SUCCESS &&
+                LoadForcedCmd(path, "/bin/echo eof") == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    /* The cut leaves "X\n", which reads as a blank line, so only the length
+     * check stops "/bin/echo cut" from loading. */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: over-long config line refused.");
+        if (WriteForceCommandLine(path, "/bin/echo cutX", lastSz + 1, 1)
+                    == WS_SUCCESS &&
+                LoadForcedCmd(path, NULL) == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
+    (void)WREMOVE(NULL, path);
+    return ret;
+}
+
 /* Each Match block is built from the global config, not from the Match block
  * before it. A user selected by a later block must not pick up settings that
  * an earlier, non-matching block changed. */
@@ -7493,6 +7617,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
+    TEST_DECL(test_ConfigLineTooLong),
     TEST_DECL(test_GetUserConfMatchNoInherit),
     TEST_DECL(test_GetUserConfMatchOverlapCompose),
     TEST_DECL(test_ConfigIncludeMatchChain),

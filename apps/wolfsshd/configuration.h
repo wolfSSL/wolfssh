@@ -40,6 +40,9 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 #define WOLFSSHD_WIN_STORE_CONFIG
 #endif
 
+/* Longest config line. ConfigLoad() refuses a longer one. */
+#define WOLFSSHD_MAX_LINE_SIZE 1024
+
 #include "auth.h"
 
 /* 0 so that privilege separation is default on after struct memset'd on init */
