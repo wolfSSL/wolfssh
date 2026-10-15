@@ -228,8 +228,8 @@ HostKey $HOSTKEY
 TrustedUserCAKeys $WORK/trusted-cas.pub
 EOF
 
-# Second config, adding a ForceCommand that is not "internal-sftp". Used to
-# separate the config-sourced command from the certificate's.
+# Second config, adding a ForceCommand that is not "internal-sftp", which
+# denies SFTP on its own.
 cat > "$WORK/sshd_config_ossh_fc" <<EOF
 Port $PORT
 Protocol 2
@@ -241,6 +241,22 @@ TrustedUserCAKeys $WORK/trusted-cas.pub
 
 Match User $LOGINUSER
 	ForceCommand /bin/echo
+EOF
+
+# Third config, a ForceCommand "internal-sftp", which permits SFTP. Only here
+# does a certificate's force-command change the outcome, so it shows the
+# configured command does not mask the certificate's.
+cat > "$WORK/sshd_config_ossh_isftp" <<EOF
+Port $PORT
+Protocol 2
+UsePrivilegeSeparation no
+UseDNS no
+PasswordAuthentication no
+HostKey $HOSTKEY
+TrustedUserCAKeys $WORK/trusted-cas.pub
+
+Match User $LOGINUSER
+	ForceCommand internal-sftp
 EOF
 
 CONFIG="$WORK/sshd_config_ossh"
@@ -453,13 +469,16 @@ run_suite() { # driver
         sftp_check "internal-sftp sftp" "$ED" \
             "$CERTS/$LOGINUSER-ossh-internalsftp-cert.pub" 0
 
-        # A configured ForceCommand is not a certificate force-command: on its
-        # own it must not deny SFTP, and it must not mask one carried by a
-        # certificate.
+        # A configured ForceCommand denies SFTP on its own.
         CONFIG="$WORK/sshd_config_ossh_fc"
         sftp_check "config forcecmd sftp" "$ED" \
+            "$CERTS/$LOGINUSER-ossh-cert.pub"              1
+
+        # A configured "internal-sftp" does not mask a certificate's.
+        CONFIG="$WORK/sshd_config_ossh_isftp"
+        sftp_check "config isftp sftp" "$ED" \
             "$CERTS/$LOGINUSER-ossh-cert.pub"              0
-        sftp_check "config+cert sftp deny" "$ED" \
+        sftp_check "config isftp+cert sftp deny" "$ED" \
             "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"     1
         CONFIG="$WORK/sshd_config_ossh"
     else
@@ -476,6 +495,12 @@ run_suite() { # driver
             "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"     1
         scp_check "internal-sftp scp"   "$ED" \
             "$CERTS/$LOGINUSER-ossh-internalsftp-cert.pub" 1
+
+        # A configured ForceCommand denies it too.
+        CONFIG="$WORK/sshd_config_ossh_fc"
+        scp_check "config forcecmd scp" "$ED" \
+            "$CERTS/$LOGINUSER-ossh-cert.pub"              1
+        CONFIG="$WORK/sshd_config_ossh"
     fi
 }
 
