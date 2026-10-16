@@ -1809,6 +1809,12 @@ static int test_DoReceive_VerifyMacFailure(void)
             result = -209;
             goto done;
         }
+        /* The rejected packet does not wait for wolfSSH_free(). */
+        if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                    totalLen)) {
+            result = -210;
+            goto done;
+        }
     }
 
 done:
@@ -1924,6 +1930,12 @@ static int test_DoReceive_AeadTagFailure(void)
         result = -230;
         goto done;
     }
+    /* The packet that failed its tag is wiped. */
+    if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                UINT32_SZ + ssh->curSz)) {
+        result = -231;
+        goto done;
+    }
 
 done:
     if (aesInited)
@@ -1933,6 +1945,81 @@ done:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+/* A first block that fails to decrypt is wiped, and nothing around it. */
+static int test_DoReceive_FirstDecryptFailWipes(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    word32 i;
+    const word32 lead = 5;
+    const word32 recordSz = 2 * AES_BLOCK_SIZE;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -232;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -233;
+        goto done;
+    }
+
+    /* Decrypt() has no case for ID_UNKNOWN, so the first block fails. */
+    ssh->peerEncryptId = ID_UNKNOWN;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = AES_BLOCK_SIZE;
+    ssh->peerMacSz = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    if (GrowBuffer(&ssh->inputBuffer, lead + recordSz) != WS_SUCCESS) {
+        result = -234;
+        goto done;
+    }
+    WMEMSET(ssh->inputBuffer.buffer, 0xEE, lead);
+    WMEMSET(ssh->inputBuffer.buffer + lead, 0x5A, recordSz);
+    ssh->inputBuffer.length = lead + recordSz;
+    ssh->inputBuffer.idx = lead;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_INVALID_ALGO_ID) {
+        result = -235;
+        goto done;
+    }
+    if (ssh->inputBuffer.idx != lead) {
+        result = -236;
+        goto done;
+    }
+    if (!IsZeroed(ssh->inputBuffer.buffer + lead, AES_BLOCK_SIZE)) {
+        result = -237;
+        goto done;
+    }
+    /* Only the block it read is wiped. */
+    for (i = 0; i < lead; i++) {
+        if (ssh->inputBuffer.buffer[i] != 0xEE) {
+            result = -238;
+            goto done;
+        }
+    }
+    for (i = lead + AES_BLOCK_SIZE; i < lead + recordSz; i++) {
+        if (ssh->inputBuffer.buffer[i] != 0x5A) {
+            result = -239;
+            goto done;
+        }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
@@ -2517,6 +2604,7 @@ static int test_DoReceive_CbcRejectDiscards(void)
         pkt[3] = (byte)(cases[i].packetLen);
         pkt[4] = 22;            /* padding_length */
         pkt[5] = MSGID_IGNORE;
+        WMEMSET(pkt + 10, 0x5A, 22);
 
         if (wc_AesSetKey(&encAes, key, sizeof(key), iv,
                     AES_ENCRYPTION) != 0
@@ -2580,6 +2668,13 @@ static int test_DoReceive_CbcRejectDiscards(void)
                 cases[i].closeAt : MAX_PACKET_SZ - cases[i].readSz;
         if (io.fed != fed) {
             result = -848;
+            goto done6;
+        }
+
+        /* The bytes decrypted before the rejection are wiped. */
+        if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                    cases[i].readSz)) {
+            result = -851;
             goto done6;
         }
 
@@ -7603,6 +7698,11 @@ static int test_BundlePacketFailureDropsPartial(void)
 
     /* The aborted packet is gone and the framed one is untouched. */
     if (ssh->outputBuffer.length != queued) { result = -1857; goto done; }
+    if (!IsZeroed(ssh->outputBuffer.buffer + queued,
+                ssh->outputBuffer.bufferSz - queued)) {
+        result = -1859;
+        goto done;
+    }
 
 done:
     s_recvPkt = NULL;
@@ -25040,7 +25140,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoReceiveAeadTag: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoReceive_FirstDecryptFailWipes();
+    printf("DoReceiveFirstDecryptFailWipes: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
     unitResult = test_AeadNoncePerPacket();
     printf("AeadNoncePerPacket: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
