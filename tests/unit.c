@@ -1671,6 +1671,19 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && !NO_WOLFSSH_SERVER */
 
 
+/* Returns 1 when all sz bytes at p are zero. */
+static WS_MAYBE_UNUSED int IsZeroed(const byte* p, word32 sz)
+{
+    word32 i;
+
+    for (i = 0; i < sz; i++) {
+        if (p[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \
      !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
@@ -5878,6 +5891,136 @@ static int test_DoChannelExtendedData_flow(void)
 done:
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Channel data handed to the application is wiped from the channel buffers:
+ * the consumed bytes on each read, and the copies a compaction leaves above
+ * the new length. */
+static int test_ChannelReadWipesConsumed(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    WOLFSSH_BUFFER*  in;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             data[40];
+    byte             out[64];
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1900;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1901; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, so reads compact once length passes 64. */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1902; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1903;
+        goto done;
+    }
+    in = &ch->inputBuffer;
+
+    WMEMSET(data, 0x5A, sizeof(data));
+    if (wolfSSH_TestChannelPutData(ch, data, 40) != WS_SUCCESS) {
+        result = -1904;
+        goto done;
+    }
+
+    /* Short reads that do not compact, through both read paths. */
+    ret = wolfSSH_stream_read(ssh, out, 10);
+    if (ret != 10) { result = -1905; goto done; }
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, 10);
+    if (ret != 10) { result = -1906; goto done; }
+    if (in->idx != 20 || in->length != 40) { result = -1907; goto done; }
+    if (!IsZeroed(in->buffer, 20)) { result = -1908; goto done; }
+    if (in->buffer[20] != 0x5A || in->buffer[39] != 0x5A) {
+        result = -1909;
+        goto done;
+    }
+
+    /* A read that compacts: 50 unread bytes move down from offset 30. */
+    WMEMSET(data, 0x6B, sizeof(data));
+    if (wolfSSH_TestChannelPutData(ch, data, 40) != WS_SUCCESS) {
+        result = -1910;
+        goto done;
+    }
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, 10);
+    if (ret != 10) { result = -1911; goto done; }
+    if (in->idx != 0 || in->length != 50) { result = -1912; goto done; }
+    if (!IsZeroed(in->buffer + 50, 30)) { result = -1913; goto done; }
+
+    /* The unread data survived the move. */
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, sizeof(out));
+    if (ret != 50) { result = -1914; goto done; }
+    if (out[0] != 0x5A || out[9] != 0x5A || out[10] != 0x6B
+            || out[49] != 0x6B) {
+        result = -1915;
+        goto done;
+    }
+
+    /* A short stderr chunk sits in the inline buffer and is drained whole. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1916; goto done; }
+    if (ch->extDataBuffer.dynamicFlag) { result = -1917; goto done; }
+    ret = wolfSSH_ChannelReadExt(ch, out, sizeof(out));
+    if (ret != 10) { result = -1918; goto done; }
+    if (!IsZeroed(ch->extDataBuffer.staticBuffer, STATIC_BUFFER_LEN)) {
+        result = -1919;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* GrowBuffer() compacting in place wipes what the move leaves above the new
+ * length. */
+static int test_GrowBufferCompactWipesTail(void)
+{
+    WOLFSSH_BUFFER buf;
+    int result = 0;
+    word32 i;
+
+    if (BufferInit(&buf, 64, NULL) != WS_SUCCESS)
+        return -1920;
+    for (i = 0; i < 40; i++)
+        buf.buffer[i] = (byte)(i + 1);
+    buf.length = 40;
+    buf.idx = 30;
+
+    /* 4 more bytes fit, so the allocation is kept. */
+    if (GrowBuffer(&buf, 4) != WS_SUCCESS) { result = -1921; goto done; }
+    if (buf.bufferSz != 64 || buf.length != 10 || buf.idx != 0) {
+        result = -1922;
+        goto done;
+    }
+    for (i = 0; i < 10; i++) {
+        if (buf.buffer[i] != (byte)(i + 31)) { result = -1923; goto done; }
+    }
+    if (!IsZeroed(buf.buffer + 10, 30)) { result = -1924; goto done; }
+
+done:
+    ShrinkBuffer(&buf, 1);
     return result;
 }
 
@@ -25779,6 +25922,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelExtendedData_flow();
     printf("DoChannelExtendedData_flow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelReadWipesConsumed();
+    printf("ChannelReadWipesConsumed: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_GrowBufferCompactWipesTail();
+    printf("GrowBufferCompactWipesTail: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
