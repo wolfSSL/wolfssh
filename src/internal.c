@@ -3857,6 +3857,7 @@ int GenerateKey(byte hashId, byte keyId,
     if (ret != WS_SUCCESS)
         ret = WS_CRYPTO_FAILED;
     wc_HashFree(&hash, enmhashId);
+    WS_FORCEZERO(&hash, sizeof(hash));
 
     return ret;
 }
