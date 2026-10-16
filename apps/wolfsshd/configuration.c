@@ -2505,12 +2505,11 @@ void wolfSSHD_ConfigSavePID(const WOLFSSHD_CONFIG* conf)
 #ifndef _WIN32
         /* raw open, not WFOPEN: the O_NOFOLLOW hardening needs a real fd */
 #if defined(WOLFSSH_HAVE_SYMLINK) && WOLFSSH_O_NOFOLLOW == 0
-        /* no O_NOFOLLOW here, so pre-check with a racy best-effort lstat */
-        if (lstat(conf->pidFile, &st) == 0 && S_ISLNK(st.st_mode)) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Refusing symlinked PID file %s", conf->pidFile);
-            ok = 0;
-        }
+        /* without O_NOFOLLOW the open below follows a link swapped in after
+         * any check, and the fstat gate accepts a root-owned target */
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] No O_NOFOLLOW, not writing PID file %s", conf->pidFile);
+        ok = 0;
 #endif
         if (ok) {
             /* O_EXCL first so 'created' distinguishes creation from reuse; on
