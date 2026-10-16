@@ -14898,6 +14898,15 @@ static int test_ParseEd25519PubKey(void)
         failures++;
     }
 
+    /* format identifier other than "ssh-ed25519" */
+    blob[UINT32_SZ + keyTypeNameSz - 1] = '8';
+    ret = wolfSSH_TestParseEd25519PubKey(ssh, blob, blobSz);
+    if (ret != WS_INVALID_ALGO_ID) {
+        fprintf(stderr, "\t\"format mismatch\" FAIL: got %d, expected %d\n",
+                ret, WS_INVALID_ALGO_ID);
+        failures++;
+    }
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 
@@ -15930,6 +15939,99 @@ static int test_DoUserAuthRequestMlDsa(void)
 #endif /* WOLFSSH_CERTS */
     return 0;
 }
+
+#ifndef WOLFSSH_NO_MLDSA44
+/* Host key blob parse for ssh-mldsa-44. The format identifier must match
+ * the negotiated algorithm (RFC 4253 section 6.6). */
+static int test_ParseMlDsaPubKey(void)
+{
+    static const char keyTypeName[] = "ssh-mldsa-44";
+    const word32 keyTypeNameSz = (word32)(sizeof(keyTypeName) - 1);
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    MlDsaKey key;
+    int keyInit = 0;
+    WC_RNG rng;
+    int rngInit = 0;
+    byte blob[UINT32_SZ * 2 + sizeof(keyTypeName) - 1
+            + WC_MLDSA_44_PUB_KEY_SIZE];
+    word32 pubSz = WC_MLDSA_44_PUB_KEY_SIZE;
+    word32 blobSz;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -780;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -781;
+        goto done;
+    }
+
+    if (wc_InitRng(&rng) != 0) {
+        result = -782;
+        goto done;
+    }
+    rngInit = 1;
+    if (wc_MlDsaKey_Init(&key, NULL, INVALID_DEVID) != 0) {
+        result = -783;
+        goto done;
+    }
+    keyInit = 1;
+    if (wc_MlDsaKey_SetParams(&key, WC_ML_DSA_44) != 0
+            || wc_MlDsaKey_MakeKey(&key, &rng) != 0) {
+        result = -784;
+        goto done;
+    }
+
+    /* string "ssh-mldsa-44" || string pubkey */
+    PutU32BE(blob, keyTypeNameSz);
+    WMEMCPY(blob + UINT32_SZ, keyTypeName, keyTypeNameSz);
+    if (wc_MlDsaKey_ExportPubRaw(&key,
+            blob + UINT32_SZ * 2 + keyTypeNameSz, &pubSz) != 0) {
+        result = -785;
+        goto done;
+    }
+    PutU32BE(blob + UINT32_SZ + keyTypeNameSz, pubSz);
+    blobSz = UINT32_SZ * 2 + keyTypeNameSz + pubSz;
+
+    ret = wolfSSH_TestParseMlDsaPubKey(ssh, blob, blobSz, ID_MLDSA44);
+    if (ret != WS_SUCCESS) {
+        fprintf(stderr, "\t\"valid\" FAIL: got %d, expected %d\n",
+                ret, WS_SUCCESS);
+        result = -786;
+        goto done;
+    }
+
+    ret = wolfSSH_TestParseMlDsaPubKey(ssh, blob, blobSz - 4, ID_MLDSA44);
+    if (ret == WS_SUCCESS) {
+        fprintf(stderr, "\t\"truncated\" FAIL: got %d\n", ret);
+        result = -787;
+        goto done;
+    }
+
+    /* format identifier other than "ssh-mldsa-44" */
+    blob[UINT32_SZ + keyTypeNameSz - 1] = '5';
+    ret = wolfSSH_TestParseMlDsaPubKey(ssh, blob, blobSz, ID_MLDSA44);
+    if (ret != WS_INVALID_ALGO_ID) {
+        fprintf(stderr, "\t\"format mismatch\" FAIL: got %d, expected %d\n",
+                ret, WS_INVALID_ALGO_ID);
+        result = -788;
+        goto done;
+    }
+
+done:
+    if (keyInit)
+        wc_MlDsaKey_Free(&key);
+    if (rngInit)
+        wc_FreeRng(&rng);
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* !WOLFSSH_NO_MLDSA44 */
 
 /* tamperSig: 0 = no tampering, 1 = flip a byte in the trad-algorithm
  * signature component, 2 = flip a byte in the ML-DSA signature component,
@@ -22717,6 +22819,7 @@ static const byte userAuthRsaSigBlob[] = {
 static const byte userAuthRsaSigLenOverrun[] = { 0x00, 0x00, 0x01, 0x01 };
 
 /* Offsets of interest in userAuthRsaPubKeyBlob. */
+#define RSA_PUB_BLOB_ALGO 4   /* "ssh-rsa" */
 #define RSA_PUB_BLOB_NLEN 18  /* length of the modulus mpint */
 #define RSA_PUB_BLOB_N    23  /* first byte of the modulus, past the pad */
 
@@ -22880,6 +22983,16 @@ static int test_ParseRSAPubKey(void)
     if (ret != WS_CERT_KEY_SIZE_E) {
         fprintf(stderr, "\t\"2047 bit\" FAIL: got %d, expected %d\n",
                 ret, WS_CERT_KEY_SIZE_E);
+        failures++;
+    }
+
+    /* format identifier other than "ssh-rsa" */
+    WMEMCPY(blob, userAuthRsaPubKeyBlob, sizeof(blob));
+    WMEMCPY(blob + RSA_PUB_BLOB_ALGO, "ssh-dss", 7);
+    ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)sizeof(blob));
+    if (ret != WS_INVALID_ALGO_ID) {
+        fprintf(stderr, "\t\"format mismatch\" FAIL: got %d, expected %d\n",
+                ret, WS_INVALID_ALGO_ID);
         failures++;
     }
 
@@ -26083,6 +26196,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoUserAuthRequestMlDsa: %s (result=%d)\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
+#ifndef WOLFSSH_NO_MLDSA44
+    unitResult = test_ParseMlDsaPubKey();
+    printf("ParseMlDsaPubKey: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif
 #ifndef WOLFSSH_NO_MLDSA_COMPOSITES
     unitResult = test_DoUserAuthRequestMlDsaComposite();
     printf("DoUserAuthRequestMlDsaComposite: %s (result=%d)\n",

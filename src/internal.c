@@ -7619,6 +7619,30 @@ static int CheckRsaKeyBits(RsaKey* key)
 #endif
 
 
+#if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ED25519) \
+    || !defined(WOLFSSH_NO_MLDSA)
+/* Compare the format identifier at the start of a public key blob
+ * against the expected name (RFC 4253 section 6.6). */
+static int GetPubKeyFormat(const char* expected, const byte* pubKey,
+        word32 pubKeySz, word32* pubKeyIdx)
+{
+    const byte* name = NULL;
+    word32 nameSz = 0;
+    int ret;
+
+    ret = GetStringRef(&nameSz, &name, pubKey, pubKeySz, pubKeyIdx);
+    if (ret == WS_SUCCESS) {
+        if (nameSz != (word32)WSTRLEN(expected)
+                || WMEMCMP(name, expected, nameSz) != 0) {
+            ret = WS_INVALID_ALGO_ID;
+        }
+    }
+
+    return ret;
+}
+#endif
+
+
 /* Parse out a RAW RSA public key from buffer */
 static int ParseRSAPubKey(WOLFSSH *ssh,
     struct wolfSSH_sigKeyBlock *sigKeyBlock_ptr, byte *pubKey, word32 pubKeySz)
@@ -7632,9 +7656,9 @@ static int ParseRSAPubKey(WOLFSSH *ssh,
     word32 pubKeyIdx = 0;
 
     ret = InitPubKey(sigKeyBlock_ptr, ssh);
-    /* Skip the algo name. */
+    /* All three RSA host key algorithms use the "ssh-rsa" format. */
     if (ret == WS_SUCCESS)
-        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+        ret = GetPubKeyFormat("ssh-rsa", pubKey, pubKeySz, &pubKeyIdx);
     if (ret == WS_SUCCESS) {
         ret = GetUint32(&eSz, pubKey, pubKeySz, &pubKeyIdx);
         if (ret == WS_SUCCESS && eSz > pubKeySz - pubKeyIdx)
@@ -7775,9 +7799,8 @@ static int ParseEd25519PubKey(WOLFSSH *ssh,
 
     ret = InitPubKey(sigKeyBlock_ptr, ssh);
 
-    /* Skip the algo name */
     if (ret == WS_SUCCESS) {
-        ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+        ret = GetPubKeyFormat("ssh-ed25519", pubKey, pubKeySz, &pubKeyIdx);
     }
 
     if (ret == WS_SUCCESS) {
@@ -7859,8 +7882,7 @@ static int ParseMlDsaPubKey(WOLFSSH* ssh,
         return WS_INVALID_ALGO_ID;
     }
 
-    /* skip the algo name string */
-    ret = GetSkip(pubKey, pubKeySz, &pubKeyIdx);
+    ret = GetPubKeyFormat(IdToName(keyId), pubKey, pubKeySz, &pubKeyIdx);
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&pubSz, &pub, pubKey, pubKeySz, &pubKeyIdx);
     if (ret == WS_SUCCESS)
@@ -26873,6 +26895,20 @@ int wolfSSH_TestDoUserAuthRequestEd25519(WOLFSSH* ssh,
 #endif /* !WOLFSSH_NO_ED25519 */
 
 #ifndef WOLFSSH_NO_MLDSA
+
+int wolfSSH_TestParseMlDsaPubKey(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz,
+        byte keyId)
+{
+    struct wolfSSH_sigKeyBlock sigKeyBlock;
+    int ret;
+
+    WMEMSET(&sigKeyBlock, 0, sizeof(sigKeyBlock));
+    sigKeyBlock.useMlDsa = 1;
+    ret = ParseMlDsaPubKey(ssh, &sigKeyBlock, pubKey, pubKeySz, keyId);
+    FreePubKey(&sigKeyBlock);
+
+    return ret;
+}
 
 WOLFSSH_API int wolfSSH_TestDoUserAuthRequestMlDsa(WOLFSSH* ssh,
         WS_UserAuthData* authData, word32 pubKeyBlobSz)
