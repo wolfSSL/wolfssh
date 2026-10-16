@@ -479,9 +479,14 @@ typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
 /* Policy callback for peer channel open requests. NOTE: when no callback
  * is registered every channel open from the peer is ACCEPTED by default
  * (except forwarding channel types, which fail closed without a forward
- * callback); register one to enforce a channel policy. */
+ * callback); register one to enforce a channel policy. Opens sent in the
+ * wrong direction are refused before any callback runs: session and
+ * direct-tcpip on a client, forwarded-tcpip and auth-agent on a server. */
 WOLFSSH_API int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelOpen cb);
+/* confCb and failCb run when the peer answers an open of ours. An answer for
+ * a channel with no open outstanding is a protocol error: the session is
+ * disconnected and neither callback runs. */
 WOLFSSH_API int wolfSSH_CTX_SetChannelOpenRespCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelOpen confCb, WS_CallbackChannelOpen failCb);
 WOLFSSH_API int wolfSSH_SetChannelOpenCtx(WOLFSSH* ssh, void* ctx);
@@ -521,6 +526,9 @@ typedef enum WS_ReqCbResult {
  * matches on typeSz bytes rather than with the string functions.
  * wantReply is what the peer asked for, before the library clears it for
  * the types RFC 4254 never answers.
+ *
+ * A client refuses shell, exec, subsystem and pty-req before this callback
+ * sees them; those ask a server to set up a session.
  *
  * ACCEPT and REJECT settle the request, and the shell, exec and subsystem
  * callbacks are not consulted. The library still parses and records what
