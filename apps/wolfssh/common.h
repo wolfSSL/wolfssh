@@ -32,6 +32,7 @@ WOLFSSH_LOCAL int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz,
         void* ctx);
 WOLFSSH_LOCAL void ClientIPOverride(int flag);
 WOLFSSH_LOCAL void ClientFreeBuffers(void);
+WOLFSSH_LOCAL int ClientParsePort(const char* in, word16* port);
 WOLFSSH_LOCAL int ClientParseDestination(const char* in, char** user,
         char** hostname, word16* port);
 #ifdef WOLFSSH_TEST_INTERNAL
