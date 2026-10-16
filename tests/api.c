@@ -8720,6 +8720,40 @@ static void test_wolfSSH_CheckAlgoList(void)
     WSNPRINTF(listBuf, sizeof(listBuf), "%s,bogus", validCipher);
     AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
 
+    /* A skipped name still goes out in KEXINIT, so it must be well formed. */
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,%064d", validCipher, 0);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,%065d", validCipher, 0);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bo gus", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bo\tgus", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bo\x7fgus", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bo\xc3\xa9gus", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bogus@example.com", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf), WS_SUCCESS);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bo@gus@example.com",
+            validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,@example.com", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,bogus@", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+    WSNPRINTF(listBuf, sizeof(listBuf), "%s,@", validCipher);
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),
+            WS_INVALID_ALGO_ID);
+
     /* A known name in the wrong category still fails the whole list. */
     WSNPRINTF(listBuf, sizeof(listBuf), "%s,%s", validCipher, aKexName);
     AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, listBuf),

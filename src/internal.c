@@ -4285,7 +4285,31 @@ int CheckAlgoList(const char* list, byte type)
             }
             else {
                 byte tokenType = TYPE_OTHER;
-                byte id = NameToIdType(name, nameSz, &tokenType);
+                byte id;
+                word32 j;
+                word32 atCount = 0;
+
+                /* Skipped names still go out in KEXINIT. RFC 4251 Section 6
+                 * and RFC 4250 Section 4.6: at most 64 bytes, printable
+                 * US-ASCII with no space, control code or DEL, at most one
+                 * '@', with text on both sides of it. */
+                if (nameSz > WOLFSSH_MAX_ALGO_NAME_SZ) {
+                    ret = WS_INVALID_ALGO_ID;
+                    break;
+                }
+                for (j = 0; j < nameSz; j++) {
+                    if ((byte)name[j] <= 0x20 || (byte)name[j] >= 0x7F)
+                        break;
+                    if (name[j] == '@' && (++atCount > 1 || j == 0
+                                || j == nameSz - 1))
+                        break;
+                }
+                if (j < nameSz) {
+                    ret = WS_INVALID_ALGO_ID;
+                    break;
+                }
+
+                id = NameToIdType(name, nameSz, &tokenType);
 
                 if (id == ID_NONE) {
                     /* "none" names the null cipher/MAC, not a host key. It
