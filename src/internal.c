@@ -14814,6 +14814,18 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 #endif /* WOLFSSH_NO_AEAD */
 
 
+/* Wipes up to sz bytes from the read cursor, where a packet that failed to
+ * decrypt or authenticate sits. */
+static void WipeInputPacket(WOLFSSH* ssh, word32 sz)
+{
+    word32 availSz = ssh->inputBuffer.length - ssh->inputBuffer.idx;
+
+    if (sz > availSz)
+        sz = availSz;
+    WS_FORCEZERO(ssh->inputBuffer.buffer + ssh->inputBuffer.idx, sz);
+}
+
+
 #ifndef WOLFSSH_NO_AES_CBC
 /* Reads a rejected packet out to MAX_PACKET_SZ bytes and runs the MAC over
  * the rest before failing. The byte count at failure is fixed, and so is the
@@ -14825,6 +14837,8 @@ static int DiscardPacket(WOLFSSH* ssh)
 
     ret = GetInputData(ssh, MAX_PACKET_SZ);
     if (ret < 0) {
+        if (ssh->error != WS_WANT_READ)
+            WipeInputPacket(ssh, MAX_PACKET_SZ);
         /* A transport failure ends the discard; report the rejection. */
         if (ssh->error == WS_SOCKET_ERROR_E)
             ssh->error = ssh->discardError;
@@ -14835,6 +14849,9 @@ static int DiscardPacket(WOLFSSH* ssh)
     (void)VerifyMac(ssh,
             ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->discardSz,
             MAX_PACKET_SZ - ssh->discardSz, mac);
+    /* Wiped only now, and at a fixed size, so the wipe does not time the
+     * rejection either. */
+    WipeInputPacket(ssh, MAX_PACKET_SZ);
 
     WLOG(WS_LOG_DEBUG, "Discarded rejected packet");
     ssh->error = ssh->discardError;
@@ -14867,10 +14884,9 @@ static int RejectPacket(WOLFSSH* ssh, word32 doneSz, int error)
         ssh->processReplyState = PROCESS_DISCARD;
         return DiscardPacket(ssh);
     }
-#else
-    WOLFSSH_UNUSED(doneSz);
 #endif
 
+    WipeInputPacket(ssh, doneSz);
     ssh->error = error;
     return WS_FATAL_ERROR;
 }
@@ -14905,6 +14921,7 @@ int DoReceive(WOLFSSH* ssh)
                         readSz);
                 if (ret != WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, "PR: First decrypt fail");
+                    WipeInputPacket(ssh, readSz);
                     ssh->error = ret;
                     /* The input cannot be resynced, so no highwater rekey
                      * may start. */
@@ -14978,6 +14995,7 @@ int DoReceive(WOLFSSH* ssh)
                                 + UINT32_SZ + ssh->curSz);
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: Decrypt fail");
+                        WipeInputPacket(ssh, UINT32_SZ + ssh->curSz);
                         ssh->error = ret;
                         ssh->highwaterFlag = 1;
                         ssh->msgHighwaterFlag = 1;
@@ -15003,6 +15021,7 @@ int DoReceive(WOLFSSH* ssh)
 
                     if (ret != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: DecryptAead fail");
+                        WipeInputPacket(ssh, UINT32_SZ + ssh->curSz);
                         ssh->error = ret;
                         ssh->highwaterFlag = 1;
                         ssh->msgHighwaterFlag = 1;
@@ -15366,7 +15385,10 @@ static int BundlePacket(WOLFSSH* ssh)
     else {
         WLOG(WS_LOG_DEBUG, "BP: failed to encrypt buffer");
         if (ssh != NULL) {
-            /* Drop the aborted packet */
+            /* Drop the aborted packet, wiping it: its payload is still
+             * plaintext, or only partly encrypted. */
+            WS_FORCEZERO(ssh->outputBuffer.buffer + ssh->packetStartIdx,
+                    ssh->outputBuffer.bufferSz - ssh->packetStartIdx);
             ssh->outputBuffer.length = ssh->packetStartIdx;
         }
     }
