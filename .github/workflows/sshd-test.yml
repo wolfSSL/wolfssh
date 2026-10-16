@@ -118,6 +118,19 @@ jobs:
         working-directory: ./wolfssh/
         run: make check
 
+      # Sits before the later steps, which reconfigure over config.log.
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wolfssh-sshd-logs-${{ matrix.wolfssl }}-${{ matrix.mldsa }}
+          path: |
+            wolfssh/test-suite.log
+            wolfssh/tests/*.log
+            wolfssh/scripts/*.log
+            wolfssh/config.log
+          retention-days: 5
+
       # For sshd_channel_close_test.sh. The suite runs as root, which does not
       # see a per-user pip install, so use the distro package.
       - name: Install paramiko
@@ -197,3 +210,19 @@ jobs:
           git log -3
           sudo ./run_all_sshd_tests.sh --match ssh_kex_algos.sh
 
+      # The daemon writes log.txt as root, so make it readable to the upload.
+      - name: Make wolfSSHd test logs readable
+        if: failure()
+        working-directory: ./wolfssh/apps/wolfsshd/test
+        run: sudo chmod a+r log.txt stdout.txt || true
+
+      - name: Upload wolfSSHd test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wolfsshd-test-logs-${{ matrix.wolfssl }}-${{ matrix.mldsa }}
+          path: |
+            wolfssh/apps/wolfsshd/test/log.txt
+            wolfssh/apps/wolfsshd/test/stdout.txt
+          if-no-files-found: ignore
+          retention-days: 5
