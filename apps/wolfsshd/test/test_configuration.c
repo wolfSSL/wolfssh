@@ -6013,6 +6013,38 @@ static int pidSave(const char* confPath, const char* pidTarget)
     return ret;
 }
 
+#if defined(WOLFSSH_HAVE_SYMLINK) && WOLFSSH_O_NOFOLLOW == 0
+/* Without O_NOFOLLOW a symlink check cannot be made atomic, so
+ * wolfSSHD_ConfigSavePID writes no PID file at all. */
+static int test_ConfigSavePID(void)
+{
+    int ret = WS_SUCCESS;
+    char base[] = "/tmp/wolfsshd_pidXXXXXX";
+    char conf[80] = "";
+    char pidPath[96] = "";
+    struct stat st;
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        snprintf(conf, sizeof(conf), "%s/sshd_config", base);
+        snprintf(pidPath, sizeof(pidPath), "%s/wolfsshd.pid", base);
+        ret = pidSave(conf, pidPath);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = smExpect("PID file refused without O_NOFOLLOW",
+            (stat(pidPath, &st) != 0) ? WS_SUCCESS : WS_FATAL_ERROR, 1);
+    }
+
+    unlink(pidPath);
+    unlink(conf);
+    rmdir(base);
+
+    return ret;
+}
+#else
 /* wolfSSHD_ConfigSavePID must refuse a symlink at the PID path so a planted
  * link cannot truncate another file, and must leave the PID file without group
  * or world write even under a permissive umask, whether it creates the file or
@@ -6096,9 +6128,8 @@ static int test_ConfigSavePID(void)
         }
     }
 
-    /* Scenario 2: a symlink at the PID path is refused, link target untouched.
-     * The common build exercises the atomic O_NOFOLLOW path; the lstat fallback
-     * needs a symlink-capable platform without O_NOFOLLOW. */
+    /* Scenario 2: a symlink at the PID path is refused, link target untouched
+     * (O_NOFOLLOW makes the open fail atomically). */
     if (ret == WS_SUCCESS) {
         f = fopen(victim, "w");
         if (f == NULL) {
@@ -6305,6 +6336,7 @@ static int test_ConfigSavePID(void)
 
     return ret;
 }
+#endif /* WOLFSSH_HAVE_SYMLINK && WOLFSSH_O_NOFOLLOW == 0 */
 #endif /* !_WIN32 */
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
 /* Direct coverage for the bit-level prefix matcher used by the certificate
