@@ -17497,27 +17497,43 @@ typedef struct {
     byte firstPacketFollows;
     byte expectIgnore;
     byte endpointType;
+    /* Our own lists, first choice first; NULL is the good id alone. */
+    const char* ourKexList;
+    const char* ourKeyList;
 } FirstPacketFollowsCase;
 
 static const FirstPacketFollowsCase firstPacketFollowsCases[] = {
     { "follows=0, guesses irrelevant: flag stays off",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 0, 0,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, both guesses match: do not skip",
-      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0, WOLFSSH_ENDPOINT_SERVER },
+      FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 0, WOLFSSH_ENDPOINT_SERVER,
+      NULL, NULL },
     { "follows=1, KEX guess wrong: skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, host-key guess wrong: skip", /* regression case */
       FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
     { "follows=1, both guesses wrong: skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 1,
-      WOLFSSH_ENDPOINT_SERVER },
+      WOLFSSH_ENDPOINT_SERVER, NULL, NULL },
+    /* RFC 4253 section 7: a guess is right only when both sides list the
+     * same first choice, even if the client's first choice is negotiated. */
+    { "follows=1, same first choices, longer lists: do not skip",
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD "," FPF_KEY_BAD, 1, 0,
+      WOLFSSH_ENDPOINT_SERVER,
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD "," FPF_KEY_BAD },
+    { "follows=1, KEX first choices differ, guess negotiated: skip",
+      FPF_KEX_GOOD "," FPF_KEX_BAD, FPF_KEY_GOOD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER, FPF_KEX_BAD "," FPF_KEX_GOOD, NULL },
+    { "follows=1, host-key first choices differ, guess negotiated: skip",
+      FPF_KEX_GOOD, FPF_KEY_GOOD "," FPF_KEY_BAD, 1, 1,
+      WOLFSSH_ENDPOINT_SERVER, NULL, FPF_KEY_BAD "," FPF_KEY_GOOD },
     /* A server never sends a guessed packet; the client ignores the flag. */
     { "client, server follows=1, both guesses wrong: do not skip",
       FPF_KEX_BAD "," FPF_KEX_GOOD, FPF_KEY_BAD "," FPF_KEY_GOOD, 1, 0,
-      WOLFSSH_ENDPOINT_CLIENT },
+      WOLFSSH_ENDPOINT_CLIENT, NULL, NULL },
 };
 
 static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
@@ -17534,8 +17550,10 @@ static void RunFirstPacketFollowsCase(const FirstPacketFollowsCase* tc)
     ssh = wolfSSH_new(ctx);
     AssertNotNull(ssh);
 
-    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, tc->ourKexList != NULL ?
+            tc->ourKexList : FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, tc->ourKeyList != NULL ?
+            tc->ourKeyList : FPF_KEY_GOOD), WS_SUCCESS);
 
     payloadSz = BuildKexInitPayload(ssh, tc->kexList, tc->keyList,
             tc->firstPacketFollows, payload, sizeof(payload));
@@ -17677,12 +17695,49 @@ static void RunFirstPacketFollowsCrossBoundaryCase(FirstPacketFollowsSkipFn fn,
 }
 #endif /* WOLFSSH_NO_DH_GEX_SHA256 && NO_WOLFSSH_SERVER */
 
+#ifndef NO_WOLFSSH_SERVER
+/* A client that lists GEX first may guess a KEXDH_GEX_REQUEST. DoReceive must
+ * discard it, with GEX compiled out too, rather than answer UNIMPLEMENTED and
+ * leave the skip armed for the real KEXDH_INIT. */
+static void TestFirstPacketFollowsGexRequestDispatch(void)
+{
+    ChannelOpenHarness harness;
+    byte payload[3 * UINT32_SZ];
+    byte in[64];
+    word32 payloadSz = 0;
+    word32 inSz;
+
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 2048);
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 3072);
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz, 8192);
+    inSz = WrapPacket(MSGID_KEXDH_GEX_REQUEST, payload, payloadSz,
+            in, sizeof(in));
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    harness.ssh->acceptState = ACCEPT_SERVER_KEXINIT_SENT;
+    harness.ssh->isKeying |= WOLFSSH_PEER_IS_KEYING;
+    AssertNotNull(harness.ssh->handshake);
+    harness.ssh->handshake->kexId = ID_DH_GROUP14_SHA256;
+    harness.ssh->handshake->expectMsgId = MSGID_NONE;
+    harness.ssh->handshake->ignoreNextKexMsg = 1;
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), 0);
+    AssertIntEQ(harness.ssh->handshake->ignoreNextKexMsg, 0);
+    AssertIntEQ(harness.ssh->handshake->expectMsgId, MSGID_KEXDH_INIT);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* !NO_WOLFSSH_SERVER */
+
 static void TestFirstPacketFollowsSkipped(void)
 {
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhInit, "DoKexDhInit");
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
     RunFirstPacketFollowsSkipCase(wolfSSH_TestDoKexDhGexRequest,
             "DoKexDhGexRequest");
+#ifndef NO_WOLFSSH_SERVER
+    TestFirstPacketFollowsGexRequestDispatch();
+#endif
+#ifndef WOLFSSH_NO_DH_GEX_SHA256
     /* Guess/negotiation straddling the GEX boundary, both directions. */
 #ifndef NO_WOLFSSH_SERVER
     RunFirstPacketFollowsCrossBoundaryCase(wolfSSH_TestDoKexDhInit,
