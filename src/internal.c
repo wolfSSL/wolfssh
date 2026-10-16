@@ -8410,8 +8410,12 @@ static int KeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
 
     /* Reject a peer public value outside the safe range [2, p-2] before key
      * agreement. Keeps wolfSSH independent of whether the linked wolfSSL
-     * validates the peer key inside wc_DhAgree. */
-    ret = wc_DhCheckPubKey(&ssh->handshake->privKey.dh, f, fSz);
+     * validates the peer key inside wc_DhAgree. f is an mpint, so a set
+     * top bit makes it negative (RFC 4251 section 5). */
+    if (fSz > 0 && (f[0] & 0x80) != 0)
+        ret = WS_PARSE_E;
+    else
+        ret = wc_DhCheckPubKey(&ssh->handshake->privKey.dh, f, fSz);
     if (ret != 0) {
         /* Peer-driven reject; log at DEBUG like other peer-input rejections
          * so a remote peer cannot flood the error log. */
@@ -17352,10 +17356,24 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
             PRIVATE_KEY_LOCK();
         }
         /* Reject a peer public value outside the safe range [2, p-2] before
-         * key agreement, independent of the linked wolfSSL's own check. */
-        if (ret == 0)
-            ret = wc_DhCheckPubKey(privKey, ssh->handshake->e,
-                    ssh->handshake->eSz);
+         * key agreement, independent of the linked wolfSSL's own check.
+         * e is an mpint, so a set top bit makes it negative (RFC 4251
+         * section 5). */
+        if (ret == 0) {
+            if (ssh->handshake->eSz > 0
+                    && (ssh->handshake->e[0] & 0x80) != 0)
+                ret = WS_PARSE_E;
+            else
+                ret = wc_DhCheckPubKey(privKey, ssh->handshake->e,
+                        ssh->handshake->eSz);
+            if (ret != 0) {
+                /* Peer-driven reject; log at DEBUG like other peer-input
+                 * rejections so a remote peer cannot flood the error log. */
+                WLOG(WS_LOG_DEBUG,
+                        "Peer DH public key out of range, %d", ret);
+                ret = WS_CRYPTO_FAILED;
+            }
+        }
         if (ret == 0) {
             PRIVATE_KEY_UNLOCK();
             ret = wc_DhAgree(privKey, ssh->k, &ssh->kSz, y_ptr, ySz,
