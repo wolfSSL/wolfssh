@@ -1642,11 +1642,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
             case 'p':
                 if (myoptarg == NULL)
                     err_sys("null argument found");
-                port = (word16)atoi(myoptarg);
-                #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
-                    if (port == 0)
-                        err_sys("port number cannot be 0");
-                #endif
+                if (ClientParsePort(myoptarg, &port) != WS_SUCCESS)
+                    err_sys("port number must be 1 to 65535");
                 break;
 
             case 'u':
