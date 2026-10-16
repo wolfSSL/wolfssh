@@ -24593,6 +24593,11 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
     const char* cType = "window-change";
     word32 typeSz = 0;
 
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelTerminalResize()");
+
+    if (ssh == NULL)
+        ret = WS_BAD_ARGUMENT;
+
     if (ret == WS_SUCCESS) {
         channel = ChannelFind(ssh,
                 ssh->defaultPeerChannelId, WS_CHANNEL_ID_PEER);
@@ -24641,6 +24646,7 @@ int SendChannelTerminalResize(WOLFSSH* ssh, word32 columns, word32 rows,
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
 
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelTerminalResize(), ret = %d", ret);
     return ret;
 }
 
