@@ -58,7 +58,24 @@ AC_TYPE_UINTPTR_T
 # Check headers/libs
 AC_CHECK_HEADERS([limits.h sys/select.h sys/time.h sys/ioctl.h pty.h util.h termios.h])
 AC_CHECK_LIB([network],[socket])
-AC_CHECK_LIB([util],[forkpty])
+
+# Probe forkpty through its header. AC_CHECK_LIB's bare declaration has no
+# extern "C", so the link fails under CC=g++.
+AC_MSG_CHECKING([for forkpty in -lutil])
+SAVED_LIBS="$LIBS"
+LIBS="-lutil $LIBS"
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <stddef.h>
+                     #ifdef HAVE_PTY_H
+                     #include <pty.h>
+                     #endif
+                     #ifdef HAVE_UTIL_H
+                     #include <util.h>
+                     #endif]],
+                   [[int fd; return (int)forkpty(&fd, NULL, NULL, NULL);]])],
+  [AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])
+   LIBS="$SAVED_LIBS"])
 
 #wolfssl
 AC_MSG_CHECKING([for wolfSSL])
@@ -86,8 +103,42 @@ AC_ARG_WITH(wolfssl,
   ]
 )
 
-AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
-AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket socketpair wc_ecc_set_rng])
+# Probe the wolfSSL functions through their headers. AC_CHECK_LIB and
+# AC_CHECK_FUNCS declare the symbol without extern "C", so with CC=g++ the
+# link looks for a mangled name and fails.
+# The cache variable keeps AC_CHECK_LIB's name so a preset
+# ac_cv_lib_wolfssl_wolfCrypt_Init=yes still skips the link test.
+LIBS="-lwolfssl $LIBS"
+AC_CACHE_CHECK([for wolfCrypt_Init in -lwolfssl],
+  [ac_cv_lib_wolfssl_wolfCrypt_Init],
+  [AC_LINK_IFELSE(
+    [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                       #include <wolfssl/wolfcrypt/settings.h>
+                       #else
+                       #include <wolfssl/options.h>
+                       #endif
+                       #include <wolfssl/wolfcrypt/wc_port.h>]],
+                     [[return wolfCrypt_Init();]])],
+    [ac_cv_lib_wolfssl_wolfCrypt_Init=yes],
+    [ac_cv_lib_wolfssl_wolfCrypt_Init=no])])
+AS_IF([test "x$ac_cv_lib_wolfssl_wolfCrypt_Init" != "xyes"],
+  [AC_MSG_ERROR([libwolfssl is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])
+
+AC_MSG_CHECKING([for wc_ecc_set_rng])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                     #include <wolfssl/wolfcrypt/settings.h>
+                     #else
+                     #include <wolfssl/options.h>
+                     #endif
+                     #include <wolfssl/wolfcrypt/ecc.h>]],
+                   [[return wc_ecc_set_rng(NULL, NULL);]])],
+  [AC_DEFINE([HAVE_WC_ECC_SET_RNG], [1],
+             [Define to 1 if you have the `wc_ecc_set_rng' function.])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
+AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket socketpair])
 
 # futimens()/utimensat() declarations are feature-test-macro gated, so a plain
 # AC_CHECK_FUNCS link test can pass while the prototype stays hidden at compile
@@ -387,7 +438,14 @@ AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],
           AC_MSG_ERROR([the SSH client app needs base64 encoding for host key fingerprints and known_hosts entries. Rebuild wolfSSL with --enable-base64encode, or leave out --enable-sshclient.])])])
 AS_IF([test "x$ENABLED_TPM" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TPM"
-       AC_CHECK_LIB([wolftpm],[wolfTPM2_Init],,[AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])
+       AC_MSG_CHECKING([for wolfTPM2_Init in -lwolftpm])
+       LIBS="-lwolftpm $LIBS"
+       AC_LINK_IFELSE(
+         [AC_LANG_PROGRAM([[#include <wolftpm/tpm2_wrap.h>]],
+                          [[return wolfTPM2_Init(NULL, NULL, NULL);]])],
+         [AC_MSG_RESULT([yes])],
+         [AC_MSG_RESULT([no])
+          AC_MSG_ERROR([libwolftpm is required for ${PACKAGE}. It can be obtained from https://www.wolfssl.com/download.html/ .])])])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
   AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"
   AS_IF([test -n "$PAM_LIB"],[
@@ -409,9 +467,21 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
           [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBLOGIN"; LIBS="$LIBS -llogin"],
           [AC_MSG_ERROR(liblogin not found)])],
       [*darwin*],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"],
-      [AC_CHECK_LIB([crypt],[crypt],
-        [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"; LIBS="$LIBS -lcrypt"],
-        [AC_MSG_ERROR(libcrypt not found)])])
+      [AC_MSG_CHECKING([for crypt in -lcrypt])
+       LIBS="$LIBS -lcrypt"
+       AC_LINK_IFELSE(
+         [AC_LANG_PROGRAM([[#ifndef _XOPEN_SOURCE
+                            #define _XOPEN_SOURCE
+                            #endif
+                            #ifndef _GNU_SOURCE
+                            #define _GNU_SOURCE
+                            #endif
+                            #include <unistd.h>]],
+                          [[return crypt("x", "xx") == NULL;]])],
+         [AC_MSG_RESULT([yes])
+          AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"],
+         [AC_MSG_RESULT([no])
+          AC_MSG_ERROR(libcrypt not found)])])
   ])
 ])
 

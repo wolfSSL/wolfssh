@@ -675,7 +675,8 @@ static INLINE void tcp_listen(WS_SOCKET_T* sockfd, word16* port, int useAnyAddr)
     #endif
     /* don't use INADDR_ANY by default, firewall may block, make user switch
        on */
-    build_addr(&addr, (useAnyAddr ? INADDR_ANY : wolfSshIp), *port);
+    build_addr(&addr,
+            (useAnyAddr ? (const char*)(size_t)INADDR_ANY : wolfSshIp), *port);
     tcp_socket(sockfd, ((struct sockaddr_in *)&addr)->sin_family);
 #if !defined(USE_WINDOWS_API) && !defined(WOLFSSL_MDK_ARM) \
                               && !defined(WOLFSSL_KEIL_TCP_NET) \

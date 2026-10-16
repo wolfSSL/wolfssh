@@ -896,8 +896,9 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         #if defined(HAVE_SYS_IOCTL_H)
         wolfSSH_DoModes(ssh->modes, ssh->modesSz, threadCtx->shellCtx.appFd);
         {
-            struct winsize s = {0};
+            struct winsize s;
 
+            WMEMSET(&s, 0, sizeof(s));
             s.ws_col = ssh->widthChar;
             s.ws_row = ssh->heightRows;
             s.ws_xpixel = ssh->widthPixels;
