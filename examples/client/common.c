@@ -365,6 +365,28 @@ void ClientIPOverride(int flag)
 #endif /* WOLFSSH_CERTS */
 
 
+/* Parse a port number. Text that is not wholly a number in 1..65535 is
+ * rejected with WS_BAD_ARGUMENT rather than truncated, and *port is left
+ * untouched. */
+int ClientParsePort(const char* in, word16* port)
+{
+    char* endptr = NULL;
+    long portVal;
+
+    if (in == NULL || port == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    portVal = strtol(in, &endptr, 10);
+    if (endptr == in || *endptr != '\0' || portVal < 1 || portVal > 65535) {
+        return WS_BAD_ARGUMENT;
+    }
+    *port = (word16)portVal;
+
+    return WS_SUCCESS;
+}
+
+
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     int ret = 0;

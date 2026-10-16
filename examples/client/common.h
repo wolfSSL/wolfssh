@@ -36,6 +36,7 @@ int ClientUserAuth(byte authType,
         WS_UserAuthData* authData, void* ctx);
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
 void ClientIPOverride(int flag);
+int ClientParsePort(const char* in, word16* port);
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap);
 #ifdef WOLFSSH_TPM

@@ -3916,7 +3916,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                         ES_ERROR("NULL port value\n");
                     }
                     else {
-                        port = (word16)atoi(myoptarg);
+                        /* 0 is allowed here: the test harness asks for an
+                         * ephemeral port */
+                        char* portEnd = NULL;
+                        long portVal = strtol(myoptarg, &portEnd, 10);
+
+                        if (portEnd == myoptarg || *portEnd != '\0'
+                                || portVal < 0 || portVal > 65535) {
+                            ES_ERROR("port number must be 0 to 65535\n");
+                        }
+                        port = (word16)portVal;
                         #if !defined(NO_MAIN_DRIVER)
                             if (port == 0) {
                                 ES_ERROR("port number cannot be 0\n");
