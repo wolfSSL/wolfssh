@@ -706,7 +706,8 @@ enum NameIdType {
 #endif
 
 #ifndef WOLFSSH_RSA_MIN_KEY_BITS
-    /* Minimum accepted RSA public-key size (bits) for user authentication.
+    /* Minimum accepted RSA public-key size (bits) for host keys and user
+     * authentication.
      * Per NIST SP 800-131A; override at build time if a smaller key must be
      * accepted. */
     #define WOLFSSH_RSA_MIN_KEY_BITS 2048

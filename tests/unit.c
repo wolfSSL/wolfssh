@@ -22718,9 +22718,29 @@ static int test_ParseRSAPubKey(void)
 
     /* truncated blob: fails after the key is initialized */
     ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)(sizeof(blob) / 2));
-    if (ret != WS_RSA_E) {
+    if (ret != WS_BUFFER_E) {
         fprintf(stderr, "\t\"truncated\" FAIL: got %d, expected %d\n",
-                ret, WS_RSA_E);
+                ret, WS_BUFFER_E);
+        failures++;
+    }
+
+    /* host key under WOLFSSH_RSA_MIN_KEY_BITS */
+    WMEMCPY(blob + RSA_PUB_BLOB_NLEN, userAuthRsaPubKeyNLen1024,
+            sizeof(userAuthRsaPubKeyNLen1024));
+    ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)sizeof(blob));
+    if (ret != WS_CERT_KEY_SIZE_E) {
+        fprintf(stderr, "\t\"1024 bit\" FAIL: got %d, expected %d\n",
+                ret, WS_CERT_KEY_SIZE_E);
+        failures++;
+    }
+
+    WMEMCPY(blob, userAuthRsaPubKeyBlob, sizeof(blob));
+    WMEMCPY(blob + RSA_PUB_BLOB_N, userAuthRsaPubKeyMsb2047,
+            sizeof(userAuthRsaPubKeyMsb2047));
+    ret = wolfSSH_TestParseRSAPubKey(ssh, blob, (word32)sizeof(blob));
+    if (ret != WS_CERT_KEY_SIZE_E) {
+        fprintf(stderr, "\t\"2047 bit\" FAIL: got %d, expected %d\n",
+                ret, WS_CERT_KEY_SIZE_E);
         failures++;
     }
 
