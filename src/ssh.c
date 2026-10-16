@@ -1417,6 +1417,15 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel);
 static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz);
 
 
+/* Copies sz bytes from the read cursor to out, then wipes and consumes them. */
+static void _BufferTake(WOLFSSH_BUFFER* buffer, byte* out, word32 sz)
+{
+    WMEMCPY(out, buffer->buffer + buffer->idx, sz);
+    WS_FORCEZERO(buffer->buffer + buffer->idx, sz);
+    buffer->idx += sz;
+}
+
+
 /* Wrapper function for ease of use to get data after it has been decrypted from
  * the SSH connection. This function handles low level operations in addition to
  * the read, such as window adjustment and high water checking.
@@ -1532,8 +1541,7 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         if (n <= 0)
             ret = WS_BUFFER_E;
         else {
-            WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, n);
-            inputBuffer->idx += n;
+            _BufferTake(inputBuffer, buf, (word32)n);
             ret = _UpdateChannelWindow(ssh->channelList);
             if (ret != WS_SUCCESS) {
                 ssh->error = ret;
@@ -5102,15 +5110,12 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
     if ((inputBuffer->length > inputBuffer->bufferSz / 2) ||
          (channel->windowSz == 0)) {
 
-        word32 usedSz = inputBuffer->length - inputBuffer->idx;
         word32 bytesToAdd = inputBuffer->idx;
 
-        WLOG(WS_LOG_DEBUG, "Making more room: %u", usedSz);
-        if (usedSz) {
-            WLOG(WS_LOG_DEBUG, "  ...moving data down");
-            WMEMMOVE(inputBuffer->buffer,
-                     inputBuffer->buffer + bytesToAdd, usedSz);
-        }
+        WLOG(WS_LOG_DEBUG, "Making more room: %u",
+             inputBuffer->length - inputBuffer->idx);
+        /* Compacts and wipes the vacated tail. Growing by zero cannot fail. */
+        (void)GrowBuffer(inputBuffer, 0);
 
         /* Credit through the channel, not a direct send: credit that cannot go
          * out now is parked (mid-rekey per RFC 4253 section 7.1, or a failed
@@ -5123,9 +5128,6 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
         WLOG(WS_LOG_INFO, "  windowSz = %u", channel->windowSz);
         channel->windowSz += bytesToAdd;
         WLOG(WS_LOG_INFO, "  update windowSz = %u", channel->windowSz);
-
-        inputBuffer->length = usedSz;
-        inputBuffer->idx = 0;
     }
 
     return sendResult;
@@ -5155,8 +5157,7 @@ static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
     }
 
     bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
-    WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
-    inputBuffer->idx += bufSz;
+    _BufferTake(inputBuffer, buf, bufSz);
 
     /* Unguarded by bufSz: also compacts, and carries credit left behind. */
     savedError = ssh->error;
@@ -5212,8 +5213,7 @@ static int _ChannelReadExt(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
     }
 
     bufSz = min(bufSz, extDataBuffer->length - extDataBuffer->idx);
-    WMEMCPY(buf, extDataBuffer->buffer + extDataBuffer->idx, bufSz);
-    extDataBuffer->idx += bufSz;
+    _BufferTake(extDataBuffer, buf, bufSz);
 
     if (bufSz > 0) {
         int adjustResult;

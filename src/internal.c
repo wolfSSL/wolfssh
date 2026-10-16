@@ -5556,9 +5556,7 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
             }
             else {
                 /* Scrub decrypted traffic before releasing the old buffer.
-                 * Must cover bufferSz, not length: the compacting WMEMMOVE
-                 * below lowers length while leaving a stale copy of the
-                 * shifted-out bytes above it. */
+                 * Covers bufferSz, not length, so no byte it held survives. */
                 WS_FORCEZERO(buf->buffer, buf->bufferSz);
                 WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
             }
@@ -5570,8 +5568,12 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
         }
         else {
             if (buf->length > 0) {
-                WMEMMOVE(buf->buffer, buf->buffer + buf->idx, buf->length - buf->idx);
-                buf->length -= buf->idx;
+                word32 usedSz = buf->length - buf->idx;
+
+                WMEMMOVE(buf->buffer, buf->buffer + buf->idx, usedSz);
+                /* Scrub the stale copy the move leaves above the new length. */
+                WS_FORCEZERO(buf->buffer + usedSz, buf->idx);
+                buf->length = usedSz;
                 buf->idx = 0;
             }
         }
@@ -5605,8 +5607,7 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
         if (buf->dynamicFlag) {
             WLOG(WS_LOG_DEBUG, "SB: releasing dynamic buffer");
             /* Scrub decrypted traffic before releasing the dynamic buffer.
-             * Must cover bufferSz, not length: GrowBuffer()'s compaction and
-             * the shift-down above both leave plaintext above length. */
+             * Covers bufferSz, not length, so no byte it held survives. */
             WS_FORCEZERO(buf->buffer, buf->bufferSz);
             WFREE(buf->buffer, buf->heap, DYNTYPE_BUFFER);
         }
