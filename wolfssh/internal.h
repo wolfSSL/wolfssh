@@ -701,6 +701,8 @@ enum NameIdType {
     /* Per-field cap on the number of names in a name-list. */
     #define WOLFSSH_MAX_NAMELIST_CNT 64
 #endif
+/* RFC 4251 Section 6 byte cap on one algorithm name. */
+#define WOLFSSH_MAX_ALGO_NAME_SZ 64
 #ifndef WOLFSSH_DEFAULT_GEXDH_MIN
     #define WOLFSSH_DEFAULT_GEXDH_MIN 2048
 #endif
