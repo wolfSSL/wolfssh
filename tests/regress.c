@@ -15026,6 +15026,12 @@ static void TestTerminalResizeBlockedAfterDisconnect(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+static void TestTerminalResizeNullSsh(void)
+{
+    AssertIntEQ(SendChannelTerminalResize(NULL, 80, 24, 0, 0),
+            WS_BAD_ARGUMENT);
+}
 #endif /* WOLFSSH_TERM && !NO_FILESYSTEM */
 #endif /* !NO_WOLFSSH_CLIENT */
 
@@ -20651,6 +20657,7 @@ int main(int argc, char** argv)
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM) \
     && !defined(NO_WOLFSSH_CLIENT)
     TestTerminalResizeBlockedAfterDisconnect();
+    TestTerminalResizeNullSsh();
 #endif
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();
