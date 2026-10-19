@@ -9073,6 +9073,7 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         if (ret == 0) {
             ret = wc_HashFinal(hash, hashId, ssh->h);
             wc_HashFree(hash, hashId);
+            WS_FORCEZERO(hash, sizeof(*hash));
             ssh->handshake->kexHashId = WC_HASH_TYPE_NONE;
         }
 
@@ -18957,6 +18958,7 @@ int SendKexDhReply(WOLFSSH* ssh)
         if (ret == 0) {
             ret = wc_HashFinal(hash, hashId, ssh->h);
             wc_HashFree(hash, hashId);
+            WS_FORCEZERO(hash, sizeof(*hash));
             ssh->handshake->kexHashId = WC_HASH_TYPE_NONE;
         }
         if (ret == 0) {
