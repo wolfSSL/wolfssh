@@ -297,6 +297,7 @@ enum WS_SFTP_PUT_STATE_ID {
 
 typedef struct WS_SFTP_PUT_STATE {
     enum WS_SFTP_PUT_STATE_ID state;
+    int error;
 #ifndef USE_WINDOWS_API
     WFILE* fl;
     #ifdef WOLFSSL_NUCLEUS
@@ -10540,9 +10541,8 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         if (ssh->error == WS_SUCCESS) {
                             ssh->error = (sz < 0) ? sz : WS_FATAL_ERROR;
                         }
+                        state->error = ssh->error;
                         ret = WS_FATAL_ERROR;
-                        /* no remote close, it would overwrite ret */
-                        state->handleSz = 0;
                         state->state = STATE_PUT_CLOSE_LOCAL;
                         break;
                     }
@@ -10597,6 +10597,10 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
             case STATE_PUT_CLEANUP:
                 WLOG(WS_LOG_SFTP, "SFTP PUT STATE: CLEANUP");
                 if (ssh->putState != NULL) {
+                    if (state->error != WS_SUCCESS) {
+                        ssh->error = state->error;
+                        ret = WS_FATAL_ERROR;
+                    }
                     WS_FORCEZERO(ssh->putState, sizeof(WS_SFTP_PUT_STATE));
                     WFREE(ssh->putState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                     ssh->putState = NULL;

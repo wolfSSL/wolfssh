@@ -23495,10 +23495,33 @@ static word32 SftpBuildReply(byte* out, word32 outSz, byte type, word32 reqId,
 }
 
 
+/* This bare session sends unencrypted SSH CHANNEL_DATA packets. Count
+ * CLOSE requests carrying the one-byte handle returned by the fixture. */
+static int SftpPutCountClose(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    const byte* packet = (const byte*)buf;
+    int* count = (int*)ctx;
+    word32 msgOffset = LENGTH_SZ + PAD_LENGTH_SZ;
+    word32 dataOffset = msgOffset + MSG_ID_SZ + UINT32_SZ * 2;
+    word32 handleOffset = dataOffset + WOLFSSH_SFTP_HEADER + UINT32_SZ;
+
+    WOLFSSH_UNUSED(ssh);
+    if (sz > handleOffset && packet[msgOffset] == MSGID_CHANNEL_DATA &&
+            packet[dataOffset + LENGTH_SZ] == WOLFSSH_FTP_CLOSE &&
+            packet[handleOffset - UINT32_SZ] == 0 &&
+            packet[handleOffset - 3] == 0 && packet[handleOffset - 2] == 0 &&
+            packet[handleOffset - 1] == 1 && packet[handleOffset] == 'h') {
+        (*count)++;
+    }
+    return (int)sz;
+}
+
+
 /* Drives wolfSSH_SFTP_Put() over a staged handle reply and a write answered by
  * an FXP_STATUS carrying the request id "openId + writeIdOfst". Returns 0, or
  * a negative sentinel on a setup failure. */
-static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
+static int SftpClientDrivePutFail(word32 writeIdOfst, int closeMode,
+        int* putRet, int* putErr,
         int* stateFreed)
 {
     WOLFSSH_CTX* ctx = NULL;
@@ -23510,6 +23533,7 @@ static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
     word32 openId = 0;
     int    result;
     int    fd;
+    int    closeCount = 0;
 
     *putRet     = WS_SUCCESS;
     *putErr     = WS_SUCCESS;
@@ -23527,6 +23551,8 @@ static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
 
     result = SftpClientNewSession(&ctx, &ssh);
     if (result == 0) {
+        wolfSSH_SetIOSend(ctx, SftpPutCountClose);
+        wolfSSH_SetIOWriteCtx(ssh, &closeCount);
         ssh->sftpState = SFTP_DONE;
         ssh->channelList->peerWindowSz = 4096;
         ssh->channelList->peerMaxPacketSz = 1024;
@@ -23538,6 +23564,7 @@ static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
         if (replySz > 0) {
             /* the trailing bytes open with the handle string length */
             PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+            reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
         }
         if (replySz == 0 || wolfSSH_TestChannelPutData(ssh->channelList,
                     reply, replySz) != WS_SUCCESS) {
@@ -23559,7 +23586,59 @@ static int SftpClientDrivePutFail(word32 writeIdOfst, int* putRet, int* putErr,
         }
     }
     if (result == 0) {
-        *putRet     = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+        *putRet = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+        /* CLOSE must be sent once, including on a rejected WRITE. */
+        if (closeCount != 1) {
+            result = -1150;
+        }
+        if (result == 0 && writeIdOfst == 1) {
+            if (*putRet != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+                    ssh->putState == NULL || ssh->closeState == NULL) {
+                result = -1151;
+            }
+            if (result == 0) {
+                *putRet = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+                if (*putRet != WS_FATAL_ERROR ||
+                        ssh->error != WS_WANT_READ || closeCount != 1) {
+                    result = -1152;
+                }
+            }
+            replySz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_STATUS,
+                    openId + 2, UINT32_SZ * 3);
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER, closeMode & 1 ?
+                    WOLFSSH_FTP_FAILURE : WOLFSSH_FTP_OK);
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ, 0);
+            PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ * 2, 0);
+            if (result == 0 && closeMode >= 2) {
+                /* Suspend again after receiving only part of the reply. */
+                if (wolfSSH_TestChannelPutData(ssh->channelList, reply,
+                            WOLFSSH_SFTP_HEADER + UINT32_SZ) != WS_SUCCESS) {
+                    result = -1153;
+                }
+                if (result == 0) {
+                    *putRet = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+                    if (*putRet != WS_FATAL_ERROR ||
+                            ssh->error != WS_WANT_READ ||
+                            ssh->putState == NULL || ssh->closeState == NULL)
+                        result = -1154;
+                }
+                if (result == 0 && wolfSSH_TestChannelPutData(
+                            ssh->channelList,
+                            reply + WOLFSSH_SFTP_HEADER + UINT32_SZ,
+                            replySz - WOLFSSH_SFTP_HEADER - UINT32_SZ)
+                        != WS_SUCCESS)
+                    result = -1155;
+            }
+            else if (result == 0 && wolfSSH_TestChannelPutData(
+                        ssh->channelList, reply, replySz) != WS_SUCCESS) {
+                result = -1156;
+            }
+            if (result == 0) {
+                *putRet = wolfSSH_SFTP_Put(ssh, tmpFile, remote, 0, NULL);
+                if (closeCount != 1 || ssh->closeState != NULL)
+                    result = -1157;
+            }
+        }
         *putErr     = wolfSSH_get_error(ssh);
         *stateFreed = (ssh->putState == NULL);
     }
@@ -23581,20 +23660,27 @@ static int test_SftpClientPutWriteStatusFail(void)
     int putRet;
     int putErr;
     int stateFreed;
+    int closeMode;
 
-    /* the server rejects the write */
-    rc = SftpClientDrivePutFail(1, &putRet, &putErr, &stateFreed);
-    if (rc != 0)
-        return rc;
-    if (putRet != WS_FATAL_ERROR)
-        return -994;
-    if (putErr != WS_SFTP_STATUS_NOT_OK)
-        return -995;
-    if (!stateFreed)
-        return -996;
+    /* CLOSE succeeds/fails, with a full or split response. The original
+     * WRITE error must survive every cleanup and retry. */
+    for (closeMode = 0; closeMode < 4; closeMode++) {
+        rc = SftpClientDrivePutFail(1, closeMode, &putRet, &putErr,
+                &stateFreed);
+        if (rc != 0) {
+            printf("SFTP PUT close mode %d: %d\n", closeMode, rc);
+            return rc;
+        }
+        if (putRet != WS_FATAL_ERROR)
+            return -994;
+        if (putErr != WS_SFTP_STATUS_NOT_OK)
+            return -995;
+        if (!stateFreed)
+            return -996;
+    }
 
     /* the reply answers a request id the client never sent */
-    rc = SftpClientDrivePutFail(2, &putRet, &putErr, &stateFreed);
+    rc = SftpClientDrivePutFail(2, 0, &putRet, &putErr, &stateFreed);
     if (rc != 0)
         return rc;
     if (putRet != WS_FATAL_ERROR)
