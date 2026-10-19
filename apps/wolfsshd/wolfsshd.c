@@ -4818,8 +4818,10 @@ static int StartSSHD(int argc, char** argv)
                     conn->auth = connAuth;
                 }
 #endif
-                ret = NewConnection(conn);
-                if (ret != WS_SUCCESS) {
+                /* Not assigned to ret: a failed fork() or CreateThread()
+                 * belongs to this connection only, and ret is the loop
+                 * condition, so it would stop the daemon accepting. */
+                if (NewConnection(conn) != WS_SUCCESS) {
                     /* on failure the connection was not handed off, it is
                        still owned here and needs cleaned up */
                     WCLOSESOCKET(conn->fd);
