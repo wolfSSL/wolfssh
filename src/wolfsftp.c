@@ -10512,10 +10512,54 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                 do {
                     if (state->rSz == 0) {
                     #ifndef USE_WINDOWS_API
+                    #if defined(WOLFSSH_FATFS) && \
+                            !defined(WOLFSSH_USER_FILESYSTEM)
+                        {
+                            UINT bytesRead = 0;
+                            FRESULT readResult;
+
+                            /* ff_read maps errors to zero, losing the EOF
+                             * distinction. Preserve the native result. */
+                            readResult = f_read(state->fl, state->r,
+                                    WOLFSSH_MAX_SFTP_RW, &bytesRead);
+                            if (readResult != FR_OK) {
+                                state->error = WS_BAD_FILE_E;
+                                ret = WS_FATAL_ERROR;
+                                state->state = STATE_PUT_CLOSE_LOCAL;
+                                break;
+                            }
+                            state->rSz = (int)bytesRead;
+                        }
+                    #elif defined(MICROCHIP_MPLAB_HARMONY) && \
+                            !defined(WOLFSSH_USER_FILESYSTEM)
+                        {
+                            size_t bytesRead = WFREAD(ssh->fs, state->r,
+                                    1, WOLFSSH_MAX_SFTP_RW, state->fl);
+
+                            if (bytesRead == (size_t)-1) {
+                                state->error = WS_BAD_FILE_E;
+                                ret = WS_FATAL_ERROR;
+                                state->state = STATE_PUT_CLOSE_LOCAL;
+                                break;
+                            }
+                            state->rSz = (int)bytesRead;
+                        }
+                    #else
                         state->rSz = (int)WFREAD(ssh->fs, state->r,
                                 1, WOLFSSH_MAX_SFTP_RW, state->fl);
-                        if (state->rSz <= 0) {
-                            break; /* either at end of file or error */
+                    #endif
+                        if (state->rSz < 0
+                    #ifdef WFERROR
+                                || WFERROR(ssh->fs, state->fl)
+                    #endif
+                                ) {
+                            state->error = WS_BAD_FILE_E;
+                            ret = WS_FATAL_ERROR;
+                            state->state = STATE_PUT_CLOSE_LOCAL;
+                            break;
+                        }
+                        if (state->rSz == 0) {
+                            break; /* EOF */
                         }
                     #else /* USE_WINDOWS_API */
                         /* ReadFile() wants a DWORD* out param; state->rSz is
@@ -10525,9 +10569,17 @@ int wolfSSH_SFTP_Put(WOLFSSH* ssh, char* from, char* to, byte resume,
                         if (ReadFile(state->fileHandle, state->r,
                                      WOLFSSH_MAX_SFTP_RW, &wRSz,
                                      &state->offset) == 0) {
-                            break; /* either at end of file or error */
+                            if (GetLastError() != ERROR_HANDLE_EOF) {
+                                state->error = WS_BAD_FILE_E;
+                                ret = WS_FATAL_ERROR;
+                                state->state = STATE_PUT_CLOSE_LOCAL;
+                            }
+                            break;
                         }
                         state->rSz = (int)wRSz;
+                        if (state->rSz == 0) {
+                            break; /* EOF */
+                        }
                     #endif /* USE_WINDOWS_API */
                     }
                     sz = wolfSSH_SFTP_SendWritePacket(ssh,

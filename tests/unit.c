@@ -164,6 +164,9 @@
     !defined(WOLFSSH_USER_FILESYSTEM) && !defined(WOLFSSH_FATFS)
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <errno.h>
 #define WOLFSSH_TEST_SFTP_PUT
 #endif
 
@@ -23870,6 +23873,189 @@ static int test_SftpGetCleanup(void)
     return 0;
 }
 
+/* Inject a real fread error by replacing the input descriptor with a
+ * write-only descriptor. No access to the private PUT state is needed. */
+typedef struct SftpPutReadIo {
+    int localFd;
+    int errorFd;
+    int fault;
+    int injected;
+    int setupError;
+    int writes;
+    int closes;
+    struct stat source;
+} SftpPutReadIo;
+
+static int SftpPutReadSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    SftpPutReadIo* io = (SftpPutReadIo*)ctx;
+    const byte* packet = (const byte*)buf;
+    word32 msgOffset = LENGTH_SZ + PAD_LENGTH_SZ;
+    word32 dataOffset = msgOffset + MSG_ID_SZ + UINT32_SZ * 2;
+    byte type;
+    struct stat st;
+
+    WOLFSSH_UNUSED(ssh);
+    if (sz <= dataOffset + LENGTH_SZ ||
+            packet[msgOffset] != MSGID_CHANNEL_DATA)
+        return (int)sz;
+    type = packet[dataOffset + LENGTH_SZ];
+    if (type == WOLFSSH_FTP_WRITE)
+        io->writes++;
+    if (type == WOLFSSH_FTP_CLOSE)
+        io->closes++;
+    if (!io->injected && ((io->fault == 1 && type == WOLFSSH_FTP_OPEN) ||
+            (io->fault == 2 && type == WOLFSSH_FTP_WRITE))) {
+        /* The fixture reserved the lowest free fd just before PUT. Verify
+         * that it really is the source file before replacing it. */
+        if (fstat(io->localFd, &st) != 0 ||
+                st.st_dev != io->source.st_dev ||
+                st.st_ino != io->source.st_ino ||
+                dup2(io->errorFd, io->localFd) < 0)
+            io->setupError = 1;
+        io->injected = 1;
+    }
+    return (int)sz;
+}
+
+
+static int SftpPutReadCase(word32 size, int fault, int closeFails)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    SftpPutReadIo io;
+    char path[] = "/tmp/wolfssh_put_readXXXXXX";
+    char remote[] = "put_target";
+    byte data[WOLFSSH_MAX_SFTP_RW];
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 3];
+    word32 id;
+    word32 sz;
+    word32 left = size;
+    word32 writes = fault == 1 ? 0 : fault == 2 ? 1 :
+            (size + WOLFSSH_MAX_SFTP_RW - 1) / WOLFSSH_MAX_SFTP_RW;
+    word32 n;
+    int fd;
+    int ret;
+    int result = 0;
+
+    WMEMSET(&io, 0, sizeof(io));
+    io.errorFd = -1;
+    io.localFd = -1;
+    io.fault = fault;
+    WMEMSET(data, 'x', sizeof(data));
+    fd = mkstemp(path);
+    if (fd < 0)
+        return -1160;
+    while (left > 0) {
+        sz = left > sizeof(data) ? (word32)sizeof(data) : left;
+        if (write(fd, data, sz) != (ssize_t)sz) {
+            result = -1161;
+            break;
+        }
+        left -= sz;
+    }
+    close(fd);
+    if (result != 0)
+        goto done;
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result != 0)
+        goto done;
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = WOLFSSH_MAX_SFTP_RW * 4;
+    ssh->channelList->peerMaxPacketSz = WOLFSSH_MAX_SFTP_RW + 1024;
+    wolfSSH_SetIOSend(ctx, SftpPutReadSend);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+    id = ssh->reqId;
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_HANDLE, id,
+            UINT32_SZ + 1);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+    reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != WS_SUCCESS) {
+        result = -1162;
+        goto done;
+    }
+    for (n = 0; n < writes; n++) {
+        if (SftpGetStatus(ssh, id + n + 1, WOLFSSH_FTP_OK) != WS_SUCCESS) {
+            result = -1163;
+            goto done;
+        }
+    }
+    io.errorFd = open(path, O_WRONLY);
+    if (io.errorFd < 0 || fstat(io.errorFd, &io.source) != 0) {
+        result = -1164;
+        goto done;
+    }
+    io.localFd = open(path, O_RDONLY);
+    if (io.localFd < 0) {
+        result = -1165;
+        goto done;
+    }
+    close(io.localFd);
+    ret = wolfSSH_SFTP_Put(ssh, path, remote, 0, NULL);
+    if (io.setupError || (fault && !io.injected) ||
+            ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+            io.writes != (int)writes || io.closes != 1 ||
+            ssh->putState == NULL || ssh->closeState == NULL) {
+        result = -1166;
+        goto done;
+    }
+    /* The local stream must already be closed before awaiting remote CLOSE. */
+    if (fcntl(io.localFd, F_GETFD) != -1 || errno != EBADF) {
+        result = -1167;
+        goto done;
+    }
+    if (SftpGetStatus(ssh, id + writes + 1, closeFails ?
+                WOLFSSH_FTP_FAILURE : WOLFSSH_FTP_OK) != WS_SUCCESS) {
+        result = -1168;
+        goto done;
+    }
+    ret = wolfSSH_SFTP_Put(ssh, path, remote, 0, NULL);
+    if (ret != (fault ? WS_FATAL_ERROR : WS_SUCCESS) ||
+            (fault && ssh->error != WS_BAD_FILE_E) || io.closes != 1 ||
+            ssh->putState != NULL || ssh->closeState != NULL) {
+        result = -1169;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    if (io.errorFd >= 0)
+        close(io.errorFd);
+    unlink(path);
+    return result;
+}
+
+
+static int test_SftpPutReadError(void)
+{
+    const word32 sizes[] = {0, 1, WOLFSSH_MAX_SFTP_RW,
+                           WOLFSSH_MAX_SFTP_RW + 1};
+    word32 n;
+    int fault;
+    int closeFails;
+    int ret;
+
+    for (n = 0; n < sizeof(sizes) / sizeof(sizes[0]); n++) {
+        ret = SftpPutReadCase(sizes[n], 0, 0);
+        if (ret != 0) {
+            printf("SFTP PUT EOF size %u: %d\n", sizes[n], ret);
+            return ret;
+        }
+    }
+    for (fault = 1; fault <= 2; fault++) {
+        for (closeFails = 0; closeFails <= 1; closeFails++) {
+            ret = SftpPutReadCase(WOLFSSH_MAX_SFTP_RW * 2 + 1,
+                    fault, closeFails);
+            if (ret != 0) {
+                printf("SFTP PUT read fault %d, close failure %d: %d\n",
+                        fault, closeFails, ret);
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
 #endif /* WOLFSSH_TEST_SFTP_PUT */
 
 /* Builds an SFTP DATA reply in "out": the 9 byte header carrying the request
@@ -26040,6 +26226,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_TEST_SFTP_PUT
+    unitResult = test_SftpPutReadError();
+    printf("SftpPutReadError: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+
     unitResult = test_SftpGetCleanup();
     printf("SftpGetCleanup: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
     testResult = testResult || unitResult;
