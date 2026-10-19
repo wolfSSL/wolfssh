@@ -48,6 +48,7 @@ extra_test_cases=(
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
  "sshd_fork_fail_test.sh"
+ "sshd_exit_status_test.sh"
  "sshd_x509_test.sh"
  "sshd_x509_upn_fail.sh"
  "sshd_mldsa_composite_test.sh"
@@ -772,6 +773,7 @@ local_sshd_tests=(
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
  "sshd_fork_fail_test.sh"
+ "sshd_exit_status_test.sh"
 )
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     for test in "${local_sshd_tests[@]}"; do
