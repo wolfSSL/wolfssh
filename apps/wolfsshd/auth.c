@@ -2665,6 +2665,19 @@ static void DoFakePasswordCheck(WS_UserAuthData* authData)
 }
 
 
+static int PasswordHasNul(const byte* pw, word32 pwSz)
+{
+    word32 i;
+
+    for (i = 0; pw != NULL && i < pwSz; i++) {
+        if (pw[i] == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
 /*
  * @TODO this will take a pipe or equivalent to talk to a privileged thread
  * rather than having WOLFSSHD_AUTH directly with privilege separation.
@@ -2752,6 +2765,15 @@ static int RequestAuthentication(WS_UserAuthData* authData,
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password authentication for "
                         "root not allowed by configuration!");
             ret = WOLFSSH_USERAUTH_REJECTED;
+        }
+        /* The backends check the password as a C string, so "\0..." would
+         * be checked as "" and slip past the empty-password check below. */
+        else if (PasswordHasNul(authData->sf.password.password,
+                                authData->sf.password.passwordSz)) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Password contains a NUL "
+                        "byte, rejecting");
+            ret = WOLFSSH_USERAUTH_FAILURE;
+            needFakeCheck = 1;
         }
         /* Check if password is valid for this user. */
         /* first handle empty password cases */

@@ -4364,6 +4364,156 @@ static int test_RequestAuth_permitEmptyPwDeniedFakesPasswordCheck(void)
     return ret;
 }
 
+/* Shadow entry for an account with no password set. */
+static struct spwd* stub_getspnam_emptyHash(const char* name)
+{
+    (void)name;
+    WMEMSET(&stub_shadow_test_sp, 0, sizeof(stub_shadow_test_sp));
+    stub_shadow_test_sp.sp_namp = (char*)"shadow_branch_test_user";
+    stub_shadow_test_hash[0] = '\0';
+    stub_shadow_test_sp.sp_pwdp = stub_shadow_test_hash;
+    wsshd_test_SetLiveAging(&stub_shadow_test_sp);
+    return &stub_shadow_test_sp;
+}
+
+/* A password with an embedded NUL reaches crypt() truncated at the NUL, so
+ * "\0junk" would be checked as "" and log in to an account with no password
+ * under PermitEmptyPasswords no, and "ab\0cd" would log in as "ab". It must
+ * be refused before the check, wherever the NUL sits. */
+static int test_RequestAuth_embeddedNulPasswordRejected(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    int fakeChecked;
+    int i;
+    int haveSha512;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct spwd* (*savedGetspnam)(const char*);
+    int (*savedGrouplist)(const char*, WGID_T, WGID_T*, int*);
+    int (*savedSetgroups)(int, const WGID_T*);
+    static const byte nulPw[] = "\0junk";
+    static const byte nulOnlyPw[] = "\0";
+    static const byte trailNulPw[] = "junk\0";
+    static const byte hashPw[] = "ab";
+    static const byte midNulPw[] = "ab\0cd";
+    static const struct {
+        const char* desc;
+        const char* permitLine;
+        /* hash of hashPw when set, else an empty hash */
+        int validHash;
+        const byte* pw;
+        word32 pwSz;
+        int expected;
+        int expectFakeCheck;
+    } cases[] = {
+        { "PermitEmptyPw yes accepts a real empty password",
+          "PermitEmptyPasswords yes", 0, NULL, 0,
+          WOLFSSH_USERAUTH_SUCCESS, 0 },
+        { "PermitEmptyPw no rejects NUL-prefixed password",
+          "PermitEmptyPasswords no", 0, nulPw, sizeof(nulPw) - 1,
+          WOLFSSH_USERAUTH_FAILURE, 1 },
+        { "PermitEmptyPw no rejects a lone NUL",
+          "PermitEmptyPasswords no", 0, nulOnlyPw, sizeof(nulOnlyPw) - 1,
+          WOLFSSH_USERAUTH_FAILURE, 1 },
+        { "PermitEmptyPw yes rejects NUL-prefixed password",
+          "PermitEmptyPasswords yes", 0, nulPw, sizeof(nulPw) - 1,
+          WOLFSSH_USERAUTH_FAILURE, 1 },
+        { "PermitEmptyPw yes rejects a trailing NUL",
+          "PermitEmptyPasswords yes", 0, trailNulPw, sizeof(trailNulPw) - 1,
+          WOLFSSH_USERAUTH_FAILURE, 1 },
+        { "correct password against a real hash",
+          "PermitEmptyPasswords no", 1, hashPw, sizeof(hashPw) - 1,
+          WOLFSSH_USERAUTH_SUCCESS, 0 },
+        { "correct password plus NUL and junk rejected",
+          "PermitEmptyPasswords no", 1, midNulPw, sizeof(midNulPw) - 1,
+          WOLFSSH_USERAUTH_FAILURE, 1 },
+    };
+    static const char line1[] = "UsePrivilegeSeparation no";
+
+    haveSha512 = wsshd_test_LoadShadowHash(hashPw);
+    if (!haveSha512) {
+        Log("    crypt() did not honor $6$ SHA-512, skipping real-hash "
+            "cases.\n");
+    }
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    savedGetspnam = wsshd_getspnam_cb;
+    wsshd_getpwnam_cb = stub_getpwnam_shadowUser;
+    InstallGroupStubs(0, &savedGrouplist, &savedSetgroups);
+
+    for (i = 0; ret == WS_SUCCESS &&
+            i < (int)(sizeof(cases) / sizeof(cases[0])); i++) {
+        if (cases[i].validHash) {
+            if (!haveSha512) {
+                continue;
+            }
+            /* the empty-hash stub overwrites the shared hash buffer */
+            wsshd_test_LoadShadowHash(hashPw);
+            wsshd_getspnam_cb = stub_getspnam_validHash;
+        }
+        else {
+            wsshd_getspnam_cb = stub_getspnam_emptyHash;
+        }
+
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+            break;
+        }
+
+        if (ParseConfigLine(&conf, line1, (int)WSTRLEN(line1), 0) !=
+                    WS_SUCCESS ||
+                ParseConfigLine(&conf, cases[i].permitLine,
+                    (int)WSTRLEN(cases[i].permitLine), 0) != WS_SUCCESS) {
+            wolfSSHD_ConfigFree(conf);
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+
+        authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+        if (authCtx == NULL) {
+            wolfSSHD_ConfigFree(conf);
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+
+        WMEMSET(&authData, 0, sizeof(authData));
+        authData.type = WOLFSSH_USERAUTH_PASSWORD;
+        authData.username = (const byte*)"shadow_branch_test_user";
+        authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+        authData.sf.password.password = cases[i].pw;
+        authData.sf.password.passwordSz = cases[i].pwSz;
+
+        Log("    Testing scenario: %s.", cases[i].desc);
+        wolfSSHD_ResetFakePasswordCheckCountForTest();
+        rc = DefaultUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, authCtx);
+        fakeChecked = (wolfSSHD_GetFakePasswordCheckCountForTest() != 0);
+        if (rc == cases[i].expected &&
+                fakeChecked == cases[i].expectFakeCheck) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED: got %d, expected %d, fakeCheck %d, expected %d.\n",
+                rc, cases[i].expected, fakeChecked,
+                cases[i].expectFakeCheck);
+            ret = WS_FATAL_ERROR;
+        }
+
+        wolfSSHD_AuthFreeUser(authCtx);
+        wolfSSHD_ConfigFree(conf);
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    wsshd_getspnam_cb = savedGetspnam;
+    wsshd_getgrouplist_cb = savedGrouplist;
+    wsshd_setgroups_cb = savedSetgroups;
+
+    return ret;
+}
+
 /* checkPasswordCb returning something other than WSSHD_AUTH_SUCCESS/FAILURE
  * (e.g. CheckPasswordUnix's oversized-shadow-hash fail-closed path) must
  * surface as WOLFSSH_USERAUTH_FAILURE through RequestAuthentication, taking
@@ -7344,6 +7494,7 @@ const TEST_CASE testCases[] = {
         defined(WOLFSSHD_HAVE_SHADOW)
     TEST_DECL(test_RequestAuth_pwAuthNoRejectsBeforePasswordCheck),
     TEST_DECL(test_RequestAuth_permitEmptyPwDeniedFakesPasswordCheck),
+    TEST_DECL(test_RequestAuth_embeddedNulPasswordRejected),
     TEST_DECL(test_RequestAuth_checkPasswordCbErrorFailsClosed),
     TEST_DECL(test_RequestAuth_raisePermissionsFailFakeCheckGating),
     TEST_DECL(test_RequestAuth_userConfNullFakeCheckGating),
