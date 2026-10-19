@@ -23606,6 +23606,184 @@ static int test_SftpClientPutWriteStatusFail(void)
 
     return 0;
 }
+
+/* Stage a complete STATUS reply on the existing in-memory client channel. */
+static int SftpGetStatus(WOLFSSH* ssh, word32 id, word32 status)
+{
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 3];
+    word32 sz;
+
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_STATUS, id,
+            UINT32_SZ * 3);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, status);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ, 0);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ * 2, 0);
+    return wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
+}
+
+
+enum SftpGetCleanupMode {
+    GET_LOCAL_OPEN_FAIL,
+    GET_READ_FAIL,
+    GET_EOF,
+    GET_CLOSE_FAIL,
+    GET_READ_CLOSE_FAIL,
+    GET_REMOTE_OPEN_FAIL
+};
+
+/* Exercise GET cleanup using only filesystem paths and peer replies. */
+static int SftpGetCleanupCase(int mode)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    char path[] = "/tmp/wolfssh_getXXXXXX";
+    char badPath[sizeof(path) + 8];
+    char from[] = "get_source";
+    char* to;
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 3];
+    word32 sz;
+    word32 id;
+    int fd;
+    int ret;
+    int result = 0;
+    int expected;
+
+    fd = mkstemp(path);
+    if (fd < 0)
+        return -1100;
+    close(fd);
+    WSNPRINTF(badPath, sizeof(badPath), "%s/child", path);
+    to = mode == GET_LOCAL_OPEN_FAIL ? badPath : path;
+    ret = SftpClientNewSession(&ctx, &ssh);
+    if (ret != 0) {
+        result = ret;
+        goto done;
+    }
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    id = ssh->reqId;
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_ATTRS, id,
+            UINT32_SZ * 2);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, WOLFSSH_FILEATRB_PERM);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ,
+            FILEATRB_PER_FILE | 0600);
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != 0) {
+        result = -1101;
+        goto done;
+    }
+    if (mode == GET_REMOTE_OPEN_FAIL) {
+        if (SftpGetStatus(ssh, id + 1, WOLFSSH_FTP_FAILURE) != 0) {
+            result = -1117;
+            goto done;
+        }
+        ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+        if (ret == WS_SUCCESS || ssh->getState != NULL ||
+                ssh->closeState != NULL || ssh->reqId != id + 1) {
+            result = -1118;
+        }
+        goto done;
+    }
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_HANDLE, id + 1,
+            UINT32_SZ + 1);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+    reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != 0) {
+        result = -1102;
+        goto done;
+    }
+    ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+    /* The failure must still close the remote file, so even local-open
+     * failure waits for a CLOSE reply, rather than freeing GET immediately. */
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+            ssh->getState == NULL) {
+        result = -1103;
+        goto done;
+    }
+    if (mode != GET_LOCAL_OPEN_FAIL) {
+        ret = SftpGetStatus(ssh, id + 2,
+                mode == GET_READ_FAIL || mode == GET_READ_CLOSE_FAIL ?
+                WOLFSSH_FTP_PERMISSION : WOLFSSH_FTP_EOF);
+        if (ret != 0) {
+            result = -1107;
+            goto done;
+        }
+        ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+        if (ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+                ssh->getState == NULL || ssh->closeState == NULL) {
+            result = -1108;
+            goto done;
+        }
+    }
+    if (ssh->closeState == NULL ||
+            ssh->reqId != id + (mode == GET_LOCAL_OPEN_FAIL ? 2 : 3)) {
+        result = -1109;
+        goto done;
+    }
+    /* Reenter with no reply: the CLOSE must remain pending. */
+    ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+            ssh->getState == NULL || ssh->closeState == NULL) {
+        result = -1110;
+        goto done;
+    }
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_STATUS,
+            id + (mode == GET_LOCAL_OPEN_FAIL ? 2 : 3), UINT32_SZ * 3);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER,
+            mode == GET_CLOSE_FAIL || mode == GET_READ_CLOSE_FAIL ?
+            WOLFSSH_FTP_FAILURE : WOLFSSH_FTP_OK);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ, 0);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ * 2, 0);
+    /* Split the CLOSE response across calls as well as delaying it. */
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply,
+                WOLFSSH_SFTP_HEADER + UINT32_SZ) != 0) {
+        result = -1115;
+        goto done;
+    }
+    ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+            ssh->getState == NULL || ssh->closeState == NULL) {
+        result = -1116;
+        goto done;
+    }
+    if (wolfSSH_TestChannelPutData(ssh->channelList,
+                reply + WOLFSSH_SFTP_HEADER + UINT32_SZ,
+                sz - WOLFSSH_SFTP_HEADER - UINT32_SZ) != 0) {
+        result = -1111;
+        goto done;
+    }
+    ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
+    expected = mode == GET_LOCAL_OPEN_FAIL ? WS_BAD_FILE_E :
+               mode == GET_EOF ? WS_SUCCESS : WS_FATAL_ERROR;
+    if (ret != (mode == GET_EOF ? WS_SUCCESS : WS_FATAL_ERROR) ||
+            (mode != GET_EOF && ssh->error != expected) ||
+            ssh->getState != NULL || ssh->closeState != NULL) {
+        result = -1112;
+        goto done;
+    }
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    unlink(path);
+    return result;
+}
+
+
+static int test_SftpGetCleanup(void)
+{
+    int mode;
+    int ret;
+
+    for (mode = GET_LOCAL_OPEN_FAIL; mode <= GET_REMOTE_OPEN_FAIL; mode++) {
+        ret = SftpGetCleanupCase(mode);
+        if (ret != 0) {
+            printf("SFTP GET cleanup mode %d: %d\n", mode, ret);
+            return ret;
+        }
+    }
+    return 0;
+}
+
 #endif /* WOLFSSH_TEST_SFTP_PUT */
 
 /* Builds an SFTP DATA reply in "out": the 9 byte header carrying the request
@@ -25776,6 +25954,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSH_TEST_SFTP_PUT
+    unitResult = test_SftpGetCleanup();
+    printf("SftpGetCleanup: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+
     unitResult = test_SftpClientPutWriteStatusFail();
     printf("SftpClientPutWriteStatusFail: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
