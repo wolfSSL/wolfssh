@@ -912,6 +912,29 @@ void ClientFreeBuffers(void)
 }
 
 
+/* Parse a port number. Text that is not wholly a number in 1..65535 is
+ * rejected with WS_BAD_ARGUMENT rather than truncated, and *port is left
+ * untouched. */
+int ClientParsePort(const char* in, word16* port)
+{
+    char* endptr = NULL;
+    long portVal;
+
+    if (in == NULL || port == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    portVal = strtol(in, &endptr, 10);
+    if (endptr == in || *endptr != '\0' || portVal < 1 || portVal > 65535) {
+        fprintf(stderr, "invalid port \"%s\"\n", in);
+        return WS_BAD_ARGUMENT;
+    }
+    *port = (word16)portVal;
+
+    return WS_SUCCESS;
+}
+
+
 /* Parse an SSH destination into its parts. Two forms are accepted:
  *   - [user@]hostname
  *   - ssh://[user@]hostname[:port]
@@ -923,9 +946,9 @@ void ClientFreeBuffers(void)
  * *hostname. *hostname is set only when host text is present, so a malformed
  * "ssh://" or "ssh://user@" leaves it untouched and the caller's NULL check can
  * reject it cleanly. *port is overwritten only when an explicit port is given
- * (URI form); a port that is non-numeric or outside 1..65535 is rejected with
- * WS_BAD_ARGUMENT rather than silently truncated. Returns WS_SUCCESS on
- * success, or a negative WS error code. */
+ * (URI form); a port that is empty, non-numeric or outside 1..65535 is
+ * rejected with WS_BAD_ARGUMENT rather than defaulted or silently truncated.
+ * Returns WS_SUCCESS on success, or a negative WS error code. */
 int ClientParseDestination(const char* in, char** user, char** hostname,
         word16* port)
 {
@@ -936,8 +959,6 @@ int ClientParseDestination(const char* in, char** user, char** hostname,
     char* found = NULL;
     char* newUser = NULL;
     char* newHostname = NULL;
-    char* endptr = NULL;
-    long portVal = 0;
     word16 newPort = 0;
     size_t sz = 0;
     int checkPort = 0;
@@ -1006,18 +1027,7 @@ int ClientParseDestination(const char* in, char** user, char** hostname,
     }
 
     if (ret == WS_SUCCESS && found != NULL) {
-        cursor = found + 1;
-        if (*cursor != 0) {
-            portVal = strtol(cursor, &endptr, 10);
-            if (endptr == cursor || *endptr != '\0'
-                    || portVal < 1 || portVal > 65535) {
-                fprintf(stderr, "invalid port \"%s\"\n", cursor);
-                ret = WS_BAD_ARGUMENT;
-            }
-            else {
-                newPort = (word16)portVal;
-            }
-        }
+        ret = ClientParsePort(found + 1, &newPort);
     }
 
     if (ret == WS_SUCCESS) {

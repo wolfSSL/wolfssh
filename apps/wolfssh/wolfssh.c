@@ -1132,7 +1132,9 @@ static int config_parse_command_line(struct config* config,
                 break;
 
             case 'p':
-                config->port = (word16)atoi(myoptarg);
+                if (ClientParsePort(myoptarg, &config->port) != WS_SUCCESS) {
+                    exit(EXIT_FAILURE);
+                }
                 break;
 
             case 'V':

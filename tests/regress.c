@@ -15026,6 +15026,12 @@ static void TestTerminalResizeBlockedAfterDisconnect(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+static void TestTerminalResizeNullSsh(void)
+{
+    AssertIntEQ(SendChannelTerminalResize(NULL, 80, 24, 0, 0),
+            WS_BAD_ARGUMENT);
+}
 #endif /* WOLFSSH_TERM && !NO_FILESYSTEM */
 #endif /* !NO_WOLFSSH_CLIENT */
 
@@ -19615,6 +19621,34 @@ static void TestStrictKexSurvivesRekeyKexInit(void)
 
 
 
+/* The wolfssh -p option: a port that is not wholly a number in 1..65535 is
+ * rejected, not wrapped into a different port, and leaves *port alone. */
+static void TestClientParsePort(void)
+{
+    static const char* bad[] = {
+        "70000", "65536", "0", "-1", "abc", "", "22x", "99999999999999999999"
+    };
+    word16 port;
+    word32 i;
+
+    port = 22;
+    AssertIntEQ(ClientParsePort("2222", &port), WS_SUCCESS);
+    AssertIntEQ(port, 2222);
+    AssertIntEQ(ClientParsePort("65535", &port), WS_SUCCESS);
+    AssertIntEQ(port, 65535);
+    AssertIntEQ(ClientParsePort("1", &port), WS_SUCCESS);
+    AssertIntEQ(port, 1);
+
+    for (i = 0; i < (word32)(sizeof(bad) / sizeof(bad[0])); i++) {
+        port = 22;
+        AssertIntEQ(ClientParsePort(bad[i], &port), WS_BAD_ARGUMENT);
+        AssertIntEQ(port, 22);
+    }
+
+    AssertIntEQ(ClientParsePort(NULL, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(ClientParsePort("22", NULL), WS_BAD_ARGUMENT);
+}
+
 /* Regression coverage for issue 5575: the documented ssh://hostname form must
  * set the hostname even without an explicit port, and a malformed destination
  * with no host text must leave the hostname unset so the client can reject it.
@@ -19757,6 +19791,15 @@ static void TestClientParseDestination(void)
      * caller's port and outputs are left untouched. */
     user = NULL; hostname = NULL; port = 22;
     AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:70000",
+                &user, &hostname, &port), WS_BAD_ARGUMENT);
+    AssertIntEQ(port, 22);
+    AssertTrue(user == NULL);
+    AssertTrue(hostname == NULL);
+
+    /* An explicit but empty port is malformed, not a request for the
+     * default. */
+    user = NULL; hostname = NULL; port = 22;
+    AssertIntEQ(ClientParseDestination("ssh://127.0.0.1:",
                 &user, &hostname, &port), WS_BAD_ARGUMENT);
     AssertIntEQ(port, 22);
     AssertTrue(user == NULL);
@@ -20255,6 +20298,7 @@ int main(int argc, char** argv)
     AssertNotNull(serverSsh);
 #endif
 
+    TestClientParsePort();
     TestClientParseDestination();
     TestRekeyPendingAccessor();
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -20651,6 +20695,7 @@ int main(int argc, char** argv)
 #if defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM) \
     && !defined(NO_WOLFSSH_CLIENT)
     TestTerminalResizeBlockedAfterDisconnect();
+    TestTerminalResizeNullSsh();
 #endif
 #if !(defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestClientBuffersIdempotent();

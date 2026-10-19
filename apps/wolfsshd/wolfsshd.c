@@ -2902,7 +2902,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* Child process. Any setup failure below exit(1)s rather than returning
          * into the connection handler while still at a raised privilege level. */
         const char *args[] = {"-sh", NULL, NULL, NULL};
-        char cmd[MAX_COMMAND_SZ];
+        const char* cmd;
         char shell[MAX_COMMAND_SZ];
         int ret;
 
@@ -2965,19 +2965,21 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         setenv("LOGNAME", pPasswd->pw_name, 1);
         setenv("SHELL", pPasswd->pw_shell, 1);
 
-        if (WSTRLEN(pPasswd->pw_shell) < sizeof(shell)) {
-            char* cursor;
-            char* start;
+        /* login shell argv[0] is "-" plus the basename, which fits even when
+         * the whole path would not */
+        {
+            const char* base = pPasswd->pw_shell;
+            const char* slash;
 
-            WSTRNCPY(shell, pPasswd->pw_shell, sizeof(shell)-1);
-            shell[sizeof(shell)-1] = 0;
-            cursor = shell;
-            do {
-                start = cursor;
-                *cursor = '-';
-                cursor = WSTRCHR(start, '/');
-            } while (cursor && *cursor != '\0');
-            args[0] = start;
+            while ((slash = WSTRCHR(base, '/')) != NULL) {
+                base = slash + 1;
+            }
+            if (WSTRLEN(base) + 1 < sizeof(shell)) {
+                shell[0] = '-';
+                WSTRNCPY(shell + 1, base, sizeof(shell) - 2);
+                shell[sizeof(shell) - 1] = 0;
+                args[0] = shell;
+            }
         }
 
         rc = chdir(pPasswd->pw_dir);
@@ -2987,12 +2989,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             pPasswd->pw_dir);
         }
 
-        /* default to /bin/sh if user shell is not set */
+        /* default to /bin/sh if user shell is not set; exec pw_shell itself,
+         * a copy into a fixed buffer would truncate a long path */
         if (pPasswd->pw_shell && WSTRLEN(pPasswd->pw_shell)) {
-            WSNPRINTF(cmd, sizeof(cmd), "%s", pPasswd->pw_shell);
+            cmd = pPasswd->pw_shell;
         }
         else {
-            WSNPRINTF(cmd, sizeof(cmd), "%s", "/bin/sh");
+            cmd = "/bin/sh";
         }
 
         errno = 0;
