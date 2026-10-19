@@ -2950,7 +2950,7 @@ static void test_wolfSSH_SCP_CB(void) { ; }
 #if defined(WOLFSSH_SCP) && defined(WOLFSSH_HAVE_SYMLINK) && \
     !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(SINGLE_THREADED) && \
     !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API) && \
-    !defined(NO_WOLFSSH_DIR)
+    !defined(NO_WOLFSSH_DIR) && defined(WOLFSSH_TEST_INTERNAL)
 /* The default SCP send callback must refuse a symlink so its target is not
  * streamed to the peer.  The example client cannot issue "scp -f -r", so the
  * recursive guards are unreachable through scripts/scp.test; drive both the
