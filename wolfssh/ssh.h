@@ -175,6 +175,9 @@ WOLFSSH_API int wolfSSH_ReadCert_file(const char* name,
 
 /* SetAlgoList* validate the list, returning WS_SUCCESS, WS_INVALID_ALGO_ID for
  * a bad list, or WS_SSH_CTX_NULL_E / WS_SSH_NULL_E for a NULL ctx / ssh.
+ * Unknown names are skipped, but every name must be 1 to 64 printable
+ * US-ASCII bytes with no space and at most one '@', not first or last
+ * (RFC 4251 Section 6, RFC 4250 Section 4.6).
  * Kex/Cipher/Mac reject NULL. Key accepts NULL only on a server, restoring the
  * default of deriving the host key list from the loaded private keys; a client
  * has no such fallback. KeyAccepted accepts NULL on either side, but that
