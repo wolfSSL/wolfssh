@@ -1668,6 +1668,19 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && !NO_WOLFSSH_SERVER */
 
 
+/* Returns 1 when all sz bytes at p are zero. */
+static WS_MAYBE_UNUSED int IsZeroed(const byte* p, word32 sz)
+{
+    word32 i;
+
+    for (i = 0; i < sz; i++) {
+        if (p[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \
      !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
@@ -1796,6 +1809,12 @@ static int test_DoReceive_VerifyMacFailure(void)
             result = -209;
             goto done;
         }
+        /* The rejected packet does not wait for wolfSSH_free(). */
+        if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                    totalLen)) {
+            result = -210;
+            goto done;
+        }
     }
 
 done:
@@ -1911,6 +1930,12 @@ static int test_DoReceive_AeadTagFailure(void)
         result = -230;
         goto done;
     }
+    /* The packet that failed its tag is wiped. */
+    if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                UINT32_SZ + ssh->curSz)) {
+        result = -231;
+        goto done;
+    }
 
 done:
     if (aesInited)
@@ -1920,6 +1945,81 @@ done:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+/* A first block that fails to decrypt is wiped, and nothing around it. */
+static int test_DoReceive_FirstDecryptFailWipes(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    word32 i;
+    const word32 lead = 5;
+    const word32 recordSz = 2 * AES_BLOCK_SIZE;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -232;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -233;
+        goto done;
+    }
+
+    /* Decrypt() has no case for ID_UNKNOWN, so the first block fails. */
+    ssh->peerEncryptId = ID_UNKNOWN;
+    ssh->peerAeadMode = 0;
+    ssh->peerBlockSz = AES_BLOCK_SIZE;
+    ssh->peerMacSz = 0;
+    ssh->curSz = 0;
+    ssh->processReplyState = PROCESS_INIT;
+    ssh->error = 0;
+
+    ShrinkBuffer(&ssh->inputBuffer, 1);
+    if (GrowBuffer(&ssh->inputBuffer, lead + recordSz) != WS_SUCCESS) {
+        result = -234;
+        goto done;
+    }
+    WMEMSET(ssh->inputBuffer.buffer, 0xEE, lead);
+    WMEMSET(ssh->inputBuffer.buffer + lead, 0x5A, recordSz);
+    ssh->inputBuffer.length = lead + recordSz;
+    ssh->inputBuffer.idx = lead;
+
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_INVALID_ALGO_ID) {
+        result = -235;
+        goto done;
+    }
+    if (ssh->inputBuffer.idx != lead) {
+        result = -236;
+        goto done;
+    }
+    if (!IsZeroed(ssh->inputBuffer.buffer + lead, AES_BLOCK_SIZE)) {
+        result = -237;
+        goto done;
+    }
+    /* Only the block it read is wiped. */
+    for (i = 0; i < lead; i++) {
+        if (ssh->inputBuffer.buffer[i] != 0xEE) {
+            result = -238;
+            goto done;
+        }
+    }
+    for (i = lead + AES_BLOCK_SIZE; i < lead + recordSz; i++) {
+        if (ssh->inputBuffer.buffer[i] != 0x5A) {
+            result = -239;
+            goto done;
+        }
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
@@ -2504,6 +2604,7 @@ static int test_DoReceive_CbcRejectDiscards(void)
         pkt[3] = (byte)(cases[i].packetLen);
         pkt[4] = 22;            /* padding_length */
         pkt[5] = MSGID_IGNORE;
+        WMEMSET(pkt + 10, 0x5A, 22);
 
         if (wc_AesSetKey(&encAes, key, sizeof(key), iv,
                     AES_ENCRYPTION) != 0
@@ -2567,6 +2668,13 @@ static int test_DoReceive_CbcRejectDiscards(void)
                 cases[i].closeAt : MAX_PACKET_SZ - cases[i].readSz;
         if (io.fed != fed) {
             result = -848;
+            goto done6;
+        }
+
+        /* The bytes decrypted before the rejection are wiped. */
+        if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                    cases[i].readSz)) {
+            result = -851;
             goto done6;
         }
 
@@ -5874,6 +5982,136 @@ done:
     return result;
 }
 
+/* Channel data handed to the application is wiped from the channel buffers:
+ * the consumed bytes on each read, and the copies a compaction leaves above
+ * the new length. */
+static int test_ChannelReadWipesConsumed(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    WOLFSSH_BUFFER*  in;
+    int              result = 0;
+    int              ret;
+    word32           idx;
+    byte             data[40];
+    byte             out[64];
+    /* channelId=0, type=1 (stderr), dataSz=10, payload all 0x11 */
+    static const byte blob[] = {
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x0A,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1900;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1901; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    /* windowSz=128, so reads compact once length passes 64. */
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 128, 64);
+    if (ch == NULL) { result = -1902; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1903;
+        goto done;
+    }
+    in = &ch->inputBuffer;
+
+    WMEMSET(data, 0x5A, sizeof(data));
+    if (wolfSSH_TestChannelPutData(ch, data, 40) != WS_SUCCESS) {
+        result = -1904;
+        goto done;
+    }
+
+    /* Short reads that do not compact, through both read paths. */
+    ret = wolfSSH_stream_read(ssh, out, 10);
+    if (ret != 10) { result = -1905; goto done; }
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, 10);
+    if (ret != 10) { result = -1906; goto done; }
+    if (in->idx != 20 || in->length != 40) { result = -1907; goto done; }
+    if (!IsZeroed(in->buffer, 20)) { result = -1908; goto done; }
+    if (in->buffer[20] != 0x5A || in->buffer[39] != 0x5A) {
+        result = -1909;
+        goto done;
+    }
+
+    /* A read that compacts: 50 unread bytes move down from offset 30. */
+    WMEMSET(data, 0x6B, sizeof(data));
+    if (wolfSSH_TestChannelPutData(ch, data, 40) != WS_SUCCESS) {
+        result = -1910;
+        goto done;
+    }
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, 10);
+    if (ret != 10) { result = -1911; goto done; }
+    if (in->idx != 0 || in->length != 50) { result = -1912; goto done; }
+    if (!IsZeroed(in->buffer + 50, 30)) { result = -1913; goto done; }
+
+    /* The unread data survived the move. */
+    ret = wolfSSH_ChannelIdRead(ssh, ch->channel, out, sizeof(out));
+    if (ret != 50) { result = -1914; goto done; }
+    if (out[0] != 0x5A || out[9] != 0x5A || out[10] != 0x6B
+            || out[49] != 0x6B) {
+        result = -1915;
+        goto done;
+    }
+
+    /* A short stderr chunk sits in the inline buffer and is drained whole. */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelExtendedData(ssh, (byte*)blob,
+                                            (word32)sizeof(blob), &idx);
+    if (ret != WS_EXTDATA) { result = -1916; goto done; }
+    if (ch->extDataBuffer.dynamicFlag) { result = -1917; goto done; }
+    ret = wolfSSH_ChannelReadExt(ch, out, sizeof(out));
+    if (ret != 10) { result = -1918; goto done; }
+    if (!IsZeroed(ch->extDataBuffer.staticBuffer, STATIC_BUFFER_LEN)) {
+        result = -1919;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* GrowBuffer() compacting in place wipes what the move leaves above the new
+ * length. */
+static int test_GrowBufferCompactWipesTail(void)
+{
+    WOLFSSH_BUFFER buf;
+    int result = 0;
+    word32 i;
+
+    if (BufferInit(&buf, 64, NULL) != WS_SUCCESS)
+        return -1920;
+    for (i = 0; i < 40; i++)
+        buf.buffer[i] = (byte)(i + 1);
+    buf.length = 40;
+    buf.idx = 30;
+
+    /* 4 more bytes fit, so the allocation is kept. */
+    if (GrowBuffer(&buf, 4) != WS_SUCCESS) { result = -1921; goto done; }
+    if (buf.bufferSz != 64 || buf.length != 10 || buf.idx != 0) {
+        result = -1922;
+        goto done;
+    }
+    for (i = 0; i < 10; i++) {
+        if (buf.buffer[i] != (byte)(i + 31)) { result = -1923; goto done; }
+    }
+    if (!IsZeroed(buf.buffer + 10, 30)) { result = -1924; goto done; }
+
+done:
+    ShrinkBuffer(&buf, 1);
+    return result;
+}
+
 /* Counts IoSend calls so a test can assert whether anything went on the wire. */
 static word32 s_extSendCount = 0;
 static int CountIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
@@ -7460,6 +7698,11 @@ static int test_BundlePacketFailureDropsPartial(void)
 
     /* The aborted packet is gone and the framed one is untouched. */
     if (ssh->outputBuffer.length != queued) { result = -1857; goto done; }
+    if (!IsZeroed(ssh->outputBuffer.buffer + queued,
+                ssh->outputBuffer.bufferSz - queued)) {
+        result = -1859;
+        goto done;
+    }
 
 done:
     s_recvPkt = NULL;
@@ -24897,7 +25140,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("DoReceiveAeadTag: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+#endif
 
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_DoReceive_FirstDecryptFailWipes();
+    printf("DoReceiveFirstDecryptFailWipes: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
     unitResult = test_AeadNoncePerPacket();
     printf("AeadNoncePerPacket: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
@@ -25079,6 +25331,16 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_DoChannelExtendedData_flow();
     printf("DoChannelExtendedData_flow: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelReadWipesConsumed();
+    printf("ChannelReadWipesConsumed: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_GrowBufferCompactWipesTail();
+    printf("GrowBufferCompactWipesTail: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
