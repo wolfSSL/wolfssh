@@ -23961,6 +23961,8 @@ static int SftpPutReadCase(word32 size, int fault, int closeFails)
     if (result != 0)
         goto done;
     ssh->sftpState = SFTP_DONE;
+    /* The mock peer supplies SFTP replies, but cannot complete a rekey. */
+    wolfSSH_SetHighwater(ssh, 0);
     ssh->channelList->peerWindowSz = WOLFSSH_MAX_SFTP_RW * 4;
     ssh->channelList->peerMaxPacketSz = WOLFSSH_MAX_SFTP_RW + 1024;
     wolfSSH_SetIOSend(ctx, SftpPutReadSend);
