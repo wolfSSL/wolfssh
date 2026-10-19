@@ -821,6 +821,8 @@ WOLFSSH_API int wolfSSH_CTX_SetBanner(WOLFSSH_CTX* ctx, const char* newBanner);
  *     body as softwareversion [SP comments], so a leading space would
  *     make softwareversion empty. A space later in the body is accepted
  *     and starts the optional comments field.
+ * MUST NOT carry a '-' in softwareversion, the body up to the first
+ *     space (RFC 4253 section 4.2). The comments may carry one.
  * If these are not adhered to the function will return WS_BAD_ARGUMENT
  * and not load the ProtoId into the WOLFSSH_CTX struct.
  * ProtoIdStr is stored by reference and is not copied, so it must remain
