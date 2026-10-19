@@ -46,6 +46,7 @@ extra_test_cases=(
  "sshd_login_grace_test.sh"
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
+ "sshd_fork_fail_test.sh"
  "sshd_x509_test.sh"
  "sshd_x509_upn_fail.sh"
  "sshd_mldsa_composite_test.sh"
@@ -126,7 +127,10 @@ done
 #   +0  shared wolfSSHd (TEST_PORT)    +3  host key ownership/symlink gate
 #   +1  StrictModes negative test      +4  OpenSSH certificate test
 #   +2  AuthorizedUPNDomains negative  +5  privilege-drop test
-#   +6  chroot skip-after-failure test
+#   +6  chroot skip-after-failure test +7  fork failure test
+#
+# That fills the PORT_BLOCK_SIZE (8) ports of a block; another private-daemon
+# port needs a larger PORT_BLOCK_SIZE in port_lease.sh.
 #
 # The range deliberately starts above everything else in the repo that binds
 # a port: CI steps bind 22222, 22225 and 22226, and scripts/fwd-bulk.test
@@ -164,6 +168,7 @@ HOSTKEY_PERM_PORT=$((PORT_BASE + 3))
 export WOLFSSHD_TEST_PORT=$((PORT_BASE + 4))
 export WOLFSSHD_PRIVDROP_PORT=$((PORT_BASE + 5))
 export WOLFSSHD_CHROOT_PORT=$((PORT_BASE + 6))
+export WOLFSSHD_FORK_PORT=$((PORT_BASE + 7))
 
 # Registry of the daemons started during this run, appended to by
 # start_wolfsshd in every test script that sources start_sshd.sh. The exit
@@ -764,6 +769,7 @@ local_sshd_tests=(
  "sshd_login_grace_test.sh"
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
+ "sshd_fork_fail_test.sh"
 )
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     for test in "${local_sshd_tests[@]}"; do
