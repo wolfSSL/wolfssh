@@ -106,7 +106,8 @@ extern "C" {
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support, this should be at the top of the ports list
-     * to override all */
+     * to override all. WFREAD must return a negative value on read errors,
+     * or the port must define WFERROR(fs,f) to distinguish them from EOF. */
 
 #elif defined(WOLFSSL_NUCLEUS)
     #include "storage/nu_storage.h"
@@ -197,6 +198,7 @@ extern "C" {
     #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       fclose((f))
     #define WFREAD(fs,b,s,a,f)  fread((b),(s),(a),(f))
+    #define WFERROR(fs,f)      ferror((f))
     #define WFWRITE(fs,b,x,s,f) fwrite((b),(x),(s),(f))
     #define WFSEEK(fs,s,o,w)    fseek((s),(o),(w))
     #define WFTELL(fs,s)        ftell((s))
@@ -454,6 +456,7 @@ extern "C" {
     #define WFOPEN(fs,f,fn,m)   wfopen((f),(fn),(m))
     #define WFCLOSE(fs,f)       fclose(f)
     #define WFREAD(fs,b,s,a,f)  fread((b),(s),(a),(f))
+    #define WFERROR(fs,f)      ferror((f))
     #define WFWRITE(fs,b,s,a,f) fwrite((b),(s),(a),(f))
     #define WFSEEK(fs,s,o,w)    fseek((s),(o),(w))
     #define WFTELL(fs,s)        ftell((s))
