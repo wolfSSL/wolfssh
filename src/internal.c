@@ -1921,7 +1921,10 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
 
 #if defined(WOLFSSH_TERM) && defined(WOLFSSH_SSHD)
 #ifndef WOLFSSH_RESIZE_NO_DEFUALT
-    ssh->termResizeCb = WS_TermResize;
+    /* The default drives the pty a server set as the context. A client has
+     * no pty to resize. */
+    if (ctx->side == WOLFSSH_ENDPOINT_SERVER)
+        ssh->termResizeCb = WS_TermResize;
 #endif
 #endif
 
@@ -12828,6 +12831,16 @@ static int DoChannelOpen(WOLFSSH* ssh,
                 break;
         #ifdef WOLFSSH_FWD
             case ID_CHANTYPE_TCPIP_DIRECT:
+                /* RFC 4254 7.2: a client refuses a direct-tcpip open, which
+                 * would have it connect out wherever the server named. Per
+                 * peer open, so DEBUG, as for forwarded-tcpip below. */
+                if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
+                    WLOG(WS_LOG_DEBUG, "Rejecting direct-tcpip channel open "
+                            "received by a client (wrong direction)");
+                    ret = WS_INVALID_CHANTYPE;
+                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+                    break;
+                }
                 isDirect = 1;
                 FALL_THROUGH;
             case ID_CHANTYPE_TCPIP_FORWARD:
@@ -12883,9 +12896,7 @@ static int DoChannelOpen(WOLFSSH* ssh,
              * response to a tcpip-forward request, so only a client should
              * ever receive one. Reject opens arriving in the wrong direction
              * up front, before any policy callback runs or channel state is
-             * updated. direct-tcpip is intentionally not direction-checked:
-             * either forwarding side may legitimately request a direct
-             * forward. */
+             * updated. */
             if (typeId == ID_CHANTYPE_TCPIP_FORWARD &&
                     ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
                 /* Fires per peer open request, so DEBUG: at WARN an app
@@ -13071,6 +13082,16 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
             ret = WS_INVALID_CHANID;
     }
 
+    /* RFC 4254 5.1: this answers an open of ours that is still
+     * outstanding. On any other channel it would rewrite the peer's id and
+     * window. */
+    if (ret == WS_SUCCESS && channel->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "DCOC: channel %u has no open outstanding",
+                channelId);
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        ret = WS_INVALID_STATE_E;
+    }
+
     if (ret == WS_SUCCESS)
         ret = ChannelUpdatePeer(channel, peerChannelId,
                             peerInitialWindowSz, peerMaxPacketSz);
@@ -13128,17 +13149,22 @@ static int DoChannelOpenFail(WOLFSSH* ssh,
             WLOG(WS_LOG_INFO, "description: %s", desc);
         }
 
-        if (ssh->ctx->channelOpenFailCb != NULL) {
-            channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
-
-            if (channel != NULL) {
-                ret = ssh->ctx->channelOpenFailCb(channel, ssh->channelOpenCtx);
-            }
-            else {
-                ret = WS_INVALID_CHANID;
-            }
-        }
+        channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+        if (channel == NULL)
+            ret = WS_INVALID_CHANID;
     }
+
+    /* As for the confirmation: on a channel with no open outstanding this
+     * would drop it without the close handshake. */
+    if (ret == WS_SUCCESS && channel->openConfirmed) {
+        WLOG(WS_LOG_DEBUG, "DCOF: channel %u has no open outstanding",
+                channelId);
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        ret = WS_INVALID_STATE_E;
+    }
+
+    if (ret == WS_SUCCESS && ssh->ctx->channelOpenFailCb != NULL)
+        ret = ssh->ctx->channelOpenFailCb(channel, ssh->channelOpenCtx);
 
     if (ret == WS_SUCCESS) {
         ret = ChannelRemove(ssh, channelId, WS_CHANNEL_ID_SELF);
@@ -13665,10 +13691,23 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "  type = %.*s", (int)typeSz, type);
         WLOG(WS_LOG_DEBUG, "  wantReply = %u", wantReply);
 
+        /* These ask the server to set up the session (RFC 4254 6.2 and
+         * 6.5), so a client refuses them before any callback sees one.
+         * Matched by name, so the refusal holds in builds where a type has
+         * no handling below. */
+        if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT
+                && (ChannelRequestIs(type, typeSz, "shell")
+                    || ChannelRequestIs(type, typeSz, "exec")
+                    || ChannelRequestIs(type, typeSz, "subsystem")
+                    || ChannelRequestIs(type, typeSz, "pty-req"))) {
+            WLOG(WS_LOG_DEBUG, "  session request received by a client, "
+                    "rejecting.");
+            rej = 1;
+        }
         /* The generic callback sees every request first, with the
          * type-specific part to parse itself. A refusal skips the handling
          * below; a grant runs it with the decision already made. */
-        if (ssh->ctx->channelReqAnyCb != NULL) {
+        else if (ssh->ctx->channelReqAnyCb != NULL) {
             int decision = ssh->ctx->channelReqAnyCb(channel, type, typeSz,
                     buf + begin, len - begin, wantReply,
                     ssh->channelReqCtx);

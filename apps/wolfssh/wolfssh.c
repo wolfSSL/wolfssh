@@ -726,11 +726,6 @@ static THREAD_RET readPeer(void* in)
             }
         }
     }
-
-    /* set handle to use for window resize */
-    wc_LockMutex(&args->lock);
-    wolfSSH_SetTerminalResizeCtx(args->ssh, stdoutHandle);
-    wc_UnLockMutex(&args->lock);
 #endif
 
     while (ret >= 0) {

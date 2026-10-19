@@ -275,6 +275,31 @@ static word32 BuildChannelOpenPacket(const char* type, word32 peerChannelId,
     return WrapPacket(MSGID_CHANNEL_OPEN, payload, idx, out, outSz);
 }
 
+/* Builds a plaintext SSH_MSG_CHANNEL_REQUEST with a raw type-specific
+ * tail, so a test can send any request type. */
+static word32 BuildChannelRequestPacketSz(word32 recipientChannelId,
+        const char* type, word32 typeSz, byte wantReply, const byte* tail,
+        word32 tailSz, byte* out, word32 outSz)
+{
+    byte payload[128];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendStringSz(payload, sizeof(payload), idx, type, typeSz);
+    idx = AppendByte(payload, sizeof(payload), idx, wantReply);
+    idx = AppendData(payload, sizeof(payload), idx, tail, tailSz);
+
+    return WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, out, outSz);
+}
+
+static word32 BuildChannelRequestPacket(word32 recipientChannelId,
+        const char* type, byte wantReply, const byte* tail, word32 tailSz,
+        byte* out, word32 outSz)
+{
+    return BuildChannelRequestPacketSz(recipientChannelId, type,
+            (word32)WSTRLEN(type), wantReply, tail, tailSz, out, outSz);
+}
+
 static word32 BuildDisconnectPacket(word32 reason, byte* out, word32 outSz)
 {
     byte payload[64];
@@ -6207,6 +6232,47 @@ static void TestChannelOpenFailCallbackRejects(void)
     FreeChannelOpenHarness(&harness);
 }
 
+/* RFC 4254 5.1: the open responses answer an open of ours that is still
+ * outstanding. A confirmed channel has none, so a confirmation would rewrite
+ * the peer's id and window and a failure would drop the channel without the
+ * close handshake. Either one is a protocol error. */
+static void TestChannelOpenRespOnConfirmedChannelRefused(void)
+{
+    ChannelOpenHarness harness;
+    WOLFSSH_CHANNEL* channel;
+    byte in[128];
+    word32 inSz;
+    int cbCtx = 0;
+    int isFail;
+
+    for (isFail = 0; isFail < 2; isFail++) {
+        channel = SeedOpenRespHarness(&harness, &cbCtx, WS_SUCCESS);
+        AssertIntEQ(ChannelUpdatePeer(channel, 5, 0x100, 0x200), WS_SUCCESS);
+
+        if (isFail)
+            inSz = BuildChannelOpenFailPacket(channel->channel,
+                    OPEN_ADMINISTRATIVELY_PROHIBITED, "no", in, sizeof(in));
+        else
+            inSz = BuildChannelOpenConfPacket(channel->channel, 7, 0x4000,
+                    0x8000, in, sizeof(in));
+        RepointHarnessInput(&harness, in, inSz);
+
+        AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+        AssertIntEQ(wolfSSH_get_error(harness.ssh), WS_INVALID_STATE_E);
+        AssertIntEQ(openConfCbCalls, 0);
+        AssertIntEQ(openFailCbCalls, 0);
+        AssertIntEQ(harness.ssh->channelListSz, 1);
+        AssertIntEQ(channel->peerChannel, 5);
+        AssertIntEQ(channel->peerWindowSz, 0x100);
+        AssertIntEQ(channel->peerMaxPacketSz, 0x200);
+        AssertTrue(harness.io.outSz > 0);
+        AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+                MSGID_DISCONNECT);
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
+
 /* What the close callback saw, including whether the channel was still on
  * the list when it ran. */
 static int closeCbCalls;
@@ -6427,31 +6493,6 @@ static void TestChannelReqSubsysCallbackRuns(void)
                 WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
     AssertIntEQ(RunSessionRequest("subsystem", "sftp", 1,
                 WOLFSSH_SESSION_SUBSYSTEM), MSGID_CHANNEL_FAILURE);
-}
-
-/* Builds a plaintext SSH_MSG_CHANNEL_REQUEST with a raw type-specific
- * tail, so a test can send any request type. */
-static word32 BuildChannelRequestPacketSz(word32 recipientChannelId,
-        const char* type, word32 typeSz, byte wantReply, const byte* tail,
-        word32 tailSz, byte* out, word32 outSz)
-{
-    byte payload[128];
-    word32 idx = 0;
-
-    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
-    idx = AppendStringSz(payload, sizeof(payload), idx, type, typeSz);
-    idx = AppendByte(payload, sizeof(payload), idx, wantReply);
-    idx = AppendData(payload, sizeof(payload), idx, tail, tailSz);
-
-    return WrapPacket(MSGID_CHANNEL_REQUEST, payload, idx, out, outSz);
-}
-
-static word32 BuildChannelRequestPacket(word32 recipientChannelId,
-        const char* type, byte wantReply, const byte* tail, word32 tailSz,
-        byte* out, word32 outSz)
-{
-    return BuildChannelRequestPacketSz(recipientChannelId, type,
-            (word32)WSTRLEN(type), wantReply, tail, tailSz, out, outSz);
 }
 
 /* Builds a plaintext SSH_MSG_GLOBAL_REQUEST with a raw type-specific
@@ -9711,6 +9752,249 @@ static void TestClientRefusesForwardRequestsBeforePolicy(void)
         FreeChannelOpenHarness(&harness);
     }
 }
+
+/* RFC 4254 6.2, 6.5 and 7.2: pty-req, shell, exec, subsystem and a
+ * direct-tcpip open travel client-to-server, so a client refuses each one
+ * before any policy callback sees it. Every callback a server would consult
+ * is registered to accept and counts into one tally, which a refusal leaves
+ * at zero. */
+static int clientRoleCbCalls;
+
+static int CountingChannelReqCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    WOLFSSH_UNUSED(channel);
+    WOLFSSH_UNUSED(ctx);
+
+    clientRoleCbCalls++;
+    return WS_SUCCESS;
+}
+
+static int AcceptingChannelReqAnyCb(WOLFSSH_CHANNEL* channel,
+        const byte* type, word32 typeSz, const byte* data, word32 dataSz,
+        int wantReply, void* ctx)
+{
+    WOLFSSH_UNUSED(channel);
+    WOLFSSH_UNUSED(type);
+    WOLFSSH_UNUSED(typeSz);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(dataSz);
+    WOLFSSH_UNUSED(wantReply);
+    WOLFSSH_UNUSED(ctx);
+
+    clientRoleCbCalls++;
+    return WOLFSSH_REQ_ACCEPT;
+}
+
+/* A client past userauth holding the confirmed session channel it opened.
+ * With useAnyCb the generic request callback is registered, otherwise the
+ * typed ones. */
+static WOLFSSH_CHANNEL* InitClientSessionHarness(ChannelOpenHarness* harness,
+        int useAnyCb)
+{
+    WOLFSSH_CHANNEL* channel;
+
+    clientRoleCbCalls = 0;
+    InitChannelOpenHarnessClient(harness, NULL, 0);
+    if (useAnyCb) {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqAnyCb(harness->ctx,
+                    AcceptingChannelReqAnyCb), WS_SUCCESS);
+    }
+    else {
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqShellCb(harness->ctx,
+                    CountingChannelReqCb), WS_SUCCESS);
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqExecCb(harness->ctx,
+                    CountingChannelReqCb), WS_SUCCESS);
+        AssertIntEQ(wolfSSH_CTX_SetChannelReqSubsysCb(harness->ctx,
+                    CountingChannelReqCb), WS_SUCCESS);
+    }
+
+    channel = ChannelNew(harness->ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    AssertNotNull(channel);
+    AssertIntEQ(ChannelAppend(harness->ssh, channel), WS_SUCCESS);
+    AssertIntEQ(ChannelUpdatePeer(channel, 5, 1024, 1024), WS_SUCCESS);
+
+    return channel;
+}
+
+static void TestClientRefusesSessionRequests(void)
+{
+    const char* types[3];
+    const char* args[3];
+    int useAnyCb;
+    int i;
+
+    types[0] = "shell";     args[0] = NULL;
+    types[1] = "exec";      args[1] = "ls";
+    types[2] = "subsystem"; args[2] = "sftp";
+
+    for (useAnyCb = 0; useAnyCb < 2; useAnyCb++) {
+        for (i = 0; i < 3; i++) {
+            ChannelOpenHarness harness;
+            WOLFSSH_CHANNEL* channel;
+            byte tail[32];
+            word32 tailSz = 0;
+            byte in[128];
+            word32 inSz;
+            byte clientState;
+
+            channel = InitClientSessionHarness(&harness, useAnyCb);
+            clientState = harness.ssh->clientState;
+
+            if (args[i] != NULL)
+                tailSz = AppendString(tail, sizeof(tail), 0, args[i]);
+            inSz = BuildChannelRequestPacket(channel->channel, types[i], 1,
+                    tail, tailSz, in, sizeof(in));
+
+            AssertIntEQ(ReplyToPacket(&harness, in, inSz),
+                    MSGID_CHANNEL_FAILURE);
+            AssertIntEQ(clientRoleCbCalls, 0);
+            AssertIntEQ(channel->sessionType, WOLFSSH_SESSION_UNKNOWN);
+            AssertNull(channel->command);
+            AssertIntEQ(channel->sessionGranted, 0);
+            AssertIntEQ(harness.ssh->clientState, clientState);
+
+            FreeChannelOpenHarness(&harness);
+        }
+    }
+}
+
+#ifdef WOLFSSH_TERM
+static int CountingTermResizeCb(WOLFSSH* ssh, word32 col, word32 row,
+        word32 colP, word32 rowP, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(col);
+    WOLFSSH_UNUSED(row);
+    WOLFSSH_UNUSED(colP);
+    WOLFSSH_UNUSED(rowP);
+    WOLFSSH_UNUSED(ctx);
+
+    clientRoleCbCalls++;
+    return WS_SUCCESS;
+}
+
+/* A pty-req the client takes would size its terminal on the server's word
+ * and hand the resize callback whatever context the client set. */
+static void TestClientRefusesPtyRequest(void)
+{
+    int useAnyCb;
+
+    for (useAnyCb = 0; useAnyCb < 2; useAnyCb++) {
+        ChannelOpenHarness harness;
+        WOLFSSH_CHANNEL* channel;
+        byte tail[64];
+        word32 tailSz;
+        byte in[128];
+        word32 inSz;
+
+        channel = InitClientSessionHarness(&harness, useAnyCb);
+        wolfSSH_SetTerminalResizeCb(harness.ssh, CountingTermResizeCb);
+
+        tailSz = AppendString(tail, sizeof(tail), 0, "vt100");
+        tailSz = AppendUint32(tail, sizeof(tail), tailSz, 80);
+        tailSz = AppendUint32(tail, sizeof(tail), tailSz, 24);
+        tailSz = AppendUint32(tail, sizeof(tail), tailSz, 640);
+        tailSz = AppendUint32(tail, sizeof(tail), tailSz, 480);
+        tailSz = AppendString(tail, sizeof(tail), tailSz, "");
+        inSz = BuildChannelRequestPacket(channel->channel, "pty-req", 1,
+                tail, tailSz, in, sizeof(in));
+
+        AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_FAILURE);
+        AssertIntEQ(clientRoleCbCalls, 0);
+        AssertIntEQ(channel->ptyReq, 0);
+        AssertNull(harness.ssh->modes);
+        AssertIntEQ(harness.ssh->widthChar, 0);
+        AssertIntEQ(harness.ssh->heightRows, 0);
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
+#endif /* WOLFSSH_TERM */
+
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_SSHD)
+/* The built-in resize handler drives the server's pty, and its context is
+ * the pty the server set. A client has neither, so it gets no handler. */
+static void TestTermResizeDefaultIsServerOnly(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertTrue(ssh->termResizeCb == NULL);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+#ifndef NO_WOLFSSH_SERVER
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+#if !defined(WOLFSSH_RESIZE_NO_DEFUALT) && \
+    (defined(USE_WINDOWS_API) || defined(HAVE_SYS_IOCTL_H))
+    AssertTrue(ssh->termResizeCb != NULL);
+#endif
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif /* !NO_WOLFSSH_SERVER */
+}
+#endif /* WOLFSSH_TERM && WOLFSSH_SSHD */
+
+#ifdef WOLFSSH_FWD
+static int CountingRoleFwdCb(WS_FwdCbAction action, void* ctx,
+        const char* host, word32 port)
+{
+    WOLFSSH_UNUSED(action);
+    WOLFSSH_UNUSED(ctx);
+    WOLFSSH_UNUSED(host);
+    WOLFSSH_UNUSED(port);
+
+    clientRoleCbCalls++;
+    return WS_SUCCESS;
+}
+
+static int CountingChannelOpenCb(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    WOLFSSH_UNUSED(channel);
+    WOLFSSH_UNUSED(ctx);
+
+    clientRoleCbCalls++;
+    return WS_SUCCESS;
+}
+
+/* Taken, the open would have the client connect out to whatever host and
+ * port the server named. */
+static void TestClientRefusesDirectTcpipOpen(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+
+    clientRoleCbCalls = 0;
+    InitChannelOpenHarnessClient(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, CountingRoleFwdCb, NULL),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_CTX_SetChannelOpenCb(harness.ctx,
+                CountingChannelOpenCb), WS_SUCCESS);
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_OPEN_FAIL);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_ADMINISTRATIVELY_PROHIBITED);
+    AssertIntEQ(clientRoleCbCalls, 0);
+    AssertIntEQ(harness.ssh->channelListSz, 0);
+
+    FreeChannelOpenHarness(&harness);
+}
+#endif /* WOLFSSH_FWD */
 #endif /* !NO_WOLFSSH_CLIENT */
 
 
@@ -20372,6 +20656,7 @@ int main(int argc, char** argv)
     TestChannelOpenFailCallbackRuns();
     TestChannelOpenConfCallbackRejects();
     TestChannelOpenFailCallbackRejects();
+    TestChannelOpenRespOnConfirmedChannelRefused();
     TestChannelCloseCallbackRuns();
     TestChannelCloseCallbackReturnIgnored();
     TestChannelReqExecCallbackRuns();
@@ -20460,6 +20745,16 @@ int main(int argc, char** argv)
 #endif /* NO_WOLFSSH_SERVER */
 #ifndef NO_WOLFSSH_CLIENT
     TestClientRefusesForwardRequestsBeforePolicy();
+    TestClientRefusesSessionRequests();
+#ifdef WOLFSSH_TERM
+    TestClientRefusesPtyRequest();
+#endif
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_SSHD)
+    TestTermResizeDefaultIsServerOnly();
+#endif
+#ifdef WOLFSSH_FWD
+    TestClientRefusesDirectTcpipOpen();
+#endif
 #endif
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_ED25519) \
     && !defined(NO_WOLFSSH_CLIENT)
