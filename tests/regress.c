@@ -16622,6 +16622,413 @@ static void TestSftpDirHandleLimit(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+/* Fixture directory for the READDIR tests: fileCount empty files named
+ * f000, f001, ... inside a per-process directory under the current one. */
+static void SftpMakeDirFixture(char* dir, word32 dirSz, int fileCount)
+{
+    char path[WOLFSSH_MAX_FILENAME];
+    FILE* f;
+    int i;
+
+    WSNPRINTF(dir, dirSz, "wolfssh_readdir_%d", (int)getpid());
+    AssertIntEQ(mkdir(dir, 0700), 0);
+    for (i = 0; i < fileCount; i++) {
+        WSNPRINTF(path, sizeof(path), "%s/f%03d", dir, i);
+        f = fopen(path, "wb");
+        AssertNotNull(f);
+        fclose(f);
+    }
+}
+
+static void SftpRemoveDirFixture(const char* dir, int fileCount)
+{
+    char path[WOLFSSH_MAX_FILENAME];
+    int i;
+
+    for (i = 0; i < fileCount; i++) {
+        WSNPRINTF(path, sizeof(path), "%s/f%03d", dir, i);
+        (void)remove(path);
+    }
+    (void)rmdir(dir);
+}
+
+/* FXP_OPENDIR path; the handle from the FXP_HANDLE reply goes to handle. */
+static void SftpOpenDirPath(WOLFSSH* ssh, int reqId, const char* path,
+        byte* handle)
+{
+    byte pkt[WOLFSSH_MAX_FILENAME + UINT32_SZ];
+    word32 idx = 0;
+    word32 pathSz = (word32)WSTRLEN(path);
+    const byte* reply;
+    word32 replySz;
+
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+    AssertIntEQ(wolfSSH_SFTP_RecvOpenDir(ssh, reqId, pkt, idx), WS_SUCCESS);
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= SFTP_TEST_HANDLE_OFF + WOLFSSH_HANDLE_ID_SZ);
+    AssertIntEQ(reply[LENGTH_SZ], WOLFSSH_FTP_HANDLE);
+    WMEMCPY(handle, reply + SFTP_TEST_HANDLE_OFF, WOLFSSH_HANDLE_ID_SZ);
+}
+
+/* FXP_READDIR handle. */
+static int SftpReadDirHandle(WOLFSSH* ssh, int reqId, const byte* handle)
+{
+    byte pkt[WOLFSSH_HANDLE_ID_SZ + UINT32_SZ];
+    word32 idx = 0;
+
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+
+    return wolfSSH_SFTP_RecvReadDir(ssh, reqId, pkt, idx);
+}
+
+/* Walk the buffered FXP_NAME reply. Each fixture name f<digits> marks
+ * seen[digits] (a repeat fails) unless seen is NULL; "." and ".." are counted
+ * in dots. Returns the entry count. */
+static int SftpParseNameReply(WOLFSSH* ssh, int reqId, byte* seen,
+        int seenSz, int* dots)
+{
+    const byte* reply;
+    word32 replySz;
+    word32 idx;
+    word32 count;
+    word32 i;
+
+    reply = wolfSSH_SFTP_TestRecvReply(ssh, &replySz);
+    AssertNotNull(reply);
+    AssertTrue(replySz >= WOLFSSH_SFTP_HEADER + UINT32_SZ);
+    AssertIntEQ(reply[LENGTH_SZ], WOLFSSH_FTP_NAME);
+    AssertIntEQ((int)SftpGetU32(reply + LENGTH_SZ + MSG_ID_SZ), reqId);
+    AssertIntEQ((int)SftpGetU32(reply), (int)(replySz - LENGTH_SZ));
+    idx = WOLFSSH_SFTP_HEADER;
+    count = SftpGetU32(reply + idx); idx += UINT32_SZ;
+
+    for (i = 0; i < count; i++) {
+        word32 sz;
+        word32 flags;
+        const char* name;
+        word32 k;
+        int n;
+
+        AssertTrue(replySz - idx >= UINT32_SZ);
+        sz = SftpGetU32(reply + idx); idx += UINT32_SZ;
+        AssertTrue(replySz - idx >= sz);
+        name = (const char*)reply + idx;
+        if ((sz == 1 && name[0] == '.') ||
+                (sz == 2 && name[0] == '.' && name[1] == '.')) {
+            (*dots)++;
+        }
+        else if (seen != NULL) {
+            AssertTrue(sz >= 2);
+            AssertIntEQ(name[0], 'f');
+            n = 0;
+            for (k = 1; k < sz; k++) {
+                AssertTrue(name[k] >= '0' && name[k] <= '9');
+                n = n * 10 + (name[k] - '0');
+                AssertTrue(n < seenSz);
+            }
+            AssertIntEQ(seen[n], 0);
+            seen[n] = 1;
+        }
+        idx += sz;
+
+        AssertTrue(replySz - idx >= UINT32_SZ);
+        sz = SftpGetU32(reply + idx); idx += UINT32_SZ;   /* long name */
+        AssertTrue(replySz - idx >= sz);
+        idx += sz;
+
+        AssertTrue(replySz - idx >= UINT32_SZ);
+        flags = SftpGetU32(reply + idx); idx += UINT32_SZ;
+        AssertIntEQ(flags & WOLFSSH_FILEATRB_EXT, 0);
+        sz = 0;
+        if (flags & WOLFSSH_FILEATRB_SIZE)   sz += 2 * UINT32_SZ;
+        if (flags & WOLFSSH_FILEATRB_UIDGID) sz += 2 * UINT32_SZ;
+        if (flags & WOLFSSH_FILEATRB_PERM)   sz += UINT32_SZ;
+        if (flags & WOLFSSH_FILEATRB_TIME)   sz += 2 * UINT32_SZ;
+        AssertTrue(replySz - idx >= sz);
+        idx += sz;
+    }
+    AssertIntEQ((int)idx, (int)replySz);
+
+    return (int)count;
+}
+
+/* READDIR handle until EOF, each reply checked by SftpParseNameReply and
+ * holding at most WOLFSSH_MAX_SFTP_READDIR entries. Returns the entry count;
+ * the number of NAME replies goes to replies. */
+static int SftpReadDirAll(WOLFSSH* ssh, int* rid, const byte* handle,
+        byte* seen, int seenSz, int* dots, int* replies)
+{
+    int reqId;
+    int count;
+    int total = 0;
+
+    *replies = 0;
+    for (;;) {
+        reqId = (*rid)++;
+        AssertIntEQ(SftpReadDirHandle(ssh, reqId, handle), WS_SUCCESS);
+        if (wolfSSH_SFTP_TestRecvReply(ssh, NULL)[LENGTH_SZ]
+                == WOLFSSH_FTP_STATUS) {
+            AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_EOF);
+            break;
+        }
+        count = SftpParseNameReply(ssh, reqId, seen, seenSz, dots);
+        AssertTrue(count > 0 && count <= WOLFSSH_MAX_SFTP_READDIR);
+        total += count;
+        /* one entry per reply at worst, the two dots included */
+        AssertTrue(++(*replies) <= seenSz + 2);
+    }
+
+    return total;
+}
+
+/* A READDIR answers with at most WOLFSSH_MAX_SFTP_READDIR entries and keeps
+ * its place in the directory, so a large directory comes back over several
+ * requests: every entry exactly once, then EOF, and EOF again after that. */
+static void TestSftpReadDirBounded(void)
+{
+    enum { FILES = 2 * WOLFSSH_MAX_SFTP_READDIR + 7 };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 700;
+    int reqId;
+    int replies;
+    int total;
+    int dots = 0;
+    int i;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    byte seen[FILES];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char dir[64];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    SftpMakeDirFixture(dir, sizeof(dir), FILES);
+    WMEMSET(seen, 0, sizeof(seen));
+
+    SftpOpenDirPath(ssh, rid++, dir, handle);
+    total = SftpReadDirAll(ssh, &rid, handle, seen, FILES, &dots, &replies);
+    AssertTrue(replies >= 3);
+    AssertIntEQ(dots, 2);
+    AssertIntEQ(total, FILES + 2);
+    for (i = 0; i < FILES; i++) {
+        AssertIntEQ(seen[i], 1);
+    }
+
+    /* EOF stays EOF */
+    reqId = rid++;
+    AssertIntEQ(SftpReadDirHandle(ssh, reqId, handle), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_EOF);
+
+    AssertIntEQ(SftpCloseHandle(ssh, rid++, handle), WS_SUCCESS);
+    SftpRemoveDirFixture(dir, FILES);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* An entry whose full path is longer than WOLFSSH_MAX_FILENAME is listed
+ * without attributes; it does not fail the READDIR or hide other entries.
+ * The long fixture name is f<zeros><FILES>, so it parses as entry FILES. */
+static void TestSftpReadDirLongName(void)
+{
+    enum { FILES = 3, LONG_SZ = 250 };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 750;
+    int replies;
+    int total;
+    int dots = 0;
+    int i;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    byte seen[FILES + 1];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char dir[64];
+    char longName[LONG_SZ + 1];
+    char path[sizeof(dir) + sizeof(longName)];
+    FILE* f;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    SftpMakeDirFixture(dir, sizeof(dir), FILES);
+    WSNPRINTF(longName, sizeof(longName), "f%0*d", LONG_SZ - 1, FILES);
+    WSNPRINTF(path, sizeof(path), "%s/%s", dir, longName);
+    f = fopen(path, "wb");
+    AssertNotNull(f);
+    fclose(f);
+    WMEMSET(seen, 0, sizeof(seen));
+
+    SftpOpenDirPath(ssh, rid++, dir, handle);
+    total = SftpReadDirAll(ssh, &rid, handle, seen, FILES + 1, &dots,
+            &replies);
+    AssertIntEQ(dots, 2);
+    AssertIntEQ(total, FILES + 3);
+    for (i = 0; i <= FILES; i++) {
+        AssertIntEQ(seen[i], 1);
+    }
+
+    AssertIntEQ(SftpCloseHandle(ssh, rid++, handle), WS_SUCCESS);
+    (void)remove(path);
+    SftpRemoveDirFixture(dir, FILES);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+/* Allocator that fails the sftpAllocNth allocation (1-based; 0 fails none)
+ * and tracks the live count, so a test can see a failed request free what it
+ * took. A free of a block from before the window counts down; a request that
+ * swaps its buffered reply for a new one nets to zero. */
+static int sftpAllocNth = 0;
+static int sftpAllocHits = 0;
+static int sftpAllocLive = 0;
+
+static void* SftpFailMalloc(size_t size)
+{
+    void* p;
+
+    if (++sftpAllocHits == sftpAllocNth) {
+        return NULL;
+    }
+    p = malloc(size);
+    if (p != NULL) {
+        sftpAllocLive++;
+    }
+    return p;
+}
+
+static void SftpCountFree(void* p)
+{
+    if (p != NULL) {
+        sftpAllocLive--;
+    }
+    free(p);
+}
+
+static void* SftpFailRealloc(void* p, size_t size)
+{
+    void* q;
+
+    if (++sftpAllocHits == sftpAllocNth) {
+        return NULL;
+    }
+    q = realloc(p, size);
+    if (p == NULL && q != NULL) {
+        sftpAllocLive++;
+    }
+    return q;
+}
+
+static wolfSSL_Malloc_cb sftpPrevMf;
+static wolfSSL_Free_cb sftpPrevFf;
+static wolfSSL_Realloc_cb sftpPrevRf;
+
+static void SftpFailAllocBegin(int nth)
+{
+    sftpAllocNth = nth;
+    sftpAllocHits = 0;
+    sftpAllocLive = 0;
+    AssertIntEQ(wolfSSL_GetAllocators(&sftpPrevMf, &sftpPrevFf, &sftpPrevRf),
+            0);
+    AssertIntEQ(wolfSSL_SetAllocators(SftpFailMalloc, SftpCountFree,
+            SftpFailRealloc), 0);
+}
+
+static void SftpFailAllocEnd(void)
+{
+    AssertIntEQ(wolfSSL_SetAllocators(sftpPrevMf, sftpPrevFf, sftpPrevRf), 0);
+}
+
+/* An allocation failure while building a READDIR reply is an error, not the
+ * end of the directory: the peer gets FAILURE, never EOF or a short listing,
+ * and nothing the request allocated is left behind. Fail each allocation of
+ * one READDIR in turn. */
+static void TestSftpReadDirAllocFailure(void)
+{
+    enum {
+        FILES = 3,
+        /* the first reply: every entry, the two dots included, up to the
+         * per-reply limit */
+        FIRST = (FILES + 2 < WOLFSSH_MAX_SFTP_READDIR) ?
+                FILES + 2 : WOLFSSH_MAX_SFTP_READDIR
+    };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 800;
+    int reqId;
+    int allocs;
+    int nth;
+    int ret;
+    int dots = 0;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char dir[64];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    SftpMakeDirFixture(dir, sizeof(dir), FILES);
+
+    /* count the allocations of a clean READDIR */
+    SftpOpenDirPath(ssh, rid++, dir, handle);
+    reqId = rid++;
+    SftpFailAllocBegin(0);
+    ret = SftpReadDirHandle(ssh, reqId, handle);
+    SftpFailAllocEnd();
+    allocs = sftpAllocHits;
+    AssertIntEQ(ret, WS_SUCCESS);
+    AssertIntEQ(SftpParseNameReply(ssh, reqId, NULL, 0, &dots), FIRST);
+    AssertIntEQ(SftpCloseHandle(ssh, rid++, handle), WS_SUCCESS);
+    AssertTrue(allocs > 1);
+
+    for (nth = 1; nth <= allocs; nth++) {
+        SftpOpenDirPath(ssh, rid++, dir, handle);
+        reqId = rid++;
+        SftpFailAllocBegin(nth);
+        ret = SftpReadDirHandle(ssh, reqId, handle);
+        SftpFailAllocEnd();
+        AssertTrue(ret != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_FAILURE);
+        AssertIntEQ(sftpAllocLive, 0);
+        AssertIntEQ(SftpCloseHandle(ssh, rid++, handle), WS_SUCCESS);
+    }
+    AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh), 0);
+
+    SftpRemoveDirFixture(dir, FILES);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* !WOLFSSL_STATIC_MEMORY && !WOLFSSL_DEBUG_MEMORY */
 #endif /* NO_WOLFSSH_DIR */
 
 /* A failed close() must still drop the handle from the session tracking list;
@@ -20760,6 +21167,14 @@ int main(int argc, char** argv)
     #ifndef NO_WOLFSSH_DIR
     /* open directory handles are capped per session */
     TestSftpDirHandleLimit();
+    /* READDIR replies are bounded and resume where the last one stopped */
+    TestSftpReadDirBounded();
+    /* an entry too long to stat is listed, not an error */
+    TestSftpReadDirLongName();
+    #if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+    /* an allocation failure in READDIR is an error, not EOF or a leak */
+    TestSftpReadDirAllocFailure();
+    #endif
     #endif
     /* a failed close still drops the handle from the tracking list */
     TestSftpCloseFailureRemovesHandle();
