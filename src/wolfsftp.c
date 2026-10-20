@@ -2919,9 +2919,12 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     word32 idx = 0;
     int   ret = WS_SUCCESS;
     int   rc;
+    WS_DIR_LIST* cur;
+    char*  dirName;
+    word32 dirNameSz;
 
     word32 outSz = WOLFSSH_HANDLE_ID_SZ + WOLFSSH_SFTP_HEADER + UINT32_SZ;
-    byte*  out = NULL;
+    byte*  out;
     byte idFlat[WOLFSSH_HANDLE_ID_SZ];
     char per[] = "Permission denied";
     char tooMany[] = "Too Many Open Directory Handles";
@@ -2960,71 +2963,46 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (WOPENDIR(ssh->fs, ssh->ctx->heap, &ctx, dir) != 0) {
         WLOG(WS_LOG_SFTP, "Error with opening directory: %s", dir);
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                "Unable To Open Directory", "English", NULL, &outSz)
-                != WS_SIZE_ONLY) {
-                return WS_FATAL_ERROR;
-        }
-        ret = WS_BAD_FILE_E;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
+                "Unable To Open Directory");
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
-    WOLFSSH_UNUSED(reqId);
-
-    if (ret == WS_SUCCESS) {
-        WS_DIR_LIST* cur = NULL;
-        char* dirName = NULL;
-        word32 dirNameSz;
-
-        cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
-                ssh->ctx->heap, DYNTYPE_SFTP);
-        if (cur == NULL) {
-            WCLOSEDIR(ssh->fs, &ctx);
-            return WS_MEMORY_E;
-        }
-        dirNameSz = (word32)WSTRLEN(dir) + 1;
-        dirName = (char*)WMALLOC(dirNameSz,
-                ssh->ctx->heap, DYNTYPE_PATH);
-        if (dirName == NULL) {
-            WCLOSEDIR(ssh->fs, &ctx);
-            WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
-            return WS_MEMORY_E;
-        }
-        WMEMCPY(dirName, dir, dirNameSz);
-#ifdef WOLFSSL_NUCLEUS
-        WMEMCPY(&cur->dir, &ctx, sizeof(WDIR));
-#else
-        cur->dir  = ctx;
-#endif
-        SFTP_HandleIdNext(ssh, cur->id);
-        SFTP_HandleIdEncode(cur->id, idFlat);
-        cur->isEof = 0;
-        cur->next  = ssh->dirList;
-        ssh->dirList          = cur;
-        ssh->dirList->dirName = dirName; /* take over ownership of buffer */
-    }
-
+    /* allocate everything, the reply included, before publishing the handle
+     * so a failure leaves no handle the peer was never told about */
+    dirNameSz = (word32)WSTRLEN(dir) + 1;
+    cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
+            ssh->ctx->heap, DYNTYPE_SFTP);
+    dirName = (char*)WMALLOC(dirNameSz, ssh->ctx->heap, DYNTYPE_PATH);
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (out == NULL) {
+    if (cur == NULL || dirName == NULL || out == NULL) {
+        WCLOSEDIR(ssh->fs, &ctx);
+        WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
+        WFREE(dirName, ssh->ctx->heap, DYNTYPE_PATH);
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_MEMORY_E;
     }
 
-    if (ret == WS_SUCCESS) {
-        SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
-                idFlat, sizeof(idFlat));
-    }
-    else {
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                "Unable To Open Directory", "English", out, &outSz)
-                != WS_SUCCESS) {
-            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-            return WS_FATAL_ERROR;
-        }
-    }
+    WMEMCPY(dirName, dir, dirNameSz);
+#ifdef WOLFSSL_NUCLEUS
+    WMEMCPY(&cur->dir, &ctx, sizeof(WDIR));
+#else
+    cur->dir  = ctx;
+#endif
+    SFTP_HandleIdNext(ssh, cur->id);
+    SFTP_HandleIdEncode(cur->id, idFlat);
+    cur->isEof = 0;
+    cur->dirName = dirName; /* take over ownership of buffer */
+    cur->next  = ssh->dirList;
+    ssh->dirList = cur;
+
+    SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
+            idFlat, sizeof(idFlat));
 
     /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
-    return ret;
+    return WS_SUCCESS;
 }
 #else /* USE_WINDOWS_API */
 {
@@ -3037,9 +3015,10 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     int isDir = 0;
     int ret = WS_SUCCESS;
     int rc;
+    WS_DIR_LIST* cur;
 
     word32 outSz = WOLFSSH_HANDLE_ID_SZ + WOLFSSH_SFTP_HEADER + UINT32_SZ;
-    byte*  out = NULL;
+    byte*  out;
     byte idFlat[WOLFSSH_HANDLE_ID_SZ];
     char name[MAX_PATH];
     char clean[WOLFSSH_MAX_FILENAME];
@@ -3133,62 +3112,45 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         findHandle = (HANDLE)WS_FindFirstFileA(name,
                 realName, sizeof(realName), &isDir, ssh->ctx->heap);
         if (findHandle == INVALID_HANDLE_VALUE || !isDir) {
-
             WLOG(WS_LOG_SFTP, "Error with opening directory: %s", name);
-            WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
-
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                    "Unable To Open Directory", "English", NULL, &outSz)
-                    != WS_SIZE_ONLY) {
-                    return WS_FATAL_ERROR;
-            }
             ret = WS_BAD_FILE_E;
         }
         if (findHandle != NULL && findHandle != INVALID_HANDLE_VALUE)
             FindClose(findHandle);
-    }
-
-    WOLFSSH_UNUSED(reqId);
-
-    if (ret == WS_SUCCESS) {
-        WS_DIR_LIST* cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
-                ssh->ctx->heap, DYNTYPE_SFTP);
-        if (cur == NULL) {
+        if (ret != WS_SUCCESS) {
             WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
-            return WS_MEMORY_E;
+            rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
+                    "Unable To Open Directory");
+            return (rc == WS_SUCCESS) ? ret : rc;
         }
-        cur->dir = INVALID_HANDLE_VALUE;
-        SFTP_HandleIdNext(ssh, cur->id);
-        SFTP_HandleIdEncode(cur->id, idFlat);
-        cur->isEof = 0;
-        cur->dirName = dirName; /* take over ownership of buffer */
-        cur->next    = ssh->dirList;
-        ssh->dirList = cur;
-
     }
 
+    /* allocate the reply before publishing the handle so a failure leaves
+     * no handle the peer was never told about */
+    cur = (WS_DIR_LIST*)WMALLOC(sizeof(WS_DIR_LIST),
+            ssh->ctx->heap, DYNTYPE_SFTP);
     out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
-    if (out == NULL) {
+    if (cur == NULL || out == NULL) {
+        WFREE(cur, ssh->ctx->heap, DYNTYPE_SFTP);
+        WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+        WFREE(dirName, ssh->ctx->heap, DYNTYPE_BUFFER);
         return WS_MEMORY_E;
     }
+    cur->dir = INVALID_HANDLE_VALUE;
+    SFTP_HandleIdNext(ssh, cur->id);
+    SFTP_HandleIdEncode(cur->id, idFlat);
+    cur->isEof = 0;
+    cur->dirName = dirName; /* take over ownership of buffer */
+    cur->next    = ssh->dirList;
+    ssh->dirList = cur;
 
-    if (ret == WS_SUCCESS) {
-        SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
-                idFlat, sizeof(idFlat));
-    }
-    else {
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                "Unable To Open Directory", "English", out, &outSz)
-                != WS_SUCCESS) {
-            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
-            return WS_FATAL_ERROR;
-        }
-    }
+    SFTP_CreatePacket(ssh, WOLFSSH_FTP_HANDLE, out, outSz,
+            idFlat, sizeof(idFlat));
 
     /* set send out buffer, "out" is taken by ssh  */
     wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
 
-    return ret;
+    return WS_SUCCESS;
 }
 #endif /* USE_WINDOWS_API */
 
