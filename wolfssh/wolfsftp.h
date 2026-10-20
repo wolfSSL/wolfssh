@@ -172,9 +172,12 @@ struct WS_SFTPNAME {
  *     this size for the message and then one WS_SFTPNAME node per entry, so
  *     an unbounded NAME packet lets a malicious or MITM server amplify a
  *     modest packet into several times that much live heap. The default of
- *     1 MiB leaves room for very large single-packet directory listings (the
- *     server sends a whole directory in one NAME packet) while bounding peak
- *     heap to a few MiB.
+ *     1 MiB leaves room for very large single-packet directory listings from
+ *     servers that send a whole directory in one NAME packet while bounding
+ *     peak heap to a few MiB.
+ * WOLFSSH_MAX_SFTP_READDIR: Most entries the server puts in one READDIR
+ *     reply. A larger directory takes several READDIR requests, so one
+ *     request cannot make the server read and buffer the whole directory.
  */
 #ifndef WOLFSSH_MAX_SFTP_RW
     #define WOLFSSH_MAX_SFTP_RW 32768
@@ -184,6 +187,11 @@ struct WS_SFTPNAME {
 #endif
 #ifndef WOLFSSH_MAX_SFTP_NAME
     #define WOLFSSH_MAX_SFTP_NAME (1024 * 1024)
+#endif
+#ifndef WOLFSSH_MAX_SFTP_READDIR
+    #define WOLFSSH_MAX_SFTP_READDIR 100
+#elif WOLFSSH_MAX_SFTP_READDIR < 1
+    #error WOLFSSH_MAX_SFTP_READDIR must be at least 1
 #endif
 
 /*

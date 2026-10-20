@@ -1616,6 +1616,10 @@ extern "C" {
     #include <unistd.h>   /* used for rmdir */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
+    #include <errno.h>    /* used for why a call failed */
+
+    /* failed file system calls report why in errno */
+    #define WOLFSSH_SFTP_ERRNO
 
     #define WSTAT_T      struct stat
     #define WRMDIR(fs,d) rmdir((d))
