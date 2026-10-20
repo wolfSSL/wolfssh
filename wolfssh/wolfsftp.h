@@ -193,9 +193,10 @@ struct WS_SFTPNAME {
  *     WOLFSSH_MAX_SFTP_RW bytes of file data plus the handle, offset, and
  *     length framing, so the bound is WOLFSSH_MAX_SFTP_RW plus the message
  *     overhead allowance of WOLFSSH_MAX_SFTP_RECV. Used to reject an over-large
- *     client-declared length before any buffer is allocated. This bound does
- *     not apply to client-side response handling (e.g. NAME directory listings
- *     or READ data), whose sizes are not derived from WOLFSSH_MAX_SFTP_RW.
+ *     peer-declared length before any buffer is allocated. The client applies
+ *     it to its replies too, except VERSION (WOLFSSH_MAX_SFTP_RECV), NAME
+ *     (WOLFSSH_MAX_SFTP_NAME) and any reply to a READ, which may be as large
+ *     as the caller's buffer plus the data string's length prefix.
  */
 #ifndef WOLFSSH_MAX_SFTP_PACKET
     #define WOLFSSH_MAX_SFTP_PACKET (WOLFSSH_MAX_SFTP_RW + WOLFSSH_MAX_SFTP_RECV)
