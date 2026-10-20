@@ -1856,7 +1856,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                 default:
                     WLOG(WS_LOG_SFTP, "Unknown packet type [%d] received",
                             state->type);
-                    if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE,
+                    if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_UNSUPPORTED,
                                 state->reqId,
                                 "Unknown/Unsupported packet type",
                                 "English", NULL, (word32*)&maxSz)
@@ -1875,7 +1875,7 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
                     }
 
                     maxSz = (int)wolfSSH_SFTP_buffer_size(&state->buffer);
-                    ret = wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE,
+                    ret = wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_UNSUPPORTED,
                             state->reqId,
                             "Unknown/Unsupported packet type", "English",
                             wolfSSH_SFTP_buffer_data(&state->buffer),
