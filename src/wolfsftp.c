@@ -4981,6 +4981,9 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char   name[WOLFSSH_MAX_FILENAME];
     word32 idx = 0;
     int    ret = WS_SUCCESS;
+#ifndef USE_WINDOWS_API
+    WS_SFTP_FILEATRB atr;
+#endif
 
     byte type = WOLFSSH_FTP_OK;
     int  rc;
@@ -5006,7 +5009,20 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
     #ifndef USE_WINDOWS_API
-        if (WREMOVE(ssh->fs, name) < 0)
+        /* REMOVE never takes a directory (draft-ietf-secsh-filexfer-02 6.5) */
+        WMEMSET(&atr, 0, sizeof(atr));
+        if (SFTP_GetAttributes(ssh->fs, name, &atr, 1, ssh->ctx->heap)
+                    == WS_SUCCESS
+                && (atr.per & FILEATRB_PER_MASK_TYPE) == FILEATRB_PER_DIR) {
+            WLOG(WS_LOG_SFTP, "Not removing a directory");
+            ret = WS_BAD_FILE_E;
+        }
+    #ifdef WUNLINK
+        /* unlink() refuses a directory swapped in after the check */
+        else if (WUNLINK(ssh->fs, name) < 0)
+    #else
+        else if (WREMOVE(ssh->fs, name) < 0)
+    #endif
     #else /* USE_WINDOWS_API */
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */
@@ -5051,6 +5067,65 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     return ret;
 }
+
+
+#ifndef USE_WINDOWS_API
+/* Rename without replacing an existing name (draft-ietf-secsh-filexfer-02
+ * 6.5). linkat() refuses one atomically; other types, builds without linkat(),
+ * and filesystems without hard links check first and race a concurrent
+ * create.
+ *
+ * returns WS_SUCCESS on success
+ */
+static int SFTP_RenameNoReplace(WOLFSSH* ssh, char* old, char* name)
+{
+    WS_SFTP_FILEATRB atr;
+
+    /* a missing or unreachable oldpath is reported first, with its errno */
+    WMEMSET(&atr, 0, sizeof(atr));
+    if (SFTP_GetAttributes(ssh->fs, old, &atr, 1, ssh->ctx->heap)
+            != WS_SUCCESS) {
+        return WS_BAD_FILE_E;
+    }
+
+#ifdef WLINK
+    if ((atr.per & FILEATRB_PER_MASK_TYPE) == FILEATRB_PER_FILE) {
+        if (WLINK(ssh->fs, old, name) == 0) {
+            int err;
+
+            if (WUNLINK(ssh->fs, old) == 0) {
+                return WS_SUCCESS;
+            }
+            /* undo the link, keeping the unlink errno */
+            err = errno;
+            (void)WUNLINK(ssh->fs, name);
+            errno = err;
+            return WS_BAD_FILE_E;
+        }
+        if (errno == EEXIST) {
+            WLOG(WS_LOG_SFTP, "Rename target exists");
+            errno = EEXIST;
+            return WS_BAD_FILE_E;
+        }
+    }
+#endif
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    if (SFTP_GetAttributes(ssh->fs, name, &atr, 1, ssh->ctx->heap)
+            == WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Rename target exists");
+    #ifdef WOLFSSH_SFTP_ERRNO
+        /* the reply status comes from errno, which the lstat left stale */
+        errno = EEXIST;
+    #endif
+        return WS_BAD_FILE_E;
+    }
+    if (WRENAME(ssh->fs, old, name) < 0) {
+        return WS_BAD_FILE_E;
+    }
+    return WS_SUCCESS;
+}
+#endif /* USE_WINDOWS_API */
 
 
 /* Handles packet to rename a file
@@ -5101,8 +5176,9 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (ret == WS_SUCCESS) {
     #ifndef USE_WINDOWS_API
-        if (WRENAME(ssh->fs, old, name) < 0)
+        if (SFTP_RenameNoReplace(ssh, old, name) != WS_SUCCESS)
     #else /* USE_WINDOWS_API */
+        /* MoveFile never replaces */
         if (WS_MoveFileA(old, name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */
         {
@@ -5218,8 +5294,10 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
         return WS_SUCCESS;
     }
 
-    /* handle case of "/" */
-    if (sz < 3 && fileName[0] == WS_DELIM && ret == NUF_NOFILE) {
+    /* handle case of "/" or "/.", not a root-level name such as "/a" */
+    if (fileName[0] == WS_DELIM
+            && (sz == 1 || (sz == 2 && fileName[1] == '.'))
+            && ret == NUF_NOFILE) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         atr->per |= 040000;
         return WS_SUCCESS;
@@ -5603,8 +5681,10 @@ static int SFTP_GetAttributes(void* fs, const char* fileName,
     }
 
     /* handle case of "/" */
-    /* Calling f_stat for "/" returns FR_INVALID_NAME. So we simulate the result. */
-    if (sz < 3 && fileName[0] == WS_DELIM) {
+    /* Calling f_stat for "/" returns FR_INVALID_NAME. So we simulate the result.
+     * Only "/" and "/." though; "/a" is a root-level name for f_stat. */
+    if (fileName[0] == WS_DELIM
+            && (sz == 1 || (sz == 2 && fileName[1] == '.'))) {
         atr->flags |= WOLFSSH_FILEATRB_PERM;
         atr->per |= 040000;
         return WS_SUCCESS;
