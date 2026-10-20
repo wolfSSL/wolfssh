@@ -2138,6 +2138,33 @@ static int SFTP_SendStatus(WOLFSSH* ssh, byte type, int reqId, const char* msg)
 }
 
 
+/* Status code for a file system call that just failed, from errno where the
+ * file system sets it: NO_SUCH_FILE for a missing path, PERMISSION_DENIED for
+ * a refused one, FAILURE otherwise. Without errno it is fallback. Call it
+ * before anything else, a log line included, can change errno. */
+static byte SFTP_FailStatus(byte fallback)
+{
+    byte type = fallback;
+
+#ifdef WOLFSSH_SFTP_ERRNO
+    switch (errno) {
+        case ENOENT:
+        case ENOTDIR:
+            type = WOLFSSH_FTP_NOFILE;
+            break;
+        case EACCES:
+        case EPERM:
+            type = WOLFSSH_FTP_PERMISSION;
+            break;
+        default:
+            type = WOLFSSH_FTP_FAILURE;
+            break;
+    }
+#endif
+    return type;
+}
+
+
 /* Handles packet to remove a directory
  *
  * returns WS_SUCCESS on success
@@ -2472,6 +2499,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  naf[] = "Not A File";
     char  per[] = "Permission denied";
     char  tmf[] = "Too Many Open File Handles";
+    byte  type = WOLFSSH_FTP_FAILURE;
     int handleStored = 0;
 
     if (ssh == NULL) {
@@ -2601,9 +2629,10 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         fd = WOPEN(ssh->fs, dir, m, WOLFSSH_SFTP_SAFE_MODE(atr.per));
     #endif
         if (fd < 0) {
+            type = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Error opening file %s", dir);
             res = oer;
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
+            if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res,
                     "English", NULL, &outSz) != WS_SIZE_ONLY) {
                 ret = WS_FATAL_ERROR;
                 goto cleanup;
@@ -2651,7 +2680,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         }
     }
     else {
-        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, res,
+        if (wolfSSH_SFTP_CreateStatus(ssh, type, reqId, res,
                 "English", out, &outSz) != WS_SUCCESS) {
             ret = WS_FATAL_ERROR;
             goto cleanup;
@@ -2962,9 +2991,10 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (WOPENDIR(ssh->fs, ssh->ctx->heap, &ctx, dir) != 0) {
+        byte type = SFTP_FailStatus(WOLFSSH_FTP_NOFILE);
+
         WLOG(WS_LOG_SFTP, "Error with opening directory: %s", dir);
-        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_NOFILE, reqId,
-                "Unable To Open Directory");
+        rc = SFTP_SendStatus(ssh, type, reqId, "Unable To Open Directory");
         return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
@@ -4981,6 +5011,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */
         {
+            type = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Error removing file");
         #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
             if (ret == NUF_ACCES)
@@ -5007,7 +5038,9 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     else if (ret != WS_SUCCESS) {
         res  = err;
-        type = WOLFSSH_FTP_FAILURE;
+        if (type == WOLFSSH_FTP_OK) {
+            type = WOLFSSH_FTP_FAILURE;
+        }
     }
 
     /* keep the operation result on success; on a send failure propagate it so
@@ -5073,6 +5106,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if (WS_MoveFileA(old, name, ssh->ctx->heap) == 0)
     #endif /* USE_WINDOWS_API */
         {
+            type = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Error renaming file");
             ret = WS_BAD_FILE_E;
         }
@@ -5085,7 +5119,9 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         ret  = WS_BAD_FILE_E;
     }
     else if (ret != WS_SUCCESS) {
-        type = WOLFSSH_FTP_FAILURE;
+        if (type == WOLFSSH_FTP_OK) {
+            type = WOLFSSH_FTP_FAILURE;
+        }
         res  = err;
     }
 
@@ -6030,8 +6066,9 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
         if (SFTP_GetAttributes(ssh->fs, name, &atr, 0, ssh->ctx->heap)
             != WS_SUCCESS) {
+            statusType = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Unable to get stat of file/directory");
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+            if (wolfSSH_SFTP_CreateStatus(ssh, statusType, reqId,
                     ser, "English", NULL, &outSz) != WS_SIZE_ONLY) {
                 return WS_FATAL_ERROR;
             }
@@ -6124,8 +6161,9 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         if ((ret = SFTP_GetAttributes(ssh->fs, name, &atr, 1, ssh->ctx->heap))
                 != WS_SUCCESS) {
             /* tell peer that was not ok */
+            statusType = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Unable to get lstat of file/directory");
-            if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+            if (wolfSSH_SFTP_CreateStatus(ssh, statusType, reqId,
                     ser, "English", NULL, &outSz) != WS_SIZE_ONLY) {
                 return WS_FATAL_ERROR;
             }
