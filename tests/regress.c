@@ -17028,6 +17028,60 @@ static void TestSftpReadDirAllocFailure(void)
     wolfSSH_CTX_free(ctx);
 }
 
+/* An OPENDIR that cannot build its reply must not leave a directory handle
+ * the peer was never told about. Fail each allocation of one OPENDIR in turn:
+ * no handle is left open and nothing the request allocated is left behind. */
+static void TestSftpOpenDirAllocFailure(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 900;
+    int allocs;
+    int nth;
+    int ret;
+    byte pkt[UINT32_SZ + 1];
+    word32 idx = 0;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    char cwd[WOLFSSH_MAX_FILENAME];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+
+    SftpPutU32(1, pkt + idx); idx += UINT32_SZ;
+    pkt[idx++] = '.';
+
+    /* count the allocations of a clean OPENDIR */
+    SftpFailAllocBegin(0);
+    ret = wolfSSH_SFTP_RecvOpenDir(ssh, rid++, pkt, idx);
+    SftpFailAllocEnd();
+    allocs = sftpAllocHits;
+    AssertIntEQ(ret, WS_SUCCESS);
+    WMEMCPY(handle, wolfSSH_SFTP_TestRecvReply(ssh, NULL)
+            + SFTP_TEST_HANDLE_OFF, WOLFSSH_HANDLE_ID_SZ);
+    AssertIntEQ(SftpCloseHandle(ssh, rid++, handle), WS_SUCCESS);
+    AssertTrue(allocs > 1);
+
+    for (nth = 1; nth <= allocs; nth++) {
+        SftpFailAllocBegin(nth);
+        ret = wolfSSH_SFTP_RecvOpenDir(ssh, rid++, pkt, idx);
+        SftpFailAllocEnd();
+        AssertTrue(ret != WS_SUCCESS);
+        AssertIntEQ(wolfSSH_SFTP_TestDirHandleCount(ssh), 0);
+        AssertIntEQ(sftpAllocLive, 0);
+    }
+
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
 #endif /* !WOLFSSL_STATIC_MEMORY && !WOLFSSL_DEBUG_MEMORY */
 #endif /* NO_WOLFSSH_DIR */
 
@@ -21172,8 +21226,9 @@ int main(int argc, char** argv)
     /* an entry too long to stat is listed, not an error */
     TestSftpReadDirLongName();
     #if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
-    /* an allocation failure in READDIR is an error, not EOF or a leak */
+    /* allocation failures in READDIR/OPENDIR are errors, not EOF or leaks */
     TestSftpReadDirAllocFailure();
+    TestSftpOpenDirAllocFailure();
     #endif
     #endif
     /* a failed close still drops the handle from the tracking list */
