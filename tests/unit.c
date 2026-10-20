@@ -23723,6 +23723,99 @@ static int test_SftpRecvSizeBoundAccept(void)
 
     return 0;
 }
+
+static byte s_sftpSent[512];
+static word32 s_sftpSentSz = 0;
+
+static int SftpCaptureIoSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(ctx);
+
+    if (s_sftpSentSz + sz > (word32)sizeof(s_sftpSent))
+        return WS_CBIO_ERR_GENERAL;
+    WMEMCPY(s_sftpSent + s_sftpSentSz, buf, sz);
+    s_sftpSentSz += sz;
+    return (int)sz;
+}
+
+/* An SSH_FXP_EXTENDED request the server does not implement is answered
+ * with SSH_FX_OP_UNSUPPORTED (draft-ietf-secsh-filexfer-02 Section 8),
+ * not the generic SSH_FX_FAILURE. */
+static int test_SftpExtendedUnsupported(void)
+{
+    static const char extName[] = "unknown@example.com";
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int    result = 0;
+    word32 extSz = (word32)(sizeof(extName) - 1);
+    word32 sz = 0;
+    word32 i;
+    byte   pkt[WOLFSSH_SFTP_HEADER + UINT32_SZ + sizeof(extName)];
+    /* STATUS header for request id 7, as it appears on the wire */
+    static const byte status[] = { WOLFSSH_FTP_STATUS, 0, 0, 0, 7 };
+
+    PutU32BE(pkt, MSG_ID_SZ + UINT32_SZ + UINT32_SZ + extSz);
+    pkt[LENGTH_SZ] = WOLFSSH_FTP_EXTENDED;
+    PutU32BE(pkt + LENGTH_SZ + MSG_ID_SZ, 7);
+    sz = WOLFSSH_SFTP_HEADER;
+    PutU32BE(pkt + sz, extSz);
+    sz += UINT32_SZ;
+    WMEMCPY(pkt + sz, extName, extSz);
+    sz += extSz;
+
+    s_sftpSentSz = 0;
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -960;
+    wolfSSH_SetIOSend(ctx, SftpCaptureIoSend);
+    wolfSSH_SetIORecv(ctx, RecvAlwaysWantRead);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -961; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -962; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -963;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    if (wolfSSH_TestChannelPutData(ch, pkt, sz) != WS_SUCCESS) {
+        result = -964;
+        goto done;
+    }
+    if (wolfSSH_SFTP_read(ssh) != WS_SUCCESS) {
+        result = -965;
+        goto done;
+    }
+
+    /* no keys yet, so the reply crosses the transport in the clear */
+    for (i = 0; i + sizeof(status) + UINT32_SZ <= s_sftpSentSz; i++) {
+        if (WMEMCMP(s_sftpSent + i, status, sizeof(status)) == 0)
+            break;
+    }
+    if (i + sizeof(status) + UINT32_SZ > s_sftpSentSz) {
+        result = -966;
+        goto done;
+    }
+    i += (word32)sizeof(status);
+    sz = ((word32)s_sftpSent[i] << 24) | ((word32)s_sftpSent[i + 1] << 16)
+            | ((word32)s_sftpSent[i + 2] << 8) | (word32)s_sftpSent[i + 3];
+    if (sz != WOLFSSH_FTP_UNSUPPORTED)
+        result = -967;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 #endif /* NO_WOLFSSH_SERVER */
 
 #ifndef NO_WOLFSSH_CLIENT
@@ -26734,6 +26827,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_SftpRecvSizeBoundAccept();
     printf("SftpRecvSizeBoundAccept: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpExtendedUnsupported();
+    printf("SftpExtendedUnsupported: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_SERVER */
