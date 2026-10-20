@@ -1613,7 +1613,7 @@ extern "C" {
 
 #else
 
-    #include <unistd.h>   /* used for rmdir */
+    #include <unistd.h>   /* used for rmdir, linkat, and unlink */
     #include <sys/stat.h> /* used for mkdir, stat, and lstat */
     #include <stdio.h>    /* used for remove and rename */
 
@@ -1622,6 +1622,15 @@ extern "C" {
     #define WSTAT(fs,p,b)   stat((p),(b))
     #ifndef USE_OSE_API
         #define WLSTAT(fs,p,b) lstat((p),(b))
+        #define WUNLINK(fs,p)  unlink((p))
+        #ifdef HAVE_LINKAT
+            /* SFTP no-replace rename; it reads errno. linkat() without
+             * AT_SYMLINK_FOLLOW links a symlink itself, where link() may
+             * follow it. */
+            #include <errno.h>
+            #include <fcntl.h>
+            #define WLINK(fs,o,n) linkat(AT_FDCWD, (o), AT_FDCWD, (n), 0)
+        #endif
     #else
         #define WLSTAT(fs,p,b) stat((p),(b))
     #endif
