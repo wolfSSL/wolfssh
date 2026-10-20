@@ -1052,10 +1052,12 @@ int wolfSSH_SFTP_PendingSend(WOLFSSH* ssh)
 
 /* Gets packet header information
  * request Id, type, and size of type specific data
- * return value is length of type specific data still on the wire to be read
+ * maxSz bounds the type specific data, not the packet length field
+ * return value is length of type specific data still on the wire to be read,
+ * or WS_BUFFER_E if the peer declared more than maxSz or more than an int holds
  */
 static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type,
-        WS_SFTP_BUFFER* buffer)
+        WS_SFTP_BUFFER* buffer, word32 maxSz)
 {
     int    ret;
     word32 len;
@@ -1081,9 +1083,23 @@ static int SFTP_GetHeader(WOLFSSH* ssh, word32* reqId, byte* type,
     ato32(buffer->data + UINT32_SZ + MSG_ID_SZ, reqId);
 
     wolfSSH_SFTP_buffer_free(ssh, buffer);
+
+    /* The caller allocates the body at this size, so bound it first. */
+    if (len < UINT32_SZ + MSG_ID_SZ) {
+        WLOG(WS_LOG_SFTP, "SFTP packet length %u too short", len);
+        ssh->error = WS_BUFFER_E;
+        return WS_BUFFER_E;
+    }
+    len -= UINT32_SZ + MSG_ID_SZ;
+    if (len > maxSz || len > (word32)0x7FFFFFFF) {
+        WLOG(WS_LOG_SFTP, "SFTP packet length %u over limit %u", len, maxSz);
+        ssh->error = WS_BUFFER_E;
+        return WS_BUFFER_E;
+    }
+
     WLOG(WS_LOG_SFTP, "Leaving SFTP_GetHeader(), packet length = %d id = %d"
-           " type = %d", len - UINT32_SZ - MSG_ID_SZ, *reqId, *type);
-    return len - UINT32_SZ - MSG_ID_SZ;
+           " type = %d", len, *reqId, *type);
+    return (int)len;
 }
 
 
@@ -1709,17 +1725,11 @@ int wolfSSH_SFTP_read(WOLFSSH* ssh)
             /* Wait for packet to come in then handle it, maxSz is the size of
              * packet expected to come. */
             ret = SFTP_GetHeader(ssh, (word32*)&state->reqId,
-                    &state->type, &state->buffer);
+                    &state->type, &state->buffer, WOLFSSH_MAX_SFTP_PACKET);
             if (SFTP_CheckRecvSz(ret) != WS_SUCCESS) {
-                /* A positive ret is a genuine over-large declared length; log
-                 * it as such. */
-                if (ret > 0) {
-                    WLOG(WS_LOG_SFTP,
-                            "Received SFTP packet size out of bounds");
-                }
                 /* If no lower layer left a reason (ssh->error == 0), the header
-                 * parsed but the declared body length is invalid - over the
-                 * cap, zero, or underflowed to negative - so record WS_BUFFER_E.
+                 * parsed but the declared body length is zero, so record
+                 * WS_BUFFER_E.
                  * This keeps the caller from seeing ret == WS_FATAL_ERROR with
                  * ssh->error == 0 and misclassifying it as a clean close via the
                  * channel-EOF fallback. Genuine header-read failures set
@@ -7335,29 +7345,21 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
     switch (state->state) {
 
         case SFTP_NAME_GETHEADER_PACKET:
-            maxSz = SFTP_GetHeader(ssh, &reqId, &type, &state->buffer);
+            /* Bound the NAME size: the buffer is allocated at this size and a
+             * WS_SFTPNAME node is made per entry, so an over-large packet
+             * would amplify into several times that much live heap. */
+            maxSz = SFTP_GetHeader(ssh, &reqId, &type, &state->buffer,
+                    WOLFSSH_MAX_SFTP_NAME);
             if (maxSz <= 0) {
                 /* Non-positive size: a retryable notice keeps NAME state for
-                 * resume; otherwise (including an int wrap above INT_MAX)
-                 * record a size error if unset and clear state. */
+                 * resume; otherwise record a size error if unset and clear
+                 * state. */
                 if (!NoticeError(ssh)) {
                     if (ssh->error == WS_SUCCESS) {
                         ssh->error = WS_BUFFER_E;
                     }
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 }
-                return NULL;
-            }
-
-            /* Bound the NAME size: the buffer is allocated at this size and a
-             * WS_SFTPNAME node is made per entry, so an over-large packet
-             * would amplify into several times that much live heap. */
-            if (maxSz > WOLFSSH_MAX_SFTP_NAME) {
-                WLOG(WS_LOG_SFTP,
-                        "SFTP NAME packet size %d exceeds limit %d",
-                        maxSz, (int)WOLFSSH_MAX_SFTP_NAME);
-                ssh->error = WS_BUFFER_E;
-                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 return NULL;
             }
 
@@ -7585,7 +7587,8 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
 
             case STATE_GET_HANDLE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: GET_HEADER");
-                ret = SFTP_GetHeader(ssh, &handleState->reqId, &type, &handleState->buffer);
+                ret = SFTP_GetHeader(ssh, &handleState->reqId, &type,
+                        &handleState->buffer, WOLFSSH_MAX_SFTP_PACKET);
                 if (ret <= 0) {
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
@@ -7987,7 +7990,7 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 WLOG(WS_LOG_SFTP, "SFTP LSTAT STATE: GET_HEADER");
                 /* get attributes response */
                 ret = SFTP_GetHeader(ssh, &state->reqId, &state->type,
-                        &state->buffer);
+                        &state->buffer, WOLFSSH_MAX_SFTP_PACKET);
                 if (ret <= 0) {
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
@@ -8212,7 +8215,8 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
 
 
         case STATE_SET_ATR_GET:
-            maxSz = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
+            maxSz = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer,
+                    WOLFSSH_MAX_SFTP_PACKET);
             if (maxSz <= 0) {
                 if (!NoticeError(ssh)) {
                     ret = WS_FATAL_ERROR;
@@ -8556,12 +8560,14 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 WLOG(WS_LOG_SFTP, "SFTP SEND_WRITE STATE: GET_HEADER");
                 /* Get response */
                 state->maxSz = SFTP_GetHeader(ssh, &state->reqId, &type,
-                        &state->buffer);
+                        &state->buffer, WOLFSSH_MAX_SFTP_PACKET);
                 if (state->maxSz <= 0) {
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
-                    ssh->error = WS_SFTP_BAD_HEADER;
+                    if (ssh->error == WS_SUCCESS) {
+                        ssh->error = WS_SFTP_BAD_HEADER;
+                    }
                     ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
@@ -8665,6 +8671,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
     WS_SFTP_SEND_READ_STATE* state = NULL;
     int ret = WS_SUCCESS;
     word32 sz;
+    word32 maxSz;
 
     WLOG(WS_LOG_SFTP, "Entering wolfSSH_SFTP_SendReadPacket()");
     if (ssh == NULL || handle == NULL || out == NULL)
@@ -8754,9 +8761,18 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
             case STATE_SEND_READ_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: GET_HEADER");
+                /* A DATA reply holds up to outSz bytes as a string, which can
+                 * need more room than WOLFSSH_MAX_SFTP_PACKET. The type is not
+                 * known yet, so the bound covers any reply. */
+                maxSz = WOLFSSH_MAX_SFTP_PACKET;
+                if (outSz > maxSz - UINT32_SZ) {
+                    maxSz = outSz + UINT32_SZ;
+                    if (maxSz < outSz)
+                        maxSz = outSz;
+                }
                 /* Get response */
                 if ((ret = SFTP_GetHeader(ssh, &state->reqId, &state->type,
-                                &state->buffer)) <= 0) {
+                                &state->buffer, maxSz)) <= 0) {
                     if (NoticeError(ssh)) {
                         return WS_FATAL_ERROR;
                     }
@@ -9021,7 +9037,7 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
         case STATE_MKDIR_GET:
             /* Get response */
             if ((ret = SFTP_GetHeader(ssh, &state->reqId, &type,
-                            &state->buffer)) <= 0) {
+                            &state->buffer, WOLFSSH_MAX_SFTP_PACKET)) <= 0) {
                 if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_MKDIR);
                 }
@@ -9190,7 +9206,8 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
             case STATE_CLOSE_GET_HEADER:
                 WLOG(WS_LOG_SFTP, "SFTP CLOSE STATE: GET_HEADER");
-                ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
+                ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer,
+                        WOLFSSH_MAX_SFTP_PACKET);
                 if (ret <= 0 && NoticeError(ssh)) {
                     return WS_FATAL_ERROR;
                 }
@@ -9580,7 +9597,7 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                 WLOG(WS_LOG_SFTP, "SFTP RENAME STATE: GET_HEADER");
                 /* Get response */
                 ret = SFTP_GetHeader(ssh, &state->reqId,
-                        &type, &state->buffer);
+                        &type, &state->buffer, WOLFSSH_MAX_SFTP_PACKET);
                 if (ret <= 0) {
                     if (ssh->error == WS_WANT_READ ||
                             ssh->error == WS_WANT_WRITE) {
@@ -9730,7 +9747,8 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
             FALL_THROUGH;
 
         case STATE_RM_GET:
-            ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
+            ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer,
+                    WOLFSSH_MAX_SFTP_PACKET);
             if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
                 if (!NoticeError(ssh)) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
@@ -9820,7 +9838,8 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
             FALL_THROUGH;
 
         case STATE_RMDIR_GET:
-            ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer);
+            ret = SFTP_GetHeader(ssh, &state->reqId, &type, &state->buffer,
+                    WOLFSSH_MAX_SFTP_PACKET);
             if (ret <= 0 || type != WOLFSSH_FTP_STATUS) {
                 if (!NoticeError(ssh)) {
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
