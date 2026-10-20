@@ -364,8 +364,9 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     char *encodedKey = NULL;
     char *pubKeyType = NULL;
     char *fp = NULL;
+    char *knownType = NULL;
     int ret = 0, found = 0, badMatch = 0, otherMatch = 0;
-    word32 sz, lineCount = 0;
+    word32 sz, lineCount = 0, knownLine = 0;
 
     {
         const char *defaultName = "/.ssh/known_hosts";
@@ -428,9 +429,24 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
+        word32 i;
+
         WMEMCPY(pubKeyType, pubKey + LENGTH_SZ, sz);
         pubKeyType[sz] = 0;
 
+        /* The type comes from the server and is printed and stored, so it
+         * must be printable ASCII. */
+        if (sz == 0) {
+            ret = -1;
+        }
+        for (i = 0; ret == 0 && i < sz; i++) {
+            if ((byte)pubKeyType[i] < 0x21 || (byte)pubKeyType[i] > 0x7e) {
+                ret = -1;
+            }
+        }
+    }
+
+    if (ret == 0) {
         sz = WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
 #ifdef WOLFSSL_BASE64_ENCODE
         ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
@@ -476,6 +492,12 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                         }
                         break;
                     }
+                    else if (knownType == NULL) {
+                        /* Host is pinned with another key type. Keep
+                         * looking: a later line may carry this type. */
+                        knownType = keyType;
+                        knownLine = lineCount;
+                    }
                 }
                 else {
                     if (keyTypeMatch && keyMatch) {
@@ -498,6 +520,25 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             printf("That server is known, but that key is not.\n");
             printf("Rejecting connection and closing.\n");
             ret = -1;
+        }
+        else if (!found && knownType != NULL) {
+            /* Pinned with another type. Warn, then offer to add this
+             * type like an unknown host. Any other-server lines were
+             * already listed above. */
+            printf("Known host with a different key type.\n");
+            printf("%s:%u has key type %s for %s.\n",
+                    knownHostsName, knownLine, knownType, targetName);
+            printf("The server offered key type %s instead.\n", pubKeyType);
+            printf("Fingerprint: %s\n", fp);
+            printf("Shall I add it to the known hosts?\n");
+            /* Query. */
+            if (GetConfirmation()) {
+                ret = AppendKeyToFile(knownHostsName,
+                        targetName, pubKeyType, encodedKey);
+            }
+            else {
+                ret = -1;
+            }
         }
         else if (otherMatch) {
             if (!found) {

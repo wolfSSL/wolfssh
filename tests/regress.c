@@ -21303,6 +21303,214 @@ static void TestKnownHostsLastEntry(void)
     (void)rmdir(sshDir);
     (void)rmdir(homeDir);
 }
+
+
+/* A host pinned with one key type that presents another is not an unknown
+ * host: the check must say the host is known with a different type before
+ * it prompts, must still find a later entry of the presented type, and must
+ * still reject a later entry of the presented type with a different key. */
+static void TestKnownHostsOtherType(void)
+{
+    /* string("ssh-rsa") and string("ecdsa-sha2-nistp256"), each followed by
+     * a zero certificate count and filler, as in TestKnownHostsLastEntry. */
+    static const byte rsaKey[] = {
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h', '-', 'r', 's', 'a',
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04
+    };
+    static const byte ecdsaKey[] = {
+        0x00, 0x00, 0x00, 0x13, 'e', 'c', 'd', 's', 'a', '-', 's', 'h', 'a',
+        '2', '-', 'n', 'i', 's', 't', 'p', '2', '5', '6',
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04
+    };
+    /* A type name carrying a terminal escape sequence. */
+    static const byte escKey[] = {
+        0x00, 0x00, 0x00, 0x08, 's', 's', 'h', '-', 0x1b, '[', '2', 'J',
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04
+    };
+    char targetName[] = "pinned.example.com";
+    char homeDir[64];
+    char sshDir[80];
+    char hostsPath[112];
+    char replyPath[80];
+    char expected[512];
+    int replyFd;
+    char rsaEncoded[64];
+    char ecdsaEncoded[64];
+    char wrongKey[64];
+    char contents[256];
+    char after[256];
+    char captured[1024];
+    char* savedHome = NULL;
+    const char* home;
+    word32 rsaSz = (word32)sizeof(rsaEncoded);
+    word32 ecdsaSz = (word32)sizeof(ecdsaEncoded);
+    word32 readSz;
+    int savedStdin, devNull, ready;
+
+    WSNPRINTF(homeDir, sizeof(homeDir), "wolfssh_kh_%d.tmp", (int)getpid());
+    WSNPRINTF(sshDir, sizeof(sshDir), "%s/.ssh", homeDir);
+    WSNPRINTF(hostsPath, sizeof(hostsPath), "%s/known_hosts", sshDir);
+    WSNPRINTF(replyPath, sizeof(replyPath), "%s/reply", homeDir);
+
+    AssertIntEQ(Base64_Encode_NoNl(rsaKey, (word32)sizeof(rsaKey),
+                (byte*)rsaEncoded, &rsaSz), 0);
+    AssertTrue(rsaSz < sizeof(rsaEncoded));
+    rsaEncoded[rsaSz] = 0;
+    AssertIntEQ(Base64_Encode_NoNl(ecdsaKey, (word32)sizeof(ecdsaKey),
+                (byte*)ecdsaEncoded, &ecdsaSz), 0);
+    AssertTrue(ecdsaSz < sizeof(ecdsaEncoded));
+    ecdsaEncoded[ecdsaSz] = 0;
+    WMEMCPY(wrongKey, ecdsaEncoded, ecdsaSz + 1);
+    wrongKey[0] = (ecdsaEncoded[0] == 'A') ? 'B' : 'A';
+
+    home = getenv("HOME");
+    if (home != NULL) {
+        savedHome = (char*)WMALLOC(WSTRLEN(home) + 1, NULL, 0);
+        AssertNotNull(savedHome);
+        WSTRCPY(savedHome, home);
+    }
+
+    (void)remove(hostsPath);
+    (void)remove(replyPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+
+    ready = (TEST_MKDIR(homeDir, 0700) == 0)
+            && (TEST_MKDIR(sshDir, 0700) == 0)
+            && (TEST_SETENV("HOME", homeDir) == 0);
+    AssertTrue(ready);
+
+    /* The prompt reads EOF and declines, so the entry is never added. */
+    savedStdin = dup(STDIN_FILENO);
+    devNull = open(TEST_NULL_DEVICE, O_RDONLY);
+    ready = ready && (savedStdin >= 0) && (devNull >= 0)
+            && (dup2(devNull, STDIN_FILENO) >= 0);
+    AssertTrue(ready);
+
+    if (ready) {
+        /* Pinned with ssh-rsa only, offered ecdsa: warn, prompt, decline. */
+        WSNPRINTF(contents, sizeof(contents),
+                "other.example.com ssh-rsa AAAA\n%s ssh-rsa %s\n",
+                targetName, rsaEncoded);
+        WriteTextFile(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "Known host with a different key type."));
+        AssertNotNull(WSTRSTR(captured, "known_hosts:2 has key type ssh-rsa "
+                    "for pinned.example.com."));
+        AssertNotNull(WSTRSTR(captured,
+                    "offered key type ecdsa-sha2-nistp256 instead."));
+        AssertNotNull(WSTRSTR(captured, "Fingerprint: "));
+        AssertNotNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+        AssertNull(WSTRSTR(captured, "The server is unknown"));
+        AssertNull(WSTRSTR(captured, "That server is known, but"));
+        WMEMSET(after, 0, sizeof(after));
+        readSz = LoadFileBuffer(hostsPath, (byte*)after, sizeof(after) - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(after, contents);
+
+        /* A type that is not printable ASCII is rejected before anything
+         * about it is printed. */
+        AssertTrue(KnownHostsCheckCapture(escKey, (word32)sizeof(escKey),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNull(WSTRSTR(captured, "\x1b"));
+        AssertNull(WSTRSTR(captured, "different key type"));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* A later line of the presented type still matches: no warning. */
+        WSNPRINTF(contents, sizeof(contents),
+                "%s ssh-rsa %s\n%s ecdsa-sha2-nistp256 %s\n",
+                targetName, rsaEncoded, targetName, ecdsaEncoded);
+        WriteTextFile(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNull(WSTRSTR(captured, "different key type"));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* A later line of the presented type with another key is still a
+         * known host with the wrong key, not a new type. */
+        WSNPRINTF(contents, sizeof(contents),
+                "%s ssh-rsa %s\n%s ecdsa-sha2-nistp256 %s\n",
+                targetName, rsaEncoded, targetName, wrongKey);
+        WriteTextFile(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "That server is known, but that key is not."));
+        AssertNull(WSTRSTR(captured, "different key type"));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* The offered key also belongs to another host: the other host is
+         * listed and the different-type warning still leads the prompt. */
+        WSNPRINTF(contents, sizeof(contents),
+                "other.example.com ecdsa-sha2-nistp256 %s\n%s ssh-rsa %s\n",
+                ecdsaEncoded, targetName, rsaEncoded);
+        WriteTextFile(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured, "This key matches other servers:"));
+        AssertNotNull(WSTRSTR(captured, "has key type ssh-rsa"));
+        AssertNull(WSTRSTR(captured, "Does this key look familiar to you?"));
+        AssertNotNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* Accept the new type: it is appended once beside the pinned one.
+         * The reply has no newline so nothing is left buffered in stdin, and
+         * the EOF the earlier prompts hit has to be cleared. */
+        WriteTextFile(replyPath, "Y");
+        replyFd = open(replyPath, O_RDONLY);
+        AssertTrue(replyFd >= 0);
+        AssertTrue(dup2(replyFd, STDIN_FILENO) >= 0);
+        close(replyFd);
+        clearerr(stdin);
+        WSNPRINTF(contents, sizeof(contents), "%s ssh-rsa %s\n",
+                targetName, rsaEncoded);
+        WriteTextFile(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "Known host with a different key type."));
+        WSNPRINTF(expected, sizeof(expected),
+                "%s%s ecdsa-sha2-nistp256 %s\n",
+                contents, targetName, ecdsaEncoded);
+        WMEMSET(after, 0, sizeof(after));
+        readSz = LoadFileBuffer(hostsPath, (byte*)after, sizeof(after) - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(after, expected);
+
+        /* The added entry now matches without a prompt. */
+        AssertIntEQ(KnownHostsCheckCapture(ecdsaKey, (word32)sizeof(ecdsaKey),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNull(WSTRSTR(captured, "different key type"));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+        WMEMSET(after, 0, sizeof(after));
+        readSz = LoadFileBuffer(hostsPath, (byte*)after, sizeof(after) - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(after, expected);
+    }
+
+    if (savedStdin >= 0) {
+        AssertTrue(dup2(savedStdin, STDIN_FILENO) >= 0);
+        close(savedStdin);
+        clearerr(stdin);
+    }
+    if (devNull >= 0) {
+        close(devNull);
+    }
+
+    if (savedHome != NULL) {
+        AssertIntEQ(TEST_SETENV("HOME", savedHome), 0);
+        WFREE(savedHome, NULL, 0);
+    }
+    else {
+        TEST_UNSETENV("HOME");
+    }
+
+    (void)remove(hostsPath);
+    (void)remove(replyPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+}
 #endif /* WOLFSSL_BASE64_ENCODE */
 
 
@@ -21343,6 +21551,7 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFSSL_BASE64_ENCODE
     TestKnownHostsLastEntry();
+    TestKnownHostsOtherType();
 #endif
 #ifndef NO_WOLFSSH_CLIENT
     TestAuthMessageBlockedDuringKeying(ssh);
