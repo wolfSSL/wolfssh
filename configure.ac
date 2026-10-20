@@ -148,6 +148,15 @@ AC_LINK_IFELSE(
    AC_MSG_RESULT([yes])],
   [AC_MSG_RESULT([no])])
 
+AC_MSG_CHECKING([for linkat])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <fcntl.h>
+#include <unistd.h>]],
+                   [[(void)linkat(AT_FDCWD, "x", AT_FDCWD, "y", 0);]])],
+  [AC_DEFINE([HAVE_LINKAT], [1], [linkat() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
 AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG

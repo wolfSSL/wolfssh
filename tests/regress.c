@@ -16021,6 +16021,167 @@ static void TestSftpAppendWritesAtEof(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+/* FXP_RENAME path to newPath, or FXP_REMOVE path when newPath is NULL. */
+static int SftpPathRequest(WOLFSSH* ssh, int reqId, const char* path,
+        const char* newPath)
+{
+    byte   pkt[2 * (WOLFSSH_MAX_FILENAME + UINT32_SZ)];
+    word32 idx = 0;
+    word32 sz = (word32)WSTRLEN(path);
+
+    SftpPutU32(sz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, sz); idx += sz;
+    if (newPath == NULL) {
+        return wolfSSH_SFTP_RecvRemove(ssh, reqId, pkt, idx);
+    }
+    sz = (word32)WSTRLEN(newPath);
+    SftpPutU32(sz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, newPath, sz); idx += sz;
+    return wolfSSH_SFTP_RecvRename(ssh, reqId, pkt, idx);
+}
+
+static void SftpWriteTestFile(const char* path, const char* content)
+{
+    WFILE* file;
+
+    AssertIntEQ(WFOPEN(NULL, &file, path, "wb"), 0);
+    AssertTrue(file != WBADFILE);
+    AssertIntEQ((int)WFWRITE(NULL, content, 1, WSTRLEN(content), file),
+            (int)WSTRLEN(content));
+    WFCLOSE(NULL, file);
+}
+
+/* REMOVE refuses a directory, RENAME an existing newpath
+ * (draft-ietf-secsh-filexfer-02 6.5). */
+static void TestSftpRemoveRenameSemantics(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 700;
+    WSTAT_T st;
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char fileA[64], fileB[64], fileC[64];
+    char dirA[64], dirB[64], dirC[64];
+#if defined(WOLFSSH_HAVE_SYMLINK) && !defined(USE_WINDOWS_API)
+    char lnk[64];
+#endif
+#ifndef USE_WINDOWS_API
+    char roDir[64], roFile[128], roDest[128];
+#endif
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WSNPRINTF(fileA, sizeof(fileA), "wolfssh_rm_a_%lu.tmp", SFTP_TEST_PID());
+    WSNPRINTF(fileB, sizeof(fileB), "wolfssh_rm_b_%lu.tmp", SFTP_TEST_PID());
+    WSNPRINTF(fileC, sizeof(fileC), "wolfssh_rm_c_%lu.tmp", SFTP_TEST_PID());
+    WSNPRINTF(dirA, sizeof(dirA), "wolfssh_rm_da_%lu", SFTP_TEST_PID());
+    WSNPRINTF(dirB, sizeof(dirB), "wolfssh_rm_db_%lu", SFTP_TEST_PID());
+    WSNPRINTF(dirC, sizeof(dirC), "wolfssh_rm_dc_%lu", SFTP_TEST_PID());
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+
+    SftpWriteTestFile(fileA, "aaaa");
+    SftpWriteTestFile(fileB, "bb");
+    (void)WREMOVE(ssh->fs, fileC);
+    AssertIntEQ(WMKDIR(ssh->fs, dirA, 0755), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, dirB, 0755), 0);
+    (void)WRMDIR(ssh->fs, dirC);
+
+    /* REMOVE refuses an empty directory */
+    AssertIntEQ(SftpPathRequest(ssh, rid, dirA, NULL), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertIntEQ(WSTAT(ssh->fs, dirA, &st), 0);
+
+    /* RENAME refuses an existing file; neither changes */
+    AssertIntEQ(SftpPathRequest(ssh, rid, fileA, fileB), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertSftpFileContents(fileA, "aaaa", 4);
+    AssertSftpFileContents(fileB, "bb", 2);
+
+    /* RENAME refuses an existing empty directory */
+    AssertIntEQ(SftpPathRequest(ssh, rid, dirA, dirB), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertIntEQ(WSTAT(ssh->fs, dirA, &st), 0);
+    AssertIntEQ(WSTAT(ssh->fs, dirB, &st), 0);
+
+#if defined(WOLFSSH_HAVE_SYMLINK) && !defined(USE_WINDOWS_API)
+    /* a dangling symlink is an existing newpath too */
+    WSNPRINTF(lnk, sizeof(lnk), "wolfssh_rm_ln_%lu", SFTP_TEST_PID());
+    (void)WREMOVE(ssh->fs, lnk);
+    AssertIntEQ(symlink(fileC, lnk), 0);
+    AssertIntEQ(SftpPathRequest(ssh, rid, fileA, lnk), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+    AssertIntEQ(WLSTAT(ssh->fs, lnk, &st), 0);
+    AssertTrue(S_ISLNK(st.st_mode));
+    AssertSftpFileContents(fileA, "aaaa", 4);
+    /* REMOVE takes the link, not its target */
+    AssertIntEQ(SftpPathRequest(ssh, rid, lnk, NULL), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertTrue(WLSTAT(ssh->fs, lnk, &st) != 0);
+    /* a link to a directory is not a directory to REMOVE */
+    AssertIntEQ(symlink(dirB, lnk), 0);
+    AssertIntEQ(SftpPathRequest(ssh, rid, lnk, NULL), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertTrue(WLSTAT(ssh->fs, lnk, &st) != 0);
+    AssertIntEQ(WSTAT(ssh->fs, dirB, &st), 0);
+#endif
+
+#ifndef USE_WINDOWS_API
+    /* a failed move leaves both names as they were: out of a read-only
+     * directory takes the link rollback, into one the link fallback */
+    if (geteuid() != 0) {
+        WSNPRINTF(roDir, sizeof(roDir), "wolfssh_rm_ro_%lu",
+                SFTP_TEST_PID());
+        WSNPRINTF(roFile, sizeof(roFile), "%s/%s", roDir, fileC);
+        WSNPRINTF(roDest, sizeof(roDest), "%s/%s", roDir, fileB);
+        AssertIntEQ(WMKDIR(ssh->fs, roDir, 0755), 0);
+        SftpWriteTestFile(roFile, "cc");
+        AssertIntEQ(chmod(roDir, 0555), 0);
+
+        AssertIntEQ(SftpPathRequest(ssh, rid, roFile, fileC), WS_BAD_FILE_E);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+        AssertSftpFileContents(roFile, "cc", 2);
+        AssertTrue(WLSTAT(ssh->fs, fileC, &st) != 0);
+
+        AssertIntEQ(SftpPathRequest(ssh, rid, fileB, roDest), WS_BAD_FILE_E);
+        AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_FAILURE);
+        AssertSftpFileContents(fileB, "bb", 2);
+        AssertTrue(WLSTAT(ssh->fs, roDest, &st) != 0);
+
+        AssertIntEQ(chmod(roDir, 0755), 0);
+        AssertIntEQ(WREMOVE(ssh->fs, roFile), 0);
+        AssertIntEQ(WRMDIR(ssh->fs, roDir), 0);
+    }
+#endif
+
+    /* RENAME to a free name moves a file and a directory */
+    AssertIntEQ(SftpPathRequest(ssh, rid, fileA, fileC), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertTrue(WSTAT(ssh->fs, fileA, &st) != 0);
+    AssertSftpFileContents(fileC, "aaaa", 4);
+    AssertIntEQ(SftpPathRequest(ssh, rid, dirA, dirC), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertTrue(WSTAT(ssh->fs, dirA, &st) != 0);
+    AssertIntEQ(WSTAT(ssh->fs, dirC, &st), 0);
+
+    /* REMOVE still removes a file */
+    AssertIntEQ(SftpPathRequest(ssh, rid, fileC, NULL), WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid++, WOLFSSH_FTP_OK);
+    AssertTrue(WSTAT(ssh->fs, fileC, &st) != 0);
+
+    (void)WREMOVE(ssh->fs, fileB);
+    (void)WRMDIR(ssh->fs, dirB);
+    (void)WRMDIR(ssh->fs, dirC);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
 #endif /* !NO_WOLFSSH_SERVER && !NO_FILESYSTEM */
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
@@ -20771,6 +20932,8 @@ int main(int argc, char** argv)
     #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
     /* FXF_APPEND writes land at EOF regardless of the request offset */
     TestSftpAppendWritesAtEof();
+    /* REMOVE refuses directories, RENAME refuses an existing newpath */
+    TestSftpRemoveRenameSemantics();
     #endif
     #if !defined(NO_WOLFSSH_SERVER) && defined(USE_WINDOWS_API) && \
             !defined(NO_FILESYSTEM)
