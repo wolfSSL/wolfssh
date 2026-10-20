@@ -17085,6 +17085,158 @@ static void TestSftpOpenDirAllocFailure(void)
 #endif /* !WOLFSSL_STATIC_MEMORY && !WOLFSSL_DEBUG_MEMORY */
 #endif /* NO_WOLFSSH_DIR */
 
+#ifdef WOLFSSH_SFTP_ERRNO
+/* FXP_REMOVE, FXP_STAT, FXP_LSTAT or FXP_OPENDIR path, by type. */
+static int SftpPathRequest(WOLFSSH* ssh, byte type, int reqId,
+        const char* path)
+{
+    byte pkt[WOLFSSH_MAX_FILENAME + UINT32_SZ];
+    word32 idx = 0;
+    word32 pathSz = (word32)WSTRLEN(path);
+
+    SftpPutU32(pathSz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, path, pathSz); idx += pathSz;
+
+    switch (type) {
+        case WOLFSSH_FTP_REMOVE:
+            return wolfSSH_SFTP_RecvRemove(ssh, reqId, pkt, idx);
+        case WOLFSSH_FTP_STAT:
+            return wolfSSH_SFTP_RecvSTAT(ssh, reqId, pkt, idx);
+        case WOLFSSH_FTP_LSTAT:
+            return wolfSSH_SFTP_RecvLSTAT(ssh, reqId, pkt, idx);
+    #ifndef NO_WOLFSSH_DIR
+        case WOLFSSH_FTP_OPENDIR:
+            return wolfSSH_SFTP_RecvOpenDir(ssh, reqId, pkt, idx);
+    #endif
+        default:
+            return WS_BAD_ARGUMENT;
+    }
+}
+
+/* FXP_RENAME from to. */
+static int SftpRenamePath(WOLFSSH* ssh, int reqId, const char* from,
+        const char* to)
+{
+    byte pkt[2 * (WOLFSSH_MAX_FILENAME + UINT32_SZ)];
+    word32 idx = 0;
+    word32 sz;
+
+    sz = (word32)WSTRLEN(from);
+    SftpPutU32(sz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, from, sz); idx += sz;
+    sz = (word32)WSTRLEN(to);
+    SftpPutU32(sz, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, to, sz); idx += sz;
+
+    return wolfSSH_SFTP_RecvRename(ssh, reqId, pkt, idx);
+}
+
+/* A request naming a file that does not exist answers NO_SUCH_FILE, one the
+ * server may not reach answers PERMISSION_DENIED, and anything else stays
+ * FAILURE (draft-ietf-secsh-filexfer-02 Section 7). The cause comes from
+ * errno, so this runs on the POSIX file system only. */
+static void TestSftpMissingFileStatus(void)
+{
+    static const byte pathTypes[] = {
+        WOLFSSH_FTP_STAT, WOLFSSH_FTP_LSTAT, WOLFSSH_FTP_REMOVE,
+    #ifndef NO_WOLFSSH_DIR
+        WOLFSSH_FTP_OPENDIR,
+    #endif
+    };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 1000;
+    int reqId;
+    word32 i;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char dir[64];
+    char missing[96];
+    char locked[96];
+    char present[96];
+    char inLocked[128];
+    FILE* f;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+
+    WSNPRINTF(dir, sizeof(dir), "wolfssh_nofile_%d", (int)getpid());
+    WSNPRINTF(missing, sizeof(missing), "%s/missing", dir);
+    WSNPRINTF(present, sizeof(present), "%s/present", dir);
+    WSNPRINTF(locked, sizeof(locked), "%s/locked", dir);
+    WSNPRINTF(inLocked, sizeof(inLocked), "%s/locked/x", dir);
+    AssertIntEQ(mkdir(dir, 0700), 0);
+    AssertIntEQ(mkdir(locked, 0700), 0);
+    f = fopen(present, "wb");
+    AssertNotNull(f);
+    fclose(f);
+
+    /* missing file */
+    for (i = 0; i < sizeof(pathTypes); i++) {
+        reqId = rid++;
+        AssertTrue(SftpPathRequest(ssh, pathTypes[i], reqId, missing)
+                != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_NOFILE);
+    }
+    reqId = rid++;
+    AssertTrue(SftpOpenPath(ssh, reqId, missing, WOLFSSH_FXF_READ, handle)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_NOFILE);
+    reqId = rid++;
+    AssertTrue(SftpRenamePath(ssh, reqId, missing, present) != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_NOFILE);
+
+#ifndef NO_WOLFSSH_DIR
+    /* ENOTDIR counts as missing, as in OpenSSH's sftp-server */
+    reqId = rid++;
+    AssertTrue(SftpPathRequest(ssh, WOLFSSH_FTP_OPENDIR, reqId, present)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_NOFILE);
+#endif
+    /* present but not removable, a non-empty directory: FAILURE */
+    reqId = rid++;
+    AssertTrue(SftpPathRequest(ssh, WOLFSSH_FTP_REMOVE, reqId, dir)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_FAILURE);
+
+    /* a search-permission failure on the way: PERMISSION_DENIED. Root
+     * passes the permission check, so only an unprivileged run sees it. */
+    AssertIntEQ(chmod(locked, 0), 0);
+    if (geteuid() != 0) {
+        for (i = 0; i < sizeof(pathTypes); i++) {
+            reqId = rid++;
+            AssertTrue(SftpPathRequest(ssh, pathTypes[i], reqId, inLocked)
+                    != WS_SUCCESS);
+            AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_PERMISSION);
+        }
+        reqId = rid++;
+        AssertTrue(SftpOpenPath(ssh, reqId, inLocked, WOLFSSH_FXF_READ,
+                handle) != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_PERMISSION);
+        reqId = rid++;
+        AssertTrue(SftpRenamePath(ssh, reqId, inLocked, present)
+                != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, reqId, WOLFSSH_FTP_PERMISSION);
+    }
+    AssertIntEQ(chmod(locked, 0700), 0);
+
+    (void)remove(present);
+    (void)rmdir(locked);
+    (void)rmdir(dir);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* WOLFSSH_SFTP_ERRNO */
+
 /* A failed close() must still drop the handle from the session tracking list;
  * otherwise the stale descriptor lingers and is closed a second time when the
  * session is torn down. Open a file, invalidate its descriptor out of band so
@@ -21230,6 +21382,10 @@ int main(int argc, char** argv)
     TestSftpReadDirAllocFailure();
     TestSftpOpenDirAllocFailure();
     #endif
+    #endif
+    #ifdef WOLFSSH_SFTP_ERRNO
+    /* a missing file answers NO_SUCH_FILE, a blocked one PERMISSION_DENIED */
+    TestSftpMissingFileStatus();
     #endif
     /* a failed close still drops the handle from the tracking list */
     TestSftpCloseFailureRemovesHandle();
