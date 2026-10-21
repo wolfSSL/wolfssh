@@ -56,6 +56,7 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/random.h>
+#include <limits.h>
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
     #include <windows.h>
@@ -4619,6 +4620,15 @@ void wolfSSH_GetStats(WOLFSSH* ssh, word32* txCount, word32* rxCount,
         *seq = rSeq;
     if (peerSeq != NULL)
         *peerSeq = rPeerSeq;
+}
+
+
+int wolfSSH_ConstantCompare(const byte* a, const byte* b, word32 len)
+{
+    if (a == NULL || b == NULL || len > (word32)INT_MAX)
+        return WS_BAD_ARGUMENT;
+
+    return WS_CONSTANTCOMPARE(a, b, len);
 }
 
 
