@@ -24358,7 +24358,7 @@ static int SftpGetCleanupCase(int mode)
         }
         ret = wolfSSH_SFTP_Get(ssh, from, to, 0, NULL);
         if (ret == WS_SUCCESS || ssh->getState != NULL ||
-                ssh->closeState != NULL || ssh->reqId != id + 1) {
+                ssh->closeState != NULL || ssh->reqId != id + 2) {
             result = -1118;
         }
         goto done;
@@ -24641,6 +24641,161 @@ static int test_SftpPutReadError(void)
             if (ret != 0) {
                 printf("SFTP PUT read fault %d, close failure %d: %d\n",
                         fault, closeFails, ret);
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
+enum SftpReplyIdOp {
+    REPLY_ID_REMOVE,
+    REPLY_ID_RMDIR,
+    REPLY_ID_CLOSE,
+    REPLY_ID_SETSTAT,
+    REPLY_ID_OPEN,
+    REPLY_ID_REALPATH,
+    REPLY_ID_OP_COUNT
+};
+
+enum SftpReplyIdMode {
+    REPLY_ID_MATCH,
+    REPLY_ID_WRONG_ID,
+    REPLY_ID_WRONG_TYPE
+};
+
+/* Answer one client request with a reply carrying the request id, a wrong
+ * id, or (REALPATH only) the right id on a HANDLE. A matched reply advances
+ * the request id once; a mismatch fails with a specific error and frees the
+ * request state. */
+static int SftpReplyIdCase(int op, int mode)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_SFTP_FILEATRB atr;
+    WS_SFTPNAME* name = NULL;
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 3];
+    byte handle[WOLFSSH_MAX_HANDLE];
+    word32 handleSz = sizeof(handle);
+    word32 sz;
+    word32 id;
+    word32 status = WOLFSSH_FTP_OK;
+    int ret;
+    int failed;
+    int stateLeft;
+    int result = 0;
+
+    ret = SftpClientNewSession(&ctx, &ssh);
+    if (ret != 0) {
+        result = ret;
+        goto done;
+    }
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    id = ssh->reqId;
+    if (op == REPLY_ID_REMOVE) {
+        /* REMOVE checks the file with an LSTAT first */
+        sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_ATTRS, id,
+                UINT32_SZ);
+        PutU32BE(reply + WOLFSSH_SFTP_HEADER, 0);
+        if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != 0) {
+            result = -1200;
+            goto done;
+        }
+        id++;
+    }
+    if (op == REPLY_ID_OPEN || op == REPLY_ID_REALPATH)
+        status = WOLFSSH_FTP_FAILURE;
+    if (mode == REPLY_ID_WRONG_TYPE) {
+        sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_HANDLE, id,
+                UINT32_SZ + 1);
+        PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+        reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
+        ret = wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
+    }
+    else {
+        ret = SftpGetStatus(ssh, mode == REPLY_ID_WRONG_ID ? id + 1 : id,
+                status);
+    }
+    if (ret != 0) {
+        result = -1201;
+        goto done;
+    }
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    switch (op) {
+        case REPLY_ID_REMOVE:
+            ret = wolfSSH_SFTP_Remove(ssh, (char*)"f");
+            stateLeft = ssh->rmState != NULL;
+            break;
+        case REPLY_ID_RMDIR:
+            ret = wolfSSH_SFTP_RMDIR(ssh, (char*)"d");
+            stateLeft = ssh->rmdirState != NULL;
+            break;
+        case REPLY_ID_CLOSE:
+            handle[0] = 'h';
+            ret = wolfSSH_SFTP_Close(ssh, handle, 1);
+            stateLeft = ssh->closeState != NULL;
+            break;
+        case REPLY_ID_SETSTAT:
+            ret = wolfSSH_SFTP_SetSTAT(ssh, (char*)"f", &atr);
+            stateLeft = ssh->setatrState != NULL;
+            break;
+        case REPLY_ID_OPEN:
+            ret = wolfSSH_SFTP_Open(ssh, (char*)"f", WOLFSSH_FXF_READ, NULL,
+                    handle, &handleSz);
+            stateLeft = ssh->openState != NULL ||
+                    ssh->getHandleState != NULL;
+            break;
+        default:
+            name = wolfSSH_SFTP_RealPath(ssh, (char*)"p");
+            ret = name == NULL ? WS_FATAL_ERROR : WS_SUCCESS;
+            /* realState 0 is SFTP_REAL_SEND_PACKET, ready for a new call */
+            stateLeft = ssh->nameState != NULL || ssh->realState != 0;
+            wolfSSH_SFTPNAME_list_free(name);
+            break;
+    }
+
+    if (stateLeft) {
+        result = -1202;
+    }
+    else if (mode == REPLY_ID_MATCH) {
+        failed = status != WOLFSSH_FTP_OK;
+        if ((failed ? ret == WS_SUCCESS : ret != WS_SUCCESS) ||
+                wolfSSH_get_error(ssh) == WS_SFTP_BAD_REQ_ID ||
+                ssh->reqId != id + 1) {
+            result = -1203;
+        }
+    }
+    else if (ret == WS_SUCCESS || wolfSSH_get_error(ssh) !=
+            (mode == REPLY_ID_WRONG_ID ?
+             WS_SFTP_BAD_REQ_ID : WS_SFTP_BAD_REQ_TYPE)) {
+        result = -1204;
+    }
+    else if (ssh->reqId != (mode == REPLY_ID_WRONG_ID ? id : id + 1)) {
+        result = -1205;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_SftpReplyId(void)
+{
+    int op;
+    int mode;
+    int ret;
+
+    for (op = 0; op < REPLY_ID_OP_COUNT; op++) {
+        for (mode = REPLY_ID_MATCH; mode <= REPLY_ID_WRONG_TYPE; mode++) {
+            if (mode == REPLY_ID_WRONG_TYPE && op != REPLY_ID_REALPATH)
+                continue;
+            ret = SftpReplyIdCase(op, mode);
+            if (ret != 0) {
+                printf("SFTP reply id op %d mode %d: %d\n", op, mode, ret);
                 return ret;
             }
         }
@@ -26859,6 +27014,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_SftpClientPutWriteStatusFail();
     printf("SftpClientPutWriteStatusFail: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpReplyId();
+    printf("SftpReplyId: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
     testResult = testResult || unitResult;
 #endif
 
