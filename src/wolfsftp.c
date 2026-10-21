@@ -375,7 +375,6 @@ enum WS_SFTP_GET_HANDLE_STATE_ID {
     STATE_GET_HANDLE_INIT,
     STATE_GET_HANDLE_GET_HEADER,
     STATE_GET_HANDLE_DO_STATUS,
-    STATE_GET_HANDLE_CHECK_REQ_ID,
     STATE_GET_HANDLE_READ,
     STATE_GET_HANDLE_CLEANUP
 };
@@ -6961,9 +6960,27 @@ int SendPacketType(WOLFSSH* ssh, byte type, byte* buf, word32 bufSz)
 }
 
 
+/* Check that a response answers the outstanding request. A match advances
+ * the request ID for the next request; a mismatch sets WS_SFTP_BAD_REQ_ID.
+ *
+ * returns WS_SUCCESS on a match
+ */
+static int SFTP_CheckReqId(WOLFSSH* ssh, word32 reqId)
+{
+    if (reqId != ssh->reqId) {
+        WLOG(WS_LOG_SFTP, "Unexpected request ID %u, expected %u",
+                reqId, ssh->reqId);
+        ssh->error = WS_SFTP_BAD_REQ_ID;
+        return WS_FATAL_ERROR;
+    }
+    ssh->reqId++;
+    return WS_SUCCESS;
+}
+
+
 /* process a status packet
  *
- * assuming that request ID has already been read
+ * assuming that request ID has already been read and checked
  *
  * structure of status packet is as follows
  * {
@@ -7353,24 +7370,22 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
                 return NULL;
             }
 
-            if (reqId != ssh->reqId) {
-                WLOG(WS_LOG_SFTP, "unexpected ID");
+            if (SFTP_CheckReqId(ssh, reqId) != WS_SUCCESS) {
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
                 return NULL;
             }
 
-            if (type != WOLFSSH_FTP_NAME) {
-                WLOG(WS_LOG_SFTP, "Unexpected packet type %d", type);
-                /* check for status msg */
-                if (type == WOLFSSH_FTP_STATUS) {
-                    state->state = SFTP_NAME_DO_STATUS;
-                }
-                else {
-                    return NULL;
-                }
+            if (type == WOLFSSH_FTP_NAME) {
+                state->state = SFTP_NAME_GET_PACKET;
+            }
+            else if (type == WOLFSSH_FTP_STATUS) {
+                state->state = SFTP_NAME_DO_STATUS;
             }
             else {
-                ssh->reqId += 1;
-                state->state = SFTP_NAME_GET_PACKET;
+                WLOG(WS_LOG_SFTP, "Unexpected packet type %d", type);
+                ssh->error = WS_SFTP_BAD_REQ_TYPE;
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                return NULL;
             }
 
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, maxSz) !=
@@ -7589,6 +7604,12 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                     }
                 }
 
+                if (SFTP_CheckReqId(ssh, handleState->reqId) != WS_SUCCESS) {
+                    handleState->state = STATE_GET_HANDLE_CLEANUP;
+                    ret = WS_FATAL_ERROR;
+                    continue;
+                }
+
                 if (wolfSSH_SFTP_buffer_create(ssh, &handleState->buffer, ret) !=
                         WS_SUCCESS) {
                     handleState->state = STATE_GET_HANDLE_CLEANUP;
@@ -7597,13 +7618,14 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 }
 
                 if (type == WOLFSSH_FTP_HANDLE)
-                    handleState->state = STATE_GET_HANDLE_CHECK_REQ_ID;
+                    handleState->state = STATE_GET_HANDLE_READ;
                 else if (type == WOLFSSH_FTP_STATUS) {
                     handleState->state = STATE_GET_HANDLE_DO_STATUS;
                 }
                 else {
                     WLOG(WS_LOG_SFTP,
                          "Unexpected packet type with getting handle");
+                    ssh->error = WS_SFTP_BAD_REQ_TYPE;
                     handleState->state = STATE_GET_HANDLE_CLEANUP;
                     ret = WS_FATAL_ERROR;
                 }
@@ -7630,21 +7652,6 @@ static int wolfSSH_SFTP_GetHandle(WOLFSSH* ssh, byte* handle, word32* handleSz)
                 }
                 handleState->state = STATE_GET_HANDLE_CLEANUP;
                 continue;
-
-            case STATE_GET_HANDLE_CHECK_REQ_ID:
-                WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: CHECK_REQ_ID");
-                /* @TODO packets do not need to be in order, may need
-                 * mechanism to handle out of order ID's?  */
-                if (handleState->reqId != ssh->reqId) {
-                    WLOG(WS_LOG_SFTP, "Unexpected ID");
-                    ret = WS_FATAL_ERROR;
-                    handleState->state = STATE_GET_HANDLE_CLEANUP;
-                    continue;
-                }
-                ssh->reqId++;
-
-                handleState->state = STATE_GET_HANDLE_READ;
-                FALL_THROUGH;
 
             case STATE_GET_HANDLE_READ:
                 WLOG(WS_LOG_SFTP, "SFTP GET HANDLE STATE: READ");
@@ -7998,13 +8005,9 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                 FALL_THROUGH;
 
             case STATE_LSTAT_CHECK_REQ_ID:
-                /* check request ID */
-                if (state->reqId != ssh->reqId) {
-                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_LSTAT);
                     return WS_FATAL_ERROR;
-                }
-                else {
-                    ssh->reqId++;
                 }
                 state->state = STATE_LSTAT_PARSE_REPLY;
                 FALL_THROUGH;
@@ -8211,6 +8214,11 @@ int wolfSSH_SFTP_SetSTAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                     break;
                 }
                 return WS_FATAL_ERROR;
+            }
+
+            if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
+                ret = WS_FATAL_ERROR;
+                break;
             }
 
             if (type != WOLFSSH_FTP_STATUS) {
@@ -8559,16 +8567,11 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                     continue;
                 }
 
-                /* check request ID */
-                if (state->reqId != ssh->reqId) {
-                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
                     ret = WS_FATAL_ERROR;
-                    ssh->error = WS_SFTP_BAD_REQ_ID;
                     state->state = STATE_SEND_WRITE_CLEANUP;
                     continue;
                 }
-
-                ssh->reqId++;
 
                 if (type != WOLFSSH_FTP_STATUS) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
@@ -8765,15 +8768,10 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 
             case STATE_SEND_READ_CHECK_REQ_ID:
                 WLOG(WS_LOG_SFTP, "SFTP SEND_READ STATE: CHECK_REQ_ID");
-                /* check request ID */
-                if (state->reqId != ssh->reqId) {
-                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
                     ret = WS_FATAL_ERROR;
                     state->state = STATE_SEND_READ_CLEANUP;
                     continue;
-                }
-                else {
-                    ssh->reqId++;
                 }
 
                 if (state->type == WOLFSSH_FTP_DATA)
@@ -9026,14 +9024,9 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 return WS_FATAL_ERROR;
             }
 
-            /* check request ID */
-            if (state->reqId != ssh->reqId) {
-                WLOG(WS_LOG_SFTP, "Bad request ID received");
+            if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_MKDIR);
                 return WS_FATAL_ERROR;
-            }
-            else {
-                ssh->reqId++;
             }
 
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret) != 0) {
@@ -9189,6 +9182,12 @@ int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz)
 
                 if (type != WOLFSSH_FTP_STATUS || ret <= 0) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
+                    ret = WS_FATAL_ERROR;
+                    state->state = STATE_CLOSE_CLEANUP;
+                    continue;
+                }
+
+                if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
                     ret = WS_FATAL_ERROR;
                     state->state = STATE_CLOSE_CLEANUP;
                     continue;
@@ -9582,16 +9581,11 @@ int wolfSSH_SFTP_Rename(WOLFSSH* ssh, const char* old, const char* nw)
                     continue;
                 }
 
-                /* check request ID */
-                if (state->reqId != ssh->reqId) {
-                    WLOG(WS_LOG_SFTP, "Bad request ID received");
+                if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
                     ret = WS_FATAL_ERROR;
-                    ssh->error = WS_SFTP_BAD_REQ_ID;
                     state->state = STATE_RENAME_CLEANUP;
                     continue;
                 }
-
-                ssh->reqId++;
 
                 if (type != WOLFSSH_FTP_STATUS) {
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
@@ -9731,6 +9725,11 @@ int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f)
                 return WS_FATAL_ERROR;
             }
 
+            if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
+                return WS_FATAL_ERROR;
+            }
+
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret) != 0) {
                 wolfSSH_SFTP_ClearState(ssh, STATE_ID_RM);
                 return WS_FATAL_ERROR;
@@ -9818,6 +9817,11 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
                     wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
                     WLOG(WS_LOG_SFTP, "Unexpected packet type");
                 }
+                return WS_FATAL_ERROR;
+            }
+
+            if (SFTP_CheckReqId(ssh, state->reqId) != WS_SUCCESS) {
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
                 return WS_FATAL_ERROR;
             }
             if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret) != 0) {
