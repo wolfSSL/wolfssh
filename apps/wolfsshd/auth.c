@@ -354,7 +354,7 @@ static int CheckAuthKeysLine(char* line, word32 lineSz, const byte* key,
         /* Constant-time compare to avoid leaking which prefix bytes of an
          * authorized key match a candidate offered by a remote peer. */
         if (keyCandSz != keySz ||
-                ConstantCompare(key, keyCand, keySz) != 0) {
+                wolfSSH_ConstantCompare(key, keyCand, keySz) != 0) {
             ret = WSSHD_AUTH_FAILURE;
         }
     }
@@ -811,7 +811,7 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
 
             if (hashedInputSz == 0 || hashedInput[0] == '*' ||
                     hashedInputSz != storedSz ||
-                    ConstantCompare((const byte*)hashedInput,
+                    wolfSSH_ConstantCompare((const byte*)hashedInput,
                         (const byte*)stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
