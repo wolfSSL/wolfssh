@@ -109,12 +109,14 @@ STATIC INLINE void wolfSSH_ForceZero(void* mem, size_t len)
 #endif
 
 
+#ifdef WOLFSSH_NO_CONSTCOMPARE
 /* check all length bytes for equality, return 0 on success */
 STATIC INLINE int ConstantCompare(const byte* a, const byte* b,
                                   word32 length)
 {
     word32 i;
-    word32 compareSum = 0;
+    /* volatile keeps the compiler from turning the loop into an early exit */
+    volatile word32 compareSum = 0;
 
     for (i = 0; i < length; i++) {
         compareSum |= a[i] ^ b[i];
@@ -122,6 +124,7 @@ STATIC INLINE int ConstantCompare(const byte* a, const byte* b,
 
     return compareSum;
 }
+#endif
 
 
 #undef STATIC
