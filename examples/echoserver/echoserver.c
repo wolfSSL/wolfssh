@@ -2971,6 +2971,17 @@ static int LoadPasswordBuffer(byte* buf, word32 bufSz, PwMapList* list)
 }
 
 
+/* Finds c in [str, end). Returns NULL when it is not there. */
+static char* FindDelimiter(char* str, const char* end, char c)
+{
+    for (; str < end; str++) {
+        if (*str == c)
+            return str;
+    }
+    return NULL;
+}
+
+
 static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 {
     char* str = (char*)buf;
@@ -2985,7 +2996,8 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
 
     /* Each line of passwd.txt is in the format
      *     ssh-rsa AAAB3BASE64ENCODEDPUBLICKEYBLOB username\n
-     * This function modifies the passed-in buffer. */
+     * This function modifies the passed-in buffer, which need not be
+     * NUL-terminated. */
     if (list == NULL)
         return -1;
 
@@ -2993,25 +3005,22 @@ static int LoadPublicKeyBuffer(byte* buf, word32 bufSz, PwMapList* list)
         return 0;
 
     while (str < end && *str != 0) {
-        /* Skip the public key type. This example will always be ssh-rsa. */
-        delimiter = WSTRCHR(str, ' ');
+        /* Skip the OpenSSH public-key type; the decoded blob carries the
+         * algorithm. */
+        delimiter = FindDelimiter(str, end, ' ');
         if (delimiter == NULL) {
             return -1;
         }
-        if (str >= end)
-            break;
         str = delimiter + 1;
-        delimiter = WSTRCHR(str, ' ');
+        delimiter = FindDelimiter(str, end, ' ');
         if (delimiter == NULL) {
             return -1;
         }
         publicKey64 = (byte*)str;
         *delimiter = 0;
         publicKey64Sz = (word32)(delimiter - str);
-        if (str >= end)
-            break;
         str = delimiter + 1;
-        delimiter = WSTRCHR(str, '\n');
+        delimiter = FindDelimiter(str, end, '\n');
         if (delimiter == NULL) {
             return -1;
         }
@@ -3660,6 +3669,20 @@ static void KeyLoadBufFree(byte* buf)
 #ifdef WOLFSSH_SMALL_STACK
     WFREE(buf, NULL, 0);
 #endif
+}
+
+
+/* Copies str and its terminator into the key load buffer and sets *sz to
+ * the length of str. Returns 0, or -1 when it does not fit. */
+static int CopyToKeyLoadBuf(byte* buf, const char* str, word32* sz)
+{
+    word32 len = (word32)WSTRLEN(str);
+
+    if (len >= EXAMPLE_KEYLOAD_BUFFER_SZ)
+        return -1;
+    WMEMCPY(buf, str, len + 1);
+    *sz = len;
+    return 0;
 }
 
 
@@ -4434,7 +4457,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 ES_ERROR("WMALLOC failed\n");
             }
             load_file(userPubKey, userBuf, &userBufSz);
-            LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList);
+            if (LoadPublicKeyBuffer(userBuf, userBufSz, &pwMapList) != 0) {
+                fprintf(stderr, "Couldn't load every key in %s.\n",
+                        userPubKey);
+            }
             WFREE(userBuf, NULL, 0);
         }
         #endif
@@ -4450,9 +4476,10 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         #endif
 
-        bufSz = (word32)WSTRLEN(samplePasswordBuffer);
-        WMEMCPY(keyLoadBuf, samplePasswordBuffer, bufSz);
-        keyLoadBuf[bufSz] = 0;
+        if (CopyToKeyLoadBuf(keyLoadBuf, samplePasswordBuffer, &bufSz) != 0) {
+            KeyLoadBufFree(keyLoadBuf);
+            ES_ERROR("Sample password list doesn't fit.\n");
+        }
         LoadPasswordBuffer(keyLoadBuf, bufSz, &pwMapList);
 
         #if defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_NO_ECDSA)
@@ -4478,16 +4505,18 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         #endif
         if (bufName != NULL) {
-            bufSz = (word32)WSTRLEN(bufName);
-            WMEMCPY(keyLoadBuf, bufName, bufSz);
-            keyLoadBuf[bufSz] = 0;
+            if (CopyToKeyLoadBuf(keyLoadBuf, bufName, &bufSz) != 0) {
+                KeyLoadBufFree(keyLoadBuf);
+                ES_ERROR("Sample public key list doesn't fit.\n");
+            }
             LoadPublicKeyBuffer(keyLoadBuf, bufSz, &pwMapList);
         }
 
         #ifdef WOLFSSH_ALLOW_USERAUTH_NONE
-            bufSz = (word32)WSTRLEN(sampleNoneBuffer);
-            WMEMCPY(keyLoadBuf, sampleNoneBuffer, bufSz);
-            keyLoadBuf[bufSz] = 0;
+            if (CopyToKeyLoadBuf(keyLoadBuf, sampleNoneBuffer, &bufSz) != 0) {
+                KeyLoadBufFree(keyLoadBuf);
+                ES_ERROR("Sample none list doesn't fit.\n");
+            }
             LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
         #endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
 
