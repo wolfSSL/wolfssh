@@ -1377,6 +1377,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #endif
 
     ret = NonBlockSSH_connect(ssh);
+    ClientClearPassword();
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 
