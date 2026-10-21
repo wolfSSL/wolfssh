@@ -326,9 +326,12 @@ port forwarding support in wolfSSH.
 The echoserver will handle local and remote port forwarding when started
 with `-F`; without it every forwarding request is refused. Local forwards
 may connect only to loopback destinations unless `-L` names the allowed
-`host` or `host:port` entries, comma separated. To connect with
-the ssh tool, using one of the following command lines. You can run either of
-the ssh command lines from anywhere:
+`host` or `host:port` entries, comma separated. Started as root with
+`-F`, the echoserver runs as `nobody` once it is listening; `-u` names
+another user. Shells run as that user too, so a login whose home
+directory has mode 0700 gets no shell. To connect with the ssh tool, use
+one of the following command lines. You can run either of the ssh command
+lines from anywhere:
 
     src/wolfssl$ ./examples/server/server
     src/wolfssh$ ./examples/echoserver/echoserver -F

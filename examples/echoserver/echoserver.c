@@ -103,6 +103,18 @@
     #include <sys/un.h>
 #endif /* WOLFSSH_AGENT */
 
+#if defined(WOLFSSH_FWD) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(NO_MAIN_DRIVER)
+    /* Gives up root before serving; forwarding opens sockets for the
+     * peer with the server's credentials. Standalone only: the tests run
+     * echoserver_test() inside their own process. */
+    #define ECHOSERVER_DROP_PRIVS
+    #include <grp.h>
+    #include <pwd.h>
+    #include <unistd.h>
+#endif
+
 #ifdef HAVE_SYS_SELECT_H
     #include <sys/select.h>
 #endif
@@ -3834,6 +3846,36 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath,
 #endif
 
 
+#ifdef ECHOSERVER_DROP_PRIVS
+/* Runs the process as userName for good. Without root this only checks
+ * that userName is the current user. Returns 0, or -1. */
+static int DropPrivileges(const char* userName)
+{
+    struct passwd* pw;
+    gid_t gid;
+    uid_t uid;
+
+    pw = getpwnam(userName);
+    if (pw == NULL)
+        return -1;
+    gid = pw->pw_gid;
+    uid = pw->pw_uid;
+
+    if (geteuid() != 0)
+        return (uid == geteuid()) ? 0 : -1;
+
+    if (setgroups(1, &gid) != 0 || setgid(gid) != 0 || setuid(uid) != 0)
+        return -1;
+
+    /* Make sure root cannot be taken back. */
+    if (uid != 0 && (setuid(0) == 0 || seteuid(0) == 0))
+        return -1;
+
+    return 0;
+}
+#endif
+
+
 static void ShowUsage(void)
 {
     printf("echoserver %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
@@ -3853,6 +3895,10 @@ static void ShowUsage(void)
     printf(" -L <list>     with -F, the comma separated host or host:port\n"
            "               destinations the peer may connect to, in place\n"
            "               of the default of loopback only; repeatable\n");
+#endif
+#ifdef ECHOSERVER_DROP_PRIVS
+    printf(" -u <user>     run as user once listening; started as root with\n"
+           "               -F, the default is nobody\n");
 #endif
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
@@ -3905,7 +3951,7 @@ static void ShowUsage(void)
 }
 
 
-#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFL:p:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFL:p:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:u:"
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
@@ -4040,6 +4086,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #ifdef WOLFSSH_FWD
     int allowFwd = 0;
 #endif
+#ifdef ECHOSERVER_DROP_PRIVS
+    const char* dropUser = NULL;
+#endif
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -4111,6 +4160,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 case 'F':
                     #ifdef WOLFSSH_FWD
                         allowFwd = 1;
+                    #endif
+                    break;
+
+                case 'u':
+                    #ifdef ECHOSERVER_DROP_PRIVS
+                        dropUser = myoptarg;
+                    #else
+                        fprintf(stderr, "Warning: -u is ignored in this "
+                                "build\n");
                     #endif
                     break;
 
@@ -4795,6 +4853,23 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
     #endif
     }
+
+#ifdef ECHOSERVER_DROP_PRIVS
+    /* After the listener and the keys, before any peer is served. */
+    if (dropUser == NULL && allowFwd && geteuid() == 0) {
+        dropUser = "nobody";
+        fprintf(stderr, "Warning: running as nobody for -F; -u picks the "
+                "user.\n");
+    #ifdef WOLFSSH_SHELL
+        fprintf(stderr, "Warning: shells run as nobody too; a login whose "
+                "home has mode 0700 gets no shell.\n");
+    #endif
+    }
+    if (dropUser != NULL && DropPrivileges(dropUser) != 0) {
+        WCLOSESOCKET(listenFd);
+        ES_ERROR("Couldn't run as user %s.\n", dropUser);
+    }
+#endif
 
     SignalTcpReady(serverArgs->signal, port);
 
