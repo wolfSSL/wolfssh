@@ -2638,6 +2638,7 @@ static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
 {
     byte* mldsaBuf;
     int loaded = 0;
+    int ret = 0;
 
     mldsaBuf = (byte*)WMALLOC(MLDSA_MAX_BOTH_KEY_DER_SIZE, NULL, 0);
     if (mldsaBuf == NULL) {
@@ -2650,14 +2651,14 @@ static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
         int mldsaSz = load_key_mldsa44(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
         if (mldsaSz <= 0) {
             fprintf(stderr, "Couldn't load ML-DSA-44 key file.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use ML-DSA-44 key buffer.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         loaded++;
     }
@@ -2668,14 +2669,14 @@ static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
         int mldsaSz = load_key_mldsa65(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
         if (mldsaSz <= 0) {
             fprintf(stderr, "Couldn't load ML-DSA-65 key file.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use ML-DSA-65 key buffer.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         loaded++;
     }
@@ -2686,26 +2687,29 @@ static int LoadMlDsaHostKeys(WOLFSSH_CTX* ctx, const char* keyList)
         int mldsaSz = load_key_mldsa87(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
         if (mldsaSz <= 0) {
             fprintf(stderr, "Couldn't load ML-DSA-87 key file.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, mldsaBuf, (word32)mldsaSz,
                                              WOLFSSH_FORMAT_ASN1) < 0) {
             fprintf(stderr, "Couldn't use ML-DSA-87 key buffer.\n");
-            WFREE(mldsaBuf, NULL, 0);
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         loaded++;
     }
     #endif /* WOLFSSH_NO_MLDSA87 */
 
-    WFREE(mldsaBuf, NULL, 0);
     if (loaded == 0) {
         fprintf(stderr, "ML-DSA key list '%s' matched no supported level.\n",
                 keyList);
-        return -1;
+        ret = -1;
     }
-    return 0;
+
+cleanup:
+    wc_ForceZero(mldsaBuf, MLDSA_MAX_BOTH_KEY_DER_SIZE);
+    WFREE(mldsaBuf, NULL, 0);
+    return ret;
 }
 #endif /* WOLFSSH_NO_MLDSA */
 
@@ -3648,6 +3652,17 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath,
 #endif
 
 
+/* Wipes the key load buffer, which held host private keys, and frees it
+ * when it came from the heap. */
+static void KeyLoadBufFree(byte* buf)
+{
+    wc_ForceZero(buf, EXAMPLE_KEYLOAD_BUFFER_SZ);
+#ifdef WOLFSSH_SMALL_STACK
+    WFREE(buf, NULL, 0);
+#endif
+}
+
+
 static void ShowUsage(void)
 {
     printf("echoserver %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
@@ -4253,10 +4268,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (tpmHostKeyPath != NULL) {
             if (EchoserverInitTpmHostKey(ctx, tpmHostKeyPath,
                     ECHOSERVER_TPM_KEY_AUTH_DEFAULT) != 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't load TPM host key from %s.\n",
                          tpmHostKeyPath);
             }
@@ -4289,10 +4301,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 }
             }
             if (storeErr != NULL) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                 if (kbAuthData.promptCount > 0) {
                     WFREE(kbAuthData.promptLengths, NULL, 0);
@@ -4313,18 +4322,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ECDSA)
             bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
             if (bufSz == 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't load first key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't use first key buffer.\n");
             }
 
@@ -4334,18 +4337,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             bufSz = load_key(peerEcc, keyLoadBuf, bufSz);
             if (bufSz == 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't load second key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't use second key buffer.\n");
             }
         #endif
@@ -4355,18 +4352,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             bufSz = EXAMPLE_KEYLOAD_BUFFER_SZ;
             bufSz = load_key_ed25519(keyLoadBuf, bufSz);
             if (bufSz == 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't load Ed25519 key file.\n");
             }
             if (wolfSSH_CTX_UsePrivateKey_buffer(ctx, keyLoadBuf, bufSz,
                                                  WOLFSSH_FORMAT_ASN1) < 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't use Ed25519 key buffer.\n");
             }
         #endif /* WOLFSSH_NO_ED25519 */
@@ -4391,10 +4382,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
 
             if (mldsaErr) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Error loading ML-DSA host keys.\n");
             }
             else {
@@ -4410,10 +4398,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                         mldsaMatched = 1;
                         if (LoadMlDsaCompositeHostKey(ctx, entry->fileName,
                                 entry->label) != 0) {
-                            #ifdef WOLFSSH_SMALL_STACK
-                            wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                            WFREE(keyLoadBuf, NULL, 0);
-                            #endif
+                            KeyLoadBufFree(keyLoadBuf);
                             ES_ERROR("Error loading %s host key.\n",
                                      entry->label);
                         }
@@ -4421,10 +4406,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 }
 
                 if (!mldsaMatched) {
-                    #ifdef WOLFSSH_SMALL_STACK
-                    wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                    WFREE(keyLoadBuf, NULL, 0);
-                    #endif
+                    KeyLoadBufFree(keyLoadBuf);
                     ES_ERROR("ML-DSA key list '%s' matched no supported "
                              "level.\n", keyList);
                 }
@@ -4442,19 +4424,13 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
             /* create temp buffer and load in file */
             if (userBufSz == 0) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't find size of file %s.\n", userPubKey);
             }
 
             userBuf = (byte*)WMALLOC(userBufSz, NULL, 0);
             if (userBuf == NULL) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("WMALLOC failed\n");
             }
             load_file(userPubKey, userBuf, &userBufSz);
@@ -4468,10 +4444,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         if (caCert) {
             /* PEM or DER is detected from the file's content. */
             if (wolfSSH_CTX_AddRootCert_file(ctx, caCert) != WS_SUCCESS) {
-                #ifdef WOLFSSH_SMALL_STACK
-                wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-                WFREE(keyLoadBuf, NULL, 0);
-                #endif
+                KeyLoadBufFree(keyLoadBuf);
                 ES_ERROR("Couldn't add root cert\n");
             }
         }
@@ -4518,10 +4491,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             LoadNoneBuffer(keyLoadBuf, bufSz, &pwMapList);
         #endif /* WOLFSSH_ALLOW_USERAUTH_NONE */
 
-        #ifdef WOLFSSH_SMALL_STACK
-            wc_ForceZero(keyLoadBuf, EXAMPLE_KEYLOAD_BUFFER_SZ);
-            WFREE(keyLoadBuf, NULL, 0);
-        #endif
+        KeyLoadBufFree(keyLoadBuf);
     }
 #ifdef WOLFSSL_NUCLEUS
     {
