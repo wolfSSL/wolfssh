@@ -57,11 +57,14 @@ struct WOLFSSL_CERT_MANAGER;
  * note wolfSSH mutates the shared object: in an HAVE_OCSP build this
  * enables WOLFSSL_OCSP_CHECKALL on cm, so a caller that keeps using the
  * same manager for TLS will find every chain requiring an OCSP response,
- * and during certificate authentication wolfSSH permanently adds verified
- * peer intermediate CAs to the manager as trusted roots. Prefer a manager
- * dedicated to wolfSSH over one shared with a live TLS stack. On failure
- * (WS_FATAL_ERROR) nothing has changed: the CTX keeps its previous manager
- * and no policy has been applied to cm. Returns
+ * and certificate authentication adds a peer's verified intermediate CAs
+ * to the manager, where they stay. As in TLS they are WOLFSSL_CHAIN_CA
+ * signers, which wolfSSL_CertManagerUnloadIntermediateCerts() removes; with
+ * wolfSSL older than 5.8.4 or built with NO_SKID they are trusted roots, as
+ * is one whose WOLFSSL_CHAIN_CA retag failed, which is logged as an error.
+ * Prefer a manager dedicated to wolfSSH over one shared with a live TLS
+ * stack. On failure (WS_FATAL_ERROR) nothing has changed: the CTX keeps its
+ * previous manager and no policy has been applied to cm. Returns
  * WS_NOT_COMPILED for any arguments when built against wolfSSL older than
  * 4.6.0 (wolfSSL_CertManager_up_ref() is unavailable there). */
 WOLFSSH_API
@@ -78,9 +81,14 @@ WOLFSSH_API
 int wolfSSH_CERTMAN_LoadRootCA_buffer(WOLFSSH_CERTMAN* cm,
         const unsigned char* rootCa, word32 rootCaSz);
 
-/* Verifies a leaf-first chain against the loaded roots and then applies the
- * RFC 6187 section 2.2 leaf checks in every build: a KeyUsage extension
- * must assert digitalSignature, and an ExtendedKeyUsage extension must name
+/* Verifies a leaf-first chain against the loaded roots, adding each peer
+ * intermediate a cert needs as its signer to the manager as described at
+ * wolfSSH_SetCertManager(). The chain must be strictly ordered: each cert's
+ * only candidate signer from the chain is the cert after it, so a cert whose
+ * issuer is not loaded and is not the next entry fails with
+ * WS_CERT_NO_SIGNER_E. The call then applies the RFC 6187 section 2.2 leaf
+ * checks in every build: a KeyUsage extension must assert
+ * digitalSignature, and an ExtendedKeyUsage extension must name
  * anyExtendedKeyUsage or a purpose usable for the SSH role being verified,
  * id-kp-secureShellClient or TLS clientAuth for a user certificate and
  * id-kp-secureShellServer or TLS serverAuth for a host certificate. Fails

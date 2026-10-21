@@ -124,12 +124,21 @@ extern "C" {
 #define WOLFSSL_V5_7_0 0x05007000
 #define WOLFSSL_V5_7_2 0x05007002
 #define WOLFSSL_V5_8_0 0x05008000
+#define WOLFSSL_V5_8_4 0x05008004
 #define WOLFSSL_V5_9_2 0x05009002
 
 /* wolfSSL 5.8.0 added the trusted-certificate PEM header, both the
  * TRUSTED_CERT_TYPE enum and PemToDer()'s fallback to it. */
 #if defined(WOLFSSH_CERTS) && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_8_0)
     #define WOLFSSH_HAVE_TRUSTED_CERT_PEM
+#endif
+
+/* wolfSSL 5.8.4 added typed CA loads, so a peer chain's intermediates can
+ * be tagged WOLFSSL_CHAIN_CA as TLS does. The load finds the signer by
+ * subject key ID, so NO_SKID builds keep them as trusted roots. */
+#if defined(WOLFSSH_CERTS) && !defined(NO_SKID) && \
+    (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_8_4)
+    #define WOLFSSH_CERTMAN_CHAIN_CA
 #endif
 
 /* wc_MlDsaKey_* / WC_MLDSA_* naming replaced the wc_Dilithium_* API in
