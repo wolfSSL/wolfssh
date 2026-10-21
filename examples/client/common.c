@@ -466,6 +466,23 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 }
 
 
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+/* Prints a server-supplied string with a '.' in place of each byte that is
+ * a control character other than tab or newline, DEL, or 0x80 and up. */
+static void ClientPrintSafe(const byte* str)
+{
+    byte c;
+
+    for (; *str != 0; str++) {
+        c = *str;
+        if ((c < 0x20 && c != '\t' && c != '\n') || c >= 0x7F)
+            c = '.';
+        putchar(c);
+    }
+}
+#endif
+
+
 int ClientUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -577,11 +594,13 @@ int ClientUserAuth(byte authType,
 
         if (authData->sf.keyboard.promptName &&
             authData->sf.keyboard.promptName[0] != '\0') {
-            printf("%s\n", authData->sf.keyboard.promptName);
+            ClientPrintSafe(authData->sf.keyboard.promptName);
+            printf("\n");
         }
         if (authData->sf.keyboard.promptInstruction &&
             authData->sf.keyboard.promptInstruction[0] != '\0') {
-            printf("%s\n", authData->sf.keyboard.promptInstruction);
+            ClientPrintSafe(authData->sf.keyboard.promptInstruction);
+            printf("\n");
         }
 
         /* The server may send another INFO_REQUEST at any time. */
@@ -615,7 +634,7 @@ int ClientUserAuth(byte authType,
          * but test the one this function actually returns. */
         for (entry = 0; ret == WOLFSSH_USERAUTH_SUCCESS && entry < promptCount;
                 entry++) {
-            printf("%s", authData->sf.keyboard.prompts[entry]);
+            ClientPrintSafe(authData->sf.keyboard.prompts[entry]);
             if (!authData->sf.keyboard.promptEcho[entry]) {
                 ClientSetEcho(0);
             }
