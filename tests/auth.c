@@ -2800,6 +2800,76 @@ static void test_ClientUserAuth_passwordWiped(void)
     AssertNotNull(freopen("/dev/null", "r", stdin));
 }
 
+/* Server-supplied keyboard-interactive strings reach the terminal with a
+ * '.' for each control byte and each byte 0x80 and up. */
+static void test_ClientUserAuth_keyboardFiltered(void)
+{
+    WS_UserAuthData authData;
+    byte* prompts[1];
+    byte  promptEcho[1];
+    const char* inName = "kb_filter_in.txt";
+    const char* outName = "kb_filter_out.txt";
+    WFILE* f = NULL;
+    WFILE* outFile = NULL;
+    char out[512];
+    size_t outSz;
+    size_t i;
+    int savedStdout;
+    int ret;
+
+    printf("Testing keyboard-interactive strings are filtered\n");
+
+    prompts[0] = (byte*)"p\rq\x9b\x7f: ";
+    promptEcho[0] = 1;
+
+    AssertIntEQ(WFOPEN(NULL, &f, inName, "w"), 0);
+    AssertNotNull(f);
+    AssertIntGT(fprintf(f, "resp\n"), 0);
+    WFCLOSE(NULL, f);
+    AssertNotNull(freopen(inName, "r", stdin));
+    AssertIntEQ(remove(inName), 0);
+
+    KbSetupAuthData(&authData, 1, prompts, promptEcho);
+    authData.sf.keyboard.promptName = (byte*)"a\x1b[2Jb";
+    authData.sf.keyboard.promptInstruction =
+        (byte*)"\xc2\x9b x \xc3\xa9\t\xa0\xe0\x82\x9b.";
+
+    /* Capture through the descriptor alone, leaving the stdout FILE and its
+     * buffering mode as they were. The capture file is unlinked while open
+     * so nothing is left behind if an assert aborts. */
+    AssertIntEQ(WFOPEN(NULL, &outFile, outName, "w+"), 0);
+    AssertNotNull(outFile);
+    AssertIntEQ(remove(outName), 0);
+    fflush(stdout);
+    savedStdout = dup(STDOUT_FILENO);
+    AssertTrue(savedStdout >= 0);
+    AssertTrue(dup2(fileno(outFile), STDOUT_FILENO) >= 0);
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, NULL);
+    fflush(stdout);
+    AssertTrue(dup2(savedStdout, STDOUT_FILENO) >= 0);
+    close(savedStdout);
+
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.keyboard.responseCount, 1);
+
+    rewind(outFile);
+    outSz = fread(out, 1, sizeof(out) - 1, outFile);
+    WFCLOSE(NULL, outFile);
+    out[outSz] = '\0';
+
+    AssertNotNull(WSTRSTR(out, "a.[2Jb\n"));
+    AssertNotNull(WSTRSTR(out, ".. x ..\t.....\n"));
+    AssertNotNull(WSTRSTR(out, "p.q..: "));
+    for (i = 0; i < outSz; i++) {
+        AssertTrue((byte)out[i] < 0x7F);
+        AssertTrue((byte)out[i] >= 0x20 || out[i] == '\t' ||
+                out[i] == '\n');
+    }
+
+    ClientFreeBuffers(NULL, NULL, NULL);
+    AssertNotNull(freopen("/dev/null", "r", stdin));
+}
+
 #endif /* keyboard-interactive ClientUserAuth tests */
 
 int wolfSSH_AuthTest(int argc, char** argv)
@@ -2892,6 +2962,7 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_ClientUserAuth_keyboardZeroPrompts();
     test_ClientUserAuth_keyboardRounds();
     test_ClientUserAuth_passwordWiped();
+    test_ClientUserAuth_keyboardFiltered();
 #endif
 
     /* Unknown callback return value must not grant auth (issue 2486) */
