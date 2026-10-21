@@ -136,10 +136,9 @@ wait_for_output() {
 
 # Run the client with its stdin coming from a fifo.
 #
-# The client answers its prompts with stdio, which buffers everything that
-# is ready to be read, so anything written along with a prompt's answer is
-# swallowed with it and never reaches the session. Writing each piece only
-# once the client has asked for it keeps them in separate reads. The
+# The client reads its prompt answers from an unbuffered stdin, so the
+# session data can follow the password at once and is left in the fifo for
+# the session. Each answer is still written only once its prompt is up. The
 # echoserver only ends the session when it receives a 0x03, so every
 # session has to send one or both ends wait for the other forever.
 #
@@ -161,11 +160,6 @@ run_client() {
 
         wait_for_output "Password:" || exit 1
         printf 'upthehill\n'
-
-        # Let the client consume the password before sending the session
-        # data. A single read that catches both loses the data.
-        sleep 2
-
         printf 'hello\003'
     ) > "$input_file" 2>/dev/null &
     input_pid=$!
