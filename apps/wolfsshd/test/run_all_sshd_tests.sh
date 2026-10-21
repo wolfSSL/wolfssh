@@ -13,6 +13,7 @@ test_cases=(
  "sshd_sftp_idle_cpu_test.sh"
  "sshd_bad_subsystem_test.sh"
  "sshd_scp_fail.sh"
+ "sshd_scp_home_test.sh"
  "sshd_term_close_test.sh"
  "sshd_stdin_eof_test.sh"
  "sshd_exit_signal_test.sh"
