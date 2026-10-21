@@ -64,11 +64,12 @@ static int TpmCsUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     WOLFSSH_UNUSED(ctx);
 
     if (authType == WOLFSSH_USERAUTH_PASSWORD) {
-        const char* pw = (const char*)authData->sf.password.password;
+        const byte* pw = authData->sf.password.password;
         word32 pwSz = authData->sf.password.passwordSz;
 
         if (pwSz == (word32)XSTRLEN(TPMCS_PASSWORD)
-                && XMEMCMP(pw, TPMCS_PASSWORD, pwSz) == 0) {
+                && wolfSSH_ConstantCompare(pw,
+                        (const byte*)TPMCS_PASSWORD, pwSz) == 0) {
             ret = WOLFSSH_USERAUTH_SUCCESS;
         }
     }
