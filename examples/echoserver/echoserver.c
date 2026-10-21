@@ -573,6 +573,101 @@ static WS_SOCKET_T connect_addr(const char* name, word16 port)
 }
 
 
+/* The -L arguments, each a comma separated list of host or host:port. */
+#define FWD_ALLOW_ARGS_MAX 8
+static const char* fwdAllowArgs[FWD_ALLOW_ARGS_MAX];
+static int fwdAllowArgsSz = 0;
+
+
+static int FwdIsLoopback(const char* host)
+{
+    static const byte loopback6[16] =
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    struct in_addr addr4;
+    struct in6_addr addr6;
+
+    if (WSTRLEN(host) == sizeof("localhost") - 1
+            && WSTRNCASECMP(host, "localhost", sizeof("localhost") - 1) == 0)
+        return 1;
+    if (inet_pton(AF_INET, host, &addr4) == 1)
+        return (ntohl(addr4.s_addr) >> 24) == 127;
+    if (inet_pton(AF_INET6, host, &addr6) == 1)
+        return WMEMCMP(&addr6, loopback6, sizeof(loopback6)) == 0;
+    return 0;
+}
+
+
+/* Matches one allow-list entry, host or host:port, of entrySz bytes. An
+ * entry with more than one colon is an IPv6 address without a port. */
+static int FwdEntryMatches(const char* entry, word32 entrySz,
+        const char* host, word32 port)
+{
+    const char* colon = NULL;
+    word32 hostSz = entrySz;
+    word32 i;
+
+    for (i = 0; i < entrySz; i++) {
+        if (entry[i] == ':') {
+            if (colon != NULL) {
+                colon = NULL;
+                break;
+            }
+            colon = entry + i;
+        }
+    }
+
+    if (colon != NULL) {
+        word32 entryPort = 0;
+        const char* c;
+
+        hostSz = (word32)(colon - entry);
+        if (colon + 1 == entry + entrySz)
+            return 0;
+        for (c = colon + 1; c < entry + entrySz; c++) {
+            if (*c < '0' || *c > '9' || entryPort > 65535)
+                return 0;
+            entryPort = entryPort * 10 + (word32)(*c - '0');
+        }
+        if (entryPort != port)
+            return 0;
+    }
+
+    return hostSz > 0 && WSTRLEN(host) == hostSz
+        && WSTRNCASECMP(host, entry, hostSz) == 0;
+}
+
+
+/* Whether the peer may open a direct-tcpip channel to host:port: a loopback
+ * destination by default, or only the -L entries when there are any. */
+static int FwdDestAllowed(const char* host, word32 port)
+{
+    int i;
+
+    if (host == NULL)
+        return 0;
+    if (fwdAllowArgsSz == 0)
+        return FwdIsLoopback(host);
+
+    for (i = 0; i < fwdAllowArgsSz; i++) {
+        const char* entry = fwdAllowArgs[i];
+
+        while (*entry != '\0') {
+            const char* comma = WSTRCHR(entry, ',');
+            word32 entrySz = (comma != NULL) ? (word32)(comma - entry)
+                                             : (word32)WSTRLEN(entry);
+
+            if (FwdEntryMatches(entry, entrySz, host, port))
+                return 1;
+            entry += entrySz;
+            if (*entry == ',')
+                entry++;
+        }
+    }
+
+    return 0;
+}
+
+
 static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         const char* name, word32 port)
 {
@@ -581,10 +676,27 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     int ret = 0;
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
-        fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
-        fwdCbCtx->hostPort = port;
-        fwdCbCtx->isDirect = 1;
-        appCtx->state = APP_STATE_CONNECT;
+        if (!FwdDestAllowed(name, port)) {
+            char shown[65];
+            word32 i;
+
+            /* The name is the peer's; log it bounded and printable. */
+            for (i = 0; name != NULL && name[i] != '\0'
+                    && i < sizeof(shown) - 1; i++) {
+                shown[i] = (name[i] >= ' ' && name[i] <= '~') ? name[i] : '?';
+            }
+            shown[i] = '\0';
+            /* The library refuses the open as administratively
+             * prohibited. */
+            printf("Refusing to forward to %s:%u.\n", shown, port);
+            ret = WS_FWD_SETUP_E;
+        }
+        else {
+            fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
+            fwdCbCtx->hostPort = port;
+            fwdCbCtx->isDirect = 1;
+            appCtx->state = APP_STATE_CONNECT;
+        }
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
         /* The channel id rides in the port parameter. A channel can outlive
@@ -3738,6 +3850,9 @@ static void ShowUsage(void)
     printf(" -N            use non-blocking sockets\n");
 #ifdef WOLFSSH_FWD
     printf(" -F            allow the peer's port forwarding requests\n");
+    printf(" -L <list>     with -F, the comma separated host or host:port\n"
+           "               destinations the peer may connect to, in place\n"
+           "               of the default of loopback only; repeatable\n");
 #endif
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
@@ -3790,7 +3905,7 @@ static void ShowUsage(void)
 }
 
 
-#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFL:p:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
@@ -3949,6 +4064,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 #endif
 
+#ifdef WOLFSSH_FWD
+    fwdAllowArgsSz = 0;
+#endif
     if (argc > 0) {
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, ECHOSERVER_OPTLIST)) != -1) {
@@ -3993,6 +4111,15 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 case 'F':
                     #ifdef WOLFSSH_FWD
                         allowFwd = 1;
+                    #endif
+                    break;
+
+                case 'L':
+                    #ifdef WOLFSSH_FWD
+                    if (fwdAllowArgsSz >= FWD_ALLOW_ARGS_MAX) {
+                        ES_ERROR("Too many -L options.\n");
+                    }
+                    fwdAllowArgs[fwdAllowArgsSz++] = myoptarg;
                     #endif
                     break;
 
