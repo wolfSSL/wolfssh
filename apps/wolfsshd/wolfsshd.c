@@ -2604,6 +2604,8 @@ cleanup:
     if (cnslOut != NULL) {
         CloseHandle(cnslOut);
     }
+    /* The resize callback must not reach ptyIn once it is closed. */
+    wolfSSH_SetTerminalResizeCtx(ssh, NULL);
     if (ptyIn != NULL) {
         CloseHandle(ptyIn);
     }
@@ -2678,6 +2680,40 @@ static int SHELL_SetNonBlocking(int fd)
 #ifndef WOLFSSHD_CHILD_REAP_WAIT_US
     #define WOLFSSHD_CHILD_REAP_WAIT_US 50000
 #endif
+
+/* Close a descriptor that is still open and mark it closed. */
+static void SHELL_CloseFd(int* fd)
+{
+    if (*fd >= 0) {
+        close(*fd);
+        *fd = -1;
+    }
+}
+
+/* Take down a shell child that the parent cannot service: kill it, reap it,
+ * and close the parent's descriptors to it. */
+static void SHELL_AbortChild(pid_t childPid, int* childFd, int* stdoutPipe,
+    int* stderrPipe, int* stdinPipe)
+{
+    int status;
+    int i;
+
+    if (kill(childPid, SIGKILL) == 0) {
+        while (waitpid(childPid, &status, 0) < 0 && errno == EINTR) {
+            /* retry */
+        }
+    }
+    else {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to kill shell child %d, "
+            "errno %d", (int)childPid, errno);
+    }
+    SHELL_CloseFd(childFd);
+    for (i = 0; i < 2; i++) {
+        SHELL_CloseFd(&stdoutPipe[i]);
+        SHELL_CloseFd(&stderrPipe[i]);
+        SHELL_CloseFd(&stdinPipe[i]);
+    }
+}
 
 /* Send out the last of a shell's output once the child has been reaped. The
  * SSH socket is non blocking, so retry a bounded number of times on a full
@@ -3024,15 +3060,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         exit(ret); /* exit child process and close down SSH connection */
     }
 
-    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
-        pPasswd->pw_gid) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        /* could not drop to the authenticated user; kill the already
-         * forked shell child and terminate the per-connection process
-         * rather than continue at a higher privilege level */
-        kill(childPid, SIGKILL);
-        exit(1);
-    }
     sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
@@ -3048,19 +3075,44 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* The shell child is already forked, and nothing below can reach the
          * peer without an id to address, so take it down with us. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No session channel to service");
-        kill(childPid, SIGKILL);
+        SHELL_AbortChild(childPid, &childFd, stdoutPipe, stderrPipe,
+            stdinPipe);
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error lowering permissions level");
+            exit(1);
+        }
         return WS_FATAL_ERROR;
     }
 
     signal(SIGINT, SIG_DFL);
 
     rc = tcgetattr(childFd, &tios);
+    if (rc == 0) {
+        rc = tcsetattr(childFd, TCSAFLUSH, &tios);
+    }
     if (rc != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting up the shell's pty");
+        SHELL_AbortChild(childPid, &childFd, stdoutPipe, stderrPipe,
+            stdinPipe);
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error lowering permissions level");
+            exit(1);
+        }
         return WS_FATAL_ERROR;
     }
-    rc = tcsetattr(childFd, TCSAFLUSH, &tios);
-    if (rc != 0) {
-        return WS_FATAL_ERROR;
+
+    /* Drop privileges only after the checks above, which may have to kill
+     * the child while it is still root. */
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+        pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        /* could not drop to the authenticated user; kill the already
+         * forked shell child and terminate the per-connection process
+         * rather than continue at a higher privilege level */
+        kill(childPid, SIGKILL);
+        exit(1);
     }
 
     /* set initial size of terminal based on saved size */
@@ -3564,6 +3616,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         stdinPipe[1] = -1;
     }
 
+    /* The resize callback must not reach childFd once it is closed. */
+    wolfSSH_SetTerminalResizeCtx(ssh, NULL);
+
     /* Close the pty master so the shell gets SIGHUP and can exit on its own */
     if (childFd >= 0) {
         close(childFd);
@@ -3603,8 +3658,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     "status");
         }
         else {
-            if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
-                WS_SUCCESS) {
+            word32 exitStatus = 1;
+
+            /* A signaled child reports 128 plus the signal, as a shell does */
+            if (WIFEXITED(waitStatus)) {
+                exitStatus = (word32)WEXITSTATUS(waitStatus);
+            }
+            else if (WIFSIGNALED(waitStatus)) {
+                exitStatus = 128 + (word32)WTERMSIG(waitStatus);
+            }
+            if (wolfSSH_SetExitStatus(ssh, exitStatus) != WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting child's exit "
                     "status");
             }
@@ -5053,7 +5116,7 @@ int main(int argc, char** argv)
             isService = 0;
         }
         if (WSTRCMP(argv[i], "-r") == 0) {
-            if (argc < i + 1) {
+            if (i + 1 >= argc) {
                 /* was expecting command to run after -r argument */
                 return -1;
             }
