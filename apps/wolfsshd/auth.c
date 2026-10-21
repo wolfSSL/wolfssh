@@ -75,6 +75,9 @@
 #include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
+#ifdef HAVE_CRYPT_R
+#include <crypt.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -808,6 +811,13 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 #endif
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+#ifdef HAVE_CRYPT_R
+    /* the result lives in data, which the caller wipes */
+    #define WSSHD_CRYPT(in, salt, data) crypt_r((in), (salt), (data))
+#else
+    #define WSSHD_CRYPT(in, salt, data) crypt((in), (salt))
+#endif
+
 #ifdef WOLFSSHD_UNIT_TEST
 int CheckPasswordHashUnix(const char* input, const char* stored)
 #else
@@ -830,6 +840,12 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
     int locked = 0;
     char* hashedInput = NULL;
     word32 hashedInputSz = 0, storedSz = 0;
+#ifdef HAVE_CRYPT_R
+    /* ~128 KB on glibc, ~32 KB on libxcrypt, so not on the stack */
+    struct crypt_data* cryptData = NULL;
+#else
+    void* cryptData = NULL;
+#endif
 
     if (input == NULL || stored == NULL) {
         ret = WS_BAD_ARGUMENT;
@@ -842,6 +858,20 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
                     "[SSHD] User logged in with empty password");
         return ret;
     }
+
+#ifdef HAVE_CRYPT_R
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        cryptData = (struct crypt_data*)WMALLOC(sizeof(*cryptData), NULL,
+                DYNTYPE_SSHD);
+        if (cryptData == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            /* zeroed, as crypt_r() requires of a fresh crypt_data */
+            WMEMSET(cryptData, 0, sizeof(*cryptData));
+        }
+    }
+#endif
 
     if (ret == WSSHD_AUTH_SUCCESS) {
         const char* salt = stored;
@@ -870,7 +900,7 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
             }
         }
 
-        hashedInput = crypt(input, salt);
+        hashedInput = WSSHD_CRYPT(input, salt, cryptData);
         /* glibc signals an unsupported salt with a "*"-prefixed sentinel,
          * not NULL; check both so the fallback engages on every libc. */
         if (locked) {
@@ -880,7 +910,7 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
                         && (hashedInput == NULL || hashedInput[0] == '*');
                     fbIdx++) {
                 salt = fakeHashFallbacks[fbIdx];
-                hashedInput = crypt(input, salt);
+                hashedInput = WSSHD_CRYPT(input, salt, cryptData);
             }
         }
 
@@ -896,10 +926,18 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
                         (const byte*)stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
-            /* crypt() leaves the result in static storage */
+            /* the result is in crypt()'s static storage or in cryptData */
             WS_FORCEZERO(hashedInput, hashedInputSz);
         }
     }
+#ifdef HAVE_CRYPT_R
+    if (cryptData != NULL) {
+        WS_FORCEZERO(cryptData, sizeof(*cryptData));
+        WFREE(cryptData, NULL, DYNTYPE_SSHD);
+    }
+#else
+    WOLFSSH_UNUSED(cryptData);
+#endif
     return ret;
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
