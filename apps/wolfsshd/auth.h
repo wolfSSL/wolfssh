@@ -41,6 +41,27 @@ USER_NODE* AddNewUser(USER_NODE* list, byte type, const byte* username,
                        word32 usernameSz, const byte* value, word32 valueSz);
 #endif
 
+#ifndef _WIN32
+#include <pwd.h>
+
+#ifndef WOLFSSHD_PW_BUF_SZ
+    #define WOLFSSHD_PW_BUF_SZ 4096
+#endif
+
+/* Caller-owned storage for an account lookup, so no copy of the entry is
+ * left in libc's static storage. */
+typedef struct WOLFSSHD_PW {
+    struct passwd pw;
+    char buf[WOLFSSHD_PW_BUF_SZ];
+} WOLFSSHD_PW;
+
+/* Looks up name into store. Returns &store->pw, or NULL when there is no such
+ * user (errno 0) or the lookup failed (errno set). Release the store with
+ * wolfSSHD_PwFree(), which wipes it, whatever the result. */
+struct passwd* wolfSSHD_GetPwnam(const char* name, WOLFSSHD_PW* store);
+void wolfSSHD_PwFree(WOLFSSHD_PW* store);
+#endif
+
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx);
 int DefaultUserAuthTypes(WOLFSSH* ssh, void* ctx);
 
@@ -124,6 +145,7 @@ extern int (*wsshd_setregid_cb)(WGID_T, WGID_T);
 extern int (*wsshd_setreuid_cb)(WUID_T, WUID_T);
 extern int (*wsshd_setegid_cb)(WGID_T);
 extern int (*wsshd_seteuid_cb)(WUID_T);
+/* NULL, the default, runs the real lookup; set, it replaces the lookup. */
 extern struct passwd* (*wsshd_getpwnam_cb)(const char*);
 extern int (*wsshd_setgroups_cb)(int, const WGID_T*);
 #ifdef WOLFSSHD_HAVE_SHADOW

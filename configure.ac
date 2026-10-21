@@ -437,6 +437,16 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],[
         [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_HAVE_LIBCRYPT"; LIBS="$LIBS -lcrypt"],
         [AC_MSG_ERROR(libcrypt not found)])])
   ])
+  # Only the five-argument glibc/musl form; QNX and Solaris have four.
+  AC_MSG_CHECKING([for getspnam_r])
+  AC_LINK_IFELSE(
+    [AC_LANG_PROGRAM([[#include <shadow.h>]],
+                     [[struct spwd sp; struct spwd* res; char buf[64];
+                       int rc = getspnam_r("", &sp, buf, sizeof(buf), &res);
+                       (void)rc;]])],
+    [AC_DEFINE([HAVE_GETSPNAM_R], [1], [five-argument getspnam_r() available])
+     AC_MSG_RESULT([yes])],
+    [AC_MSG_RESULT([no])])
 ])
 
 AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub

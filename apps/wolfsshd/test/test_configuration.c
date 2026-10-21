@@ -18,6 +18,7 @@
     #include <crypt.h>
 #endif
 #ifndef _WIN32
+    #include <errno.h>
     #include <unistd.h>
     #include <pwd.h>
 #endif
@@ -2770,10 +2771,10 @@ static int test_AuthInit(void)
 
     wolfSSHD_SetCachedFakeHashForTest(NULL);
 
-    /* Force the real getspnam(), independent of what earlier tests left
-     * this global as. */
+    /* Force the real lookup, independent of what earlier tests left this
+     * global as. */
     savedGetspnam = wsshd_getspnam_cb;
-    wsshd_getspnam_cb = getspnam;
+    wsshd_getspnam_cb = NULL;
 
     rootShadow = getspnam("root");
     if (rootShadow == NULL || rootShadow->sp_pwdp == NULL) {
@@ -3029,6 +3030,85 @@ static int test_ScanShadowFile_truncatedLine(void)
 }
 #endif /* WOLFSSHD_HAVE_SHADOW */
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
+
+#ifndef _WIN32
+/* The lookup fills the caller's store, and freeing it wipes the store. */
+static int test_GetPwnam(void)
+{
+    int ret = WS_SUCCESS;
+    struct passwd* (*savedGetpwnam)(const char*);
+    struct passwd* self;
+    struct passwd* pw;
+    WOLFSSHD_PW store;
+    char name[64];
+    word32 i;
+
+    savedGetpwnam = wsshd_getpwnam_cb;
+    wsshd_getpwnam_cb = NULL;
+
+    self = getpwuid(getuid());
+    if (self == NULL || self->pw_name == NULL ||
+            WSTRLEN(self->pw_name) >= sizeof(name)) {
+        Log("    Skipping test: no passwd entry for this uid.\n");
+        wsshd_getpwnam_cb = savedGetpwnam;
+        return WS_SUCCESS;
+    }
+    WSTRNCPY(name, self->pw_name, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+
+    Log("    Testing scenario: wolfSSHD_GetPwnam() for this user.");
+    pw = wolfSSHD_GetPwnam(name, &store);
+    if (pw != &store.pw || pw->pw_uid != getuid() ||
+            WSTRCMP(pw->pw_name, name) != 0 ||
+            (byte*)pw->pw_name < (byte*)store.buf ||
+            (byte*)pw->pw_name >= (byte*)store.buf + sizeof(store.buf)) {
+        Log(" FAILED: entry not in the caller's store.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    wolfSSHD_PwFree(&store);
+    for (i = 0; ret == WS_SUCCESS && i < (word32)sizeof(store); i++) {
+        if (((byte*)&store)[i] != 0) {
+            Log(" FAILED: store not wiped.\n");
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        Log(" PASSED.\n");
+        Log("    Testing scenario: wolfSSHD_GetPwnam() for no such user.");
+        WMEMSET(&store, 0xA5, sizeof(store));
+        errno = EIO;
+        if (wolfSSHD_GetPwnam("no_such_wolfsshd_user_xyz", &store) != NULL ||
+                errno != 0) {
+            Log(" FAILED: expected NULL with errno 0.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        for (i = 0; ret == WS_SUCCESS && i < (word32)sizeof(store); i++) {
+            if (((byte*)&store)[i] != 0) {
+                Log(" FAILED: store not wiped.\n");
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        wolfSSHD_PwFree(&store);
+    }
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: wolfSSHD_GetPwnam() with no name.");
+        errno = 0;
+        if (wolfSSHD_GetPwnam(NULL, &store) != NULL || errno == 0) {
+            Log(" FAILED: expected NULL with errno set.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    wsshd_getpwnam_cb = savedGetpwnam;
+    return ret;
+}
+#endif
 
 #ifdef WOLFSSL_BASE64_ENCODE
 /* Build SSH wire-format public key blob. Returns size or 0 if too small. */
@@ -7363,6 +7443,9 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthSetGroups_ok),
     TEST_DECL(test_AuthSetGroups_setgroups_fail),
     TEST_DECL(test_AuthSetGroups_getgrouplist_fail),
+#endif
+#ifndef _WIN32
+    TEST_DECL(test_GetPwnam),
 #endif
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
     TEST_DECL(test_CheckPasswordHashUnix),
