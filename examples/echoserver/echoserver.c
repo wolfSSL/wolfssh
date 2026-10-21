@@ -3702,6 +3702,8 @@ static int wsUserAuthCheck(byte authType,
                     WFREE(uuid, NULL, 0);
             }
 
+            wc_FreeDecodedCert(&cert);
+
             /* failed to at least get UUID string */
             if (ret != 0) {
                 return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
