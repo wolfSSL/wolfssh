@@ -199,8 +199,12 @@ typedef struct WS_AppCtx {
 
 
 #ifdef WOLFSSH_AGENT
+#define ECHOSERVER_AGENT_DIR "/tmp/wolfserver.XXXXXX"
+
 typedef struct WS_AgentCbActionCtx {
     struct sockaddr_un name;
+    /* The private directory holding name, empty when there is none. */
+    char dirName[sizeof(ECHOSERVER_AGENT_DIR)];
 } WS_AgentCbActionCtx;
 #endif
 
@@ -425,23 +429,34 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
     if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
         struct sockaddr_un* name = &agentCtx->name;
-        size_t size;
+        size_t size = 0;
         int envSet = 0, nameBound = 0;
 
         WMEMSET(name, 0, sizeof(struct sockaddr_un));
         name->sun_family = AF_LOCAL;
 
-        ret = snprintf(name->sun_path, sizeof(name->sun_path),
-                "/tmp/wolfserver.%d", (int)getpid());
-
-        if (ret >= 0) {
-            name->sun_path[sizeof(name->sun_path) - 1] = '\0';
-            size = WSTRLEN(name->sun_path);
-            ret = (size < WSTRLEN("/tmp/wolfserver."));
+        /* mkdtemp() makes a new 0700 directory under an unpredictable name,
+         * so no other user can claim or reach the socket inside it. */
+        WMEMCPY(agentCtx->dirName, ECHOSERVER_AGENT_DIR,
+                sizeof(ECHOSERVER_AGENT_DIR));
+        if (mkdtemp(agentCtx->dirName) == NULL) {
+            agentCtx->dirName[0] = '\0';
+            ret = -1;
         }
 
         if (ret == 0) {
-            size += offsetof(struct sockaddr_un, sun_path);
+            ret = snprintf(name->sun_path, sizeof(name->sun_path),
+                    "%s/agent", agentCtx->dirName);
+            if (ret > 0 && (size_t)ret < sizeof(name->sun_path)) {
+                size = (size_t)ret + offsetof(struct sockaddr_un, sun_path);
+                ret = 0;
+            }
+            else {
+                ret = -1;
+            }
+        }
+
+        if (ret == 0) {
             ctx->listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
             ret = (ctx->listenFd == -1) ? -1 : 0;
         }
@@ -462,12 +477,15 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         }
 
         if (ret == 0) {
+            printf("Agent socket: %s\n", name->sun_path);
+            fflush(stdout);
             ctx->state = APP_STATE_LISTEN;
         }
         else {
             if (nameBound) {
                 unlink(agentCtx->name.sun_path);
             }
+            agentCtx->name.sun_path[0] = '\0';
             if (envSet) {
                 unsetenv(EnvNameAuthPort);
             }
@@ -475,14 +493,33 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
                 close(ctx->listenFd);
                 ctx->listenFd = -1;
             }
+            if (agentCtx->dirName[0] != '\0') {
+                rmdir(agentCtx->dirName);
+                agentCtx->dirName[0] = '\0';
+            }
             ret = WS_AGENT_SETUP_E;
         }
     }
     else if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
-        WCLOSESOCKET(ctx->listenFd);
-        ctx->listenFd = -1;
-        unlink(agentCtx->name.sun_path);
-        unsetenv(EnvNameAuthPort);
+        /* The accepted agent client goes with the listener. */
+        if (ctx->appFd >= 0) {
+            WCLOSESOCKET(ctx->appFd);
+            ctx->appFd = -1;
+        }
+        if (ctx->listenFd >= 0) {
+            WCLOSESOCKET(ctx->listenFd);
+            ctx->listenFd = -1;
+        }
+        if (agentCtx->name.sun_path[0] != '\0') {
+            unlink(agentCtx->name.sun_path);
+            agentCtx->name.sun_path[0] = '\0';
+            unsetenv(EnvNameAuthPort);
+        }
+        if (agentCtx->dirName[0] != '\0') {
+            rmdir(agentCtx->dirName);
+            agentCtx->dirName[0] = '\0';
+        }
+        ctx->state = APP_STATE_INIT;
     }
     else
         ret = WS_AGENT_INVALID_ACTION;
@@ -1461,8 +1498,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             if (!agentOpened) {
                 int agentRc = wolfSSH_AGENT_ChannelOpen(ssh);
 
-                if (agentRc == WS_SUCCESS)
+                if (agentRc == WS_SUCCESS) {
+                    /* The relay below addresses the agent channel by its
+                     * own id, which only internal.h exposes. */
+                    agentChannelId = ssh->agent->channel;
                     agentOpened = 1;
+                }
                 else if (agentRc == WS_WANT_WRITE)
                     wantWrite = 1;
             }
@@ -1621,23 +1662,41 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * pumps below, on every pass. */
                         #ifdef WOLFSSH_AGENT
                         if (lastChannel == agentChannelId) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
-                                    threadCtx->agentCtx.fdBuffer,
-                                    sizeof threadCtx->agentCtx.fdBuffer);
-                            if (cnt_r <= 0) {
+                            int agentRxd = 0;
+
+                            /* One message can carry more than fdBuffer
+                             * holds, and no later report asks for the
+                             * rest, so drain it all now. */
+                            for (;;) {
+                                cnt_r = wolfSSH_ChannelIdRead(ssh,
+                                        agentChannelId,
+                                        threadCtx->agentCtx.fdBuffer,
+                                        sizeof threadCtx->agentCtx.fdBuffer);
+                                if (cnt_r <= 0)
+                                    break;
+                                agentRxd = 1;
+                                #ifdef SHELL_DEBUG
+                                    buf_dump(threadCtx->agentCtx.fdBuffer,
+                                            cnt_r);
+                                #endif
+                                /* A reply for an agent client that has
+                                 * hung up has nowhere to go; drop it. */
+                                if (agentFd >= 0 && app_write_all(agentFd,
+                                            threadCtx->agentCtx.fdBuffer,
+                                            (word32)cnt_r) < 0) {
+                                    agentRxd = -1;
+                                    break;
+                                }
+                            }
+                            if (agentRxd < 0)
+                                break;
+                            if (agentRxd == 0) {
                                 /* Nothing was buffered. Only an actual data
                                  * report makes that a failure. */
                                 if (rc == WS_REKEYING && cnt_r == 0)
                                     continue;
                                 break;
                             }
-                            #ifdef SHELL_DEBUG
-                                buf_dump(threadCtx->agentCtx.fdBuffer, cnt_r);
-                            #endif
-                            if (app_write_all(agentFd,
-                                        threadCtx->agentCtx.fdBuffer,
-                                        (word32)cnt_r) < 0)
-                                break;
                         }
                         #endif
                     }
@@ -2376,6 +2435,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         WCLOSESOCKET(threadCtx->fd);
         threadCtx->fd = -1;
     }
+#ifdef WOLFSSH_AGENT
+    /* The library never calls the cleanup on a server, so retire the
+     * listener, its socket and directory, and any agent client here. */
+    (void)wolfSSH_AGENT_DefaultActions(WOLFSSH_AGENT_LOCAL_CLEANUP,
+            &threadCtx->agentCtx);
+#endif
 #ifdef WOLFSSH_FWD
     if (threadCtx->fwdCbCtx.hostName != NULL) {
         WFREE(threadCtx->fwdCbCtx.hostName, NULL, 0);
