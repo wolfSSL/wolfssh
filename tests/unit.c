@@ -19857,6 +19857,156 @@ static int test_CertMan_LeafKeyUsage(void)
     return result;
 }
 
+#if !defined(WOLFSSH_NO_FPKI) && defined(WOLFSSL_SUBJ_DIR_ATTR)
+
+/* A leaf that names its issuer as its own subject is self-issued, so the
+ * NO_VERIFY parse before CheckProfile() looks up no signer for it. Give it
+ * what the FPKI worksheet 6 profile checks ahead of the issuer-DN match and
+ * expect WS_CERT_PROFILE_E, not a NULL dereference. wolfSSL cannot write a
+ * subjectDirectoryAttributes extension, so the leaf carries the
+ * countryOfCitizenship value as a CRL distribution points extension whose
+ * OID is rewritten to 2.5.29.9 before signing. */
+static int test_CertMan_ProfileLeafNoSigner(void)
+{
+    static const byte sda[] = {
+        0x30, 0x12, 0x30, 0x10,
+        0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x09, 0x04,
+        0x31, 0x04, 0x13, 0x02, 'U', 'S'
+    };
+    static const byte crlDpOid[] = { 0x06, 0x03, 0x55, 0x1d, 0x1f };
+    int result = 0;
+    int ret;
+    int sz;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    word32 rootSz = 0, rootKeySz = 0;
+    byte leaf[2048];
+    word32 leafSz = 0;
+    byte chain[4096];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, leafKey;
+    int haveRootKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    Cert cert;
+    DecodedCert decoded;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0 ||
+            certmanLoadFile("./keys/ca-key-ecc.der",
+                &rootKeyBuf, &rootKeySz) != 0) {
+        printf("CertMan: can't load test certs\n");
+        result = -970; goto done;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        result = -971; goto done;
+    }
+    haveRng = 1;
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -972; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -973; goto done;
+    }
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -974; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -975; goto done;
+    }
+
+    ret = wc_InitCert(&cert);
+    if (ret == 0)
+        ret = wc_SetSubjectBuffer(&cert, root, (int)rootSz);
+    if (ret == 0)
+        ret = wc_SetIssuerBuffer(&cert, root, (int)rootSz);
+    if (ret == 0)
+        ret = wc_SetKeyUsage(&cert, "digitalSignature");
+    if (ret == 0)
+        ret = wc_SetSubjectKeyIdFromPublicKey_ex(&cert, ECC_TYPE, &leafKey);
+    if (ret == 0)
+        ret = wc_SetAuthKeyIdFromCert(&cert, root, (int)rootSz);
+    if (ret == 0) {
+        cert.sigType = CTC_SHA256wECDSA;
+        cert.daysValid = 365;
+        cert.isCA = 0;
+        WSTRNCPY(cert.certPolicies[0], "2.16.840.1.101.3.2.1.3.13",
+                CTC_MAX_CERTPOL_SZ - 1);
+        cert.certPoliciesNb = 1;
+        WMEMCPY(cert.crlInfo, sda, sizeof(sda));
+        cert.crlInfoSz = (int)sizeof(sda);
+        sz = wc_MakeCert(&cert, leaf, sizeof(leaf), NULL, &leafKey, &rng);
+        if (sz < 0)
+            ret = sz;
+    }
+    if (ret == 0) {
+        ret = -1;
+        for (idx = 0; idx + sizeof(crlDpOid) <= (word32)cert.bodySz; idx++) {
+            if (WMEMCMP(leaf + idx, crlDpOid, sizeof(crlDpOid)) == 0) {
+                leaf[idx + sizeof(crlDpOid) - 1] = 0x09;
+                ret = 0;
+                break;
+            }
+        }
+    }
+    if (ret == 0) {
+        sz = wc_SignCert(cert.bodySz, cert.sigType, leaf, sizeof(leaf), NULL,
+                &rootKey, &rng);
+        if (sz < 0)
+            ret = sz;
+        else
+            leafSz = (word32)sz;
+    }
+    if (ret != 0) {
+        printf("CertMan: forge profile leaf failed, ret=%d\n", ret);
+        result = -976; goto done;
+    }
+
+    /* The leaf must get as far as the issuer-DN match. */
+    wc_InitDecodedCert(&decoded, leaf, leafSz, NULL);
+    ret = wc_ParseCert(&decoded, CERT_TYPE, NO_VERIFY, NULL);
+    if (ret == 0 && WSTRCMP(decoded.countryOfCitizenship, "US") != 0) {
+        ret = -1;
+    }
+    wc_FreeDecodedCert(&decoded);
+    if (ret != 0 || !certmanIsSelfIssued(leaf, leafSz)) {
+        printf("CertMan: forged profile leaf is not as intended\n");
+        result = -977; goto done;
+    }
+
+    cm = wolfSSH_CERTMAN_new(NULL);
+    if (cm == NULL ||
+            wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -978; goto done;
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != WS_CERT_PROFILE_E) {
+        printf("CertMan: self-issued profile leaf got %d\n", ret);
+        result = -979; goto done;
+    }
+
+done:
+    if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    return result;
+}
+
+#endif /* !WOLFSSH_NO_FPKI && WOLFSSL_SUBJ_DIR_ATTR */
+
 #endif /* WOLFSSL_CERT_EXT */
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
@@ -26894,6 +27044,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("CertMan_LeafKeyUsage: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if !defined(WOLFSSH_NO_FPKI) && defined(WOLFSSL_SUBJ_DIR_ATTR)
+    unitResult = test_CertMan_ProfileLeafNoSigner();
+    printf("CertMan_ProfileLeafNoSigner: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 #endif
 

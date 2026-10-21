@@ -954,6 +954,11 @@ static int CheckProfile(DecodedCert* cert, int profile)
     }
 
     /* encoding of issuer DN must be exact match to CA subject DN */
+    if (valid && cert->ca == NULL) {
+        /* a self-issued leaf parsed NO_VERIFY has no signer looked up */
+        WLOG(WS_LOG_CERTMAN, "CA for issuer DN match not found");
+        valid = 0;
+    }
     if (valid) {
         int sz = min(SIGNER_DIGEST_SIZE, KEYID_SIZE);
         if (XMEMCMP(cert->ca->subjectNameHash, cert->issuerHash, sz) != 0) {
