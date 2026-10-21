@@ -640,20 +640,28 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         if (ret == 0) {
 
             WMEMSET(&addr, 0, sizeof addr);
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons((word16)port);
+            addrSz = sizeof addr;
             if (WSTRCMP(name, "") == 0 ||
-                WSTRCMP(name, "0.0.0.0") == 0 ||
-                WSTRCMP(name, "localhost") == 0 ||
+                WSTRCMP(name, "0.0.0.0") == 0) {
+                addr.sin_addr.s_addr = htonl(INADDR_ANY);
+            }
+            else if (WSTRCMP(name, "localhost") == 0 ||
                 WSTRCMP(name, "127.0.0.1") == 0) {
-
-                addr.sin_addr.s_addr = INADDR_ANY;
-                addr.sin_family = AF_INET;
-                addr.sin_port = htons((word16)port);
-                addrSz = sizeof addr;
+                addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             }
             else {
                 printf("Not using IPv6 yet.\n");
                 ret = -1;
             }
+        }
+
+        if (ret == 0 && (port > 65535 ||
+                    (port != 0 && port < WS_FWD_PORT_CHECK))) {
+            /* The peer does not get the server's privileged ports. */
+            printf("Refusing to forward port %u.\n", port);
+            ret = -1;
         }
 
         if (ret == 0) {
@@ -3727,6 +3735,9 @@ static void ShowUsage(void)
     printf(" -A            drive channels from the application callbacks\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
+#ifdef WOLFSSH_FWD
+    printf(" -F            allow the peer's port forwarding requests\n");
+#endif
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
     printf(" -D            confine SFTP connections to the home directory,"
@@ -3778,7 +3789,7 @@ static void ShowUsage(void)
 }
 
 
-#define ECHOSERVER_OPTLIST "?1a:Ad:DefEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
@@ -3910,6 +3921,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int peerEcc = 0;
     int echo = 0;
     int appChannels = 0;
+#ifdef WOLFSSH_FWD
+    int allowFwd = 0;
+#endif
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -3973,6 +3987,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'A':
                     appChannels = 1;
+                    break;
+
+                case 'F':
+                    #ifdef WOLFSSH_FWD
+                        allowFwd = 1;
+                    #endif
                     break;
 
                 case 'p':
@@ -4216,7 +4236,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
 #ifdef WOLFSSH_FWD
-    wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
+    /* The callback opens sockets with the server's own credentials, so
+     * forwarding is refused unless asked for. Without a callback the
+     * library turns every forwarding request down. */
+    if (allowFwd)
+        wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
 #endif
     /* With -A the echoserver drives its own channels: accept() stops at
      * userauth and these callbacks start the shell, subsystem or transfer.

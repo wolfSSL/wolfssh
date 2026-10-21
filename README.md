@@ -323,18 +323,23 @@ are routed back and forth between the client and server. "Hello, wolfSSL!"
 The source for portfwd provides an example on how to set up and use the
 port forwarding support in wolfSSH.
 
-The echoserver will handle local and remote port forwarding. To connect with
+The echoserver will handle local and remote port forwarding when started
+with `-F`; without it every forwarding request is refused. To connect with
 the ssh tool, using one of the following command lines. You can run either of
 the ssh command lines from anywhere:
 
     src/wolfssl$ ./examples/server/server
-    src/wolfssh$ ./examples/echoserver/echoserver
+    src/wolfssh$ ./examples/echoserver/echoserver -F
     anywhere 1$ ssh -p 22222 -L 12345:localhost:11111 jill@localhost
     anywhere 2$ ssh -p 22222 -R 12345:localhost:11111 jill@localhost
     src/wolfssl$ ./examples/client/client -p 12345
 
 This will allow port forwarding between the wolfSSL client and server like in
 the previous example.
+
+A remote forward for `localhost` or `127.0.0.1` listens on the loopback
+address only, so with `-R` the wolfSSL client runs on the echoserver's
+machine. The echoserver refuses a remote forward of a port below 1024.
 
 
 SFTP
