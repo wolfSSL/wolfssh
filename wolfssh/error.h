@@ -99,7 +99,7 @@ enum WS_ErrorCodes {
     WS_CHAN_RXD             = -1057, /* Status that channel data received. */
     WS_INVALID_EXTDATA      = -1058, /* invalid Channel Extended Data Type */
     WS_SFTP_BAD_REQ_ID      = -1060, /* SFTP Bad request ID */
-    WS_SFTP_BAD_REQ_TYPE    = -1061, /* SFTP Bad request ID */
+    WS_SFTP_BAD_REQ_TYPE    = -1061, /* SFTP Bad request response type */
     WS_SFTP_STATUS_NOT_OK   = -1062, /* SFTP Status not OK */
     WS_SFTP_FILE_DNE        = -1063, /* SFTP File Does Not Exist */
     WS_SIZE_ONLY            = -1064, /* Only getting size of buffer needed */
