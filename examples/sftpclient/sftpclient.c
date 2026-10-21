@@ -1896,6 +1896,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = wolfSSH_SFTP_connect(ssh);
     else
         ret = NonBlockSSH_connect();
+    ClientClearPassword();
     if (ret != WS_SUCCESS) {
         /* the return is a generic failure code; the real cause is kept in
          * the session error */

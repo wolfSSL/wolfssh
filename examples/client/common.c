@@ -510,6 +510,7 @@ int ClientUserAuth(byte authType,
         ret = WOLFSSH_USERAUTH_SUCCESS;
     }
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        ClientClearPassword();
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
             if (passwordSz > (word32)sizeof(userPassword))
@@ -543,6 +544,9 @@ int ClientUserAuth(byte authType,
         if (ret == WOLFSSH_USERAUTH_SUCCESS) {
             authData->sf.password.password = userPassword;
             authData->sf.password.passwordSz = passwordSz;
+        }
+        else {
+            ClientClearPassword();
         }
     }
 #if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
@@ -597,6 +601,7 @@ int ClientUserAuth(byte authType,
                     == NULL) {
                 fprintf(stderr, "Getting response failed.\n");
                 ClientSetEcho(1);
+                wc_ForceZero(userPassword, sizeof(userPassword));
                 ret = WOLFSSH_USERAUTH_FAILURE;
                 break;
             }
@@ -613,6 +618,7 @@ int ClientUserAuth(byte authType,
             WFFLUSH(stdout);
             keyboardResponses[entry] =
                 (byte*) WSTRDUP((char*)userPassword, NULL, 0);
+            wc_ForceZero(userPassword, sizeof(userPassword));
             if (keyboardResponses[entry] == NULL) {
                 ret = WS_MEMORY_E;
                 break;
@@ -630,6 +636,19 @@ int ClientUserAuth(byte authType,
     }
 #endif
     return ret;
+}
+
+
+/* The wolfssh app has its own copy in apps/wolfssh/common.c, with no
+ * keyboard-interactive responses to free. The keyboard loop above wipes
+ * userPassword directly: this would free the responses authData still
+ * points at. */
+void ClientClearPassword(void)
+{
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    ClientFreeKeyboardResponses();
+#endif
+    wc_ForceZero(userPassword, sizeof(userPassword));
 }
 
 
@@ -1245,12 +1264,9 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         userPrivateKeyTypeSz = 0;
     }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    ClientFreeKeyboardResponses();
-#endif
+    ClientClearPassword();
     wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
     userPrivateKeySz = 0;
-    wc_ForceZero(userPassword, sizeof(userPassword));
     pubKeyLoaded = 0;
 }
 

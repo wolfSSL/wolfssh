@@ -36,6 +36,10 @@ int ClientUserAuth(byte authType,
         WS_UserAuthData* authData, void* ctx);
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
 void ClientIPOverride(int flag);
+/* Wipes the password and keyboard-interactive responses ClientUserAuth()
+ * last read. The library sends them after the callback returns, so call
+ * this once connect is done. */
+void ClientClearPassword(void);
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap);
 #ifdef WOLFSSH_TPM
