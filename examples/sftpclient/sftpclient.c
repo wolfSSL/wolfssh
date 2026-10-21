@@ -1722,6 +1722,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
+#ifdef WOLFSSH_TERM
+    ClientUnbufferStdin();
+#endif
+
     if (username == NULL)
         err_sys("client requires a username parameter.");
 

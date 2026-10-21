@@ -653,6 +653,18 @@ void ClientClearPassword(void)
 
 
 #ifdef WOLFSSH_TERM
+void ClientUnbufferStdin(void)
+{
+    static int done = 0;
+
+    if (!done) {
+        done = 1;
+        if (setvbuf(stdin, NULL, _IONBF, 0) != 0)
+            fprintf(stderr, "Couldn't unbuffer stdin.\n");
+    }
+}
+
+
 /* type = 2 : shell / execute command settings
  * type = 0 : password
  * type = 1 : restore default
