@@ -2772,7 +2772,7 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
         map->type = type;
         if (usernameSz >= sizeof(map->username))
             usernameSz = sizeof(map->username) - 1;
-        WMEMCPY(map->username, username, usernameSz + 1);
+        WMEMCPY(map->username, username, usernameSz);
         map->username[usernameSz] = 0;
         map->usernameSz = usernameSz;
 
