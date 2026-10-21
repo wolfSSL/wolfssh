@@ -32,6 +32,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #if ((defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)) || \
      (defined(WOLFSSH_SCP) && defined(WOLFSSH_HAVE_SYMLINK) && \
       !defined(WOLFSSH_SCP_USER_CALLBACKS))) && \
@@ -8034,6 +8035,26 @@ static void test_wolfSSH_ConvertConsole(void)
 }
 
 
+static void test_wolfSSH_ConstantCompare(void)
+{
+    const byte a[] = { 0x01, 0x02, 0x03, 0x04 };
+    const byte b[] = { 0x01, 0x02, 0x03, 0x04 };
+    const byte first[] = { 0x81, 0x02, 0x03, 0x04 };
+    const byte last[] = { 0x01, 0x02, 0x03, 0x05 };
+
+    AssertIntEQ(0, wolfSSH_ConstantCompare(a, b, sizeof(a)));
+    AssertIntNE(0, wolfSSH_ConstantCompare(a, first, sizeof(a)));
+    AssertIntNE(0, wolfSSH_ConstantCompare(a, last, sizeof(a)));
+    /* Only len bytes take part. */
+    AssertIntEQ(0, wolfSSH_ConstantCompare(a, last, sizeof(a) - 1));
+    AssertIntEQ(0, wolfSSH_ConstantCompare(a, first, 0));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ConstantCompare(NULL, b, sizeof(b)));
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_ConstantCompare(a, NULL, sizeof(a)));
+    AssertIntEQ(WS_BAD_ARGUMENT,
+            wolfSSH_ConstantCompare(a, b, (word32)INT_MAX + 1));
+}
+
+
 static void test_wstrcat(void)
 {
 #ifndef WSTRING_USER
@@ -9286,6 +9307,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     #endif /* HAVE_FIPS */
 
     test_wstrcat();
+    test_wolfSSH_ConstantCompare();
     test_wolfSSH_Log_sanitize();
     test_wolfSSH_CTX_new();
     test_server_wolfSSH_new();

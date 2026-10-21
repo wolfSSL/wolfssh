@@ -14865,7 +14865,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacUpdate(&hmac, in, inSz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacFinal(&hmac, checkMac);
-                if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                if (ret == WS_SUCCESS && WS_CONSTANTCOMPARE(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
 #endif
@@ -14880,7 +14880,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacUpdate(&hmac, in, inSz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacFinal(&hmac, checkMac);
-                if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                if (ret == WS_SUCCESS && WS_CONSTANTCOMPARE(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
 #endif
@@ -14895,7 +14895,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
                     ret = wc_HmacUpdate(&hmac, in, inSz);
                 if (ret == WS_SUCCESS)
                     ret = wc_HmacFinal(&hmac, checkMac);
-                if (ret == WS_SUCCESS && ConstantCompare(checkMac, mac, ssh->peerMacSz) != 0)
+                if (ret == WS_SUCCESS && WS_CONSTANTCOMPARE(checkMac, mac, ssh->peerMacSz) != 0)
                     ret = WS_VERIFY_MAC_E;
                 break;
 #endif
@@ -17196,7 +17196,7 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
                 RSA_PUBLIC_ENCRYPT, key, NULL);
 
         if (rsaRet != 0 || checkBlockSz != keySz
-                || ConstantCompare(checkBlock, encBlock, keySz) != 0) {
+                || WS_CONSTANTCOMPARE(checkBlock, encBlock, keySz) != 0) {
             WLOG(WS_LOG_DEBUG, "%s: %s", loc, "Bad RSA Verify");
             ret = WS_RSA_E;
         }
