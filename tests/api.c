@@ -8034,6 +8034,31 @@ static void test_wolfSSH_ConvertConsole(void)
 }
 
 
+#if defined(WOLFSSH_TERM) && !defined(NO_TERMIOS) && \
+    defined(HAVE_SYS_IOCTL_H) && !defined(USE_WINDOWS_API)
+#include <unistd.h>
+
+static void test_wolfSSH_DoModes(void)
+{
+    static const byte modes[] = {
+        WOLFSSH_ECHO, 0x00, 0x00, 0x00, 0x01,
+        WOLFSSH_TTY_OP_END
+    };
+    int fds[2];
+
+    AssertIntEQ(wolfSSH_DoModes(NULL, sizeof(modes), -1), -1);
+
+    /* a pipe is not a terminal, so its attributes cannot be read */
+    AssertIntEQ(pipe(fds), 0);
+    AssertIntEQ(wolfSSH_DoModes(modes, sizeof(modes), fds[0]), -1);
+    close(fds[0]);
+    close(fds[1]);
+}
+#else
+static void test_wolfSSH_DoModes(void) { ; }
+#endif
+
+
 static void test_wstrcat(void)
 {
 #ifndef WSTRING_USER
@@ -9294,6 +9319,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SetUsername();
     test_wolfSSH_SetChannelType();
     test_wolfSSH_ConvertConsole();
+    test_wolfSSH_DoModes();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CTX_UseCert_file();
