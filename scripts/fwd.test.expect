@@ -190,7 +190,7 @@ proc run_phase {label reverse entry_port target_port} {
     puts "    PID $nc_server_pid - waiting for a connection..."
 
     puts "\n\[2\] Starting wolfssh server..."
-    spawn sh -c "exec ./examples/echoserver/echoserver -1 -f -R $srv_ready >$srv_log 2>&1"
+    spawn sh -c "exec ./examples/echoserver/echoserver -1 -f -F -R $srv_ready >$srv_log 2>&1"
     set wolfssh_srv_id  $spawn_id
     set wolfssh_srv_pid [exp_pid]
 

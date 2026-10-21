@@ -252,7 +252,7 @@ do_tail_attempt() {
     kill -0 "$tail_nc_server_pid" 2>/dev/null \
         || do_fail "couldn't listen on port $tail_target_port, is it in use?"
 
-    ./examples/echoserver/echoserver -1 -f -R "$tail_ready_file" \
+    ./examples/echoserver/echoserver -1 -f -F -R "$tail_ready_file" \
         > "$tail_server_log" 2>&1 &
     tail_server_pid=$!
 
@@ -333,7 +333,7 @@ then
     exit 1
 fi
 
-./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+./examples/echoserver/echoserver -1 -f -F -R "$ready_file" \
     > "$server_log" 2>&1 &
 server_pid=$!
 
@@ -463,7 +463,7 @@ done
 [ -s "$echo_target_ready" ] \
     || do_fail "couldn't listen on port $echo_target_port, is it in use?"
 
-./examples/echoserver/echoserver -1 -f -R "$echo_ready_file" \
+./examples/echoserver/echoserver -1 -f -F -R "$echo_ready_file" \
     > "$echo_server_log" 2>&1 &
 echo_server_pid=$!
 

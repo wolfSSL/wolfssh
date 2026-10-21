@@ -10,8 +10,8 @@
 # peer that disagreed about the counters would fail the first packet that
 # had to authenticate.
 #
-# Part 1b reuses the OpenSSH client on the echoserver to forward ssh-agent
-# through it.
+# Parts 1b and 1c reuse the OpenSSH client on the echoserver: 1b forwards
+# ssh-agent through it, 1c checks that it forwards ports only with -F.
 #
 # Part 3 has the wolfSSH client authenticate to sshd with an RSA key held
 # by OpenSSH's ssh-agent. The client has only the public half; the agent
@@ -395,6 +395,64 @@ else
     agent_pid=$no_pid
 
     echo "the forwarded agent answered through the echoserver"
+fi
+
+# Part 1c: the echoserver forwards ports only when started with -F.
+# ExitOnForwardFailure turns a refused remote forward into exit status 255.
+#
+# $1 - the remote port to ask for, 0 to let the server pick
+# rest  - extra echoserver arguments
+run_openssh_forward() {
+    fwd_port=$1
+    shift
+    case $echo_keys in
+        ecc) start_echoserver -e "$@" ;;
+        rsa) start_echoserver "$@" ;;
+        *) start_echoserver -j "$work_dir/ed25519.pub" "$@" ;;
+    esac
+
+    rm -f "$client_out" "$client_log"
+    printf '%s\n\003' "$probe" | \
+        ssh -T -p $port \
+            -o ExitOnForwardFailure=yes \
+            -R $fwd_port:127.0.0.1:9 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -i "$work_dir/id" hansel@127.0.0.1 \
+            > "$client_out" 2> "$client_log" &
+    wait_with_limit $!
+}
+
+if ./apps/wolfssh-options 2>/dev/null | grep -qx 'FWD'; then
+    echo "Test the echoserver's forwarding opt-in"
+
+    run_openssh_forward 0
+    [ $? -eq 255 ] && grep -q 'remote port forwarding failed' "$client_log" \
+        || fail "the echoserver forwarded a port without -F"
+
+    run_openssh_forward 0 -F
+    if [ $? -ne 0 ] || ! grep -q "$probe" "$client_out"; then
+        cat "$client_log"
+        fail "the echoserver refused a forward with -F"
+    fi
+
+    # A privileged port is refused by the echoserver's own check, which
+    # logs it, not by a bind() failing for a non-root user. The server
+    # exits after the session, flushing its log.
+    run_openssh_forward 80 -F
+    fwd_status=$?
+    wait_with_limit $server_pid
+    server_pid=$no_pid
+    if [ $fwd_status -ne 255 ] ||
+        ! grep -q 'remote port forwarding failed' "$client_log" ||
+        ! grep -q 'Refusing to forward port 80\.' "$work_dir/server.log"; then
+        cat "$client_log" "$work_dir/server.log"
+        fail "the echoserver didn't refuse a forward of port 80"
+    fi
+
+    echo "the echoserver forwards only when asked to"
 fi
 
 # Part 2 needs an sshd to talk to, and a host key to give it. Neither is
