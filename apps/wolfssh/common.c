@@ -652,6 +652,7 @@ int ClientUserAuth(byte authType,
         ret = WOLFSSH_USERAUTH_SUCCESS;
     }
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        ClientClearPassword();
         printf("Password: ");
         fflush(stdout);
         ClientSetEcho(0);
@@ -675,9 +676,20 @@ int ClientUserAuth(byte authType,
             authData->sf.password.passwordSz =
                 (word32)strlen((const char*)userPassword);
         }
+        else {
+            ClientClearPassword();
+        }
     }
 
     return ret;
+}
+
+
+/* This app does not link examples/client/common.c, so it has its own copy.
+ * It answers no keyboard-interactive, so only the password needs wiping. */
+void ClientClearPassword(void)
+{
+    wc_ForceZero(userPassword, sizeof(userPassword));
 }
 
 
@@ -908,7 +920,7 @@ void ClientFreeBuffers(void)
 
     wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
     userPrivateKeySz = 0;
-    wc_ForceZero(userPassword, sizeof(userPassword));
+    ClientClearPassword();
 }
 
 

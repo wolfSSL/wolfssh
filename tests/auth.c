@@ -2748,6 +2748,67 @@ static void test_ClientUserAuth_keyboardRounds(void)
     AssertNotNull(freopen("/dev/null", "r", stdin));
 }
 
+
+/* A retry with a shorter password leaves nothing of the longer one,
+ * ClientClearPassword() wipes the buffer the library was handed, and a
+ * failed read leaves nothing of the last password. */
+static void test_ClientUserAuth_passwordWiped(void)
+{
+    WS_UserAuthData authData;
+    const char* fname = "password_wiped.txt";
+    WFILE* f = NULL;
+    const byte* pw;
+    word32 i;
+    int ret;
+
+    printf("Testing the password buffer is wiped\n");
+
+    AssertIntEQ(WFOPEN(NULL, &f, fname, "w"), 0);
+    AssertNotNull(f);
+    AssertIntGT(fprintf(f, "longerpassword\nshort\nagain\n"), 0);
+    WFCLOSE(NULL, f);
+    AssertNotNull(freopen(fname, "r", stdin));
+    AssertIntEQ(remove(fname), 0);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.password.passwordSz, 14);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(authData.sf.password.passwordSz, 5);
+    pw = authData.sf.password.password;
+    AssertIntEQ(WMEMCMP(pw, "short", 6), 0);
+    for (i = 6; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    ClientClearPassword();
+    for (i = 0; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(WMEMCMP(pw, "again", 6), 0);
+
+    /* stdin is at EOF */
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_PASSWORD;
+    ret = ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &authData, NULL);
+    AssertIntEQ(ret, WOLFSSH_USERAUTH_FAILURE);
+    AssertNull(authData.sf.password.password);
+    for (i = 0; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    ClientFreeBuffers(NULL, NULL, NULL);
+    AssertNotNull(freopen("/dev/null", "r", stdin));
+}
+
 #endif /* keyboard-interactive ClientUserAuth tests */
 
 int wolfSSH_AuthTest(int argc, char** argv)
@@ -2839,6 +2900,7 @@ int wolfSSH_AuthTest(int argc, char** argv)
     test_ClientUserAuth_keyboardEof();
     test_ClientUserAuth_keyboardZeroPrompts();
     test_ClientUserAuth_keyboardRounds();
+    test_ClientUserAuth_passwordWiped();
 #endif
 
     /* Unknown callback return value must not grant auth (issue 2486) */

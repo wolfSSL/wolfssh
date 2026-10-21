@@ -15797,6 +15797,73 @@ static void TestPasswordEofNoCrash(void)
     ClientFreeBuffers();
 }
 
+#define TEST_STDIN_FILE "regress_stdin.txt"
+
+/* Points stdin at a file holding text. The caller removes the file once
+ * stdin is reopened elsewhere; Windows cannot remove an open file. */
+static void StdinFromText(const char* text)
+{
+    FILE* f;
+
+    f = fopen(TEST_STDIN_FILE, "w");
+    AssertNotNull(f);
+    AssertTrue(fputs(text, f) >= 0);
+    AssertIntEQ(fclose(f), 0);
+    AssertNotNull(freopen(TEST_STDIN_FILE, "r", stdin));
+}
+
+/* A retry with a shorter password leaves nothing of the longer one,
+ * ClientClearPassword() wipes the buffer the library was handed, and a
+ * failed read leaves nothing of the last password. */
+static void TestPasswordBufferWiped(void)
+{
+    WS_UserAuthData auth;
+    const byte* pw;
+    word32 i;
+
+    StdinFromText("longerpassword\nshort\nagain\n");
+
+    WMEMSET(&auth, 0, sizeof(auth));
+    auth.type = WOLFSSH_USERAUTH_PASSWORD;
+    AssertIntEQ(ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &auth, NULL),
+            WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(auth.sf.password.passwordSz, 14);
+    AssertIntEQ(WMEMCMP(auth.sf.password.password, "longerpassword", 14), 0);
+
+    WMEMSET(&auth, 0, sizeof(auth));
+    auth.type = WOLFSSH_USERAUTH_PASSWORD;
+    AssertIntEQ(ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &auth, NULL),
+            WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(auth.sf.password.passwordSz, 5);
+    pw = auth.sf.password.password;
+    AssertIntEQ(WMEMCMP(pw, "short", 6), 0);
+    for (i = 6; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    ClientClearPassword();
+    for (i = 0; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    WMEMSET(&auth, 0, sizeof(auth));
+    auth.type = WOLFSSH_USERAUTH_PASSWORD;
+    AssertIntEQ(ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &auth, NULL),
+            WOLFSSH_USERAUTH_SUCCESS);
+    AssertIntEQ(WMEMCMP(pw, "again", 6), 0);
+
+    /* stdin is at EOF */
+    WMEMSET(&auth, 0, sizeof(auth));
+    auth.type = WOLFSSH_USERAUTH_PASSWORD;
+    AssertIntEQ(ClientUserAuth(WOLFSSH_USERAUTH_PASSWORD, &auth, NULL),
+            WOLFSSH_USERAUTH_FAILURE);
+    AssertNull(auth.sf.password.password);
+    for (i = 0; i < 16; i++)
+        AssertIntEQ(pw[i], 0);
+
+    ClientFreeBuffers();
+    AssertNotNull(freopen(TEST_NULL_DEVICE, "r", stdin));
+    AssertIntEQ(remove(TEST_STDIN_FILE), 0);
+}
+
 /* An idle receive still gets its flush. The receive runs first and reports
  * want-read, and the queued byte is pushed anyway, so ssh->error carries the
  * write the socket would not take. */
@@ -21755,6 +21822,7 @@ int main(int argc, char** argv)
     TestUserAuthPkWithoutServerSigAlgs();
 #endif
     TestPasswordEofNoCrash();
+    TestPasswordBufferWiped();
 #ifndef NO_WOLFSSH_CLIENT
     TestWorkerReadsWhenSendWouldBlock();
 #endif
