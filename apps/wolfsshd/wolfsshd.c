@@ -2246,6 +2246,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
 
                 if (tmp != NULL) {
+                    WS_FORCEZERO(tmp, (word32)(sizeof(wchar_t) * cmdSz));
                     WFREE(tmp, NULL, DYNTYPE_SSHD);
                 }
 
@@ -2652,6 +2653,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
 cleanup:
     if (conCmdPtr != NULL) {
+        WS_FORCEZERO(conCmdPtr, (word32)(sizeof(wchar_t) * conCmdSz));
         WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
     }
     if (cnslIn != NULL) {
@@ -2676,6 +2678,7 @@ cleanup:
         wolfSSHD_AuthCloseToken(conn->auth);
     }
     if (cmd != NULL) {
+        WS_FORCEZERO(cmd, (word32)(sizeof(wchar_t) * cmdSz));
         WFREE(cmd, NULL, DYNTYPE_SSHD);
     }
     WS_FORCEZERO(channelBuffer, sizeof channelBuffer);
@@ -5143,7 +5146,8 @@ static int SetupConsole(char* inCmd)
         if (CreateProcessW(NULL, cmd,
             NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
             &ext.StartupInfo, &processInfo) != TRUE) {
-            return WS_FATAL_ERROR;
+            /* the return value, once cleanup has run */
+            processState = (DWORD)WS_FATAL_ERROR;
         }
         else {
             DWORD ava = 0;
@@ -5181,6 +5185,7 @@ static int SetupConsole(char* inCmd)
     }
 
     if (cmd != NULL) {
+        WS_FORCEZERO(cmd, sizeof(wchar_t) * cmdSz);
         HeapFree(GetProcessHeap(), 0, cmd);
     }
 
