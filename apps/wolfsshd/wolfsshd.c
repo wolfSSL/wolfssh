@@ -1772,8 +1772,23 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
          * privilege level */
         exit(1);
     }
+
+    /* Relative SCP paths resolve from home, inside a chroot too, as for
+     * SFTP and the shell. Like OpenSSH, a chroot without the home dir falls
+     * back to "/" quietly. */
+    if (ret == WS_SUCCESS && chdir(pPasswd->pw_dir) != 0) {
+        if (error != 1) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir "
+                "%s, using /", pPasswd->pw_dir);
+        }
+        if (chdir("/") != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to /");
+        }
+    }
 #else
-    /* impersonate the logged on user for file permissions */
+    /* Impersonate the logged on user for file permissions. Relative SCP
+     * paths stay relative to the daemon's directory: connections share one
+     * process, and SCP has no per-session default path like SFTP's. */
     if (ImpersonateLoggedOnUser(wolfSSHD_GetAuthToken(conn->auth)) == FALSE) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Error impersonating logged on user");
@@ -3023,8 +3038,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         rc = chdir(pPasswd->pw_dir);
         if (rc != 0) {
             /* not error'ing out if unable to find home directory */
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s",
-            pPasswd->pw_dir);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s, "
+                "using /", pPasswd->pw_dir);
+            if (chdir("/") != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to /");
+            }
         }
 
         /* default to /bin/sh if user shell is not set */
