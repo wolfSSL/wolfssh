@@ -438,6 +438,8 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
         readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
         if (readSz < (size_t)fileSz) {
             WFCLOSE(NULL, file);
+            /* whatever part of a key was read */
+            WS_FORCEZERO(buf, (word32)fileSz + 1);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
@@ -3003,11 +3005,33 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         const char *args[] = {"-sh", NULL, NULL, NULL};
         const char* cmd;
         char shell[MAX_COMMAND_SZ];
+        char* userName;
         int ret;
         int chrooted;
 
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+
+        /* The shell needs none of the session, so drop the host key and the
+         * session keys this image inherited before giving up root. The
+         * command can live in the session, so keep a copy of it. */
+        userName = WSTRDUP(wolfSSH_GetUsername(ssh), NULL, DYNTYPE_SSHD);
+        if (forcedCmd != NULL) {
+            forcedCmd = WSTRDUP(forcedCmd, NULL, DYNTYPE_SSHD);
+            if (forcedCmd == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error copying forced command");
+                exit(1);
+            }
+        }
+        if (userName == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error copying user name");
+            exit(1);
+        }
+        wolfSSH_free(ssh);
+        ssh = NULL;
+        wolfSSH_CTX_free(conn->ctx);
+        conn->ctx = NULL;
 
         if (!ptyReq || forcedCmd) {
             close(stdoutPipe[0]);
@@ -3035,7 +3059,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
 
         /* set additional groups if needed */
-        if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
+        if (wolfSSHD_AuthSetGroups(conn->auth, userName,
                 pPasswd->pw_gid) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
             exit(1);
