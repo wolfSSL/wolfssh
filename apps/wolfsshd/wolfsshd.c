@@ -4062,6 +4062,11 @@ static void* HandleConnection(void* arg)
         char* usr;
         const char* certCmd = NULL;
         const char* confCmd = NULL;
+    #ifndef _WIN32
+        WOLFSSHD_PW pwStore;
+
+        WMEMSET(&pwStore, 0, sizeof(pwStore));
+    #endif
 
         /* get configuration for user */
         usr     = wolfSSH_GetUsername(ssh);
@@ -4073,10 +4078,10 @@ static void* HandleConnection(void* arg)
             ret = WS_FATAL_ERROR;
         }
 
-    #ifndef WIN32
+    #ifndef _WIN32
         if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE ||
             ret == WS_SCP_INIT) {
-            pPasswd = getpwnam((const char *)usr);
+            pPasswd = wolfSSHD_GetPwnam(usr, &pwStore);
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
                 ret = WS_FATAL_ERROR;
@@ -4222,6 +4227,9 @@ static void* HandleConnection(void* arg)
         }
 
         wolfSSHD_ConfigFree(usrConf);
+    #ifndef _WIN32
+        wolfSSHD_PwFree(&pwStore);
+    #endif
     }
 
     error = wolfSSH_get_error(ssh);
