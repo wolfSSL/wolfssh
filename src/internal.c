@@ -13272,7 +13272,8 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
      * byte left over.
      */
 
-    tcgetattr(fd, &term);
+    if (tcgetattr(fd, &term) != 0)
+        return -1;
 
     while (idx + TERMINAL_MODE_SZ <= modesSz && modes[idx] != WOLFSSH_TTY_OP_END
             && modes[idx] < WOLFSSH_TTY_INVALID) {
@@ -13511,7 +13512,8 @@ int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd)
         idx += TERMINAL_MODE_SZ;
     }
 
-    tcsetattr(fd, TCSANOW, &term);
+    if (tcsetattr(fd, TCSANOW, &term) != 0)
+        return -1;
 
     return 0;
 }

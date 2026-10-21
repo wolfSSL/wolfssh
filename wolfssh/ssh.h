@@ -1026,6 +1026,8 @@ WOLFSSH_API int wolfSSH_ConvertConsole(WOLFSSH* ssh, WOLFSSH_HANDLE handle,
 #endif
 
 
+/* Applies the peer's pty-req terminal modes to fd. Returns 0, or -1 for a bad
+ * mode list or when fd's attributes cannot be read or set. */
 WOLFSSH_API int wolfSSH_DoModes(const byte* modes, word32 modesSz, int fd);
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH* ssh);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH* ssh);

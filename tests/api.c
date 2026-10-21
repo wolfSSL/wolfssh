@@ -8034,6 +8034,68 @@ static void test_wolfSSH_ConvertConsole(void)
 }
 
 
+#if defined(WOLFSSH_TERM) && !defined(NO_TERMIOS) && \
+    defined(HAVE_SYS_IOCTL_H) && !defined(USE_WINDOWS_API)
+#include <unistd.h>
+#include <termios.h>
+#ifdef HAVE_PTY_H
+    #include <pty.h>
+#endif
+#ifdef HAVE_UTIL_H
+    #include <util.h>
+#endif
+
+static void test_wolfSSH_DoModes(void)
+{
+    static const byte modes[] = {
+        WOLFSSH_ECHO, 0x00, 0x00, 0x00, 0x01,
+        WOLFSSH_TTY_OP_END
+    };
+    int fds[2];
+
+    AssertIntEQ(wolfSSH_DoModes(NULL, sizeof(modes), -1), -1);
+
+    /* a pipe is not a terminal, so its attributes cannot be read */
+    AssertIntEQ(pipe(fds), 0);
+    AssertIntEQ(wolfSSH_DoModes(modes, sizeof(modes), fds[0]), -1);
+    close(fds[0]);
+    close(fds[1]);
+
+#if defined(HAVE_PTY_H) || defined(HAVE_UTIL_H)
+    /* a pty is a terminal, so the modes land on it */
+    {
+        static const byte echoOff[] = {
+            WOLFSSH_ECHO, 0x00, 0x00, 0x00, 0x00,
+            WOLFSSH_TTY_OP_END
+        };
+        struct termios term;
+        int master, slave;
+
+        if (openpty(&master, &slave, NULL, NULL, NULL) != 0) {
+            return; /* no pty to be had here */
+        }
+        AssertIntEQ(tcgetattr(slave, &term), 0);
+        term.c_lflag &= ~ECHO;
+        AssertIntEQ(tcsetattr(slave, TCSANOW, &term), 0);
+
+        AssertIntEQ(wolfSSH_DoModes(modes, sizeof(modes), slave), 0);
+        AssertIntEQ(tcgetattr(slave, &term), 0);
+        AssertTrue((term.c_lflag & ECHO) != 0);
+
+        AssertIntEQ(wolfSSH_DoModes(echoOff, sizeof(echoOff), slave), 0);
+        AssertIntEQ(tcgetattr(slave, &term), 0);
+        AssertTrue((term.c_lflag & ECHO) == 0);
+
+        close(slave);
+        close(master);
+    }
+#endif
+}
+#else
+static void test_wolfSSH_DoModes(void) { ; }
+#endif
+
+
 static void test_wstrcat(void)
 {
 #ifndef WSTRING_USER
@@ -9294,6 +9356,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SetUsername();
     test_wolfSSH_SetChannelType();
     test_wolfSSH_ConvertConsole();
+    test_wolfSSH_DoModes();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
     test_wolfSSH_CTX_UseCert_file();

@@ -3065,7 +3065,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
     /* set initial size of terminal based on saved size */
 #if defined(HAVE_SYS_IOCTL_H)
-    wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd);
+    if (ssh->modesSz > 0 &&
+            wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error applying terminal modes");
+    }
     {
         struct winsize s;
 
