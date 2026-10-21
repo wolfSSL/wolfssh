@@ -4211,7 +4211,8 @@ static int NewConnection(WOLFSSHD_CONNECTION* conn)
 }
 
 
-/* return non zero value for a pending connection */
+/* return positive for a pending connection, 0 for none, negative on a
+ * select() failure the accept loop cannot recover from */
 static int PendingConnection(WS_SOCKET_T fd)
 {
     int ret;
@@ -4233,7 +4234,7 @@ static int PendingConnection(WS_SOCKET_T fd)
         /* a socket level issue happened, could just be a system call int. */
         if (errno != EINTR) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] TCP socket error on select()");
-            quit = 1;
+            return WS_FATAL_ERROR;
         }
         ret  = 0;
     }
@@ -4725,6 +4726,7 @@ static int StartSSHD(int argc, char** argv)
         /* wait for incoming connections and fork them off */
         while (ret == WS_SUCCESS && quit == 0) {
             WOLFSSHD_CONNECTION* conn;
+            int pending;
 #ifdef WOLFSSL_NUCLEUS
             struct addr_struct clientAddr;
 #else
@@ -4736,6 +4738,7 @@ static int StartSSHD(int argc, char** argv)
             if (conn == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Failed to malloc memory for connection");
+                ret = WS_MEMORY_E;
                 break;
             }
             WMEMSET(conn, 0, sizeof(WOLFSSHD_CONNECTION));
@@ -4749,7 +4752,8 @@ static int StartSSHD(int argc, char** argv)
 #endif
 
             /* wait for a connection */
-            if (PendingConnection(listenFd)) {
+            pending = PendingConnection(listenFd);
+            if (pending > 0) {
                 conn->ctx = ctx;
 #ifdef WOLFSSL_NUCLEUS
                 conn->fd = NU_Accept(listenFd, &clientAddr, 0);
@@ -4818,8 +4822,10 @@ static int StartSSHD(int argc, char** argv)
                     conn->auth = connAuth;
                 }
 #endif
-                ret = NewConnection(conn);
-                if (ret != WS_SUCCESS) {
+                /* Not assigned to ret: a failed fork() or CreateThread()
+                 * belongs to this connection only, and ret is the loop
+                 * condition, so it would stop the daemon accepting. */
+                if (NewConnection(conn) != WS_SUCCESS) {
                     /* on failure the connection was not handed off, it is
                        still owned here and needs cleaned up */
                     WCLOSESOCKET(conn->fd);
@@ -4830,6 +4836,9 @@ static int StartSSHD(int argc, char** argv)
                 }
             }
             else {
+                if (pending < 0) {
+                    ret = WS_FATAL_ERROR;
+                }
                 WFREE(conn, NULL, DYNTYPE_SSHD);
             }
 #ifdef _WIN32
@@ -4883,7 +4892,9 @@ static int StartSSHD(int argc, char** argv)
      * failure, and argc tracks argv's length once it is allocated. */
     _freeWinArgs(argv, argc, cmdArgs);
 #else
-    return 0;
+    /* main() returns this, so a failed startup, config check (-t) or
+     * listen loop must not look like a clean exit to the caller. */
+    return (ret == WS_SUCCESS) ? EXIT_SUCCESS : EXIT_FAILURE;
 #endif
 }
 
