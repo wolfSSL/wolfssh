@@ -1,0 +1,103 @@
+name: C++ Build Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WOLFSSL_REF: master
+
+jobs:
+  build_wolfssl:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    name: Build wolfssl
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v5
+        id: cache-wolfssl
+        with:
+          path: build-dir/
+          key: wolfssh-cxx-check-wolfssl-${{ env.WOLFSSL_REF }}-${{ matrix.os }}
+          lookup-only: true
+
+      - name: Checkout, build, and install wolfssl
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: wolfSSL/actions-build-autotools-project@v1
+        with:
+          repository: wolfssl/wolfssl
+          ref: ${{ env.WOLFSSL_REF }}
+          path: wolfssl
+          configure: --enable-all
+          check: false
+          install: true
+
+  # wolfSSL is built as C above; only wolfSSH is compiled as C++, with the
+  # C++ compiler as CC so every .c file goes through it. clang++ warns that
+  # compiling a .c file as C++ is deprecated, so that one warning is
+  # turned off to keep -Werror.
+  build_wolfssh:
+    needs: build_wolfssl
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { os: ubuntu-latest, cc: g++, cflags: -Werror }
+          - { os: ubuntu-latest, cc: clang++, cflags: -Werror -Wno-deprecated }
+          - { os: macos-latest, cc: clang++, cflags: -Werror -Wno-deprecated }
+        config: [ '', '--enable-all' ]
+    name: Build wolfssh (${{ matrix.target.os }}, ${{ matrix.target.cc }}, ${{ matrix.config }})
+    runs-on: ${{ matrix.target.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Checking cache for wolfssl
+        uses: actions/cache@v5
+        with:
+          path: build-dir/
+          key: wolfssh-cxx-check-wolfssl-${{ env.WOLFSSL_REF }}-${{ matrix.target.os }}
+          fail-on-cache-miss: true
+
+      - uses: actions/checkout@v6
+        with:
+          path: wolfssh/
+
+      - name: Install autotools
+        if: runner.os == 'macOS'
+        run: brew install automake libtool
+
+      - name: autogen
+        working-directory: ./wolfssh/
+        run: ./autogen.sh
+
+      - name: configure
+        working-directory: ./wolfssh/
+        run: |
+          ./configure ${{ matrix.config }} \
+            --with-wolfssl=${{ github.workspace }}/build-dir \
+            CC=${{ matrix.target.cc }} CFLAGS="${{ matrix.target.cflags }}"
+
+      - name: make
+        working-directory: ./wolfssh/
+        run: make -j$(getconf _NPROCESSORS_ONLN)
+
+      - name: make check
+        working-directory: ./wolfssh/
+        run: make check
+
+      - name: Show logs on errors
+        if: failure()
+        working-directory: ./wolfssh/
+        run: |
+          cat config.log
+          cat test-suite.log || true
