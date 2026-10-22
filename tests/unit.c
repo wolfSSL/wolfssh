@@ -24485,9 +24485,9 @@ static int test_SftpDoName_sizeBound(void)
     if (err == WS_BUFFER_E)
         return -571;
 
-    /* A wire length above INT_MAX makes SFTP_GetHeader's int result wrap
-     * non-positive; this must be reported as a size error, not a silent
-     * NULL with WS_SUCCESS. */
+    /* A wire length above INT_MAX is far past WOLFSSH_MAX_SFTP_NAME, so
+     * SFTP_GetHeader refuses it; this must be reported as a size error, not
+     * a silent NULL with WS_SUCCESS. */
     err = WS_SUCCESS;
     result = sftpDoNameInjectErr(0x80000000U + overhead, &err);
     if (result != 0)
