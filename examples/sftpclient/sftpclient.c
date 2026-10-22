@@ -1722,6 +1722,10 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     }
     myoptind = 0;      /* reset for test cases */
 
+#ifdef WOLFSSH_TERM
+    ClientUnbufferStdin();
+#endif
+
     if (username == NULL)
         err_sys("client requires a username parameter.");
 
@@ -1896,6 +1900,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
         ret = wolfSSH_SFTP_connect(ssh);
     else
         ret = NonBlockSSH_connect();
+    ClientClearPassword();
     if (ret != WS_SUCCESS) {
         /* the return is a generic failure code; the real cause is kept in
          * the session error */

@@ -444,6 +444,23 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 }
 
 
+#if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
+/* Prints a server-supplied string with a '.' in place of each byte that is
+ * a control character other than tab or newline, DEL, or 0x80 and up. */
+static void ClientPrintSafe(const byte* str)
+{
+    byte c;
+
+    for (; *str != 0; str++) {
+        c = *str;
+        if ((c < 0x20 && c != '\t' && c != '\n') || c >= 0x7F)
+            c = '.';
+        putchar(c);
+    }
+}
+#endif
+
+
 int ClientUserAuth(byte authType,
                       WS_UserAuthData* authData,
                       void* ctx)
@@ -510,6 +527,7 @@ int ClientUserAuth(byte authType,
         ret = WOLFSSH_USERAUTH_SUCCESS;
     }
     else if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        ClientClearPassword();
         if (defaultPassword != NULL) {
             passwordSz = (word32)strlen(defaultPassword);
             if (passwordSz > (word32)sizeof(userPassword))
@@ -544,6 +562,9 @@ int ClientUserAuth(byte authType,
             authData->sf.password.password = userPassword;
             authData->sf.password.passwordSz = passwordSz;
         }
+        else {
+            ClientClearPassword();
+        }
     }
 #if defined(WOLFSSH_TERM) && defined(WOLFSSH_KEYBOARD_INTERACTIVE)
     else if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
@@ -551,11 +572,13 @@ int ClientUserAuth(byte authType,
 
         if (authData->sf.keyboard.promptName &&
             authData->sf.keyboard.promptName[0] != '\0') {
-            printf("%s\n", authData->sf.keyboard.promptName);
+            ClientPrintSafe(authData->sf.keyboard.promptName);
+            printf("\n");
         }
         if (authData->sf.keyboard.promptInstruction &&
             authData->sf.keyboard.promptInstruction[0] != '\0') {
-            printf("%s\n", authData->sf.keyboard.promptInstruction);
+            ClientPrintSafe(authData->sf.keyboard.promptInstruction);
+            printf("\n");
         }
 
         /* The server may send another INFO_REQUEST at any time. */
@@ -589,7 +612,7 @@ int ClientUserAuth(byte authType,
          * but test the one this function actually returns. */
         for (entry = 0; ret == WOLFSSH_USERAUTH_SUCCESS && entry < promptCount;
                 entry++) {
-            printf("%s", authData->sf.keyboard.prompts[entry]);
+            ClientPrintSafe(authData->sf.keyboard.prompts[entry]);
             if (!authData->sf.keyboard.promptEcho[entry]) {
                 ClientSetEcho(0);
             }
@@ -597,6 +620,7 @@ int ClientUserAuth(byte authType,
                     == NULL) {
                 fprintf(stderr, "Getting response failed.\n");
                 ClientSetEcho(1);
+                wc_ForceZero(userPassword, sizeof(userPassword));
                 ret = WOLFSSH_USERAUTH_FAILURE;
                 break;
             }
@@ -613,6 +637,7 @@ int ClientUserAuth(byte authType,
             WFFLUSH(stdout);
             keyboardResponses[entry] =
                 (byte*) WSTRDUP((char*)userPassword, NULL, 0);
+            wc_ForceZero(userPassword, sizeof(userPassword));
             if (keyboardResponses[entry] == NULL) {
                 ret = WS_MEMORY_E;
                 break;
@@ -633,7 +658,32 @@ int ClientUserAuth(byte authType,
 }
 
 
+/* The wolfssh app has its own copy in apps/wolfssh/common.c, with no
+ * keyboard-interactive responses to free. The keyboard loop above wipes
+ * userPassword directly: this would free the responses authData still
+ * points at. */
+void ClientClearPassword(void)
+{
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    ClientFreeKeyboardResponses();
+#endif
+    wc_ForceZero(userPassword, sizeof(userPassword));
+}
+
+
 #ifdef WOLFSSH_TERM
+void ClientUnbufferStdin(void)
+{
+    static int done = 0;
+
+    if (!done) {
+        done = 1;
+        if (setvbuf(stdin, NULL, _IONBF, 0) != 0)
+            fprintf(stderr, "Couldn't unbuffer stdin.\n");
+    }
+}
+
+
 /* type = 2 : shell / execute command settings
  * type = 0 : password
  * type = 1 : restore default
@@ -1245,12 +1295,9 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         userPrivateKeyTypeSz = 0;
     }
 
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    ClientFreeKeyboardResponses();
-#endif
+    ClientClearPassword();
     wc_ForceZero(userPrivateKeyBuf, sizeof(userPrivateKeyBuf));
     userPrivateKeySz = 0;
-    wc_ForceZero(userPassword, sizeof(userPassword));
     pubKeyLoaded = 0;
 }
 

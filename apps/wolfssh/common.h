@@ -31,6 +31,9 @@ WOLFSSH_LOCAL int ClientUserAuth(byte authType, WS_UserAuthData* authData,
 WOLFSSH_LOCAL int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz,
         void* ctx);
 WOLFSSH_LOCAL void ClientIPOverride(int flag);
+/* Wipes the password ClientUserAuth() last read. The library sends it from
+ * that buffer after the callback returns, so call this once connect is done. */
+WOLFSSH_LOCAL void ClientClearPassword(void);
 WOLFSSH_LOCAL void ClientFreeBuffers(void);
 WOLFSSH_LOCAL int ClientParseDestination(const char* in, char** user,
         char** hostname, word16* port);
