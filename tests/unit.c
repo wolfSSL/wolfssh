@@ -663,6 +663,9 @@ static int test_DoProtoId(void)
              * 0x7e must both be accepted. */
             { "body w/ SP comments",   "SSH-2.0-app comment\r\n",     1 },
             { "body w/ tilde",         "SSH-2.0-app~1\r\n",           1 },
+            /* RFC 4253 section 4.2 bars '-' only from softwareversion. */
+            { "comments w/ minus",     "SSH-2.0-app my-comment\r\n",  1 },
+            { "comments are minus",    "SSH-2.0-app -\r\n",           1 },
             /* Failing Tests */
             { "wrong version prefix",  "SSH-2-this_is_my_app\r\n",    0 },
             { "bad casing prefix",     "sSH-2.0-this_is_my_app\r\n",  0 },
@@ -675,7 +678,10 @@ static int test_DoProtoId(void)
             { "Body End in CR",        "SSH-2.0-s\r\r\n",             0 },
             { "Body End in TAB",       "SSH-2.0-s\t\r\n",             0 },
             { "body starts w/ space",  "SSH-2.0-\x20-a-b\r\n",        0 },
-            { "body has embedded TAB", "SSH-2.0-\x7e-a\t\r\n",        0 },
+            { "body has embedded TAB", "SSH-2.0-\x7e" "a\t\r\n",      0 },
+            { "swversion w/ minus",    "SSH-2.0-my-app\r\n",          0 },
+            { "swversion is minus",    "SSH-2.0--\r\n",               0 },
+            { "minus before comments", "SSH-2.0-app- comment\r\n",    0 },
             { "too long id",           tooLongProtoId,                0 },
             { "null pointer",          NULL,                          0 },
         };

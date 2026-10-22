@@ -15420,6 +15420,17 @@ int ValidateProtoId(const char* protoIdStr, word32 len)
         }
     }
 
+    /* softwareversion runs to the first space and must not contain a '-'
+     * (RFC 4253 section 4.2); the comments may. */
+    for (i = SSH_PROTO_SZ;
+            i < len - SSH_PROTO_EOL_SZ && protoIdStr[i] != ' '; i++) {
+        if (protoIdStr[i] == '-') {
+            WLOG(WS_LOG_ERROR, "Proto Id was invalid: softwareversion "
+                    "must not contain '-'");
+            return WS_BAD_ARGUMENT;
+        }
+    }
+
     return WS_SUCCESS;
 }
 
