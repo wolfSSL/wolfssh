@@ -766,7 +766,9 @@ typedef struct WS_UserAuthData {
  * For WOLFSSH_USERAUTH_PUBLICKEY, the callback must check the offered
  * public key against the user's authorized keys; returning success on an
  * unchecked key authorizes an attacker-supplied key. The library verifies
- * the signature, not the key's authorization. */
+ * the signature, not the key's authorization.
+ *
+ * Compare secrets with wolfSSH_ConstantCompare(), not memcmp(). */
 typedef int (*WS_CallbackUserAuth)(byte authType, WS_UserAuthData* authData,
         void* ctx);
 WOLFSSH_API void wolfSSH_SetUserAuth(WOLFSSH_CTX* ctx, WS_CallbackUserAuth cb);
@@ -783,6 +785,15 @@ WOLFSSH_API void wolfSSH_SetUserAuthResult(WOLFSSH_CTX* ctx,
 WOLFSSH_API void wolfSSH_SetUserAuthResultCtx(WOLFSSH* ssh,
         void* userAuthResultCtx);
 WOLFSSH_API void* wolfSSH_GetUserAuthResultCtx(WOLFSSH* ssh);
+
+/* Compares len bytes of a and b in time that depends only on len, using
+ * wolfCrypt's wc_ConstantCompare() where the wolfSSL build provides it.
+ * Returns 0 when they match, nonzero when they differ, and WS_BAD_ARGUMENT
+ * for a NULL a or b or a len over INT_MAX. Intended for userauth callbacks
+ * comparing passwords, responses or digests; check lengths separately, as
+ * the compare cannot hide them. */
+WOLFSSH_API int wolfSSH_ConstantCompare(const byte* a, const byte* b,
+        word32 len);
 
 /* Public Key Check Callback
  *
