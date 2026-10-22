@@ -634,8 +634,10 @@ static int DoReceiveHandshake(WOLFSSH* ssh)
 
 #ifndef NO_WOLFSSH_SERVER
 
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
 const char acceptError[] = "accept error: %s, %d";
 const char acceptState[] = "accept state: %s";
+#endif
 
 
 int wolfSSH_accept(WOLFSSH* ssh)
@@ -899,8 +901,10 @@ int wolfSSH_accept(WOLFSSH* ssh)
 
 #ifndef NO_WOLFSSH_CLIENT
 
+#if defined(DEBUG_WOLFSSH) || defined(WOLFSSH_SSHD)
 const char connectError[] = "connect error: %s, %d";
 const char connectState[] = "connect state: %s";
+#endif
 
 
 int wolfSSH_connect(WOLFSSH* ssh)
