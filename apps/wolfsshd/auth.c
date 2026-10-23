@@ -75,6 +75,9 @@
 #include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
+#ifdef HAVE_CRYPT_R
+#include <crypt.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -120,13 +123,92 @@ int (*wsshd_setregid_cb)(WGID_T, WGID_T) = setregid;
 int (*wsshd_setreuid_cb)(WUID_T, WUID_T) = setreuid;
 int (*wsshd_setegid_cb)(WGID_T) = setegid;
 int (*wsshd_seteuid_cb)(WUID_T) = seteuid;
-struct passwd* (*wsshd_getpwnam_cb)(const char*) = getpwnam;
-#define getpwnam wsshd_getpwnam_cb
+struct passwd* (*wsshd_getpwnam_cb)(const char*) = NULL;
 int (*wsshd_setgroups_cb)(int, const WGID_T*) = wsshd_setgroups_default;
 #ifdef HAVE_SHADOW
-struct spwd* (*wsshd_getspnam_cb)(const char*) = getspnam;
-#define getspnam wsshd_getspnam_cb
+struct spwd* (*wsshd_getspnam_cb)(const char*) = NULL;
 #endif
+#endif
+
+#ifndef _WIN32
+struct passwd* wolfSSHD_GetPwnam(const char* name, WOLFSSHD_PW* store)
+{
+    struct passwd* res = NULL;
+    int err;
+
+    if (name == NULL || store == NULL) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    WMEMSET(store, 0, sizeof(*store));
+#ifdef WOLFSSHD_UNIT_TEST
+    if (wsshd_getpwnam_cb != NULL) {
+        errno = 0;
+        return wsshd_getpwnam_cb(name);
+    }
+#endif
+    err = getpwnam_r(name, &store->pw, store->buf, sizeof(store->buf), &res);
+    if (res == NULL) {
+        WS_FORCEZERO(store, sizeof(*store));
+        if (err == ERANGE) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] passwd entry for %s exceeds "
+                "WOLFSSHD_PW_BUF_SZ (%d)", name, WOLFSSHD_PW_BUF_SZ);
+        }
+        /* some libcs report no such user as ENOENT */
+        errno = (err == ENOENT) ? 0 : err;
+    }
+    return res;
+}
+
+void wolfSSHD_PwFree(WOLFSSHD_PW* store)
+{
+    if (store != NULL) {
+        WS_FORCEZERO(store, sizeof(*store));
+    }
+}
+#endif
+
+#ifdef HAVE_SHADOW
+#ifndef WSSHD_SPWD_BUF_SZ
+    #define WSSHD_SPWD_BUF_SZ 1024
+#endif
+
+typedef struct WSSHD_SPWD {
+    struct spwd sp;
+    char buf[WSSHD_SPWD_BUF_SZ];
+} WSSHD_SPWD;
+
+/* Looks up the shadow entry for name into store, which the caller wipes. */
+static struct spwd* AuthGetSpnam(const char* name, WSSHD_SPWD* store)
+{
+    struct spwd* res = NULL;
+#ifdef HAVE_GETSPNAM_R
+    int err;
+#endif
+
+    WMEMSET(store, 0, sizeof(*store));
+#ifdef WOLFSSHD_UNIT_TEST
+    if (wsshd_getspnam_cb != NULL) {
+        return wsshd_getspnam_cb(name);
+    }
+#endif
+#ifdef HAVE_GETSPNAM_R
+    err = getspnam_r(name, &store->sp, store->buf, sizeof(store->buf), &res);
+    if (err != 0) {
+        if (err == ERANGE) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] shadow entry for %s exceeds "
+                "WSSHD_SPWD_BUF_SZ (%d)", name, WSSHD_SPWD_BUF_SZ);
+        }
+        res = NULL;
+    }
+#else
+    /* The entry stays in libc static storage, which a wipe of store does
+     * not reach; the caller's copy of the hash is the only one it controls. */
+    res = getspnam((char*)name);
+#endif
+    return res;
+}
 #endif
 
 #ifdef WOLFSSH_OSSH_CERTS
@@ -534,6 +616,8 @@ static void ScanShadowFile(WFILE* f)
         AddShadowLineToFakeHashCache(line);
         WS_FORCEZERO(line, sizeof(line));
     }
+    /* the read that ends the loop on a full cache still fills line */
+    WS_FORCEZERO(line, sizeof(line));
 }
 
 #ifndef WOLFSSH_USE_PAM
@@ -616,6 +700,7 @@ void wolfSSHD_AuthInit(void)
 #ifdef HAVE_SHADOW
     char tmpl[WSSHD_FAKE_HASH_SZ];
     struct spwd* rootShadow;
+    WSSHD_SPWD rootStore;
 
 #ifndef WOLFSSHD_UNIT_TEST
     WFILE* f = NULL;
@@ -632,7 +717,7 @@ void wolfSSHD_AuthInit(void)
 #endif
 
     if (numCachedFakeHashes == 0) {
-        rootShadow = getspnam("root");
+        rootShadow = AuthGetSpnam("root", &rootStore);
         if (rootShadow != NULL && rootShadow->sp_pwdp != NULL) {
             GetFakeHashFromTemplate(rootShadow->sp_pwdp, tmpl, sizeof(tmpl));
             if (tmpl[0] != '\0' && tmpl[1] != '\0' && tmpl[1] != '*') {
@@ -640,7 +725,9 @@ void wolfSSHD_AuthInit(void)
                 cachedFakeHashes[0][sizeof(cachedFakeHashes[0]) - 1] = '\0';
                 numCachedFakeHashes = 1;
             }
+            WS_FORCEZERO(tmpl, sizeof(tmpl));
         }
+        WS_FORCEZERO(&rootStore, sizeof(rootStore));
     }
 
     if (numCachedFakeHashes == 0) {
@@ -724,6 +811,13 @@ static int ExtractSalt(char* hash, char** salt, int saltSz)
 #endif
 
 #if defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)
+#ifdef HAVE_CRYPT_R
+    /* the result lives in data, which the caller wipes */
+    #define WSSHD_CRYPT(in, salt, data) crypt_r((in), (salt), (data))
+#else
+    #define WSSHD_CRYPT(in, salt, data) crypt((in), (salt))
+#endif
+
 #ifdef WOLFSSHD_UNIT_TEST
 int CheckPasswordHashUnix(const char* input, const char* stored)
 #else
@@ -746,6 +840,12 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
     int locked = 0;
     char* hashedInput = NULL;
     word32 hashedInputSz = 0, storedSz = 0;
+#ifdef HAVE_CRYPT_R
+    /* ~128 KB on glibc, ~32 KB on libxcrypt, so not on the stack */
+    struct crypt_data* cryptData = NULL;
+#else
+    void* cryptData = NULL;
+#endif
 
     if (input == NULL || stored == NULL) {
         ret = WS_BAD_ARGUMENT;
@@ -758,6 +858,20 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
                     "[SSHD] User logged in with empty password");
         return ret;
     }
+
+#ifdef HAVE_CRYPT_R
+    if (ret == WSSHD_AUTH_SUCCESS) {
+        cryptData = (struct crypt_data*)WMALLOC(sizeof(*cryptData), NULL,
+                DYNTYPE_SSHD);
+        if (cryptData == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            /* zeroed, as crypt_r() requires of a fresh crypt_data */
+            WMEMSET(cryptData, 0, sizeof(*cryptData));
+        }
+    }
+#endif
 
     if (ret == WSSHD_AUTH_SUCCESS) {
         const char* salt = stored;
@@ -786,7 +900,7 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
             }
         }
 
-        hashedInput = crypt(input, salt);
+        hashedInput = WSSHD_CRYPT(input, salt, cryptData);
         /* glibc signals an unsupported salt with a "*"-prefixed sentinel,
          * not NULL; check both so the fallback engages on every libc. */
         if (locked) {
@@ -796,28 +910,34 @@ static int CheckPasswordHashUnix(const char* input, const char* stored)
                         && (hashedInput == NULL || hashedInput[0] == '*');
                     fbIdx++) {
                 salt = fakeHashFallbacks[fbIdx];
-                hashedInput = crypt(input, salt);
+                hashedInput = WSSHD_CRYPT(input, salt, cryptData);
             }
         }
 
         if (hashedInput == NULL) {
             ret = WS_FATAL_ERROR;
         }
-        else if (locked) {
-            ret = WSSHD_AUTH_FAILURE;
-        }
         else {
             hashedInputSz = (word32)WSTRLEN(hashedInput);
 
-            if (hashedInputSz == 0 || hashedInput[0] == '*' ||
+            if (locked || hashedInputSz == 0 || hashedInput[0] == '*' ||
                     hashedInputSz != storedSz ||
                     ConstantCompare((const byte*)hashedInput,
                         (const byte*)stored, storedSz) != 0) {
                 ret = WSSHD_AUTH_FAILURE;
             }
+            /* the result is in crypt()'s static storage or in cryptData */
             WS_FORCEZERO(hashedInput, hashedInputSz);
         }
     }
+#ifdef HAVE_CRYPT_R
+    if (cryptData != NULL) {
+        WS_FORCEZERO(cryptData, sizeof(*cryptData));
+        WFREE(cryptData, NULL, DYNTYPE_SSHD);
+    }
+#else
+    WOLFSSH_UNUSED(cryptData);
+#endif
     return ret;
 }
 #endif /* WOLFSSH_HAVE_LIBCRYPT || WOLFSSH_HAVE_LIBLOGIN */
@@ -831,12 +951,12 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     int ret = WS_SUCCESS;
     char* pwStr = NULL;
     struct passwd* pwInfo;
+    WOLFSSHD_PW pwStore;
 #ifdef HAVE_SHADOW
     struct spwd* shadowInfo;
+    WSSHD_SPWD spStore;
     time_t now;
     int expired = 0;
-    /* getspnam() returns a static buffer; copy immediately before it can
-     * be overwritten by any subsequent call. */
     char hashBuf[WSSHD_FAKE_HASH_SZ];
 #endif
     /* The hash of the user's password stored on the system. */
@@ -862,7 +982,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     }
 
     if (ret == WS_SUCCESS) {
-        pwInfo = getpwnam((const char*)usr);
+        pwInfo = wolfSSHD_GetPwnam(usr, &pwStore);
         if (pwInfo == NULL) {
             /* User not found: use dummy hash to equalize timing. */
             wolfSSH_Log(WS_LOG_INFO,
@@ -871,11 +991,7 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
         else {
 #ifdef HAVE_SHADOW
             if (pwInfo->pw_passwd[0] == 'x') {
-#ifdef WOLFSSH_HAVE_LIBCRYPT
-                shadowInfo = getspnam((const char*)usr);
-#else
-                shadowInfo = getspnam((char*)usr);
-#endif
+                shadowInfo = AuthGetSpnam(usr, &spStore);
                 if (shadowInfo == NULL) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Error getting user password info");
@@ -901,8 +1017,6 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
                     ret = WS_FATAL_ERROR;
                 }
                 else {
-                    /* Copy before any subsequent getspnam() call
-                     * overwrites the static buffer. */
                     XSTRNCPY(hashBuf, shadowInfo->sp_pwdp, sizeof(hashBuf));
                     hashBuf[sizeof(hashBuf) - 1] = '\0';
                     storedHash = hashBuf;
@@ -959,7 +1073,9 @@ static int CheckPasswordUnix(const char* usr, const byte* pw, word32 pwSz, WOLFS
     }
 #ifdef HAVE_SHADOW
     WS_FORCEZERO(hashBuf, sizeof(hashBuf));
+    WS_FORCEZERO(&spStore, sizeof(spStore));
 #endif
+    wolfSSHD_PwFree(&pwStore);
 
     WOLFSSH_UNUSED(authCtx);
     return ret;
@@ -1625,10 +1741,11 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
 static int CheckUserUnix(const char* name) {
     int ret = WSSHD_AUTH_FAILURE;
     struct passwd* pwInfo;
+    WOLFSSHD_PW pwStore;
 
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Unix check user");
     errno = 0;
-    pwInfo = getpwnam(name);
+    pwInfo = wolfSSHD_GetPwnam(name, &pwStore);
     if (pwInfo == NULL) {
         if (errno != 0) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
@@ -1639,6 +1756,7 @@ static int CheckUserUnix(const char* name) {
     else {
         ret = WSSHD_AUTH_SUCCESS;
     }
+    wolfSSHD_PwFree(&pwStore);
 
     return ret;
 }
@@ -1915,6 +2033,7 @@ static int CheckPublicKeyUnix(const char* name,
 {
     int ret = WSSHD_AUTH_SUCCESS;
     struct passwd* pwInfo;
+    WOLFSSHD_PW pwStore;
 
 #ifdef WOLFSSH_OSSH_CERTS
     if (pubKeyCtx->isOsshCert) {
@@ -1933,7 +2052,7 @@ static int CheckPublicKeyUnix(const char* name,
         /* The requested user must be a real local account. */
         if (ret == WSSHD_AUTH_SUCCESS) {
             errno = 0;
-            pwInfo = getpwnam((const char*)name);
+            pwInfo = wolfSSHD_GetPwnam(name, &pwStore);
             if (pwInfo == NULL) {
                 if (errno != 0) {
                     wolfSSH_Log(WS_LOG_ERROR,
@@ -1974,7 +2093,7 @@ static int CheckPublicKeyUnix(const char* name,
     #endif /* WOLFSSH_OSSH_CERTS */
     {
         errno = 0;
-        pwInfo = getpwnam((const char*)name);
+        pwInfo = wolfSSHD_GetPwnam(name, &pwStore);
         if (pwInfo == NULL) {
             if (errno != 0) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error calling getpwnam for user "
@@ -1989,6 +2108,7 @@ static int CheckPublicKeyUnix(const char* name,
                 wolfSSHD_ConfigGetStrictModes(authCtx->conf));
         }
     }
+    wolfSSHD_PwFree(&pwStore);
 
     WOLFSSH_UNUSED(usrCaKeysFile);
     WOLFSSH_UNUSED(authCtx);
@@ -2412,11 +2532,13 @@ static int IsRootUser(const char* usr)
     int isRoot = 0;
 #ifndef _WIN32
     struct passwd* pwInfo;
+    WOLFSSHD_PW pwStore;
 
-    pwInfo = getpwnam(usr);
+    pwInfo = wolfSSHD_GetPwnam(usr, &pwStore);
     if ((pwInfo != NULL && pwInfo->pw_uid == 0) || XSTRCMP(usr, "root") == 0) {
         isRoot = 1;
     }
+    wolfSSHD_PwFree(&pwStore);
 #else
     if (XSTRCMP(usr, "root") == 0) {
         isRoot = 1;
@@ -3163,6 +3285,7 @@ static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
     return 0;
 #else
     struct passwd* pwInfo;
+    WOLFSSHD_PW pwStore;
     int ret = WS_SUCCESS;
 
     if (wolfSSHD_ConfigGetPrivilegeSeparation(auth->conf) ==
@@ -3174,7 +3297,8 @@ static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
         return WS_SUCCESS;
     }
 
-    pwInfo = getpwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER));
+    pwInfo = wolfSSHD_GetPwnam(WOLFSSH_USER_STRING(WOLFSSH_SSHD_USER),
+        &pwStore);
 #ifdef WOLFSSHD_UNIT_TEST
     /* Fallback for unit tests. */
     if (pwInfo == NULL) {
@@ -3194,6 +3318,7 @@ static int SetDefaultUserID(WOLFSSHD_AUTH* auth)
         auth->sGid = getgid();
         auth->sUid = getuid();
     }
+    wolfSSHD_PwFree(&pwStore);
     return ret;
 #endif
 }
@@ -3709,17 +3834,22 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
              * Match Group directives do not apply here */
 #else
             struct passwd* p_passwd;
+            WOLFSSHD_PW pwStore;
+            int grpRet;
 
-            p_passwd = getpwnam((const char *)usr);
+            p_passwd = wolfSSHD_GetPwnam(usr, &pwStore);
             if (p_passwd == NULL) {
+                wolfSSHD_PwFree(&pwStore);
                 return NULL;
             }
 
             /* Resolve the full group set (primary and supplementary) so a
              * Match Group directive matches on any of the user's groups.
              * Fail closed if the groups cannot be enumerated. */
-            if (wolfSSHD_GetUserGroupNames(auth->heap, usr, p_passwd->pw_gid,
-                    &grpNames, &grpCount) != WS_SUCCESS) {
+            grpRet = wolfSSHD_GetUserGroupNames(auth->heap, usr,
+                    p_passwd->pw_gid, &grpNames, &grpCount);
+            wolfSSHD_PwFree(&pwStore);
+            if (grpRet != WS_SUCCESS) {
                 return NULL;
             }
 #endif

@@ -438,6 +438,8 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
         readSz = (word32)WFREAD(NULL, buf, 1, fileSz, file);
         if (readSz < (size_t)fileSz) {
             WFCLOSE(NULL, file);
+            /* whatever part of a key was read */
+            WS_FORCEZERO(buf, (word32)fileSz + 1);
             WFREE(buf, heap, DYNTYPE_SSHD);
             return NULL;
         }
@@ -1772,8 +1774,23 @@ static int SCP_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
          * privilege level */
         exit(1);
     }
+
+    /* Relative SCP paths resolve from home, inside a chroot too, as for
+     * SFTP and the shell. Like OpenSSH, a chroot without the home dir falls
+     * back to "/" quietly. */
+    if (ret == WS_SUCCESS && chdir(pPasswd->pw_dir) != 0) {
+        if (error != 1) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir "
+                "%s, using /", pPasswd->pw_dir);
+        }
+        if (chdir("/") != 0) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to /");
+        }
+    }
 #else
-    /* impersonate the logged on user for file permissions */
+    /* Impersonate the logged on user for file permissions. Relative SCP
+     * paths stay relative to the daemon's directory: connections share one
+     * process, and SCP has no per-session default path like SFTP's. */
     if (ImpersonateLoggedOnUser(wolfSSHD_GetAuthToken(conn->auth)) == FALSE) {
         wolfSSH_Log(WS_LOG_ERROR,
             "[SSHD] Error impersonating logged on user");
@@ -2190,6 +2207,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
 
                 if (tmp != NULL) {
+                    WS_FORCEZERO(tmp, (word32)(sizeof(wchar_t) * cmdSz));
                     WFREE(tmp, NULL, DYNTYPE_SSHD);
                 }
 
@@ -2596,6 +2614,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
 cleanup:
     if (conCmdPtr != NULL) {
+        WS_FORCEZERO(conCmdPtr, (word32)(sizeof(wchar_t) * conCmdSz));
         WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
     }
     if (cnslIn != NULL) {
@@ -2604,6 +2623,8 @@ cleanup:
     if (cnslOut != NULL) {
         CloseHandle(cnslOut);
     }
+    /* The resize callback must not reach ptyIn once it is closed. */
+    wolfSSH_SetTerminalResizeCtx(ssh, NULL);
     if (ptyIn != NULL) {
         CloseHandle(ptyIn);
     }
@@ -2618,6 +2639,7 @@ cleanup:
         wolfSSHD_AuthCloseToken(conn->auth);
     }
     if (cmd != NULL) {
+        WS_FORCEZERO(cmd, (word32)(sizeof(wchar_t) * cmdSz));
         WFREE(cmd, NULL, DYNTYPE_SSHD);
     }
     WS_FORCEZERO(channelBuffer, sizeof channelBuffer);
@@ -2678,6 +2700,40 @@ static int SHELL_SetNonBlocking(int fd)
 #ifndef WOLFSSHD_CHILD_REAP_WAIT_US
     #define WOLFSSHD_CHILD_REAP_WAIT_US 50000
 #endif
+
+/* Close a descriptor that is still open and mark it closed. */
+static void SHELL_CloseFd(int* fd)
+{
+    if (*fd >= 0) {
+        close(*fd);
+        *fd = -1;
+    }
+}
+
+/* Take down a shell child that the parent cannot service: kill it, reap it,
+ * and close the parent's descriptors to it. */
+static void SHELL_AbortChild(pid_t childPid, int* childFd, int* stdoutPipe,
+    int* stderrPipe, int* stdinPipe)
+{
+    int status;
+    int i;
+
+    if (kill(childPid, SIGKILL) == 0) {
+        while (waitpid(childPid, &status, 0) < 0 && errno == EINTR) {
+            /* retry */
+        }
+    }
+    else {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unable to kill shell child %d, "
+            "errno %d", (int)childPid, errno);
+    }
+    SHELL_CloseFd(childFd);
+    for (i = 0; i < 2; i++) {
+        SHELL_CloseFd(&stdoutPipe[i]);
+        SHELL_CloseFd(&stderrPipe[i]);
+        SHELL_CloseFd(&stdinPipe[i]);
+    }
+}
 
 /* Send out the last of a shell's output once the child has been reaped. The
  * SSH socket is non blocking, so retry a bounded number of times on a full
@@ -2908,10 +2964,32 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         const char *args[] = {"-sh", NULL, NULL, NULL};
         char cmd[MAX_COMMAND_SZ];
         char shell[MAX_COMMAND_SZ];
+        char* userName;
         int ret;
 
         signal(SIGINT,  SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+
+        /* The shell needs none of the session, so drop the host key and the
+         * session keys this image inherited before giving up root. The
+         * command can live in the session, so keep a copy of it. */
+        userName = WSTRDUP(wolfSSH_GetUsername(ssh), NULL, DYNTYPE_SSHD);
+        if (forcedCmd != NULL) {
+            forcedCmd = WSTRDUP(forcedCmd, NULL, DYNTYPE_SSHD);
+            if (forcedCmd == NULL) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error copying forced command");
+                exit(1);
+            }
+        }
+        if (userName == NULL) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error copying user name");
+            exit(1);
+        }
+        wolfSSH_free(ssh);
+        ssh = NULL;
+        wolfSSH_CTX_free(conn->ctx);
+        conn->ctx = NULL;
 
         if (!ptyReq || forcedCmd) {
             close(stdoutPipe[0]);
@@ -2939,7 +3017,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
 
         /* set additional groups if needed */
-        if (wolfSSHD_AuthSetGroups(conn->auth, wolfSSH_GetUsername(ssh),
+        if (wolfSSHD_AuthSetGroups(conn->auth, userName,
                 pPasswd->pw_gid) != WS_SUCCESS) {
             wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting groups");
             exit(1);
@@ -2987,8 +3065,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         rc = chdir(pPasswd->pw_dir);
         if (rc != 0) {
             /* not error'ing out if unable to find home directory */
-            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s",
-            pPasswd->pw_dir);
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to user home dir %s, "
+                "using /", pPasswd->pw_dir);
+            if (chdir("/") != 0) {
+                wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error going to /");
+            }
         }
 
         /* default to /bin/sh if user shell is not set */
@@ -3024,15 +3105,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         exit(ret); /* exit child process and close down SSH connection */
     }
 
-    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
-        pPasswd->pw_gid) != WS_SUCCESS) {
-        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
-        /* could not drop to the authenticated user; kill the already
-         * forked shell child and terminate the per-connection process
-         * rather than continue at a higher privilege level */
-        kill(childPid, SIGKILL);
-        exit(1);
-    }
     sshFd = wolfSSH_get_fd(ssh);
 
     struct termios tios;
@@ -3048,24 +3120,52 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         /* The shell child is already forked, and nothing below can reach the
          * peer without an id to address, so take it down with us. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No session channel to service");
-        kill(childPid, SIGKILL);
+        SHELL_AbortChild(childPid, &childFd, stdoutPipe, stderrPipe,
+            stdinPipe);
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error lowering permissions level");
+            exit(1);
+        }
         return WS_FATAL_ERROR;
     }
 
     signal(SIGINT, SIG_DFL);
 
     rc = tcgetattr(childFd, &tios);
+    if (rc == 0) {
+        rc = tcsetattr(childFd, TCSAFLUSH, &tios);
+    }
     if (rc != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting up the shell's pty");
+        SHELL_AbortChild(childPid, &childFd, stdoutPipe, stderrPipe,
+            stdinPipe);
+        if (wolfSSHD_AuthReducePermissions(conn->auth) != WS_SUCCESS) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Error lowering permissions level");
+            exit(1);
+        }
         return WS_FATAL_ERROR;
     }
-    rc = tcsetattr(childFd, TCSAFLUSH, &tios);
-    if (rc != 0) {
-        return WS_FATAL_ERROR;
+
+    /* Drop privileges only after the checks above, which may have to kill
+     * the child while it is still root. */
+    if (wolfSSHD_AuthReducePermissionsUser(conn->auth, pPasswd->pw_uid,
+        pPasswd->pw_gid) != WS_SUCCESS) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error setting user ID");
+        /* could not drop to the authenticated user; kill the already
+         * forked shell child and terminate the per-connection process
+         * rather than continue at a higher privilege level */
+        kill(childPid, SIGKILL);
+        exit(1);
     }
 
     /* set initial size of terminal based on saved size */
 #if defined(HAVE_SYS_IOCTL_H)
-    wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd);
+    if (ssh->modesSz > 0 &&
+            wolfSSH_DoModes(ssh->modes, ssh->modesSz, childFd) != 0) {
+        wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error applying terminal modes");
+    }
     {
         struct winsize s;
 
@@ -3561,6 +3661,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         stdinPipe[1] = -1;
     }
 
+    /* The resize callback must not reach childFd once it is closed. */
+    wolfSSH_SetTerminalResizeCtx(ssh, NULL);
+
     /* Close the pty master so the shell gets SIGHUP and can exit on its own */
     if (childFd >= 0) {
         close(childFd);
@@ -3600,8 +3703,16 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     "status");
         }
         else {
-            if (wolfSSH_SetExitStatus(ssh, (word32)WEXITSTATUS(waitStatus)) !=
-                WS_SUCCESS) {
+            word32 exitStatus = 1;
+
+            /* A signaled child reports 128 plus the signal, as a shell does */
+            if (WIFEXITED(waitStatus)) {
+                exitStatus = (word32)WEXITSTATUS(waitStatus);
+            }
+            else if (WIFSIGNALED(waitStatus)) {
+                exitStatus = 128 + (word32)WTERMSIG(waitStatus);
+            }
+            if (wolfSSH_SetExitStatus(ssh, exitStatus) != WS_SUCCESS) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Issue setting child's exit "
                     "status");
             }
@@ -3927,6 +4038,11 @@ static void* HandleConnection(void* arg)
         WOLFSSHD_CONFIG* usrConf;
         char* usr;
         const char* forcedCmd = NULL;
+    #ifndef _WIN32
+        WOLFSSHD_PW pwStore;
+
+        WMEMSET(&pwStore, 0, sizeof(pwStore));
+    #endif
 
         /* get configuration for user */
         usr     = wolfSSH_GetUsername(ssh);
@@ -3938,10 +4054,10 @@ static void* HandleConnection(void* arg)
             ret = WS_FATAL_ERROR;
         }
 
-    #ifndef WIN32
+    #ifndef _WIN32
         if (ret == WS_SUCCESS || ret == WS_SFTP_COMPLETE ||
             ret == WS_SCP_INIT) {
-            pPasswd = getpwnam((const char *)usr);
+            pPasswd = wolfSSHD_GetPwnam(usr, &pwStore);
             if (pPasswd == NULL) {
                 wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Error getting user info");
                 ret = WS_FATAL_ERROR;
@@ -4085,6 +4201,9 @@ static void* HandleConnection(void* arg)
         }
 
         wolfSSHD_ConfigFree(usrConf);
+    #ifndef _WIN32
+        wolfSSHD_PwFree(&pwStore);
+    #endif
     }
 
     error = wolfSSH_get_error(ssh);
@@ -4987,7 +5106,8 @@ static int SetupConsole(char* inCmd)
         if (CreateProcessW(NULL, cmd,
             NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
             &ext.StartupInfo, &processInfo) != TRUE) {
-            return WS_FATAL_ERROR;
+            /* the return value, once cleanup has run */
+            processState = (DWORD)WS_FATAL_ERROR;
         }
         else {
             DWORD ava = 0;
@@ -5025,6 +5145,7 @@ static int SetupConsole(char* inCmd)
     }
 
     if (cmd != NULL) {
+        WS_FORCEZERO(cmd, sizeof(wchar_t) * cmdSz);
         HeapFree(GetProcessHeap(), 0, cmd);
     }
 
@@ -5050,7 +5171,7 @@ int main(int argc, char** argv)
             isService = 0;
         }
         if (WSTRCMP(argv[i], "-r") == 0) {
-            if (argc < i + 1) {
+            if (i + 1 >= argc) {
                 /* was expecting command to run after -r argument */
                 return -1;
             }
