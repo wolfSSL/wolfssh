@@ -719,7 +719,8 @@ enum NameIdType {
 #endif
 
 #ifndef WOLFSSH_RSA_MIN_KEY_BITS
-    /* Minimum accepted RSA public-key size (bits) for user authentication.
+    /* Minimum accepted RSA public-key size (bits) for host keys and user
+     * authentication.
      * Per NIST SP 800-131A; override at build time if a smaller key must be
      * accepted. */
     #define WOLFSSH_RSA_MIN_KEY_BITS 2048
@@ -2257,6 +2258,8 @@ enum WS_MessageIdLimits {
             WS_UserAuthData* authData);
 #endif /* !WOLFSSH_NO_ED25519 */
 #ifndef WOLFSSH_NO_MLDSA
+    WOLFSSH_API int wolfSSH_TestParseMlDsaPubKey(WOLFSSH* ssh, byte* pubKey,
+            word32 pubKeySz, byte keyId);
     WOLFSSH_API int wolfSSH_TestDoUserAuthRequestMlDsa(WOLFSSH* ssh,
             WS_UserAuthData* authData, word32 pubKeyBlobSz);
     WOLFSSH_API int wolfSSH_TestPrepareUserAuthRequestMlDsa(WOLFSSH* ssh,
