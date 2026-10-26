@@ -134,51 +134,63 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth);
 static int CountWhitespace(const char* in, int inSz, byte inv);
 static int SetFileString(char** dst, const char* src, void* heap);
 
-/* convert a string into seconds, handles if 'm' for minutes follows the string
- * number, i.e. 2m
+/* Largest value GetConfigInt returns, before and after a time multiplier. It
+ * fits in a long on every target. */
+#define CONFIG_INT_MAX 0x7FFFFFFFL
+
+/* Convert a decimal string into a number. With isTime, one trailing unit
+ * suffix (s, m, h, d or w, either case) scales the number to seconds. The whole
+ * string must be consumed: no sign, whitespace or trailing text. A zero must be
+ * written as a single '0'.
  * Returns the value on success and negative value on failure */
 static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
     long ret = 0;
-    int mult = 1; /* multiplier */
+    long mult = 1; /* multiplier */
     int sz   = inSz;
+    int i;
+
+    (void)heap;
 
     if (in == NULL || inSz <= 0) {
-        ret = WS_BAD_ARGUMENT;
+        return WS_BAD_ARGUMENT;
     }
 
     /* check for multipliers */
-    if (ret == 0 && isTime) {
-        if (in[sz - 1] == 'm') {
-            sz--;
-            mult = 60;
-        }
-        else if (in[sz - 1] == 'h') {
-            sz--;
-            mult = 60*60;
-        }
-    }
-
-    if (ret == 0) {
-        char* num = (char*)WMALLOC(sz + 1, heap, DYNTYPE_SSHD);
-        if (num == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else {
-            WMEMCPY(num, in, sz);
-            num[sz] = '\0';
-            ret = atol(num);
-            if (ret == 0 && WSTRCMP(num, "0") != 0) {
-                ret = WS_BAD_ARGUMENT;
-            }
-            else if (ret > 0) {
-                ret = ret * mult;
-            }
-            WFREE(num, heap, DYNTYPE_SSHD);
+    if (isTime) {
+        switch (in[sz - 1]) {
+            case 's': case 'S': mult = 1;           sz--; break;
+            case 'm': case 'M': mult = 60;          sz--; break;
+            case 'h': case 'H': mult = 60*60;       sz--; break;
+            case 'd': case 'D': mult = 60*60*24;    sz--; break;
+            case 'w': case 'W': mult = 60*60*24*7;  sz--; break;
+            default: break;
         }
     }
 
-    return ret;
+    if (sz <= 0) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < sz; i++) {
+        if (in[i] < '0' || in[i] > '9') {
+            return WS_BAD_ARGUMENT;
+        }
+        if (ret > (CONFIG_INT_MAX - (in[i] - '0')) / 10) {
+            return WS_BAD_ARGUMENT;
+        }
+        ret = ret * 10 + (in[i] - '0');
+    }
+
+    if (ret == 0 && sz != 1) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (ret > CONFIG_INT_MAX / mult) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    return ret * mult;
 }
 
 /* returns WS_SUCCESS on success, removes trailng newlines */

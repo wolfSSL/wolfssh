@@ -306,6 +306,10 @@ static int test_ParseConfigLine(void)
         {"Port 0", "Port 0", 1},
         {"Port NaN", "Port wolfsshd", 1},
         {"Port no value", "Port \n", 1},
+        {"Port trailing junk", "Port 22abc", 1},
+        {"Port leading plus", "Port +22", 1},
+        {"Port overflow", "Port 99999999999999999999", 1},
+        {"Protocol trailing junk", "Protocol 2x", 1},
 
         /* Whitespace tests. */
         {"Extra leading whitespace", "Port   22", 0},
@@ -360,6 +364,22 @@ static int test_ParseConfigLine(void)
         {"Valid login grace time zero minutes", "LoginGraceTime 0m", 0},
         {"Valid login grace time zero hours", "LoginGraceTime 0h", 0},
         {"Invalid zero padded login grace time", "LoginGraceTime 00", 1},
+        {"Valid login grace time s suffix", "LoginGraceTime 60s", 0},
+        {"Valid login grace time days", "LoginGraceTime 1d", 0},
+        {"Valid login grace time weeks", "LoginGraceTime 1w", 0},
+        {"Valid login grace time upper case", "LoginGraceTime 2M", 0},
+        {"Login grace time trailing junk", "LoginGraceTime 2junk", 1},
+        {"Login grace time word suffix", "LoginGraceTime 60seconds", 1},
+        {"Login grace time two suffixes", "LoginGraceTime 1m1", 1},
+        {"Login grace time overflow", "LoginGraceTime 9999999999w", 1},
+        /* the limit is CONFIG_INT_MAX seconds, before and after the
+         * multiplier: 2147483647 / 604800 is 3550, / 60 is 35791394 */
+        {"Login grace time max", "LoginGraceTime 2147483647", 0},
+        {"Login grace time max plus one", "LoginGraceTime 2147483648", 1},
+        {"Login grace time max weeks", "LoginGraceTime 3550w", 0},
+        {"Login grace time weeks overflow", "LoginGraceTime 3551w", 1},
+        {"Login grace time max minutes", "LoginGraceTime 35791394m", 0},
+        {"Login grace time minutes overflow", "LoginGraceTime 35791395m", 1},
 
         /* Permit empty password tests. */
         {"Permit empty password no", "PermitEmptyPasswords no", 0},
@@ -454,6 +474,31 @@ static int test_ParseConfigLine(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: bare keyword matches, then fails.");
         ret = CheckScenario(PCL("StrictModes") == WS_BAD_ARGUMENT);
+    }
+
+    /* the time suffixes scale the value to seconds */
+    if (ret == WS_SUCCESS) {
+        static const struct {
+            const char* line;
+            long expect;
+        } times[] = {
+            { "LoginGraceTime 60s", 60 },
+            { "LoginGraceTime 2M", 120 },
+            { "LoginGraceTime 1h", 3600 },
+            { "LoginGraceTime 1d", 86400 },
+            { "LoginGraceTime 1w", 604800 },
+            { "LoginGraceTime 3550w", 2147040000L },
+            { "LoginGraceTime 35791394m", 2147483640L },
+            { "LoginGraceTime 2147483647", 2147483647L },
+        };
+
+        for (i = 0; ret == WS_SUCCESS &&
+                i < (int)(sizeof(times) / sizeof(*times)); i++) {
+            Log("    Testing scenario: %s is %ld seconds.", times[i].line,
+                    times[i].expect);
+            ret = CheckScenario(PCL(times[i].line) == WS_SUCCESS &&
+                    wolfSSHD_ConfigGetGraceTime(conf) == times[i].expect);
+        }
     }
 #undef PCL
 
