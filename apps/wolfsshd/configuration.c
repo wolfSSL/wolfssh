@@ -134,51 +134,74 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth);
 static int CountWhitespace(const char* in, int inSz, byte inv);
 static int SetFileString(char** dst, const char* src, void* heap);
 
-/* convert a string into seconds, handles if 'm' for minutes follows the string
- * number, i.e. 2m
+/* Largest value GetConfigInt returns, before and after a time multiplier. It
+ * fits in a long on every target. */
+#define CONFIG_INT_MAX 0x7FFFFFFFL
+
+/* Convert a decimal string into a number. With isTime, the string is the
+ * sshd_config(5) time format: one or more groups of a number and a unit
+ * (s, m, h, d or w, either case), summed as seconds, as in "1h30m". The last
+ * group may omit its unit and counts as seconds, so "1m1" is 61. The whole
+ * string must be consumed: no sign, whitespace or trailing text. Outside a
+ * time, a zero must be written as a single '0'.
  * Returns the value on success and negative value on failure */
 static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
-    long ret = 0;
-    int mult = 1; /* multiplier */
-    int sz   = inSz;
+    long total = 0;
+    int i = 0;
+
+    (void)heap;
 
     if (in == NULL || inSz <= 0) {
-        ret = WS_BAD_ARGUMENT;
+        return WS_BAD_ARGUMENT;
     }
 
-    /* check for multipliers */
-    if (ret == 0 && isTime) {
-        if (in[sz - 1] == 'm') {
-            sz--;
-            mult = 60;
-        }
-        else if (in[sz - 1] == 'h') {
-            sz--;
-            mult = 60*60;
-        }
-    }
+    do {
+        long val = 0;
+        long mult = 1; /* multiplier */
+        int start = i;
 
-    if (ret == 0) {
-        char* num = (char*)WMALLOC(sz + 1, heap, DYNTYPE_SSHD);
-        if (num == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else {
-            WMEMCPY(num, in, sz);
-            num[sz] = '\0';
-            ret = atol(num);
-            if (ret == 0 && WSTRCMP(num, "0") != 0) {
-                ret = WS_BAD_ARGUMENT;
+        for (; i < inSz && in[i] >= '0' && in[i] <= '9'; i++) {
+            if (val > (CONFIG_INT_MAX - (in[i] - '0')) / 10) {
+                return WS_BAD_ARGUMENT;
             }
-            else if (ret > 0) {
-                ret = ret * mult;
-            }
-            WFREE(num, heap, DYNTYPE_SSHD);
+            val = val * 10 + (in[i] - '0');
         }
+
+        if (i == start) {
+            return WS_BAD_ARGUMENT;
+        }
+        if (!isTime && val == 0 && i - start != 1) {
+            return WS_BAD_ARGUMENT;
+        }
+
+        if (isTime && i < inSz) {
+            switch (in[i]) {
+                case 's': case 'S': mult = 1;           break;
+                case 'm': case 'M': mult = 60;          break;
+                case 'h': case 'H': mult = 60*60;       break;
+                case 'd': case 'D': mult = 60*60*24;    break;
+                case 'w': case 'W': mult = 60*60*24*7;  break;
+                default: return WS_BAD_ARGUMENT;
+            }
+            i++;
+        }
+
+        if (val > CONFIG_INT_MAX / mult) {
+            return WS_BAD_ARGUMENT;
+        }
+        val *= mult;
+        if (total > CONFIG_INT_MAX - val) {
+            return WS_BAD_ARGUMENT;
+        }
+        total += val;
+    } while (isTime && i < inSz);
+
+    if (i != inSz) {
+        return WS_BAD_ARGUMENT;
     }
 
-    return ret;
+    return total;
 }
 
 /* returns WS_SUCCESS on success, removes trailng newlines */
