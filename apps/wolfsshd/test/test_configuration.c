@@ -418,6 +418,9 @@ static int test_ParseConfigLine(void)
         {"Include file DNE", "Include sshd_config.d/test-dne.conf", 1},
         {"Include wildcard exists", "Include sshd_config.d/*.conf", 0},
         {"Include wildcard NDE", "Include sshd_config.d/*.dne", 0},
+        /* a leading '*' with no directory part is still a wildcard, so a
+         * pattern that matches nothing is not opened as a literal file */
+        {"Include leading wildcard NDE", "Include *.wolfsshd-dne", 0},
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
@@ -1343,6 +1346,81 @@ static int WriteConfigFile(const char* path, const char* contents)
     return ret;
 }
 
+
+/* Applies 'line' to a fresh config preset to LoginGraceTime 5 and checks the
+ * resulting grace time against 'expect'. */
+static int CheckIncludeGraceTime(const char* line, long expect)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+    Log("    Testing scenario: %s.", line);
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        ret = WS_MEMORY_E;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = ParseConfigLine(&conf, "LoginGraceTime 5",
+                (int)WSTRLEN("LoginGraceTime 5"), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0);
+    }
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetGraceTime(conf) != expect) {
+        ret = WS_FATAL_ERROR;
+    }
+    Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* A '*' in an Include pattern may match an empty sequence, so 'foo*' and
+ * '*foo' both pick up a file named exactly 'foo'. The fixed prefix and
+ * postfix must not overlap, so 'ab*ba' does not pick up 'aba'. As in
+ * glob(3), a leading '.' in a file name is only matched by a literal '.', so
+ * '*.bak' skips '.bak' and '.x.bak'. */
+static int test_IncludeWildcardEmptyMatch(void)
+{
+    int ret;
+    const char* fooPath = "./sshd_config.d/foo";
+    const char* abaPath = "./sshd_config.d/aba";
+    const char* dotPath = "./sshd_config.d/.bak";
+    const char* dotXPath = "./sshd_config.d/.x.bak";
+
+    ret = WriteConfigFile(fooPath, "LoginGraceTime 7\n");
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(abaPath, "LoginGraceTime 9\n");
+    }
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(dotPath, "LoginGraceTime 8\n");
+    }
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(dotXPath, "LoginGraceTime 6\n");
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/foo*", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/*foo", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/f*o", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/ab*ba", 5);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/a*a", 9);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/*.bak", 5);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/.b*", 8);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/.*.bak", 6);
+
+    (void)WREMOVE(NULL, fooPath);
+    (void)WREMOVE(NULL, abaPath);
+    (void)WREMOVE(NULL, dotPath);
+    (void)WREMOVE(NULL, dotXPath);
+    return ret;
+}
 
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
@@ -7826,6 +7904,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigLineTooLong),
+    TEST_DECL(test_IncludeWildcardEmptyMatch),
     TEST_DECL(test_GetUserConfMatchNoInherit),
     TEST_DECL(test_GetUserConfMatchOverlapCompose),
     TEST_DECL(test_ConfigIncludeMatchChain),

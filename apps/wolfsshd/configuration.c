@@ -887,9 +887,9 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
             }
         }
 
-        /* Find wildcards */
+        /* Find wildcards, value[0] included */
         ptr2 = ptr;
-        while (ptr2 != value) {
+        for (;;) {
             if (*ptr2 == '*') {
                 /* Wildcard found */
                 found = 1;
@@ -901,6 +901,9 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
             if (*ptr2 == '/') {
                 /* Found slash before wildcard directory-wildcards
                  * not supported */
+                break;
+            }
+            if (ptr2 == value) {
                 break;
             }
             ptr2--;
@@ -1040,29 +1043,31 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                         fileFilled = i;
 
                         for (i = 0; ret == WS_SUCCESS && i < fileFilled; i++) {
-                            /* Check if filename prefix matches */
-                            if (prefixLen > 0) {
-                                if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
-                                    continue;
-                                }
-                                if (WSTRNCMP(fileNames[i], prefix, prefixLen)
-                                        != 0) {
-                                    continue;
-                                }
+                            int nameLen = (int)WSTRLEN(fileNames[i]);
+                            int postfixLen = (postfix != NULL) ?
+                                    (int)WSTRLEN(postfix) : 0;
+
+                            /* The '*' may match nothing, but the prefix and
+                             * postfix must not overlap. */
+                            if (nameLen < prefixLen + postfixLen) {
+                                continue;
                             }
-                            if (postfix) {
-                                /* Skip if file is too short */
-                                if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
-                                    continue;
-                                }
-                                if (WSTRNCMP(fileNames[i] +
-                                            WSTRLEN(fileNames[i]) -
-                                            WSTRLEN(postfix),
-                                            postfix, WSTRLEN(postfix))
+                            /* as in glob(3), a leading '.' is only
+                             * matched by a literal '.', never by the '*' */
+                            if (fileNames[i][0] == '.' &&
+                                    (prefixLen == 0 || prefix[0] != '.')) {
+                                continue;
+                            }
+                            if (prefixLen > 0 &&
+                                    WSTRNCMP(fileNames[i], prefix, prefixLen)
                                         != 0) {
-                                    /* Not a match */
-                                    continue;
-                                }
+                                continue;
+                            }
+                            if (postfixLen > 0 &&
+                                    WSTRNCMP(fileNames[i] + nameLen -
+                                        postfixLen, postfix, postfixLen)
+                                        != 0) {
+                                continue;
                             }
                             ret = WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
                                         fileNames[i]);
