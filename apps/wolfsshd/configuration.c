@@ -1834,21 +1834,29 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
     currentConfig = conf;
     while ((current = XFGETS(buf, WOLFSSHD_MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
+        int tooLong = 0;
 
-        /* A full buffer with no newline is a cut line, and its leftover is
-         * read as a line of its own, so going on applies a truncated
-         * directive. One more byte tells a cut line from one that ends at
-         * the buffer: a newline, or the end of the file. */
+        /* A full buffer without a newline means the line goes on. Drain the
+         * rest so it is not parsed as a line of its own. */
         if (currentSz == WOLFSSHD_MAX_LINE_SIZE - 1 &&
-                buf[currentSz - 1] != '\n') {
-            char next;
+                current[currentSz - 1] != '\n') {
+            char rest[64];
 
-            if (WFREAD(NULL, &next, 1, 1, f) == 1 && next != '\n') {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Config line longer than %d in %s",
-                    WOLFSSHD_MAX_LINE_SIZE - 1, filename);
-                ret = WS_FATAL_ERROR;
-                break;
+            while (XFGETS(rest, (int)sizeof(rest), f) != NULL) {
+                word32 restSz = (word32)XSTRLEN(rest);
+                word32 k;
+
+                /* only text past the buffer makes the line too long,
+                 * trailing whitespace and the line ending do not */
+                for (k = 0; k < restSz; k++) {
+                    if (rest[k] != ' ' && rest[k] != '\t' &&
+                            rest[k] != '\r' && rest[k] != '\n') {
+                        tooLong = 1;
+                    }
+                }
+                if (restSz > 0 && rest[restSz - 1] == '\n') {
+                    break;
+                }
             }
         }
 
@@ -1859,12 +1867,21 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
             current   = current + 1;
         }
 
-        if (currentSz <= 2) { /* \n or \r\n */
-            continue; /* empty line */
-        }
-
         if (current[0] == '#') {
             continue; /* commented out line */
+        }
+
+        /* check before the empty line test, leading whitespace may have
+         * pushed the text of the line past the buffer */
+        if (tooLong) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Config line longer than %d "
+                    "bytes in %s", WOLFSSHD_MAX_LINE_SIZE - 1, filename);
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+
+        if (currentSz <= 2) { /* \n or \r\n */
+            continue; /* empty line */
         }
 
         ret = ParseConfigLine(&currentConfig, current, currentSz, depth);

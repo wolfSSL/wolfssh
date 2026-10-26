@@ -1482,6 +1482,210 @@ static int test_IncludeWildcardEmptyMatch(void)
     return ret;
 }
 
+/* ConfigLoad reads a line in one buffer of WOLFSSHD_MAX_LINE_SIZE (1024)
+ * bytes. A longer comment is skipped whole, so its tail is never parsed as a
+ * directive of its own. A longer directive is an error rather than being cut
+ * short, also when leading whitespace pushes it past the buffer. Whitespace
+ * past the buffer does not make a line too long. A line that just fits still
+ * loads. */
+#define TEST_LINE_MAX 1023
+
+/* Writes 'contents' to 'path' and loads it into a new config returned in
+ * *conf, which the caller frees. Returns the result of the load. */
+static int LoadConfigText(const char* path, const char* contents,
+        WOLFSSHD_CONFIG** conf)
+{
+    int ret;
+
+    *conf = NULL;
+    ret = WriteConfigFile(path, contents);
+    if (ret == WS_SUCCESS) {
+        *conf = wolfSSHD_ConfigNew(NULL);
+        if (*conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSHD_ConfigLoad(*conf, path);
+    }
+
+    return ret;
+}
+
+static int test_ConfigLoadLongLine(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    const char* path = "./long_line.conf";
+    const char* fill = "/bin/true";
+    char* contents;
+    word32 i, fillSz, prefixSz;
+    const char* cmd;
+
+    contents = (char*)WMALLOC(TEST_LINE_MAX * 2 + 64, NULL, DYNTYPE_STRING);
+    if (contents == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    /* a comment that fills the buffer exactly, followed on the same line by
+     * text that looks like a directive */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: long comment tail is not parsed.");
+        WSTRNCPY(contents, "Port 2222\n", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        contents[prefixSz] = '#';
+        WMEMSET(contents + prefixSz + 1, 'x', TEST_LINE_MAX - 1);
+        WMEMCPY(contents + prefixSz + TEST_LINE_MAX, "Port 2223\n",
+                sizeof("Port 2223\n"));
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = wolfSSHD_ConfigLoad(conf, path);
+        }
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPort(conf) != 2222) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a directive one byte too long for the buffer */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: over-long directive is rejected.");
+        WSTRNCPY(contents, "ForceCommand ", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        fillSz = (word32)WSTRLEN(fill);
+        for (i = prefixSz; i < TEST_LINE_MAX + 1; i++) {
+            contents[i] = ((i - prefixSz) % (fillSz + 1) == fillSz) ?
+                    ' ' : fill[(i - prefixSz) % (fillSz + 1)];
+        }
+        contents[TEST_LINE_MAX + 1] = '\n';
+        contents[TEST_LINE_MAX + 2] = '\0';
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = (wolfSSHD_ConfigLoad(conf, path) == WS_SUCCESS) ?
+                    WS_FATAL_ERROR : WS_SUCCESS;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* the same directive at exactly the buffer limit loads whole */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: directive at the limit loads.");
+        contents[TEST_LINE_MAX] = '\n';
+        contents[TEST_LINE_MAX + 1] = '\0';
+        if (contents[TEST_LINE_MAX - 1] == ' ') {
+            contents[TEST_LINE_MAX - 1] = 'x';
+        }
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = wolfSSHD_ConfigLoad(conf, path);
+        }
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(conf);
+            if (cmd == NULL ||
+                    WSTRLEN(cmd) != (size_t)(TEST_LINE_MAX - prefixSz) ||
+                    WSTRNCMP(cmd, contents + prefixSz,
+                        TEST_LINE_MAX - prefixSz) != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* the same directive ending in CRLF, at the limit and one byte short of
+     * it, loads whole. At the limit the buffer leftover is "\r\n"; one short,
+     * the buffer ends in '\r' and the leftover is "\n". */
+    for (i = 0; ret == WS_SUCCESS && i < 2; i++) {
+        word32 lineSz = TEST_LINE_MAX - i;
+
+        Log("    Testing scenario: CRLF directive %u bytes loads.", lineSz);
+        contents[lineSz - 1] = 'x';
+        contents[lineSz] = '\r';
+        contents[lineSz + 1] = '\n';
+        contents[lineSz + 2] = '\0';
+
+        ret = LoadConfigText(path, contents, &conf);
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(conf);
+            if (cmd == NULL ||
+                    WSTRLEN(cmd) != (size_t)(lineSz - prefixSz) ||
+                    WSTRNCMP(cmd, contents + prefixSz,
+                        lineSz - prefixSz) != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a directive pushed past the buffer by leading whitespace is rejected,
+     * even when what is left in the buffer looks like an empty line */
+    for (i = 0; ret == WS_SUCCESS && i < 4; i++) {
+        static const word32 pads[] = { 1021, 1022, 1023, 1100 };
+
+        Log("    Testing scenario: %u spaces then a directive is rejected.",
+                pads[i]);
+        WMEMSET(contents, ' ', pads[i]);
+        WMEMCPY(contents + pads[i], "PasswordAuthentication no\n",
+                sizeof("PasswordAuthentication no\n"));
+
+        ret = (LoadConfigText(path, contents, &conf) == WS_SUCCESS) ?
+                WS_FATAL_ERROR : WS_SUCCESS;
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a line of nothing but whitespace is still an empty line, however long */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: long blank line is skipped.");
+        WSTRNCPY(contents, "Port 2222\n", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        WMEMSET(contents + prefixSz, ' ', TEST_LINE_MAX + 100);
+        WMEMCPY(contents + prefixSz + TEST_LINE_MAX + 100, "\n",
+                sizeof("\n"));
+
+        ret = LoadConfigText(path, contents, &conf);
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPort(conf) != 2222) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    (void)WREMOVE(NULL, path);
+    WFREE(contents, NULL, DYNTYPE_STRING);
+    return ret;
+}
+
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
  * config object must remain usable so a subsequent load of a normal
@@ -7966,6 +8170,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigLineTooLong),
     TEST_DECL(test_IncludeWildcardEmptyMatch),
+    TEST_DECL(test_ConfigLoadLongLine),
     TEST_DECL(test_GetUserConfMatchNoInherit),
     TEST_DECL(test_GetUserConfMatchOverlapCompose),
     TEST_DECL(test_ConfigIncludeMatchChain),
