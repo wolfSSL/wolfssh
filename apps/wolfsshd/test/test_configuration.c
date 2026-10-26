@@ -862,6 +862,20 @@ static int test_MatchUnsupportedSelector(void)
          * unsupported part must not be silently dropped */
         {"Mixed User+Address", "Match User alice Address 10.0.0.0/8", 1},
         {"Mixed Group+Host", "Match Group dev Host example.com", 1},
+
+        /* comma separated lists of exact names are supported */
+        {"Match User list", "Match User alice,bob", 0},
+        {"Match Group list", "Match Group dev,ops", 0},
+
+        /* pattern syntax and empty list entries would be kept as literals
+         * that never match, so they are rejected */
+        {"Match User wildcard", "Match User a*", 1},
+        {"Match User single char wildcard", "Match User a?c", 1},
+        {"Match User negation", "Match User !root", 1},
+        {"Match Group negated entry", "Match Group dev,!ops", 1},
+        {"Match User empty entry", "Match User a,,b", 1},
+        {"Match User leading comma", "Match User ,a", 1},
+        {"Match Group trailing comma", "Match Group dev,", 1},
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
@@ -1019,6 +1033,52 @@ static int test_GetUserConfMatchGroupAnd(void)
         grps[0] = "staff";
         ret = CheckForcedCmd(head, "anyuser", grps, 1, "/bin/staff");
     }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* 'Match User a,b' and 'Match Group a,b' apply when any one entry equals the
+ * user or one of the user's groups. The list itself, or a prefix of an entry,
+ * is not a match. */
+static int test_GetUserConfMatchCommaList(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    const char* grps[2];
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice,bob");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/users");
+    if (ret == WS_SUCCESS) ret = PCL("Match Group admins,staff");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/groups");
+#undef PCL
+
+    grps[0] = "users";
+    grps[1] = "staff";
+
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "alice", grps, 1, "/bin/users");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "bob", grps, 1, "/bin/users");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "carol", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "alice,bob", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "ali", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "bo", grps, 1, "internal-sftp");
+    /* the second group entry, reached through a supplementary group */
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "carol", grps, 2, "/bin/groups");
 
     wolfSSHD_ConfigFree(head);
     return ret;
@@ -7898,6 +7958,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchRepeatedKeyword),
     TEST_DECL(test_GetUserConfMatchGroupAnd),
     TEST_DECL(test_GetUserConfMatchSecondaryGroup),
+    TEST_DECL(test_GetUserConfMatchCommaList),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_PermitRootLoginModes),
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),

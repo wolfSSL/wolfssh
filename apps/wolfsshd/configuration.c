@@ -1145,6 +1145,57 @@ static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
 }
 
 
+/* Match names are a comma separated list of exact names. OpenSSH pattern
+ * syntax ('*', '?', '!') and empty list entries are rejected rather than kept
+ * as literals that could never match. Returns WS_SUCCESS when 'list' is
+ * usable. */
+static int CheckMatchList(const char* list, int listSz)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    int entrySz = 0;
+
+    for (i = 0; ret == WS_SUCCESS && i < listSz; i++) {
+        if (list[i] == '*' || list[i] == '?' || list[i] == '!') {
+            ret = WS_FATAL_ERROR;
+        }
+        else if (list[i] == ',') {
+            if (entrySz == 0) {
+                ret = WS_FATAL_ERROR;
+            }
+            entrySz = 0;
+        }
+        else {
+            entrySz++;
+        }
+    }
+    if (ret == WS_SUCCESS && entrySz == 0) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+/* returns 1 when 'name' equals one entry of the comma separated 'list' */
+static int MatchList(const char* list, const char* name)
+{
+    word32 nameSz = (word32)WSTRLEN(name);
+    const char* entry = list;
+    const char* end;
+
+    for (;;) {
+        end = WSTRCHR(entry, ',');
+        if (end == NULL) {
+            return WSTRCMP(entry, name) == 0;
+        }
+        if ((word32)(end - entry) == nameSz &&
+                WSTRNCMP(entry, name, nameSz) == 0) {
+            return 1;
+        }
+        entry = end + 1;
+    }
+}
+
 /* Parse the value of a Match directive into the user and group applies-to
  * fields of 'config'. The value is a whitespace separated sequence of
  * keyword/name pairs, e.g. "User alice Group admins". The token immediately
@@ -1211,6 +1262,13 @@ static int ParseMatchCriteria(WOLFSSHD_CONFIG* config, const char* value)
             if (tokSz == 0) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Match %s directive is missing a name",
+                    (out == &config->usrAppliesTo) ? "User" : "Group");
+                ret = WS_FATAL_ERROR;
+            }
+            else if (CheckMatchList(tok, tokSz) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Match %s supports only a comma separated list of "
+                    "exact names",
                     (out == &config->usrAppliesTo) ? "User" : "Group");
                 ret = WS_FATAL_ERROR;
             }
@@ -1320,8 +1378,6 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     if (ret == WS_SUCCESS) {
         ret = ParseMatchCriteria(newConf, value);
     }
-
-    /* @TODO handle , separated user/group list */
 
     /* on failure free the config that will not be added to the list */
     if (ret != WS_SUCCESS && newConf != NULL) {
@@ -1925,22 +1981,22 @@ static int MatchApplies(const WOLFSSHD_CONFIG* node, const char* usr,
         matches = 1;
 
         if (node->usrAppliesTo != NULL) {
-            if (usr == NULL || XSTRCMP(node->usrAppliesTo, usr) != 0) {
+            if (usr == NULL || !MatchList(node->usrAppliesTo, usr)) {
                 matches = 0;
             }
         }
 
-        /* The group selector matches when it equals any group the user belongs
-         * to, primary or supplementary, mirroring how OpenSSH evaluates
-         * 'Match Group'. An empty group list matches no group selector, so
-         * combined blocks fail closed. */
+        /* The group selector matches when a list entry equals any group the
+         * user belongs to, primary or supplementary, mirroring how OpenSSH
+         * evaluates 'Match Group'. An empty group list matches no group
+         * selector, so combined blocks fail closed. */
         if (matches && node->groupAppliesTo != NULL) {
             matches = 0;
             if (grps != NULL) {
                 for (i = 0; i < grpCount; i++) {
                     if (grps[i] == NULL)
                         continue;
-                    if (XSTRCMP(node->groupAppliesTo, grps[i]) == 0) {
+                    if (MatchList(node->groupAppliesTo, grps[i])) {
                         matches = 1;
                         break;
                     }
