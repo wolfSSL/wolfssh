@@ -774,6 +774,49 @@ static int test_GetUserConfMatchOverride(void)
     return ret;
 }
 
+/* "ChrootDirectory none" means no chroot. In a Match block it clears the
+ * global path for that user rather than becoming the path "none". */
+static int test_GetUserConfChrootNone(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_CONFIG* match = NULL;
+    WOLFSSHD_CONFIG* other = NULL;
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory /var/chroot");
+    if (ret == WS_SUCCESS) ret = PCL("Match User testuser");
+    if (ret == WS_SUCCESS) ret = PCL("ChrootDirectory None");
+#undef PCL
+
+    if (ret == WS_SUCCESS) {
+        match = wolfSSHD_GetUserConf(head, "testuser", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (match == NULL || wolfSSHD_ConfigGetChroot(match) != NULL)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* other users keep the global chroot */
+    if (ret == WS_SUCCESS) {
+        other = wolfSSHD_GetUserConf(head, "otheruser", NULL, 0, NULL, NULL,
+                                     NULL, NULL, NULL);
+        if (other == NULL || wolfSSHD_ConfigGetChroot(other) == NULL ||
+                XSTRCMP(wolfSSHD_ConfigGetChroot(other), "/var/chroot") != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(other);
+    wolfSSHD_ConfigFree(match);
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
 /* Only the User and Group Match selectors are implemented. A Match block keyed
  * on any other selector (Address, Host, LocalAddress, LocalPort, RDomain) would
  * otherwise be accepted but never apply, a fail-open misconfiguration. Verify
@@ -7948,6 +7991,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthKeysPatternIsPerUser),
     TEST_DECL(test_ConfigCopy),
     TEST_DECL(test_GetUserConfMatchOverride),
+    TEST_DECL(test_GetUserConfChrootNone),
     TEST_DECL(test_MatchUnsupportedSelector),
     TEST_DECL(test_GetUserConfMatchSubstring),
     TEST_DECL(test_GetUserConfMatchSubstringGroup),

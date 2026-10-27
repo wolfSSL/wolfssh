@@ -1122,8 +1122,12 @@ static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
             FreeString(&conf->chrootDir, conf->heap);
             conf->chrootDir = NULL;
         }
-        ret = CreateString(&conf->chrootDir, value,
+        /* "none" means no chroot, as in OpenSSH. The keyword is still
+         * recorded as set, so a Match block clears an inherited path. */
+        if (!wolfSSHD_ConfigIsNoneKeyword(value)) {
+            ret = CreateString(&conf->chrootDir, value,
                                         (int)WSTRLEN(value), conf->heap);
+        }
     }
 
     return ret;
