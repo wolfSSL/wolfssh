@@ -3750,8 +3750,8 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
     if (auth != NULL) {
         if (usr != NULL) {
 #ifdef _WIN32
-            /* LogonUserEx(): group lookup is not implemented on Windows, so
-             * Match Group directives do not apply here */
+            /* group lookup is not implemented on Windows; config load
+             * refuses Match Group, so no block here depends on groups */
 #else
             struct passwd* p_passwd;
 

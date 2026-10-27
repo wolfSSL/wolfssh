@@ -820,7 +820,14 @@ static int test_GetUserConfChrootNone(void)
 /* Only the User and Group Match selectors are implemented. A Match block keyed
  * on any other selector (Address, Host, LocalAddress, LocalPort, RDomain) would
  * otherwise be accepted but never apply, a fail-open misconfiguration. Verify
- * that User/Group are accepted while the unsupported selectors are rejected. */
+ * that User/Group are accepted while the unsupported selectors are rejected.
+ * Under WOLFSSHD_NO_MATCH_GROUP (always on Windows) a block that names Group
+ * could never apply either, so it must be rejected too. */
+#ifdef WOLFSSHD_NO_MATCH_GROUP
+    #define MATCH_GROUP_FAILS 1
+#else
+    #define MATCH_GROUP_FAILS 0
+#endif
 static int test_MatchUnsupportedSelector(void)
 {
     int ret = WS_SUCCESS;
@@ -831,11 +838,11 @@ static int test_MatchUnsupportedSelector(void)
     static CONFIG_LINE_VECTOR vectors[] = {
         /* supported selectors */
         {"Match User", "Match User testuser", 0},
-        {"Match Group", "Match Group testgroup", 0},
+        {"Match Group", "Match Group testgroup", MATCH_GROUP_FAILS},
 
         /* combined supported selectors must be accepted, in either order */
-        {"Match User+Group", "Match User alice Group dev", 0},
-        {"Match Group+User", "Match Group dev User alice", 0},
+        {"Match User+Group", "Match User alice Group dev", MATCH_GROUP_FAILS},
+        {"Match Group+User", "Match Group dev User alice", MATCH_GROUP_FAILS},
 
         /* unsupported selectors must be rejected, not silently ignored */
         {"Match Address", "Match Address 10.0.0.0/8", 1},
@@ -890,6 +897,7 @@ static int test_MatchUnsupportedSelector(void)
     return ret;
 }
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* Resolves 'usr' against 'head' and compares the resolved ForceCommand with
  * 'expect', where NULL expects no forced command. wolfSSHD_GetUserConf composes
  * a config the caller owns, so this frees it. Returns WS_SUCCESS on a match. */
@@ -918,6 +926,7 @@ static int CheckForcedCmd(WOLFSSHD_CONFIG* head, const char* usr,
     wolfSSHD_ConfigFree(match);
     return ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
 /* Same as CheckForcedCmd for the resolved PasswordAuthentication setting. */
 static int CheckPwAuth(WOLFSSHD_CONFIG* head, const char* usr,
@@ -940,6 +949,7 @@ static int CheckPwAuth(WOLFSSHD_CONFIG* head, const char* usr,
     return ret;
 }
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* A combined 'Match User X Group Y' directive is a conjunction: it applies only
  * to a user who satisfies BOTH selectors, matching OpenSSH semantics. This
  * locks in that wolfSSHD_GetUserConf does not apply such a block to a user
@@ -1018,7 +1028,9 @@ static int test_GetUserConfMatchGroupAnd(void)
     wolfSSHD_ConfigFree(head);
     return ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* A 'Match Group' directive must match on any of the user's groups, primary or
  * supplementary, the way OpenSSH evaluates it. The matcher receives the full
  * group set as a list, so a group named only in a secondary slot still selects
@@ -1087,6 +1099,7 @@ static int test_GetUserConfMatchSecondaryGroup(void)
     wolfSSHD_ConfigFree(head);
     return ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
 /* A Match directive whose user name contains the substring "Group" (e.g.
  * "GroupAdmin") must not yield a spurious group applies-to value. The parser is
@@ -1135,6 +1148,7 @@ static int test_GetUserConfMatchSubstring(void)
     return ret;
 }
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* Symmetric counterpart to test_GetUserConfMatchSubstring: a Match directive
  * whose group name contains the substring "User" (e.g. "UserStaff") must not
  * yield a spurious user applies-to value. "Match Group UserStaff" sets only the
@@ -1180,6 +1194,7 @@ static int test_GetUserConfMatchSubstringGroup(void)
     wolfSSHD_ConfigFree(head);
     return ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
 /* A principal named exactly like the opposite keyword must be handled by token
  * position, not by the embedded keyword. "Match User Group" names a user whose
@@ -1522,6 +1537,7 @@ static int test_ConfigLineTooLong(void)
     return ret;
 }
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* Each Match block is built from the global config, not from the Match block
  * before it. A user selected by a later block must not pick up settings that
  * an earlier, non-matching block changed. */
@@ -1629,8 +1645,10 @@ static int test_GetUserConfMatchNoInherit(void)
     wolfSSHD_ConfigFree(head);
     return ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
 /* Builds "global, Match User alice, Match Group nopw" or the reverse order,
  * depending on 'userFirst'. Only the group block sets PasswordAuthentication;
  * only the user block sets AuthorizedKeysFile. Returns the head on success. */
@@ -1916,6 +1934,7 @@ static int test_GetUserConfMatchOverlapCompose(void)
 
     return (fail != WS_SUCCESS) ? fail : ret;
 }
+#endif /* !WOLFSSHD_NO_MATCH_GROUP */
 
 
 /* A Match block inside an Include'd file must survive a later Match block in
@@ -2245,8 +2264,10 @@ static int test_ConfigFree(void)
     /* Match User - allocates usrAppliesTo on the copied node */
     if (ret == WS_SUCCESS) ret = PCL("Match User alice");
 
+#ifndef WOLFSSHD_NO_MATCH_GROUP
     /* Match Group - allocates groupAppliesTo on the next copied node */
     if (ret == WS_SUCCESS) ret = PCL("Match Group staff");
+#endif
 #undef PCL
 
     /* Free must not crash and must release every allocation */
@@ -6264,10 +6285,12 @@ static int test_DefaultUserAuthTypesUnknownUser(void)
         {"Match User on another name does not apply", ADV_NO_ACCOUNT,
             {"Match User someone_else", "PasswordAuthentication no", NULL},
             WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+#ifndef WOLFSSHD_NO_MATCH_GROUP
         {"Match Group does not apply to a name with no account",
             ADV_NO_ACCOUNT,
             {"Match Group somegroup", "PasswordAuthentication no", NULL},
             WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_PUBLICKEY},
+#endif
 #ifndef _WIN32
         {"account lookup error advertises nothing", ADV_LOOKUP_ERROR,
             {NULL}, 0},
@@ -7994,20 +8017,26 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfChrootNone),
     TEST_DECL(test_MatchUnsupportedSelector),
     TEST_DECL(test_GetUserConfMatchSubstring),
+#ifndef WOLFSSHD_NO_MATCH_GROUP
     TEST_DECL(test_GetUserConfMatchSubstringGroup),
+#endif
     TEST_DECL(test_GetUserConfMatchLiteralKeywordName),
     TEST_DECL(test_GetUserConfMatchBareKeyword),
     TEST_DECL(test_GetUserConfMatchRepeatedKeyword),
+#ifndef WOLFSSHD_NO_MATCH_GROUP
     TEST_DECL(test_GetUserConfMatchGroupAnd),
     TEST_DECL(test_GetUserConfMatchSecondaryGroup),
+#endif
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_PermitRootLoginModes),
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigLineTooLong),
+#ifndef WOLFSSHD_NO_MATCH_GROUP
     TEST_DECL(test_GetUserConfMatchNoInherit),
     TEST_DECL(test_GetUserConfMatchOverlapCompose),
+#endif
     TEST_DECL(test_ConfigIncludeMatchChain),
     TEST_DECL(test_GetUserAuthTypes),
     TEST_DECL(test_DefaultUserAuthTypesNullArgs),
