@@ -1310,7 +1310,8 @@ static int ParseMatchCriteria(WOLFSSHD_CONFIG* config, const char* value)
  * is not User or Group (Address, Host, LocalAddress, LocalPort, RDomain, ...),
  * and a Match with no selector at all (bare "Match", "Match all"), is rejected.
  * This also catches mixed forms such as "User alice Address 10.0.0.0/8" where
- * the unsupported selector would otherwise be silently dropped. */
+ * the unsupported selector would otherwise be silently dropped. Group is
+ * rejected too under WOLFSSHD_NO_MATCH_GROUP. */
 static int CheckMatchSelectors(const char* value)
 {
     int ret = WS_SUCCESS;
@@ -1336,7 +1337,11 @@ static int CheckMatchSelectors(const char* value)
         }
         else if (len == (int)(sizeof("Group") - 1) &&
                 WSTRNCMP(value + i, "Group", sizeof("Group") - 1) == 0) {
+        #ifdef WOLFSSHD_NO_MATCH_GROUP
+            ret = WS_FATAL_ERROR;
+        #else
             found = 1;
+        #endif
         }
         else {
             ret = WS_FATAL_ERROR;
@@ -1378,9 +1383,15 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     if (ret == WS_SUCCESS) {
         ret = CheckMatchSelectors(value);
         if (ret != WS_SUCCESS) {
+        #ifdef WOLFSSHD_NO_MATCH_GROUP
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unsupported Match selector, only User is handled on "
+                "this platform");
+        #else
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Unsupported Match selector, only User and Group are "
                 "handled");
+        #endif
         }
     }
 
