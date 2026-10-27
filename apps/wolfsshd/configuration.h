@@ -43,6 +43,13 @@ typedef struct WOLFSSHD_CONFIG WOLFSSHD_CONFIG;
 /* Longest config line. ConfigLoad() refuses a longer one. */
 #define WOLFSSHD_MAX_LINE_SIZE 1024
 
+/* Windows wolfsshd does not look up a user's groups, so a Match Group block
+ * could never apply there. Such a config is refused rather than run without
+ * the block's restrictions. Defined here so the unit tests see it too. */
+#if defined(_WIN32) && !defined(WOLFSSHD_NO_MATCH_GROUP)
+    #define WOLFSSHD_NO_MATCH_GROUP
+#endif
+
 #include "auth.h"
 
 /* 0 so that privilege separation is default on after struct memset'd on init */
