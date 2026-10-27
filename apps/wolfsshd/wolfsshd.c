@@ -1434,16 +1434,20 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * AuthorizedKeysFile so a subject CN match alone is never sufficient to
      * log in; the exact certificate match in that file is the real binding.
      * The curated wolfSSH_TrustedUserCAStore path is not held to this because
-     * its store is admin-created and the public store names are refused. */
+     * its store is admin-created and the public store names are refused. A
+     * node with AuthorizedKeysFile none passes: RequestAuthentication sends
+     * its certificates to the key check, which refuses them, so no
+     * certificate logs in there at all. */
     if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
         const WOLFSSHD_CONFIG* cur;
         word32 node = 0;
 
         cur = conf;
         while (cur != NULL) {
-            if (!wolfSSHD_ConfigGetAuthKeysFileSet(cur) ||
-                    !wolfSSHD_AuthKeysPatternIsPerUser(
-                        wolfSSHD_ConfigGetAuthKeysFile(cur))) {
+            if (!wolfSSHD_ConfigGetAuthKeysFileNone(cur) &&
+                    (!wolfSSHD_ConfigGetAuthKeysFileSet(cur) ||
+                     !wolfSSHD_AuthKeysPatternIsPerUser(
+                         wolfSSHD_ConfigGetAuthKeysFile(cur)))) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] wolfSSH_TrustedSystemCAKeys with CN-only cert "
                     "binding requires a per-user AuthorizedKeysFile");
@@ -1483,7 +1487,8 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
      * which trusted CA issued it: any CA in the OS store willing to emit a
      * UPN in an allowed realm still satisfies it. The per-user
      * AuthorizedKeysFile arm is the only one that adds an exact-certificate
-     * second factor. */
+     * second factor. A node with AuthorizedKeysFile none passes, as in the
+     * gate above: no certificate logs in there. */
     if (ret == WS_SUCCESS && wolfSSHD_ConfigGetSystemCA(conf)) {
         const WOLFSSHD_CONFIG* cur;
         const char* domains;
@@ -1492,6 +1497,7 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         while (cur != NULL) {
             domains = wolfSSHD_ConfigGetAuthorizedUPNDomains(cur);
             if ((domains == NULL || *domains == '\0') &&
+                    !wolfSSHD_ConfigGetAuthKeysFileNone(cur) &&
                     (!wolfSSHD_ConfigGetAuthKeysFileSet(cur) ||
                      !wolfSSHD_AuthKeysPatternIsPerUser(
                          wolfSSHD_ConfigGetAuthKeysFile(cur)))) {

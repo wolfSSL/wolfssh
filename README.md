@@ -609,7 +609,9 @@ rejected inside a `Match` block):
   `AuthorizedUPNDomains` or a per-user `AuthorizedKeysFile`; note
   `AuthorizedUPNDomains` constrains only the certificate's UPN realm, not
   which trusted CA issued it, so use it only when the OS trust store holds
-  solely your organization's CA.
+  solely your organization's CA. A config node with `AuthorizedKeysFile none`
+  also satisfies either check, since X.509 certificate login is refused
+  outright for the accounts it covers.
 
 Note that the pre-existing `HostKey` and `HostCertificate` directives are now
 also rejected when they appear after a `Match` block (matching OpenSSH); they

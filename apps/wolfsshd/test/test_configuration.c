@@ -2038,7 +2038,139 @@ static int test_ConfigSetAuthKeysFile(void)
             ret = WS_FATAL_ERROR;
     }
 
+    /* "none" in any case disables the file rather than naming ~/none */
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(conf, "NoNe");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileNone(conf) != 1 ||
+                wolfSSHD_ConfigGetAuthKeysFile(conf) == NULL ||
+                XSTRCMP(wolfSSHD_ConfigGetAuthKeysFile(conf), "none") != 0 ||
+                wolfSSHD_ConfigGetAuthKeysFileSet(conf) != 0)
+            ret = WS_FATAL_ERROR;
+    }
+
+    /* a later file replaces the disabled state */
+    if (ret == WS_SUCCESS)
+        ret = wolfSSHD_ConfigSetAuthKeysFile(conf, "nonexistent");
+    if (ret == WS_SUCCESS) {
+        if (wolfSSHD_ConfigGetAuthKeysFileNone(conf) != 0 ||
+                wolfSSHD_ConfigGetAuthKeysFileSet(conf) == 0)
+            ret = WS_FATAL_ERROR;
+    }
+
     wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* Checks the AuthorizedKeysFile none state for the user a Match block
+ * resolves to. RequestAuthentication reads authKeysFileNone on that config to
+ * keep an X.509 certificate off the CA-only path, so the flag must survive
+ * wolfSSHD_ConfigCopy (none set globally, inherited by a Match node) and
+ * ConfigComposeFrom (none set or cleared inside a Match block). Returns 0 when
+ * user resolves to the expected none/set flags and file string. */
+static int CheckAuthKeysNone(WOLFSSHD_CONFIG* head, const char* user,
+                             int none, int set, const char* file)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* usrConf;
+
+    usrConf = wolfSSHD_GetUserConf(head, user, NULL, 0, NULL, NULL,
+                                   NULL, NULL, NULL);
+    if (usrConf == NULL) {
+        ret = WS_FATAL_ERROR;
+    }
+    else if (wolfSSHD_ConfigGetAuthKeysFileNone(usrConf) != none ||
+            wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) != set ||
+            wolfSSHD_ConfigGetAuthKeysFile(usrConf) == NULL ||
+            XSTRCMP(wolfSSHD_ConfigGetAuthKeysFile(usrConf), file) != 0) {
+        Log("    %s: none=%d set=%d file=%s, expected %d %d %s\n", user,
+            wolfSSHD_ConfigGetAuthKeysFileNone(usrConf),
+            wolfSSHD_ConfigGetAuthKeysFileSet(usrConf),
+            wolfSSHD_ConfigGetAuthKeysFile(usrConf) == NULL ? "(null)" :
+                wolfSSHD_ConfigGetAuthKeysFile(usrConf), none, set, file);
+        ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_ConfigFree(usrConf);
+    return ret;
+}
+
+static int test_GetUserConfAuthKeysNone(void)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    WOLFSSHD_CONFIG* head = NULL;
+    WOLFSSHD_CONFIG* conf;
+    static const char* globalNone[] = {
+        "AuthorizedKeysFile NONE",
+        "Match User testuser",
+        "PasswordAuthentication no",
+        NULL
+    };
+    static const char* matchNone[] = {
+        "AuthorizedKeysFile /etc/keys",
+        "Match User testuser",
+        "AuthorizedKeysFile none",
+        NULL
+    };
+    static const char* matchFile[] = {
+        "AuthorizedKeysFile none",
+        "Match User testuser",
+        "AuthorizedKeysFile .ssh/match_keys",
+        NULL
+    };
+
+    /* none set globally: the Match node inherits it through the copy */
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+    for (i = 0; ret == WS_SUCCESS && globalNone[i] != NULL; i++) {
+        ret = ParseConfigLine(&conf, globalNone[i],
+                              (int)WSTRLEN(globalNone[i]), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "testuser", 1, 0, "none");
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "otheruser", 1, 0, "none");
+    wolfSSHD_ConfigFree(head);
+    head = NULL;
+
+    /* none set in a Match block over a global file */
+    if (ret == WS_SUCCESS) {
+        head = wolfSSHD_ConfigNew(NULL);
+        if (head == NULL)
+            ret = WS_MEMORY_E;
+        conf = head;
+    }
+    for (i = 0; ret == WS_SUCCESS && matchNone[i] != NULL; i++) {
+        ret = ParseConfigLine(&conf, matchNone[i],
+                              (int)WSTRLEN(matchNone[i]), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "testuser", 1, 0, "none");
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "otheruser", 0, 1, "/etc/keys");
+    wolfSSHD_ConfigFree(head);
+    head = NULL;
+
+    /* a file in a Match block clears an inherited global none */
+    if (ret == WS_SUCCESS) {
+        head = wolfSSHD_ConfigNew(NULL);
+        if (head == NULL)
+            ret = WS_MEMORY_E;
+        conf = head;
+    }
+    for (i = 0; ret == WS_SUCCESS && matchFile[i] != NULL; i++) {
+        ret = ParseConfigLine(&conf, matchFile[i],
+                              (int)WSTRLEN(matchFile[i]), 0);
+    }
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "testuser", 0, 1, ".ssh/match_keys");
+    if (ret == WS_SUCCESS)
+        ret = CheckAuthKeysNone(head, "otheruser", 1, 0, "none");
+    wolfSSHD_ConfigFree(head);
+
     return ret;
 }
 
@@ -3823,6 +3955,7 @@ static int test_SearchForPubKey(void)
     char base[] = "/tmp/wolfsshd_pkXXXXXX";
     char keysPath[64] = "";
     char missPath[64] = "";
+    char nonePath[64] = "";
     char line[256];
     WS_UserAuthData_PublicKey pubKeyCtx;
     WUID_T uid = getuid();
@@ -3844,6 +3977,7 @@ static int test_SearchForPubKey(void)
     if (ret == WS_SUCCESS) {
         snprintf(keysPath, sizeof(keysPath), "%s/authorized_keys", base);
         snprintf(missPath, sizeof(missPath), "%s/absent_keys", base);
+        snprintf(nonePath, sizeof(nonePath), "%s/none", base);
         ret = BuildAuthKeysLine(blobA, blobSz, line, sizeof(line));
     }
 
@@ -3977,6 +4111,50 @@ static int test_SearchForPubKey(void)
         }
     }
 
+    /* AuthorizedKeysFile none searches no file. A key in <home>/none, where a
+     * relative "none" would resolve, must not match; "./none" names the same
+     * file and does match, so the file itself is readable. */
+    if (ret == WS_SUCCESS) {
+        f = fopen(nonePath, "w");
+        if (f == NULL) {
+            Log("    fopen of none failed.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            fputs(line, f);
+            fputs("\n", f);
+            fclose(f);
+        }
+    }
+    if (ret == WS_SUCCESS && chmod(nonePath, S_IRUSR | S_IWUSR) != 0) {
+        Log("    chmod of none failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: ./none is read as a file.");
+        pubKeyCtx.publicKey = blobA;
+        rc = SearchForPubKey(base, "./none", "testuser", &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_SUCCESS) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: none searches no file.");
+        pubKeyCtx.publicKey = blobA;
+        rc = SearchForPubKey(base, "none", "testuser", &pubKeyCtx, uid, 0);
+        if (rc == WSSHD_AUTH_FAILURE) {
+            Log(" PASSED.\n");
+        }
+        else {
+            Log(" FAILED (rc=%d).\n", rc);
+            ret = WS_FATAL_ERROR;
+        }
+    }
+
     /* A missing authorized_keys file is an error, not a silent accept. */
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: missing keys file returns an error.");
@@ -3993,6 +4171,9 @@ static int test_SearchForPubKey(void)
 
     if (keysPath[0] != '\0') {
         unlink(keysPath);
+    }
+    if (nonePath[0] != '\0') {
+        unlink(nonePath);
     }
     rmdir(base);
 
@@ -7788,6 +7969,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_DefaultUserAuthTypesNullArgs),
     TEST_DECL(test_DefaultUserAuthTypesUnknownUser),
     TEST_DECL(test_ConfigSetAuthKeysFile),
+    TEST_DECL(test_GetUserConfAuthKeysNone),
     TEST_DECL(test_ResolveAuthKeysPath),
     TEST_DECL(test_ConfigFree),
 #ifndef _WIN32

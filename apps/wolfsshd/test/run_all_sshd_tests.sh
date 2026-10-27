@@ -35,6 +35,7 @@ extra_test_cases=(
  "strictmodes_authkeys_negative"
  "sshd_forcedcmd_test.sh"
  "sshd_match_overlap_test.sh"
+ "sshd_authkeys_none_test.sh"
  "sshd_window_full_test.sh"
  "sshd_stderr_eof_test.sh"
  "sshd_stderr_drain_test.sh"
@@ -761,6 +762,7 @@ fi
 local_sshd_tests=(
  "sshd_forcedcmd_test.sh"
  "sshd_match_overlap_test.sh"
+ "sshd_authkeys_none_test.sh"
  "sshd_window_full_test.sh"
  "sshd_stderr_eof_test.sh"
  "sshd_stderr_drain_test.sh"
