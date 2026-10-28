@@ -1228,6 +1228,40 @@ static int FlushQueuedOutput(WOLFSSH* ssh)
 }
 
 
+/* Keeps a peer that never reads from growing the output buffer without
+ * bound, since nearly every packet read can queue a reply. When more than
+ * WOLFSSH_MAX_OUTPUT_BACKLOG bytes are queued, flush, and refuse the read
+ * if the backlog is still over the cap. Returns WS_SUCCESS if the caller may
+ * read, otherwise the send error (usually WS_WANT_WRITE), also stored in
+ * ssh->error. A backlog under the cap never blocks the read, so two peers
+ * that both write before reading cannot deadlock, and a stalled send can
+ * still receive the window adjust it waits on. ssh must not be NULL. */
+static int HoldInputForBacklog(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    if (!ssh->disconnected && ssh->outputBuffer.length > ssh->outputBuffer.idx
+            && ssh->outputBuffer.length - ssh->outputBuffer.idx
+               > WOLFSSH_MAX_OUTPUT_BACKLOG) {
+        ret = wolfSSH_SendPacket(ssh);
+        if (ret == WS_WANT_WRITE
+                && ssh->outputBuffer.length - ssh->outputBuffer.idx
+                   <= WOLFSSH_MAX_OUTPUT_BACKLOG) {
+            /* Drained enough to read again; the caller flushes the rest. */
+            ret = WS_SUCCESS;
+        }
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Output backlog of %u over the cap, "
+                    "not reading, ret = %d",
+                    ssh->outputBuffer.length - ssh->outputBuffer.idx, ret);
+            ssh->error = ret;
+        }
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_shutdown(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
@@ -1512,6 +1546,9 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
             WLOG(WS_LOG_DEBUG,
                     "Starting to receive data at current index of %u",
                     inputBuffer->idx);
+            ret = HoldInputForBacklog(ssh);
+            if (ret != WS_SUCCESS)
+                break;
             ret = DoReceive(ssh);
             /* Off the current head: DoReceive() may have retired the old. */
             if (ssh->channelList == NULL
@@ -4714,6 +4751,15 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     if (ret == WS_SUCCESS && SendAfterDisconnect(ssh)) {
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), session disconnected");
         return WS_FATAL_ERROR;
+    }
+
+    /* Don't read while the output backlog is over the cap. */
+    if (ret == WS_SUCCESS) {
+        ret = HoldInputForBacklog(ssh);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), ret = %d", ret);
+            return ret;
+        }
     }
 
     /* Always service inbound data first so window updates can unblock sends. */
