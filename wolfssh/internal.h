@@ -870,6 +870,18 @@ WOLFSSH_LOCAL int CheckAlgoList(const char* list, byte type);
     #error "DEFAULT_MAX_PACKET_SZ too large to frame inside MAX_PACKET_SZ"
 #endif
 
+#ifndef WOLFSSH_MAX_OUTPUT_BACKLOG
+    /* Unsent bytes in the output buffer past which the session stops
+     * taking input until the transport drains. A data send never stacks
+     * a second packet behind an unsent one, so normal traffic queues at
+     * most one full packet plus the small replies the receive path adds;
+     * this leaves room for a full packet of each. CVE-2025-26466 pattern. */
+    #define WOLFSSH_MAX_OUTPUT_BACKLOG (MAX_PACKET_SZ * 2)
+#endif
+#if WOLFSSH_MAX_OUTPUT_BACKLOG < MAX_PACKET_SZ
+    #error "WOLFSSH_MAX_OUTPUT_BACKLOG must hold at least one MAX_PACKET_SZ"
+#endif
+
 
 typedef struct WOLFSSH_BUFFER {
     void* heap;       /* Heap for allocations */

@@ -532,6 +532,18 @@ static byte ReplyToPacket(ChannelOpenHarness* harness, byte* in,
             harness->io.outSz);
 }
 
+/* F-16808 back-pressure, shared by the unknown-id and GLOBAL_REQUEST
+ * tests. Once the library
+ * stops reading at WOLFSSH_MAX_OUTPUT_BACKLOG queued bytes, the last packet
+ * it read can add one more reply on top, and no reply outgrows a packet. */
+#define REGRESS_BACKLOG_LIMIT (WOLFSSH_MAX_OUTPUT_BACKLOG + MAX_PACKET_SZ)
+#define REGRESS_BACKLOG_PKT_SZ 16U
+/* Every reply is at least a 16-byte packet, so if nothing held the input
+ * this many replies would take the backlog past the limit. */
+#define REGRESS_BACKLOG_PKTS \
+        ((REGRESS_BACKLOG_LIMIT / REGRESS_BACKLOG_PKT_SZ) + 1024U)
+#define REGRESS_BACKLOG_UNIMPL_MSGID 15 /* unassigned transport id */
+
 /* The tests below drive a server-side session. With NO_WOLFSSH_SERVER the
  * message filter has no server branch, so every message on such a session is
  * refused and those tests cannot run. */
@@ -560,6 +572,57 @@ static void InitChannelOpenHarness(ChannelOpenHarness* harness,
     harness->ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
 }
 
+
+/* F-16808, the unknown-message-id variant: every unassigned id the server is
+ * fed is answered with SSH_MSG_UNIMPLEMENTED (RFC 4253 section 11.4). With
+ * the transport reporting would-block on every send and the application
+ * calling wolfSSH_worker() again on WS_WANT_WRITE, each pass used to consume
+ * one packet and append one more UNIMPLEMENTED to the unsent backlog without
+ * bound. Plaintext harness, server side, past userauth. */
+static void TestOutputBacklogBoundedUnimplemented(void)
+{
+    ChannelOpenHarness harness;
+    byte* in;
+    word32 inSz = 0;
+    word32 i;
+    word32 pending;
+    word32 maxPending = 0;
+    int ret;
+    int err;
+
+    in = (byte*)WMALLOC(REGRESS_BACKLOG_PKTS * REGRESS_BACKLOG_PKT_SZ, NULL,
+            DYNTYPE_BUFFER);
+    AssertNotNull(in);
+    for (i = 0; i < REGRESS_BACKLOG_PKTS; i++) {
+        inSz += BuildPacket(REGRESS_BACKLOG_UNIMPL_MSGID, in + inSz,
+                REGRESS_BACKLOG_PKT_SZ);
+    }
+
+    InitChannelOpenHarness(&harness, in, inSz);
+    harness.io.blockAll = 1;
+
+    for (i = 0; i < REGRESS_BACKLOG_PKTS; i++) {
+        ret = wolfSSH_worker(harness.ssh, NULL);
+        err = wolfSSH_get_error(harness.ssh);
+
+        pending = harness.ssh->outputBuffer.length
+                - harness.ssh->outputBuffer.idx;
+        if (pending > maxPending)
+            maxPending = pending;
+
+        AssertFalse(harness.ssh->disconnected);
+        AssertIntEQ(ret, WS_WANT_WRITE);
+        AssertIntEQ(err, WS_WANT_WRITE);
+    }
+
+    /* The cap held, and input stopped being taken to hold it. */
+    AssertTrue(maxPending > WOLFSSH_MAX_OUTPUT_BACKLOG);
+    AssertTrue(maxPending <= REGRESS_BACKLOG_LIMIT);
+    AssertTrue(harness.io.inOff < harness.io.inSz);
+
+    FreeChannelOpenHarness(&harness);
+    WFREE(in, NULL, DYNTYPE_BUFFER);
+}
 
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 /* Build a plaintext SSH_MSG_USERAUTH_INFO_RESPONSE. The wire response count is
@@ -840,6 +903,8 @@ typedef struct DuplexEndpoint {
     byte sentStrictKexMarker;
     byte sentExtInfoMarker;
     byte failSendMsgId; /* nonzero: fail the send of a packet with this id */
+    byte blockSend;     /* nonzero: every send reports a would-block */
+    byte shortSend;     /* nonzero: send what fits the peer's queue */
 } DuplexEndpoint;
 
 typedef struct {
@@ -1539,6 +1604,25 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 
     if (endpoint == NULL || endpoint->peer == NULL || buf == NULL) {
         return WS_CBIO_ERR_GENERAL;
+    }
+
+    /* A peer that has stopped reading: nothing this side sends leaves. */
+    if (endpoint->blockSend) {
+        return WS_CBIO_ERR_WANT_WRITE;
+    }
+
+    /* A slow reader: a short send, or a would-block once its queue is full,
+     * instead of failing the send. */
+    if (endpoint->shortSend) {
+        word32 room = REGRESS_DUPLEX_QUEUE_SZ - endpoint->peer->inbound.len;
+
+        if (room == 0) {
+            return WS_CBIO_ERR_WANT_WRITE;
+        }
+        if (outputSz > room) {
+            outputSz = room;
+            sz = room;
+        }
     }
 
     if (endpoint->failSendMsgId != 0 &&
@@ -2290,6 +2374,90 @@ static void TestKexSecretWipedOnServerSendFail(void)
     /* H is hashed over K, so K was agreed. */
     AssertTrue(harness.server->sessionIdSz > 0);
     AssertTrue(KexSecretWiped(harness.server));
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* F-16808: an established session must not keep consuming reply-generating
+ * input while earlier output is still queued. The client below keeps sending
+ * GLOBAL_REQUEST want_reply over the real encrypted, authenticated session
+ * while the server's transport reports would-block on every send, and the
+ * server application keeps turning wolfSSH_worker() the way a non-blocking
+ * event loop does on WS_WANT_WRITE. Each pass used to consume one request
+ * and queue its REQUEST_FAILURE behind the ones that never left, so
+ * ssh->outputBuffer grew by one reply per request. Once the transport
+ * drains, the held requests must still be answered. */
+static void TestOutputBacklogBoundedGlobalRequest(void)
+{
+    static const char reqName[] = "keepalive@openssh.com";
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    word32 i;
+    word32 held = 0;
+    word32 pending;
+    word32 maxPending = 0;
+    int ret;
+    int err;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(harness.server->acceptState,
+            ACCEPT_CLIENT_SESSION_ESTABLISHED);
+    AssertFalse(wolfSSH_OutputPending(harness.server));
+    AssertIntEQ(harness.serverIo.inbound.len, 0);
+
+    /* The client stops reading. */
+    harness.serverIo.blockSend = 1;
+
+    for (i = 0; i < REGRESS_BACKLOG_PKTS; i++) {
+        AssertIntEQ(SendGlobalRequest(harness.client,
+                (const byte*)reqName, (word32)WSTRLEN(reqName), 1, NULL),
+                WS_SUCCESS);
+
+        ret = wolfSSH_worker(harness.server, NULL);
+        err = wolfSSH_get_error(harness.server);
+        if (harness.serverIo.inbound.len > 0)
+            held++;
+
+        pending = harness.server->outputBuffer.length
+                - harness.server->outputBuffer.idx;
+        if (pending > maxPending)
+            maxPending = pending;
+
+        /* The session stays up, the would-block is all the app sees. */
+        AssertIntEQ(ret, WS_WANT_WRITE);
+        AssertIntEQ(err, WS_WANT_WRITE);
+        AssertFalse(harness.server->disconnected);
+
+        /* Stop before the duplex queue to the server fills. */
+        if (harness.serverIo.inbound.len > REGRESS_DUPLEX_QUEUE_SZ / 2)
+            break;
+    }
+
+    /* The cap held, and input stopped being taken to hold it. */
+    AssertTrue(maxPending > WOLFSSH_MAX_OUTPUT_BACKLOG);
+    AssertTrue(maxPending <= REGRESS_BACKLOG_LIMIT);
+    AssertTrue(held > 0);
+
+    /* The client reads again: the backlog drains and the held requests are
+     * answered, with no stall. */
+    harness.serverIo.blockSend = 0;
+    harness.serverIo.shortSend = 1;
+    for (i = 0; i < REGRESS_BACKLOG_PKTS * 2U; i++) {
+        if (harness.serverIo.inbound.len == 0
+                && !wolfSSH_OutputPending(harness.server)
+                && harness.clientIo.inbound.len == 0)
+            break;
+        (void)wolfSSH_worker(harness.server, NULL);
+        AssertFalse(harness.server->disconnected);
+        (void)wolfSSH_worker(harness.client, NULL);
+        AssertFalse(harness.client->disconnected);
+    }
+    AssertIntEQ(harness.serverIo.inbound.len, 0);
+    AssertFalse(wolfSSH_OutputPending(harness.server));
 
     FreeKexReplyHarness(&harness);
 }
@@ -21491,6 +21659,7 @@ int main(int argc, char** argv)
     TestSameUserRetryAllowed();
     TestUserAuthBeforeServiceRequestDisconnects();
     TestUserAuthPipelinedAfterServiceRequest();
+    TestOutputBacklogBoundedUnimplemented();
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     TestKbInfoResponseCountMismatchSendsFailure();
     TestKbInfoResponseMismatchKeepsFraming();
@@ -21794,6 +21963,7 @@ int main(int argc, char** argv)
     TestKexDhReplyRejectsSigNameOverrun();
     TestKexSecretWipedPerKex();
     TestKexSecretWipedOnServerSendFail();
+    TestOutputBacklogBoundedGlobalRequest();
     #ifdef REGRESS_TRUNC_KEX_ALGO
     TestKexDhReplyTruncatedFSendsDisconnect();
     TestKexDhInitTruncatedESendsDisconnect();
