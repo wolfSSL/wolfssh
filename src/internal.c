@@ -1275,7 +1275,12 @@ static const char cannedKeyAlgoNames[] =
         "ecdsa-sha2-nistp521-cert-v01@openssh.com,"
     #endif
     #ifndef WOLFSSH_NO_OSSH_CERT_RSA
-        "ssh-rsa-cert-v01@openssh.com,"
+        /* This name binds an ssh-rsa (SHA-1) signature, so it is offered
+         * only where the server would accept one. */
+        #if defined(WOLFSSH_NO_SHA1_SOFT_DISABLE) && \
+            !defined(WOLFSSH_NO_SSH_RSA_SHA1)
+            "ssh-rsa-cert-v01@openssh.com,"
+        #endif
         #ifndef WOLFSSH_NO_RSA_SHA2_256
             "rsa-sha2-256-cert-v01@openssh.com,"
         #endif
@@ -11575,6 +11580,55 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
 #endif /* !WOLFSSH_NO_ED25519 */
 
 #ifndef WOLFSSH_NO_PUBKEY_AUTH
+/* 1 if name is one of the comma-separated names in list, else 0. */
+static int NameInList(const char* list, const byte* name, word32 nameSz)
+{
+    word32 listSz = AlgoListSz(list);
+    word32 start = 0, i;
+
+    if (name == NULL || nameSz == 0)
+        return 0;
+
+    for (i = 0; i <= listSz; i++) {
+        if (i == listSz || list[i] == ',') {
+            if (i - start == nameSz
+                    && WMEMCMP(list + start, name, nameSz) == 0) {
+                return 1;
+            }
+            start = i + 1;
+        }
+    }
+
+    return 0;
+}
+
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_RSA)
+/* The signature algorithm an OpenSSH RSA certificate algorithm name
+ * carries (RFC 8332 Section 3), or ID_UNKNOWN. The three names share
+ * ID_OSSH_CERT_RSA, so only the name tells them apart. */
+static byte OsshRsaCertNameSigId(const byte* name, word32 nameSz)
+{
+    static const struct {
+        const char* name;
+        byte sigId;
+    } map[] = {
+        { "ssh-rsa-cert-v01@openssh.com", ID_SSH_RSA },
+        { "rsa-sha2-256-cert-v01@openssh.com", ID_RSA_SHA2_256 },
+        { "rsa-sha2-512-cert-v01@openssh.com", ID_RSA_SHA2_512 }
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(map) / sizeof(map[0])); i++) {
+        if (nameSz == (word32)WSTRLEN(map[i].name)
+                && WMEMCMP(name, map[i].name, nameSz) == 0) {
+            return map[i].sigId;
+        }
+    }
+
+    return ID_UNKNOWN;
+}
+#endif
+
 /* Utility for DoUserAuthRequest() */
 static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                       byte* buf, word32 len, word32* idx)
@@ -11684,6 +11738,18 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
             WLOG(WS_LOG_DEBUG, "DUARPK: Signature type unsupported");
             authFailure = 1;
         }
+    }
+    /* Only accept what server-sig-algs advertises, RFC 8308 section 3.1.
+     * Match the name the client sent, not its ID: the OpenSSH RSA
+     * certificate names share one ID but carry different hashes. A NULL
+     * list advertises nothing and leaves only the build's own check
+     * above. */
+    if (ret == WS_SUCCESS && !authFailure
+            && ssh->algoListKeyAccepted != NULL
+            && !NameInList(ssh->algoListKeyAccepted,
+                    pubKeyAlgo, pubKeyAlgoSz)) {
+        WLOG(WS_LOG_DEBUG, "DUARPK: Key type not in accepted list");
+        authFailure = 1;
     }
 
     #ifdef WOLFSSH_CERTS
@@ -11812,6 +11878,11 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                                 !defined(WOLFSSH_NO_SSH_RSA_SHA1)
                                 sigOk = sigOk || (sigId == ID_SSH_RSA);
                             #endif
+                                /* The hash must be the one the requested
+                                 * certificate algorithm names. */
+                                sigOk = sigOk && (sigId ==
+                                        OsshRsaCertNameSigId(pubKeyAlgo,
+                                                pubKeyAlgoSz));
                                 break;
                         #endif
                         #ifndef WOLFSSH_NO_ECDSA
