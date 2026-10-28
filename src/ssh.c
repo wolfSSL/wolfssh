@@ -1351,7 +1351,12 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
     if (ret == WS_SUCCESS && SendAfterDisconnect(ssh))
         ret = WS_FATAL_ERROR;
 
-    if (ret == WS_SUCCESS) {
+    /* A key exchange is already running, including the stretch after this
+     * side's NEWKEYS while the peer's is still due. It will rekey anyway. */
+    if (ret == WS_SUCCESS && ssh->isKeying != 0) {
+        WLOG(WS_LOG_DEBUG, "Key exchange in progress, not starting another");
+    }
+    else if (ret == WS_SUCCESS) {
         ret = SendKexInit(ssh);
         if (ret != WS_SUCCESS)
             ssh->error = ret;
