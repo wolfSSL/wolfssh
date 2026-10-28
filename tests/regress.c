@@ -46,6 +46,7 @@
 #ifdef WOLF_CRYPTO_CB
     #include <wolfssl/wolfcrypt/cryptocb.h>
 #endif
+#include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssh/port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
@@ -10790,6 +10791,39 @@ static void TestAgentEd25519UserAuthRejectsOversizeSignature(void)
 #endif /* WOLFSSH_AGENT && !WOLFSSH_NO_ED25519 && !NO_WOLFSSH_CLIENT */
 
 
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+/* keys/ossh-user-rsa.pub signed by keys/ossh-ca-rsa, for the agent and
+ * accepted-key tests: ssh-keygen -s ossh-ca-rsa -I wolfssh-agent-test
+ * -n hansel -V always:forever */
+static WS_MAYBE_UNUSED const char osshRsaCert[] =
+    "ssh-rsa-cert-v01@openssh.com "
+    "AAAAHHNzaC1yc2EtY2VydC12MDFAb3BlbnNzaC5jb20AAAAga1B4hnmhn37kMGWS"
+    "R3lji74KzQmOj4ZQri6pxSBB+E8AAAADAQABAAABAQDMhB3Xi7lqn3w7bYorlUAx"
+    "BgdjAkmD/j1Sx+nRIqnGqk1YFNFmbl3iQ+JG3S13jwwi/CJyLXrdkVocsBOhHebM"
+    "yyPHN0b7Cgl1Dvtxg+2Zh1K+dkzC2BhTmby/hj4NySnP04EgmY0w9f8uPCZHY0s0"
+    "fq6nsMCJOo9/53JR38HJFAFabI344vY2kbUPFqBIuG45OfIQrJK3KeqQGTcGRzhO"
+    "Ogk5AkkytcIRrLeKbdBCCYYUcCFIEH/RL7fCSkbth54kJ8FWNEdJu5YYbpJY4Yog"
+    "ITeFlZi4Z8sMbO2I53MBaWleMjjntuUtac0Yry9CXWz1fgImAYjCDB7h4wHF/nQ5"
+    "AAAAAAAAAAAAAAABAAAAEndvbGZzc2gtYWdlbnQtdGVzdAAAAAoAAAAGaGFuc2Vs"
+    "AAAAAAAAAAD//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGlu"
+    "ZwAAAAAAAAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1w"
+    "b3J0LWZvcndhcmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11"
+    "c2VyLXJjAAAAAAAAAAAAAAEXAAAAB3NzaC1yc2EAAAADAQABAAABAQDCSZff5o7U"
+    "OUQ9sC4YqX++TYFHRZtrsBWPKKokdo7DPzveiOfHpnMps9/sZB9yiz+A7mGBRPJP"
+    "uCep1G95j1CA57/yb5/4jqvoD6ZSFPUKgHeQ21oIraSFneynw76+lrd87OCrWMkx"
+    "Dh6ogV2kkbNK3+HgzbnkyUdRo/dq7ZS0/DbA2wMGTzD2j+mMgkk3aazWlBdlnazk"
+    "NwjZZdUbyW9CI8tdlnRZ/6j0aH4Te6YkoTTDMN9s0xI5VsJzP8vcVt4RZkMaE6M9"
+    "pJyWfhh2HTsUILui3F232RpwdlxksnBbzptNpSBvaPfYlTeaCtzriuf4w0sYINxj"
+    "xcaoLMResmLhAAABFAAAAAxyc2Etc2hhMi01MTIAAAEAqyoYPA0HxiSIjEZcFw63"
+    "Id1DrawFuPFaLuuoaBu/U/hvpO9T6dmLYYeNSggS4/I3zlQS29dmQWDQDRSikOg4"
+    "q4upCl8LCHtZh7q0mAM4Yc8akdeYeXtoxNdSo04Gor+IlyD78WXlwshH7Nm2qtWD"
+    "mPrQYeciXPn1IN4cn5KR6DuetU2zf9IihN7Ay9jIzId+JUJykWtzegMKcnGQ0bcS"
+    "PeCWclWDyYsZYgrHmDwPxs0gw/+HwEj7ZNHpfj6fyFFnBul8TnX5RlvYdR5dYjCs"
+    "LhC4shipEwdr7CFD6dBzSeEQBF06ao7fThpJ9p/eFQCDwyjF3UOqiqAZNLzi4VAm"
+    "Pg=="
+    " wolfssh-ossh-test-user-rsa";
+#endif
+
 #if defined(WOLFSSH_AGENT) && !defined(WOLFSSH_NO_RSA) \
     && !defined(NO_WOLFSSH_CLIENT) \
     && !(defined(WOLFSSH_NO_RSA_SHA2_256) && defined(WOLFSSH_NO_RSA_SHA2_512))
@@ -11022,46 +11056,16 @@ static void TestAgentRsaUserAuthRefusesMismatchedBlob(void)
     "ssh-rsa-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com," \
     "rsa-sha2-512-cert-v01@openssh.com"
 
-/* keys/ossh-user-rsa.pub signed by keys/ossh-ca-rsa: ssh-keygen -s
- * ossh-ca-rsa -I wolfssh-agent-test -n hansel -V always:forever */
-static const char agentRsaCert[] =
-    "ssh-rsa-cert-v01@openssh.com "
-    "AAAAHHNzaC1yc2EtY2VydC12MDFAb3BlbnNzaC5jb20AAAAga1B4hnmhn37kMGWS"
-    "R3lji74KzQmOj4ZQri6pxSBB+E8AAAADAQABAAABAQDMhB3Xi7lqn3w7bYorlUAx"
-    "BgdjAkmD/j1Sx+nRIqnGqk1YFNFmbl3iQ+JG3S13jwwi/CJyLXrdkVocsBOhHebM"
-    "yyPHN0b7Cgl1Dvtxg+2Zh1K+dkzC2BhTmby/hj4NySnP04EgmY0w9f8uPCZHY0s0"
-    "fq6nsMCJOo9/53JR38HJFAFabI344vY2kbUPFqBIuG45OfIQrJK3KeqQGTcGRzhO"
-    "Ogk5AkkytcIRrLeKbdBCCYYUcCFIEH/RL7fCSkbth54kJ8FWNEdJu5YYbpJY4Yog"
-    "ITeFlZi4Z8sMbO2I53MBaWleMjjntuUtac0Yry9CXWz1fgImAYjCDB7h4wHF/nQ5"
-    "AAAAAAAAAAAAAAABAAAAEndvbGZzc2gtYWdlbnQtdGVzdAAAAAoAAAAGaGFuc2Vs"
-    "AAAAAAAAAAD//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGlu"
-    "ZwAAAAAAAAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1w"
-    "b3J0LWZvcndhcmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11"
-    "c2VyLXJjAAAAAAAAAAAAAAEXAAAAB3NzaC1yc2EAAAADAQABAAABAQDCSZff5o7U"
-    "OUQ9sC4YqX++TYFHRZtrsBWPKKokdo7DPzveiOfHpnMps9/sZB9yiz+A7mGBRPJP"
-    "uCep1G95j1CA57/yb5/4jqvoD6ZSFPUKgHeQ21oIraSFneynw76+lrd87OCrWMkx"
-    "Dh6ogV2kkbNK3+HgzbnkyUdRo/dq7ZS0/DbA2wMGTzD2j+mMgkk3aazWlBdlnazk"
-    "NwjZZdUbyW9CI8tdlnRZ/6j0aH4Te6YkoTTDMN9s0xI5VsJzP8vcVt4RZkMaE6M9"
-    "pJyWfhh2HTsUILui3F232RpwdlxksnBbzptNpSBvaPfYlTeaCtzriuf4w0sYINxj"
-    "xcaoLMResmLhAAABFAAAAAxyc2Etc2hhMi01MTIAAAEAqyoYPA0HxiSIjEZcFw63"
-    "Id1DrawFuPFaLuuoaBu/U/hvpO9T6dmLYYeNSggS4/I3zlQS29dmQWDQDRSikOg4"
-    "q4upCl8LCHtZh7q0mAM4Yc8akdeYeXtoxNdSo04Gor+IlyD78WXlwshH7Nm2qtWD"
-    "mPrQYeciXPn1IN4cn5KR6DuetU2zf9IihN7Ay9jIzId+JUJykWtzegMKcnGQ0bcS"
-    "PeCWclWDyYsZYgrHmDwPxs0gw/+HwEj7ZNHpfj6fyFFnBul8TnX5RlvYdR5dYjCs"
-    "LhC4shipEwdr7CFD6dBzSeEQBF06ao7fThpJ9p/eFQCDwyjF3UOqiqAZNLzi4VAm"
-    "Pg=="
-    " wolfssh-ossh-test-user-rsa";
-
 /* An OpenSSH RSA certificate held by the agent. The request names the
  * certificate algorithm; the signature names the RSA algorithm under it. */
 static void TestAgentOsshRsaCertUserAuthWolfSshServer(void)
 {
 #ifndef WOLFSSH_NO_RSA_SHA2_512
-    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+    RunAgentRsaUserAuth(osshRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
             AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS,
             "rsa-sha2-512-cert-v01@openssh.com", "rsa-sha2-512");
 #else
-    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+    RunAgentRsaUserAuth(osshRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
             AGENT_RSA_REPLY_BY_FLAGS, WS_SUCCESS,
             "rsa-sha2-256-cert-v01@openssh.com", "rsa-sha2-256");
 #endif
@@ -11071,14 +11075,14 @@ static void TestAgentOsshRsaCertUserAuthWolfSshServer(void)
  * is refused. */
 static void TestAgentOsshRsaCertUserAuthRejectsOversizeSignature(void)
 {
-    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+    RunAgentRsaUserAuth(osshRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
             AGENT_RSA_REPLY_OVERSIZE, WS_BUFFER_E, NULL, NULL);
 }
 
 /* Agents before OpenSSH 7.2 hold certificates but ignore the flags. */
 static void TestAgentOsshRsaCertUserAuthRefusesIgnoredFlags(void)
 {
-    RunAgentRsaUserAuth(agentRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
+    RunAgentRsaUserAuth(osshRsaCert, AGENT_RSA_WOLFSSH_SIG_ALGS,
             AGENT_RSA_REPLY_SSH_RSA, WS_INVALID_ALGO_ID, NULL, NULL);
 }
 
@@ -16260,6 +16264,492 @@ static void TestUserAuthPkWithoutServerSigAlgs(void)
     ClientFreeBuffers();
 #endif
 }
+
+/* A usable key type other than the one under test, so a list without the
+ * tested name still passes CheckAlgoList(). */
+#ifndef WOLFSSH_NO_ED25519
+    #define PK_ACCEPTED_NOT_RSA "ssh-ed25519"
+    #define PK_ACCEPTED_NOT_P256 "ssh-ed25519"
+#else
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+        #define PK_ACCEPTED_NOT_RSA "ecdsa-sha2-nistp256"
+    #endif
+    #if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_512)
+        #define PK_ACCEPTED_NOT_P256 "rsa-sha2-512"
+    #endif
+#endif
+
+#if !defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_512) \
+    && defined(PK_ACCEPTED_NOT_RSA)
+    #define PK_ACCEPTED_TEST_RSA
+#endif
+#if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && defined(PK_ACCEPTED_NOT_P256)
+    #define PK_ACCEPTED_TEST_P256
+#endif
+
+#if defined(PK_ACCEPTED_TEST_RSA) || defined(PK_ACCEPTED_TEST_P256)
+#define PK_ACCEPTED_TEST
+
+/* Times the server's userauth callback saw a publickey request. */
+static int pkAcceptedCbCount = 0;
+
+/* Server side: approve any publickey request, so only the library's own
+ * algorithm policy can turn one away. */
+static int PkAcceptedServerUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_PUBLICKEY)
+        return WOLFSSH_USERAUTH_FAILURE;
+    pkAcceptedCbCount++;
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* Passed as "accepted" to keep the server's default accepted-key list. */
+static const char pkAcceptedDefault[] = "(default)";
+
+/* Hand a USERAUTH_REQUEST payload, signed over session ID 0x33..., to a
+ * server whose accepted-key list is set to accepted (NULL clears it,
+ * pkAcceptedDefault leaves the default). Returns 1 if the server
+ * authenticated the user, 0 if it answered USERAUTH_FAILURE. label names
+ * the case in the log. */
+static int RunPkAcceptedServer(const char* accepted, byte* payload,
+        word32 payloadSz, const char* label)
+{
+    WOLFSSH_CTX* srvCtx;
+    WOLFSSH* srv;
+    MemIo srvIo;
+    byte srvOut[512];
+    word32 idx = 0;
+    int authed;
+
+    srvCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(srvCtx);
+    wolfSSH_SetIORecv(srvCtx, MemRecv);
+    wolfSSH_SetIOSend(srvCtx, MemSend);
+    wolfSSH_SetUserAuth(srvCtx, PkAcceptedServerUserAuth);
+    if (accepted != pkAcceptedDefault) {
+        AssertIntEQ(wolfSSH_CTX_SetAlgoListKeyAccepted(srvCtx, accepted),
+                WS_SUCCESS);
+    }
+    srv = wolfSSH_new(srvCtx);
+    AssertNotNull(srv);
+    /* This list is what SendExtInfoServer() advertises in server-sig-algs. */
+    if (accepted == NULL) {
+        AssertNull(wolfSSH_GetAlgoListKeyAccepted(srv));
+    }
+    else if (accepted != pkAcceptedDefault) {
+        AssertStrEQ(wolfSSH_GetAlgoListKeyAccepted(srv), accepted);
+    }
+    MemIoInit(&srvIo, NULL, 0, srvOut, (word32)sizeof(srvOut));
+    wolfSSH_SetIOReadCtx(srv, &srvIo);
+    wolfSSH_SetIOWriteCtx(srv, &srvIo);
+    srv->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(srv->sessionId, 0x33, srv->sessionIdSz);
+
+    pkAcceptedCbCount = 0;
+    AssertIntEQ(wolfSSH_TestDoUserAuthRequest(srv, payload, payloadSz,
+            &idx), WS_SUCCESS);
+
+    authed = (srv->clientState == CLIENT_USERAUTH_DONE);
+    printf("UserAuthPkAccepted: accepted=\"%s\" %s: "
+            "server %s, callback calls %d, server sent %s\n",
+            accepted != NULL ? accepted : "(null)", label,
+            authed ? "AUTHENTICATED" : "refused", pkAcceptedCbCount,
+            srvIo.outSz == 0 ? "nothing" :
+            ParseMsgId(srvIo.out, srvIo.outSz) == MSGID_USERAUTH_FAILURE ?
+                "USERAUTH_FAILURE" : "other");
+    if (!authed) {
+        AssertIntEQ(ParseMsgId(srvIo.out, srvIo.outSz),
+                MSGID_USERAUTH_FAILURE);
+    }
+
+    wolfSSH_free(srv);
+    wolfSSH_CTX_free(srvCtx);
+
+    return authed;
+}
+
+/* Build a signed publickey USERAUTH_REQUEST with a real wolfSSH client
+ * whose userauth callback is cliAuth, logging in as user. A non-NULL
+ * sigAlgs arrives first as the server's server-sig-algs; with none the
+ * client picks from its own list as RFC 8308 section 2.2 allows. Hand the
+ * request to a server whose accepted-key list is set to accepted (NULL
+ * clears it, pkAcceptedDefault leaves the default). Returns 1 if the
+ * server authenticated the user, 0 if it answered USERAUTH_FAILURE.
+ * algName gets the algorithm the client used. */
+static int RunUserAuthPkClientCase(WS_CallbackUserAuth cliAuth,
+        const char* user, const char* sigAlgs, const char* accepted,
+        char* algName, word32 algNameSz)
+{
+    WOLFSSH_CTX* cliCtx;
+    WOLFSSH* cli;
+    MemIo cliIo;
+    byte cliOut[2048];
+    char label[96];
+    const byte* payload;
+    const byte* field;
+    word32 payloadSz;
+    word32 fieldSz;
+    word32 idx = 0;
+    int i;
+    int authed;
+
+    /* Client: a genuine signed request. */
+    cliCtx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(cliCtx);
+    wolfSSH_SetIORecv(cliCtx, MemRecv);
+    wolfSSH_SetIOSend(cliCtx, MemSend);
+    wolfSSH_SetUserAuth(cliCtx, cliAuth);
+    cli = wolfSSH_new(cliCtx);
+    AssertNotNull(cli);
+    AssertIntEQ(wolfSSH_SetUsername(cli, user), WS_SUCCESS);
+    MemIoInit(&cliIo, NULL, 0, cliOut, (word32)sizeof(cliOut));
+    wolfSSH_SetIOReadCtx(cli, &cliIo);
+    wolfSSH_SetIOWriteCtx(cli, &cliIo);
+    cli->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(cli->sessionId, 0x33, cli->sessionIdSz);
+
+    if (sigAlgs != NULL) {
+        byte ext[512];
+        word32 extSz;
+
+        extSz = BuildExtInfoSigAlgs(ext, (word32)sizeof(ext), sigAlgs);
+        AssertIntEQ(wolfSSH_TestDoExtInfo(cli, ext, extSz, &idx),
+                WS_SUCCESS);
+        idx = 0;
+    }
+
+    AssertIntEQ(SendUserAuthRequest(cli, WOLFSSH_USERAUTH_PUBLICKEY, 1),
+            WS_SUCCESS);
+    AssertIntEQ(ParseMsgId(cliIo.out, cliIo.outSz), MSGID_USERAUTH_REQUEST);
+    payloadSz = ParsePayloadLen(cliIo.out, cliIo.outSz) - MSG_ID_SZ;
+    payload = cliIo.out + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+
+    /* user name, service name, method name, has-signature, algorithm */
+    for (i = 0; i < 3; i++) {
+        AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz,
+                &idx), WS_SUCCESS);
+    }
+    idx += BOOLEAN_SZ;
+    AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz, &idx),
+            WS_SUCCESS);
+    AssertTrue(fieldSz < algNameSz);
+    WMEMCPY(algName, field, fieldSz);
+    algName[fieldSz] = '\0';
+
+    /* Server: same session ID, restricted accepted-key list. */
+    WSNPRINTF(label, sizeof(label), "client used \"%s\"", algName);
+    authed = RunPkAcceptedServer(accepted, (byte*)payload, payloadSz, label);
+
+    wolfSSH_free(cli);
+    wolfSSH_CTX_free(cliCtx);
+
+    return authed;
+}
+
+/* RunUserAuthPkClientCase() with the example client's key pair, loaded by
+ * ClientUsePubKey()/ClientSetPrivateKey(), and no server-sig-algs. */
+static int RunUserAuthPkAcceptedCase(const char* accepted, char* algName,
+        word32 algNameSz)
+{
+    return RunUserAuthPkClientCase(ClientUserAuth, "gretel", NULL, accepted,
+            algName, algNameSz);
+}
+
+/* Fenrir F-16810: the server must not accept a publickey userauth
+ * algorithm left out of the accepted-key list it advertises in
+ * server-sig-algs, RFC 8308 section 3.1. Algorithms on the list still
+ * work, and the default or a cleared (NULL) list accepts what the build
+ * supports. */
+static void TestUserAuthPkHonorsAcceptedList(void)
+{
+    char algName[64];
+
+    (void)algName;
+
+#ifdef PK_ACCEPTED_TEST_RSA
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-rsa.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-rsa.pem"), 0);
+
+    /* Control: the algorithm is on the list. */
+    AssertIntEQ(RunUserAuthPkAcceptedCase(
+            PK_ACCEPTED_NOT_RSA ",rsa-sha2-512", algName, sizeof(algName)), 1);
+    AssertStrEQ(algName, "rsa-sha2-512");
+
+    /* The default list and a cleared one leave only the build's check. */
+    AssertIntEQ(RunUserAuthPkAcceptedCase(pkAcceptedDefault,
+            algName, sizeof(algName)), 1);
+    AssertIntEQ(RunUserAuthPkAcceptedCase(NULL, algName, sizeof(algName)), 1);
+
+    /* A different RSA hash on the list does not admit rsa-sha2-512. */
+    AssertIntEQ(RunUserAuthPkAcceptedCase(
+            PK_ACCEPTED_NOT_RSA ",rsa-sha2-256", algName, sizeof(algName)), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    /* No RSA on the list. */
+    AssertIntEQ(RunUserAuthPkAcceptedCase(PK_ACCEPTED_NOT_RSA,
+            algName, sizeof(algName)), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    ClientFreeBuffers();
+#endif
+
+#ifdef PK_ACCEPTED_TEST_P256
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-ecc.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-ecc.pem"), 0);
+
+    AssertIntEQ(RunUserAuthPkAcceptedCase(
+            PK_ACCEPTED_NOT_P256 ",ecdsa-sha2-nistp256", algName,
+            sizeof(algName)), 1);
+    AssertStrEQ(algName, "ecdsa-sha2-nistp256");
+
+    /* A different ECDSA curve on the list does not admit nistp256. */
+    AssertIntEQ(RunUserAuthPkAcceptedCase(
+            PK_ACCEPTED_NOT_P256 ",ecdsa-sha2-nistp384", algName,
+            sizeof(algName)), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    ClientFreeBuffers();
+#endif
+}
+
+#if defined(PK_ACCEPTED_TEST_RSA) && defined(WOLFSSH_OSSH_CERTS) \
+    && !defined(WOLFSSH_NO_OSSH_CERT_RSA) \
+    && !defined(WOLFSSH_NO_RSA_SHA2_256) \
+    && !defined(NO_FILESYSTEM) && !defined(WOLFSSH_USER_FILESYSTEM)
+#define PK_ACCEPTED_TEST_OSSH_RSA
+
+#define OSSH_RSA_CERT_256 "rsa-sha2-256-cert-v01@openssh.com"
+#define OSSH_RSA_CERT_512 "rsa-sha2-512-cert-v01@openssh.com"
+#define OSSH_RSA_CERT_LEGACY "ssh-rsa-cert-v01@openssh.com"
+
+/* Send osshRsaCert under the algorithm name certAlgo with a signature by
+ * keys/ossh-user-rsa under sigAlgo, an RSA signature algorithm. The two
+ * are picked independently, which a wolfSSH client never does, so the
+ * server alone has to bind them. Returns as RunPkAcceptedServer(). */
+static int RunUserAuthOsshRsaCertCase(const char* accepted,
+        const char* certAlgo, const char* sigAlgo)
+{
+    WS_KeySignature keySig;
+    WC_RNG rng;
+    enum wc_HashType hashType;
+    byte* cert = NULL;
+    byte* priv = NULL;
+    const byte* type = NULL;
+    word32 certSz = 0;
+    word32 privSz = 0;
+    word32 typeSz = 0;
+    byte isPrivate = 0;
+    byte sessionId[WC_SHA256_DIGEST_SIZE];
+    byte payload[2048];
+    byte signedData[2048];
+    byte digest[WC_MAX_DIGEST_SIZE];
+    byte encDigest[128];
+    byte sig[512];
+    char label[160];
+    word32 payloadSz;
+    word32 signedSz;
+    word32 encDigestSz;
+    word32 idx = 0;
+    int digestSz;
+    int sigSz;
+    int authed;
+
+    if (WSTRCMP(sigAlgo, "ssh-rsa") == 0)
+        hashType = WC_HASH_TYPE_SHA;
+    else if (WSTRCMP(sigAlgo, "rsa-sha2-256") == 0)
+        hashType = WC_HASH_TYPE_SHA256;
+    else
+        hashType = WC_HASH_TYPE_SHA512;
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)osshRsaCert,
+            (word32)WSTRLEN(osshRsaCert), WOLFSSH_FORMAT_SSH, &cert, &certSz,
+            &type, &typeSz, NULL), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ReadKey_file("keys/ossh-user-rsa", &priv, &privSz,
+            &type, &typeSz, &isPrivate, NULL), WS_SUCCESS);
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    AssertIntEQ(GetOpenSshKey(&keySig, priv, privSz, &idx), WS_SUCCESS);
+    AssertIntEQ(keySig.keyId, ID_SSH_RSA);
+
+    payloadSz = AppendString(payload, sizeof(payload), 0, "hansel");
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz,
+            "ssh-connection");
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz,
+            "publickey");
+    payloadSz = AppendByte(payload, sizeof(payload), payloadSz, 1);
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, certAlgo);
+    payloadSz = AppendBlob(payload, sizeof(payload), payloadSz, cert, certSz);
+
+    /* RFC 4252 Section 7: session ID, then the request up to the
+     * signature. */
+    WMEMSET(sessionId, 0x33, sizeof(sessionId));
+    signedSz = AppendBlob(signedData, sizeof(signedData), 0, sessionId,
+            (word32)sizeof(sessionId));
+    signedSz = AppendByte(signedData, sizeof(signedData), signedSz,
+            MSGID_USERAUTH_REQUEST);
+    signedSz = AppendData(signedData, sizeof(signedData), signedSz,
+            payload, payloadSz);
+
+    digestSz = wc_HashGetDigestSize(hashType);
+    AssertTrue(digestSz > 0);
+    AssertIntEQ(wc_Hash(hashType, signedData, signedSz, digest,
+            (word32)digestSz), 0);
+    encDigestSz = wc_EncodeSignature(encDigest, digest, (word32)digestSz,
+            wc_HashGetOID(hashType));
+    AssertTrue(encDigestSz > 0);
+    AssertIntEQ(wc_InitRng(&rng), 0);
+    sigSz = wc_RsaSSL_Sign(encDigest, encDigestSz, sig, (word32)sizeof(sig),
+            &keySig.ks.rsa.key, &rng);
+    AssertTrue(sigSz > 0);
+    wc_FreeRng(&rng);
+
+    payloadSz = AppendUint32(payload, sizeof(payload), payloadSz,
+            (word32)(UINT32_SZ + WSTRLEN(sigAlgo) + UINT32_SZ + sigSz));
+    payloadSz = AppendString(payload, sizeof(payload), payloadSz, sigAlgo);
+    payloadSz = AppendBlob(payload, sizeof(payload), payloadSz, sig,
+            (word32)sigSz);
+
+    WSNPRINTF(label, sizeof(label), "cert \"%s\" signed \"%s\"",
+            certAlgo, sigAlgo);
+    authed = RunPkAcceptedServer(accepted, payload, payloadSz, label);
+
+    wc_FreeRsaKey(&keySig.ks.rsa.key);
+    WFREE(priv, NULL, DYNTYPE_PRIVKEY);
+    WFREE(cert, NULL, DYNTYPE_PRIVKEY);
+
+    return authed;
+}
+
+/* Fenrir F-16810: the three OpenSSH RSA certificate names share one ID, so
+ * the accepted-key list is matched by name, and the signature has to use
+ * the hash its certificate name carries. */
+static void TestUserAuthOsshRsaCertHonorsAcceptedList(void)
+{
+    static const char only512[] = PK_ACCEPTED_NOT_RSA "," OSSH_RSA_CERT_512;
+
+    /* Control: the listed name, signed with its own hash. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(only512, OSSH_RSA_CERT_512,
+            "rsa-sha2-512"), 1);
+
+    /* The 256 certificate name is not on the list. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(only512, OSSH_RSA_CERT_256,
+            "rsa-sha2-256"), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    /* Nor does the listed name admit a 256 signature. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(only512, OSSH_RSA_CERT_512,
+            "rsa-sha2-256"), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    /* With every name accepted, each still takes only its own hash. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(pkAcceptedDefault,
+            OSSH_RSA_CERT_256, "rsa-sha2-256"), 1);
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(pkAcceptedDefault,
+            OSSH_RSA_CERT_256, "rsa-sha2-512"), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+
+    /* The legacy name takes an rsa-sha2-* signature, as OpenSSH's sshd
+     * does for clients that predate the rsa-sha2-* certificate names. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(NULL,
+            OSSH_RSA_CERT_LEGACY, "rsa-sha2-512"), 1);
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(
+            PK_ACCEPTED_NOT_RSA "," OSSH_RSA_CERT_LEGACY,
+            OSSH_RSA_CERT_LEGACY, "rsa-sha2-256"), 1);
+
+#if defined(WOLFSSH_NO_SHA1_SOFT_DISABLE) && !defined(WOLFSSH_NO_SSH_RSA_SHA1)
+    /* The legacy name is on the default list where ssh-rsa is, and takes
+     * SHA-1 there too. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(pkAcceptedDefault,
+            OSSH_RSA_CERT_LEGACY, "rsa-sha2-512"), 1);
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(pkAcceptedDefault,
+            OSSH_RSA_CERT_LEGACY, "ssh-rsa"), 1);
+#else
+    /* Otherwise the default list leaves it out, as OpenSSH's does. */
+    AssertIntEQ(RunUserAuthOsshRsaCertCase(pkAcceptedDefault,
+            OSSH_RSA_CERT_LEGACY, "rsa-sha2-512"), 0);
+    AssertIntEQ(pkAcceptedCbCount, 0);
+#endif
+}
+
+/* Key material OsshRsaCertClientUserAuth() offers, osshRsaCert and
+ * keys/ossh-user-rsa. */
+static byte* osshCliCert = NULL;
+static word32 osshCliCertSz = 0;
+static byte* osshCliPriv = NULL;
+static word32 osshCliPrivSz = 0;
+
+/* Client side: offer osshRsaCert. */
+static int OsshRsaCertClientUserAuth(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    (void)ctx;
+
+    if (authType != WOLFSSH_USERAUTH_PUBLICKEY)
+        return WOLFSSH_USERAUTH_FAILURE;
+    authData->sf.publicKey.publicKeyType = (const byte*)OSSH_RSA_CERT_LEGACY;
+    authData->sf.publicKey.publicKeyTypeSz =
+            (word32)WSTRLEN(OSSH_RSA_CERT_LEGACY);
+    authData->sf.publicKey.publicKey = osshCliCert;
+    authData->sf.publicKey.publicKeySz = osshCliCertSz;
+    authData->sf.publicKey.privateKey = osshCliPriv;
+    authData->sf.publicKey.privateKeySz = osshCliPrivSz;
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* A wolfSSH client with osshRsaCert logs in to a server advertising
+ * sigAlgs in server-sig-algs and accepting the same list. Returns as
+ * RunPkAcceptedServer(); algName gets the name the client sent. */
+static int RunOsshRsaCertClientCase(const char* sigAlgs, char* algName,
+        word32 algNameSz)
+{
+    return RunUserAuthPkClientCase(OsshRsaCertClientUserAuth, "hansel",
+            sigAlgs, sigAlgs, algName, algNameSz);
+}
+
+/* The client picks its RSA certificate name from the certificate names in
+ * server-sig-algs, not only the plain rsa-sha2-* ones, so a server that
+ * advertises just one certificate name still lets it in. */
+static void TestUserAuthOsshRsaCertClientFollowsSigAlgs(void)
+{
+    const byte* type = NULL;
+    word32 typeSz = 0;
+    byte isPrivate = 0;
+    char algName[64];
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer((const byte*)osshRsaCert,
+            (word32)WSTRLEN(osshRsaCert), WOLFSSH_FORMAT_SSH, &osshCliCert,
+            &osshCliCertSz, &type, &typeSz, NULL), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_ReadKey_file("keys/ossh-user-rsa", &osshCliPriv,
+            &osshCliPrivSz, &type, &typeSz, &isPrivate, NULL), WS_SUCCESS);
+
+    AssertIntEQ(RunOsshRsaCertClientCase(
+            PK_ACCEPTED_NOT_RSA "," OSSH_RSA_CERT_256,
+            algName, sizeof(algName)), 1);
+    AssertStrEQ(algName, OSSH_RSA_CERT_256);
+
+    /* Both names: the client prefers SHA2-512. */
+    AssertIntEQ(RunOsshRsaCertClientCase(
+            PK_ACCEPTED_NOT_RSA "," OSSH_RSA_CERT_256 "," OSSH_RSA_CERT_512,
+            algName, sizeof(algName)), 1);
+    AssertStrEQ(algName, OSSH_RSA_CERT_512);
+
+    /* The 512 certificate name alone, with no plain rsa-sha2-512 to hint
+     * at it. */
+    AssertIntEQ(RunOsshRsaCertClientCase(
+            PK_ACCEPTED_NOT_RSA "," OSSH_RSA_CERT_512,
+            algName, sizeof(algName)), 1);
+    AssertStrEQ(algName, OSSH_RSA_CERT_512);
+
+    WFREE(osshCliPriv, NULL, DYNTYPE_PRIVKEY);
+    WFREE(osshCliCert, NULL, DYNTYPE_PRIVKEY);
+    osshCliPriv = NULL;
+    osshCliCert = NULL;
+}
+#endif /* PK_ACCEPTED_TEST_OSSH_RSA */
+#endif /* PK_ACCEPTED_TEST */
 #endif
 
 /* Windows has no /dev/null; the null device there is "NUL". Keyed on
@@ -22688,6 +23178,13 @@ int main(int argc, char** argv)
     && ((!defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)) \
         || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestUserAuthPkWithoutServerSigAlgs();
+#ifdef PK_ACCEPTED_TEST
+    TestUserAuthPkHonorsAcceptedList();
+#endif
+#ifdef PK_ACCEPTED_TEST_OSSH_RSA
+    TestUserAuthOsshRsaCertHonorsAcceptedList();
+    TestUserAuthOsshRsaCertClientFollowsSigAlgs();
+#endif
 #endif
     TestPasswordEofNoCrash();
     TestPasswordBufferWiped();
