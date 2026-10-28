@@ -1444,6 +1444,10 @@ struct WOLFSSH {
     byte peerSigAlgsSeen; /* peer sent server-sig-algs, even an unusable one */
     byte* peerSigId;
     word32 peerSigIdSz;
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(WOLFSSH_NO_OSSH_CERT_RSA)
+    byte peerOsshRsaCertSigId; /* hash of the best RSA cert name in
+                                * server-sig-algs, or ID_UNKNOWN */
+#endif
 
 #ifdef USE_WINDOWS_API
     word32 defaultAttr; /* default windows attributes */
