@@ -72,14 +72,14 @@
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
  */
-static int GetOpenSshKeyRsa(RsaKey* key,
+static int GetOpenSshKeyRsa(RsaKey* key, void* heap,
         const byte* buf, word32 len, word32* idx)
 {
     const byte *n, *e, *d, *u, *p, *q;
     word32 nSz, eSz, dSz, uSz, pSz, qSz;
     int ret;
 
-    ret = wc_InitRsaKey(key, NULL);
+    ret = wc_InitRsaKey(key, heap);
     if (ret == WS_SUCCESS)
         ret = GetMpint(&nSz, &n, buf, len, idx);
     if (ret == WS_SUCCESS)
@@ -130,12 +130,12 @@ static int GetMpintToMp(mp_int* mp,
 /*
  * Utility for GetOpenSshKey() to read in RSA keys.
  */
-static int GetOpenSshKeyRsa(RsaKey* key,
+static int GetOpenSshKeyRsa(RsaKey* key, void* heap,
         const byte* buf, word32 len, word32* idx)
 {
     int ret;
 
-    ret = wc_InitRsaKey(key, NULL);
+    ret = wc_InitRsaKey(key, heap);
     if (ret == WS_SUCCESS)
         ret = GetMpintToMp(&key->n, buf, len, idx);
     if (ret == WS_SUCCESS)
@@ -176,14 +176,14 @@ static int GetOpenSshKeyRsa(RsaKey* key,
 /*
  * Utility for GetOpenSshKey() to read in ECDSA keys.
  */
-static int GetOpenSshKeyEcc(ecc_key* key,
+static int GetOpenSshKeyEcc(ecc_key* key, void* heap,
         const byte* buf, word32 len, word32* idx)
 {
     const byte *name = NULL, *priv = NULL, *pub = NULL;
     word32 nameSz = 0, privSz = 0, pubSz = 0;
     int ret;
 
-    ret = wc_ecc_init(key);
+    ret = wc_ecc_init_ex(key, heap, INVALID_DEVID);
     if (ret == WS_SUCCESS)
         ret = GetStringRef(&nameSz, &name, buf, len, idx); /* curve name */
     if (ret == WS_SUCCESS)
@@ -206,14 +206,16 @@ static int GetOpenSshKeyEcc(ecc_key* key,
 /*
  * Utility for GetOpenSshKey() to read in Ed25519 keys.
  */
-static int GetOpenSshKeyEd25519(ed25519_key* key,
+static int GetOpenSshKeyEd25519(ed25519_key* key, void* heap,
         const byte* buf, word32 len, word32* idx)
 {
     const byte *priv = NULL, *pub = NULL;
     word32 privSz = 0, pubSz = 0;
     int ret;
 
-    ret = wc_ed25519_init_ex(key, key->heap, INVALID_DEVID);
+    ret = wc_ed25519_init_ex(key, heap, INVALID_DEVID);
+    if (ret != 0)
+        return WS_ED25519_E;
 
     /* OpenSSH key formatting stores the public key, ENC(A), and the
      * private key (k) concatenated with the public key, k || ENC(A). */
@@ -225,12 +227,12 @@ static int GetOpenSshKeyEd25519(ed25519_key* key,
         if (privSz < pubSz)
             ret = WS_KEY_FORMAT_E;
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = wc_ed25519_import_private_key(priv, privSz - pubSz,
                 pub, pubSz, key);
-
-    if (ret != WS_SUCCESS)
-        ret = WS_ECC_E;
+        if (ret != 0)
+            ret = WS_ED25519_E;
+    }
 
     return ret;
 }
@@ -238,7 +240,7 @@ static int GetOpenSshKeyEd25519(ed25519_key* key,
 
 #ifndef WOLFSSH_NO_MLDSA
 /* Parse OpenSSH ML-DSA private key blob; see GetOpenSshKeyPublicMlDsa. */
-static int GetOpenSshKeyMlDsa(MlDsaKey* key,
+static int GetOpenSshKeyMlDsa(MlDsaKey* key, void* heap,
         const byte* buf, word32 len, word32* idx, byte level)
 {
     const byte *pub = NULL;
@@ -247,7 +249,7 @@ static int GetOpenSshKeyMlDsa(MlDsaKey* key,
     word32 privSz = 0;
     int ret;
 
-    ret = wc_MlDsaKey_Init(key, key->heap, INVALID_DEVID);
+    ret = wc_MlDsaKey_Init(key, heap, INVALID_DEVID);
     if (ret == 0) {
         ret = wc_MlDsaKey_SetParams(key, level);
         if (ret != 0) {
@@ -401,14 +403,14 @@ static int GetOpenSshKeyPublicEd25519(ed25519_key* key, const byte* buf,
 }
 #endif
 #ifndef WOLFSSH_NO_MLDSA
-static int GetOpenSshKeyPublicMlDsa(MlDsaKey* key, const byte* buf,
-    word32 len, word32* idx, byte level)
+static int GetOpenSshKeyPublicMlDsa(MlDsaKey* key, void* heap,
+    const byte* buf, word32 len, word32* idx, byte level)
 {
     int ret;
     const byte* pub = NULL;
     word32 pubSz = 0;
 
-    ret = wc_MlDsaKey_Init(key, key->heap, INVALID_DEVID);
+    ret = wc_MlDsaKey_Init(key, heap, INVALID_DEVID);
     if (ret == 0) {
         ret = wc_MlDsaKey_SetParams(key, level);
         if (ret != 0) {
@@ -499,16 +501,16 @@ int GetOpenSshPublicKey(WS_KeySignature *key,
         #endif
         #ifndef WOLFSSH_NO_MLDSA
             case ID_MLDSA44:
-                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                               idx, WC_ML_DSA_44);
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key,
+                        key->heap, buf, len, idx, WC_ML_DSA_44);
                 break;
             case ID_MLDSA65:
-                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                               idx, WC_ML_DSA_65);
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key,
+                        key->heap, buf, len, idx, WC_ML_DSA_65);
                 break;
             case ID_MLDSA87:
-                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key, buf, len,
-                                               idx, WC_ML_DSA_87);
+                ret = GetOpenSshKeyPublicMlDsa(&key->ks.mldsa.key,
+                        key->heap, buf, len, idx, WC_ML_DSA_87);
                 break;
         #endif
             default:
@@ -600,7 +602,7 @@ int GetOpenSshKey(WS_KeySignature *key,
                         #ifndef WOLFSSH_NO_RSA
                             case ID_SSH_RSA:
                                 ret = GetOpenSshKeyRsa(&key->ks.rsa.key,
-                                        str, strSz, &subIdx);
+                                        key->heap, str, strSz, &subIdx);
                                 break;
                         #endif
                         #ifndef WOLFSSH_NO_ECDSA
@@ -608,19 +610,19 @@ int GetOpenSshKey(WS_KeySignature *key,
                             case ID_ECDSA_SHA2_NISTP384:
                             case ID_ECDSA_SHA2_NISTP521:
                                 ret = GetOpenSshKeyEcc(&key->ks.ecc.key,
-                                        str, strSz, &subIdx);
+                                        key->heap, str, strSz, &subIdx);
                                 break;
                         #endif
                         #ifndef WOLFSSH_NO_ED25519
                             case ID_ED25519:
                                 ret = GetOpenSshKeyEd25519(&key->ks.ed25519.key,
-                                        str, strSz, &subIdx);
+                                        key->heap, str, strSz, &subIdx);
                                 break;
                         #endif
                         #ifndef WOLFSSH_NO_MLDSA
                             case ID_MLDSA44:
                                 ret = GetOpenSshKeyMlDsa(
-                                    &key->ks.mldsa.key,
+                                    &key->ks.mldsa.key, key->heap,
                                     str, strSz, &subIdx, WC_ML_DSA_44);
                                 /* Avoid double free. */
                                 if (ret != WS_SUCCESS)
@@ -628,14 +630,14 @@ int GetOpenSshKey(WS_KeySignature *key,
                                 break;
                             case ID_MLDSA65:
                                 ret = GetOpenSshKeyMlDsa(
-                                    &key->ks.mldsa.key,
+                                    &key->ks.mldsa.key, key->heap,
                                     str, strSz, &subIdx, WC_ML_DSA_65);
                                 if (ret != WS_SUCCESS)
                                     key->keyId = ID_NONE;
                                 break;
                             case ID_MLDSA87:
                                 ret = GetOpenSshKeyMlDsa(
-                                    &key->ks.mldsa.key,
+                                    &key->ks.mldsa.key, key->heap,
                                     str, strSz, &subIdx, WC_ML_DSA_87);
                                 if (ret != WS_SUCCESS)
                                     key->keyId = ID_NONE;
@@ -670,28 +672,20 @@ int GetOpenSshKey(WS_KeySignature *key,
                                     /* key comment */
                     }
                 }
-                /* Padding: Add increasing digits to pad to the nearest
-                 * block size. Default block size is 8, but depends on
-                 * the encryption algo. The private key chunk's length,
-                 * and the length of the comment delimit the end of the
-                 * encrypted blob. No added padding required. */
+                /* Padding: the private section is a whole number of
+                 * blocks (MIN_BLOCK_SZ for an unencrypted key), filled
+                 * out with the bytes 1, 2, 3, ... Check every pad byte
+                 * so the work depends only on the padding length. */
                 if (ret == WS_SUCCESS) {
-                    if (strSz % MIN_BLOCK_SZ == 0) {
-                        if (strSz > subIdx) {
-                            /* The padding starts at 1. */
-                            check2 = strSz - subIdx;
-                            for (check1 = 1;
-                                 check1 <= check2;
-                                 check1++, subIdx++) {
-                                if (check1 != str[subIdx]) {
-                                    /* Bad pad: free key. */
-                                    wolfSSH_KEY_clean(key);
-                                    key->keyId = ID_NONE;
-                                    ret = WS_KEY_FORMAT_E;
-                                    break;
-                                }
-                            }
-                        }
+                    byte padBad = (strSz % MIN_BLOCK_SZ != 0);
+
+                    for (check1 = 1; subIdx < strSz; check1++, subIdx++)
+                        padBad |= (byte)check1 ^ str[subIdx];
+
+                    if (padBad) {
+                        wolfSSH_KEY_clean(key);
+                        key->keyId = ID_NONE;
+                        ret = WS_KEY_FORMAT_E;
                     }
                 }
             }
