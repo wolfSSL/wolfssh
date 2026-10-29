@@ -10661,8 +10661,21 @@ static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        encDigestSz = wc_EncodeSignature(encDigest,
-                digest, digestSz, wc_HashGetOID(hashId));
+        int hashOid = wc_HashGetOID(hashId);
+
+        /* wc_EncodeSignature() encodes a bad OID without complaint. */
+        encDigestSz = 0;
+        if (hashOid > 0) {
+            encDigestSz = wc_EncodeSignature(encDigest,
+                    digest, digestSz, hashOid);
+        }
+        if (encDigestSz == 0) {
+            WLOG(WS_LOG_DEBUG, "Could not encode the digest");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
                 key, ssh->ctx->heap, "DoUserAuthRequestRsa");
     }
@@ -10821,8 +10834,21 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
     }
 
     if (ret == WS_SUCCESS) {
-        encDigestSz = wc_EncodeSignature(encDigest,
-                digest, digestSz, wc_HashGetOID(hashId));
+        int hashOid = wc_HashGetOID(hashId);
+
+        /* wc_EncodeSignature() encodes a bad OID without complaint. */
+        encDigestSz = 0;
+        if (hashOid > 0) {
+            encDigestSz = wc_EncodeSignature(encDigest,
+                    digest, digestSz, hashOid);
+        }
+        if (encDigestSz == 0) {
+            WLOG(WS_LOG_DEBUG, "Could not encode the digest");
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
         ret = wolfSSH_RsaVerify(sig, sigSz, encDigest, encDigestSz,
                 key, ssh->ctx->heap, "DoUserAuthRequestRsaCert");
     }
@@ -11110,14 +11136,14 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
             ret = wc_EccPublicKeyDecode(pub, &idx, key_ptr, pubSz);
         }
 
+        if (ret != 0 && ret != WS_MEMORY_E) {
+            WLOG(WS_LOG_DEBUG, "Could not decode public key");
+            ret = WS_CRYPTO_FAILED;
+        }
+
         if (pub != NULL)
             WFREE(pub, ssh->ctx->heap, DYNTYPE_PUBKEY);
         wc_FreeDecodedCert(&cert);
-    }
-
-    if (ret != 0) {
-        WLOG(WS_LOG_DEBUG, "Could not decode public key");
-        ret = WS_CRYPTO_FAILED;
     }
 
     /* Bind the certificate's key to the declared algorithm so one credential
@@ -11150,10 +11176,29 @@ static int DoUserAuthRequestEccCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
         ret = GetSize(&publicKeyTypeSz, pk->signature, pk->signatureSz, &i);
     }
 
+    /* RFC 6187 Section 3.4: the signature is named for the underlying
+     * ecdsa-sha2 algorithm; the declared x509v3 name is also accepted. */
     if (ret == WS_SUCCESS) {
+        byte declaredId;
+        byte sigId;
+
         publicKeyType = pk->signature + i;
         i += publicKeyTypeSz;
-        WOLFSSH_UNUSED(publicKeyType);
+
+        declaredId = NameToId((const char*)pk->publicKeyType,
+                pk->publicKeyTypeSz);
+        sigId = NameToId((const char*)publicKeyType, publicKeyTypeSz);
+        if (sigId != declaredId
+                && !(declaredId == ID_X509V3_ECDSA_SHA2_NISTP256
+                    && sigId == ID_ECDSA_SHA2_NISTP256)
+                && !(declaredId == ID_X509V3_ECDSA_SHA2_NISTP384
+                    && sigId == ID_ECDSA_SHA2_NISTP384)
+                && !(declaredId == ID_X509V3_ECDSA_SHA2_NISTP521
+                    && sigId == ID_ECDSA_SHA2_NISTP521)) {
+            WLOG(WS_LOG_DEBUG,
+                 "Signature's type does not match public key type");
+            ret = WS_INVALID_ALGO_ID;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -11453,9 +11498,8 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wc_ed25519_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID);
-        if (ret == 0) {
-            ret = WS_SUCCESS;
+        if (wc_ed25519_init_ex(key_ptr, ssh->ctx->heap, INVALID_DEVID) != 0) {
+            ret = WS_CRYPTO_FAILED;
         }
     }
 
@@ -11480,12 +11524,10 @@ static int DoUserAuthRequestEd25519(WOLFSSH* ssh,
     }
 
     if (ret == WS_SUCCESS) {
-        ret = wc_ed25519_import_public(pk->publicKey + i, qSz, key_ptr);
-    }
-
-    if (ret != 0) {
-        WLOG(WS_LOG_DEBUG, "Could not decode public key");
-        ret = WS_CRYPTO_FAILED;
+        if (wc_ed25519_import_public(pk->publicKey + i, qSz, key_ptr) != 0) {
+            WLOG(WS_LOG_DEBUG, "Could not decode public key");
+            ret = WS_CRYPTO_FAILED;
+        }
     }
 
     if (ret == WS_SUCCESS) {
@@ -26986,6 +27028,14 @@ int wolfSSH_TestParseECCPubKeyCert(WOLFSSH* ssh, byte* pubKey, word32 pubKeySz)
     FreePubKey(&sigKeyBlock);
 
     return ret;
+}
+
+int wolfSSH_TestDoUserAuthRequestEccCert(WOLFSSH* ssh,
+        WS_UserAuthData_PublicKey* pk, int hashId, byte* digest,
+        word32 digestSz)
+{
+    return DoUserAuthRequestEccCert(ssh, pk, (enum wc_HashType)hashId,
+            digest, digestSz);
 }
 #endif /* WOLFSSH_CERTS */
 

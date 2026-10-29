@@ -15351,6 +15351,28 @@ static int test_DoUserAuthRequestEd25519(void)
         result = -606; goto done;
     }
 
+    /* A declared type that differs from the blob's is reported as such, not
+     * as a key decode failure. */
+    authData.sf.publicKey.signature = sigBlob;
+    authData.sf.publicKey.publicKeyType = (const byte*)"ssh-ed448";
+    authData.sf.publicKey.publicKeyTypeSz = 9;
+    ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
+    authData.sf.publicKey.publicKeyType = (const byte*)keyTypeName;
+    authData.sf.publicKey.publicKeyTypeSz = keyTypeNameSz;
+    if (ret != WS_INVALID_ALGO_ID) {
+        printf("DoUserAuthRequestEd25519 type mismatch: ret=%d\n", ret);
+        result = -609; goto done;
+    }
+
+    /* A truncated public key blob is a buffer error. */
+    authData.sf.publicKey.publicKeySz = pubKeyBlobSz - 1;
+    ret = wolfSSH_TestDoUserAuthRequestEd25519(ssh, &authData);
+    authData.sf.publicKey.publicKeySz = pubKeyBlobSz;
+    if (ret != WS_BUFFER_E) {
+        printf("DoUserAuthRequestEd25519 truncated key: ret=%d\n", ret);
+        result = -610; goto done;
+    }
+
 done:
     if (signingKeyInit)
         wc_ed25519_free(&signingKey);
@@ -23091,6 +23113,189 @@ static int test_ParseECCPubKeyCert(void)
     return result;
 }
 
+
+/* Write r or s as an SSH mpint (RFC 4251 Section 5): a set high bit gets
+ * a leading zero so the value stays positive. Returns the size written. */
+static word32 eccCertSigMpint(byte* out, const byte* v, word32 vSz)
+{
+    word32 pad = (vSz > 0 && (v[0] & 0x80)) ? 1 : 0;
+
+    certChainPut32(vSz + pad, out);
+    if (pad)
+        out[LENGTH_SZ] = 0;
+    WMEMCPY(out + LENGTH_SZ + pad, v, vSz);
+
+    return LENGTH_SZ + pad + vSz;
+}
+
+
+/* Build an x509v3-ecdsa USERAUTH signature blob, string name || string
+ * (mpint r || mpint s), into out. Returns its size. */
+static word32 eccCertSigBlob(byte* out, const char* name, const byte* r,
+        word32 rSz, const byte* s, word32 sSz)
+{
+    word32 nameSz = (word32)WSTRLEN(name);
+    word32 idx = 0;
+    word32 lenIdx;
+
+    certChainPut32(nameSz, out + idx);
+    idx += LENGTH_SZ;
+    WMEMCPY(out + idx, name, nameSz);
+    idx += nameSz;
+    lenIdx = idx;
+    idx += LENGTH_SZ;
+    idx += eccCertSigMpint(out + idx, r, rSz);
+    idx += eccCertSigMpint(out + idx, s, sSz);
+    certChainPut32(idx - lenIdx - LENGTH_SZ, out + lenIdx);
+
+    return idx;
+}
+
+
+/* DoUserAuthRequestEccCert() Unit Test: signs a digest with keys/fred-key.der
+ * and checks the signature's algorithm name against the declared
+ * x509v3-ecdsa-sha2-nistp256 (keys/fred-cert.der is P-256). The declared name
+ * and RFC 6187's ecdsa-sha2-nistp256 are accepted; any other name is
+ * WS_INVALID_ALGO_ID. Argument errors keep their own code. Returns 1 to skip
+ * when the key files are not readable. */
+static int test_DoUserAuthRequestEccCert(void)
+{
+    static const struct {
+        const char* name;
+        int expected;
+    } names[] = {
+        { "x509v3-ecdsa-sha2-nistp256", WS_SUCCESS },
+        { "ecdsa-sha2-nistp256", WS_SUCCESS },
+        { "ecdsa-sha2-nistp384", WS_INVALID_ALGO_ID },
+        { "x509v3-ecdsa-sha2-nistp384", WS_INVALID_ALGO_ID },
+        { "ssh-rsa", WS_INVALID_ALGO_ID },
+        { "", WS_INVALID_ALGO_ID },
+    };
+    static const char algoName[] = "x509v3-ecdsa-sha2-nistp256";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte* cert = NULL;
+    byte* keyDer = NULL;
+    word32 certSz = 0, keyDerSz = 0, idx = 0;
+    ecc_key key;
+    WC_RNG rng;
+    int keyInit = 0, rngInit = 0;
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    byte der[ECC_MAX_SIG_SIZE];
+    word32 derSz = (word32)sizeof(der);
+    byte r[MAX_ECC_BYTES], s[MAX_ECC_BYTES];
+    word32 rSz = (word32)sizeof(r), sSz = (word32)sizeof(s);
+    byte sigBlob[64 + ECC_MAX_SIG_SIZE];
+    WS_UserAuthData_PublicKey pk;
+    int result = 0;
+    int ret;
+    word32 i;
+
+    if (certmanLoadFile("./keys/fred-cert.der", &cert, &certSz) != 0 ||
+            certmanLoadFile("./keys/fred-key.der", &keyDer, &keyDerSz)
+                != 0) {
+        printf("DoUserAuthRequestEccCert: SKIP, ./keys not readable\n");
+        free(cert);
+        free(keyDer);
+        return 1;
+    }
+
+    WMEMSET(digest, 0x5A, sizeof(digest));
+    if (wc_InitRng(&rng) != 0)
+        result = -1;
+    else
+        rngInit = 1;
+    if (result == 0) {
+        if (wc_ecc_init(&key) != 0)
+            result = -2;
+        else
+            keyInit = 1;
+    }
+    if (result == 0 && wc_EccPrivateKeyDecode(keyDer, &idx, &key,
+                keyDerSz) != 0)
+        result = -3;
+    if (result == 0 && wc_ecc_sign_hash(digest, sizeof(digest), der, &derSz,
+                &rng, &key) != 0)
+        result = -4;
+    if (result == 0 && wc_ecc_sig_to_rs(der, derSz, r, &rSz, s, &sSz) != 0)
+        result = -5;
+
+    if (result == 0) {
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx != NULL)
+            ssh = wolfSSH_new(ctx);
+        if (ssh == NULL)
+            result = -6;
+    }
+
+    WMEMSET(&pk, 0, sizeof(pk));
+    pk.publicKeyType = (const byte*)algoName;
+    pk.publicKeyTypeSz = (word32)WSTRLEN(algoName);
+    pk.publicKey = cert;
+    pk.publicKeySz = certSz;
+    pk.hasSignature = 1;
+    pk.signature = sigBlob;
+
+    for (i = 0; ssh != NULL && i < sizeof(names) / sizeof(names[0]); i++) {
+        pk.signatureSz = eccCertSigBlob(sigBlob, names[i].name,
+                r, rSz, s, sSz);
+        ret = wolfSSH_TestDoUserAuthRequestEccCert(ssh, &pk,
+                WC_HASH_TYPE_SHA256, digest, (word32)sizeof(digest));
+        if (ret != names[i].expected) {
+            printf("DoUserAuthRequestEccCert: sig name \"%s\" ret %d, "
+                    "expected %d\n", names[i].name, ret, names[i].expected);
+            result = -7;
+        }
+    }
+
+    /* a signature over another digest fails the verify */
+    if (result == 0) {
+        pk.signatureSz = eccCertSigBlob(sigBlob, algoName, r, rSz, s, sSz);
+        digest[0] ^= 0x01;
+        ret = wolfSSH_TestDoUserAuthRequestEccCert(ssh, &pk,
+                WC_HASH_TYPE_SHA256, digest, (word32)sizeof(digest));
+        digest[0] ^= 0x01;
+        if (ret != WS_ECC_E) {
+            printf("DoUserAuthRequestEccCert: wrong digest ret %d\n", ret);
+            result = -8;
+        }
+    }
+
+    /* an argument error is not reported as a key decode failure */
+    if (result == 0) {
+        ret = wolfSSH_TestDoUserAuthRequestEccCert(ssh, &pk,
+                WC_HASH_TYPE_SHA256, digest, 0);
+        if (ret != WS_BAD_ARGUMENT) {
+            printf("DoUserAuthRequestEccCert: digestSz 0 ret %d\n", ret);
+            result = -9;
+        }
+    }
+
+    /* a certificate that does not parse is a key decode failure */
+    if (result == 0) {
+        pk.publicKeySz = 16;
+        ret = wolfSSH_TestDoUserAuthRequestEccCert(ssh, &pk,
+                WC_HASH_TYPE_SHA256, digest, (word32)sizeof(digest));
+        pk.publicKeySz = certSz;
+        if (ret != WS_CRYPTO_FAILED) {
+            printf("DoUserAuthRequestEccCert: bad cert ret %d\n", ret);
+            result = -10;
+        }
+    }
+
+    if (keyInit)
+        wc_ecc_free(&key);
+    if (rngInit)
+        wc_FreeRng(&rng);
+    /* cert and keyDer come from certmanLoadFile()'s malloc */
+    free(cert);
+    free(keyDer);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return result;
+}
+
 #endif /* WOLFSSH_CERTS && !NO_FILESYSTEM */
 
 #endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
@@ -23279,6 +23484,35 @@ static int test_DoUserAuthRequestRsa(void)
         if (ret != tv->expected) {
             fprintf(stderr, "\t[%d] \"%s\" FAIL: got %d, expected %d\n",
                     i, tv->name, ret, tv->expected);
+            failures++;
+        }
+    }
+
+    /* A hash wc_EncodeSignature() cannot encode is a crypto failure, not a
+     * bad signature. */
+    {
+        byte sigBlob[sizeof(userAuthRsaSigBlob)];
+        byte pubBlob[sizeof(userAuthRsaPubKeyBlob)];
+        byte digest[sizeof(userAuthRsaDigest)];
+        WS_UserAuthData_PublicKey pk;
+
+        WMEMCPY(sigBlob, userAuthRsaSigBlob, sizeof(sigBlob));
+        WMEMCPY(pubBlob, userAuthRsaPubKeyBlob, sizeof(pubBlob));
+        WMEMCPY(digest, userAuthRsaDigest, sizeof(digest));
+        WMEMSET(&pk, 0, sizeof(pk));
+        pk.publicKeyType = (const byte*)"ssh-rsa";
+        pk.publicKeyTypeSz = 7;
+        pk.publicKey = pubBlob;
+        pk.publicKeySz = (word32)sizeof(pubBlob);
+        pk.hasSignature = 1;
+        pk.signature = sigBlob;
+        pk.signatureSz = (word32)sizeof(sigBlob);
+
+        ret = wolfSSH_TestDoUserAuthRequestRsa(ssh, &pk, WC_HASH_TYPE_NONE,
+                digest, (word32)sizeof(digest));
+        if (ret != WS_CRYPTO_FAILED) {
+            fprintf(stderr, "\t\"unencodable hash\" FAIL: got %d, "
+                    "expected %d\n", ret, WS_CRYPTO_FAILED);
             failures++;
         }
     }
@@ -23512,6 +23746,33 @@ static int test_DoUserAuthRequestRsaCert(void)
         if (ret != tv->expected) {
             fprintf(stderr, "\t[%d] \"%s\" FAIL: got %d, expected %d\n",
                     i, tv->name, ret, tv->expected);
+            failures++;
+        }
+    }
+
+    /* A hash wc_EncodeSignature() cannot encode is a crypto failure, not a
+     * bad signature. */
+    {
+        byte sigBlob[sizeof(userAuthRsaSigBlob)];
+        byte digest[sizeof(userAuthRsaDigest)];
+        WS_UserAuthData_PublicKey pk;
+
+        WMEMCPY(sigBlob, userAuthRsaSigBlob, sizeof(sigBlob));
+        WMEMCPY(digest, userAuthRsaDigest, sizeof(digest));
+        WMEMSET(&pk, 0, sizeof(pk));
+        pk.publicKeyType = (const byte*)"x509v3-ssh-rsa";
+        pk.publicKeyTypeSz = 14;
+        pk.publicKey = userAuthRsaCertDer;
+        pk.publicKeySz = (word32)sizeof(userAuthRsaCertDer);
+        pk.hasSignature = 1;
+        pk.signature = sigBlob;
+        pk.signatureSz = (word32)sizeof(sigBlob);
+
+        ret = wolfSSH_TestDoUserAuthRequestRsaCert(ssh, &pk,
+                WC_HASH_TYPE_NONE, digest, (word32)sizeof(digest));
+        if (ret != WS_CRYPTO_FAILED) {
+            fprintf(stderr, "\t\"unencodable hash\" FAIL: got %d, "
+                    "expected %d\n", ret, WS_CRYPTO_FAILED);
             failures++;
         }
     }
@@ -26644,6 +26905,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_ParseECCPubKeyCert();
     /* 1 means the ./keys certs were unreadable or unverifiable here */
     printf("ParseECCPubKeyCert: %s\n", (unitResult == 0 ? "SUCCESS" :
+            unitResult > 0 ? "SKIPPED" : "FAILED"));
+    testResult = testResult || (unitResult < 0);
+
+    unitResult = test_DoUserAuthRequestEccCert();
+    printf("DoUserAuthRequestEccCert: %s\n", (unitResult == 0 ? "SUCCESS" :
             unitResult > 0 ? "SKIPPED" : "FAILED"));
     testResult = testResult || (unitResult < 0);
 #endif
