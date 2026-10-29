@@ -284,6 +284,77 @@ jobs:
         # The server took the key and then refused the signature.
         grep -q "auth = Failure" ossh_cert_server_neg.txt
 
+    # Negative tests: malformed key blobs and an oversized key auth. Each
+    # must stop the client at the private key load, before it connects.
+    - name: Test TPM client rejects bad key blobs
+      if: matrix.keytype == 'rsa' && matrix.hostkey == 'raw'
+      run: |
+        cd wolfssh
+        BLOB=../wolftpm/keyblob.bin
+        # The loader's bounds are wolfTPM's key blob struct sizes.
+        cat > blobsz.c <<'EOF'
+        #include <stdio.h>
+        #include <wolftpm/tpm2_wrap.h>
+        int main(void)
+        {
+            WOLFTPM2_KEYBLOB k;
+            printf("%u %u\n", (unsigned)sizeof(k.pub), (unsigned)sizeof(k.priv));
+            return 0;
+        }
+        EOF
+        gcc -o blobsz blobsz.c
+        read PUB_SZ PRIV_SZ < <(./blobsz)
+        echo "pub struct $PUB_SZ, priv struct $PRIV_SZ"
+
+        # $1 blob, $2 expected client output, $3 optional key auth.
+        reject() {
+            echo "----- $1 -----"
+            if timeout 20 ./examples/client/client -i "$1" -u hansel \
+                -K "${3:-ThisIsMyKeyAuth}" < /dev/null > reject.txt 2>&1; then
+                echo "ERROR: the client accepted $1"
+                cat reject.txt
+                exit 1
+            fi
+            cat reject.txt
+            grep -q "Error setting private key" reject.txt
+            grep -q "$2" reject.txt
+        }
+
+        # No size marker.
+        : > blob_empty.bin
+        reject blob_empty.bin "expected size marker"
+
+        # A public size larger than the parse buffer.
+        printf '\377\377' > blob_bigpub.bin
+        reject blob_bigpub.bin "Public blob of 65535 bytes is too large"
+
+        # A public part cut short.
+        head -c 10 $BLOB > blob_shortpub.bin
+        reject blob_shortpub.bin "expected public blob"
+
+        # A private part larger than its struct. The whole file stays
+        # within the outer file size check.
+        PUB_LEN=$(( 4 + $(od -An -tu2 -N2 $BLOB) ))
+        head -c $PUB_LEN $BLOB > blob_bigpriv.bin
+        head -c $(( PUB_SZ + PRIV_SZ - PUB_LEN )) /dev/zero \
+            >> blob_bigpriv.bin
+        reject blob_bigpriv.bin "Private blob of [0-9]* bytes is too large"
+
+        # A public area wolfTPM cannot parse: the auth policy size, at file
+        # offset 12, runs past the end of the buffer.
+        cp $BLOB blob_badparse.bin
+        printf '\377\377' | dd of=blob_badparse.bin bs=1 seek=12 \
+            conv=notrunc status=none
+        reject blob_badparse.bin "Reading [0-9]* bytes"
+        if grep -q "Reading the private part" reject.txt; then
+            echo "ERROR: the public area parsed"
+            exit 1
+        fi
+
+        # A key auth longer than the TPM auth buffer. The blob itself loads.
+        reject $BLOB "Reading the private part" \
+            "$(head -c 200 /dev/zero | tr '\0' A)"
+
     - name: Archive test artifacts
       if: always()
       uses: actions/upload-artifact@v7
