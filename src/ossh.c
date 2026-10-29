@@ -670,28 +670,20 @@ int GetOpenSshKey(WS_KeySignature *key,
                                     /* key comment */
                     }
                 }
-                /* Padding: Add increasing digits to pad to the nearest
-                 * block size. Default block size is 8, but depends on
-                 * the encryption algo. The private key chunk's length,
-                 * and the length of the comment delimit the end of the
-                 * encrypted blob. No added padding required. */
+                /* Padding: the private section is a whole number of
+                 * blocks (MIN_BLOCK_SZ for an unencrypted key), filled
+                 * out with the bytes 1, 2, 3, ... Check every pad byte
+                 * so the work depends only on the padding length. */
                 if (ret == WS_SUCCESS) {
-                    if (strSz % MIN_BLOCK_SZ == 0) {
-                        if (strSz > subIdx) {
-                            /* The padding starts at 1. */
-                            check2 = strSz - subIdx;
-                            for (check1 = 1;
-                                 check1 <= check2;
-                                 check1++, subIdx++) {
-                                if (check1 != str[subIdx]) {
-                                    /* Bad pad: free key. */
-                                    wolfSSH_KEY_clean(key);
-                                    key->keyId = ID_NONE;
-                                    ret = WS_KEY_FORMAT_E;
-                                    break;
-                                }
-                            }
-                        }
+                    byte padBad = (strSz % MIN_BLOCK_SZ != 0);
+
+                    for (check1 = 1; subIdx < strSz; check1++, subIdx++)
+                        padBad |= (byte)check1 ^ str[subIdx];
+
+                    if (padBad) {
+                        wolfSSH_KEY_clean(key);
+                        key->keyId = ID_NONE;
+                        ret = WS_KEY_FORMAT_E;
                     }
                 }
             }
