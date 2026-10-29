@@ -1045,7 +1045,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     }
     else
 #endif
-    if (pubKeyName) {
+    /* Without -i the built-in private key is loaded; a NULL name loads its
+     * public half. A TPM key fills in its own public key. */
+    if (pubKeyName != NULL || privKeyName == NULL) {
         ret = ClientUsePubKey(pubKeyName, userEcc, NULL);
     }
     if (ret != 0) {

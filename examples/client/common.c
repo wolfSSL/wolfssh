@@ -856,23 +856,33 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
         if (bytes_read != sizeof(key->pub.size)) {
             printf("Read %zu, expected size marker of %zu bytes\n",
                 bytes_read, sizeof(key->pub.size));
-            goto exit;
+            rc = BUFFER_E; goto exit;
         }
         fileSz -= bytes_read;
+
+        if (sizeof(UINT16) + key->pub.size > sizeof(pubAreaBuffer)) {
+            printf("Public blob of %d bytes is too large\n", key->pub.size);
+            rc = BUFFER_E; goto exit;
+        }
 
         bytes_read = WFREAD(NULL, pubAreaBuffer, 1,
             sizeof(UINT16) + key->pub.size, fp);
         if (bytes_read != sizeof(UINT16) + key->pub.size) {
             printf("Read %zu, expected public blob %zu bytes\n",
                 bytes_read, sizeof(UINT16) + key->pub.size);
-            goto exit;
+            rc = BUFFER_E; goto exit;
         }
         fileSz -= bytes_read; /* Reminder bytes for private key part */
+
+        if (fileSz > sizeof(key->priv)) {
+            printf("Private blob of %zu bytes is too large\n", fileSz);
+            rc = BUFFER_E; goto exit;
+        }
 
         /* Decode the byte stream into a publicArea structure ready for use */
         rc = TPM2_ParsePublic(&key->pub, pubAreaBuffer,
             (word32)sizeof(pubAreaBuffer), &pubAreaSize);
-        if (rc != 0) return rc;
+        if (rc != 0) goto exit;
 
         if (fileSz > 0) {
             printf("Reading the private part of the key\n");
@@ -880,7 +890,7 @@ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
             if (bytes_read != fileSz) {
                 printf("Read %zu, expected private blob %zu bytes\n",
                     bytes_read, fileSz);
-                goto exit;
+                rc = BUFFER_E; goto exit;
             }
             rc = 0; /* success */
         }
@@ -966,6 +976,11 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
     }
 
     /* Use global auth if provided */
+    if (rc == 0 && tpmKeyAuth != NULL &&
+            XSTRLEN(tpmKeyAuth) > sizeof(tpmKeyBlob.handle.auth.buffer)) {
+        WLOG(WS_LOG_DEBUG, "TPM key auth is too long");
+        rc = BUFFER_E;
+    }
     if (rc == 0 && tpmKeyAuth != NULL) {
         tpmKeyBlob.handle.auth.size = (word32)XSTRLEN(tpmKeyAuth);
         XMEMCPY(tpmKeyBlob.handle.auth.buffer, tpmKeyAuth,
@@ -1015,6 +1030,10 @@ static int wolfSSH_TPM_InitKey(WOLFTPM2_DEV* dev, const char* name,
         wolfTPM2_UnloadHandle(dev, &endorse.handle);
     }
 
+    /* The blob holds the key auth; the session may hold auth data too. */
+    wc_ForceZero(&tpmKeyBlob, sizeof(tpmKeyBlob));
+    wc_ForceZero(&tpmSession, sizeof(tpmSession));
+
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_TPM_InitKey(), rc = %d", rc);
     return rc;
 }
@@ -1024,6 +1043,7 @@ static void wolfSSH_TPM_Cleanup(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key)
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_TPM_Cleanup()");
     if (key != NULL) {
         wolfTPM2_UnloadHandle(dev, &key->handle);
+        wc_ForceZero(key, sizeof(*key));
     }
 
     if (dev != NULL) {
