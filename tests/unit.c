@@ -1573,7 +1573,8 @@ static word32 OsshTest_Ed25519Blob(byte* out, const byte* pub,
 }
 
 /* GetOpenSshKey on Ed25519 keys: the private section must be a whole
- * number of blocks ending in the 1, 2, 3, ... padding. */
+ * number of blocks ending in the 1, 2, 3, ... padding, a malformed key
+ * reports WS_KEY_FORMAT_E, and the key is set up on the caller's heap. */
 static int test_OpenSshKeyEd25519Parse(void)
 {
     static const byte seed[ED25519_KEY_SIZE] = {
@@ -1606,11 +1607,24 @@ static int test_OpenSshKeyEd25519Parse(void)
           ED25519_KEY_SIZE + ED25519_PUB_KEY_SIZE, WS_KEY_FORMAT_E },
         { "aligned, bad last pad byte", padBad5, sizeof(padBad5),
           ED25519_KEY_SIZE + ED25519_PUB_KEY_SIZE, WS_KEY_FORMAT_E },
+        /* 131 - 48 + 5 = 88 is aligned, so only privSz < pubSz fails */
+        { "private string shorter than public", padGood, sizeof(padGood),
+          ED25519_KEY_SIZE + ED25519_PUB_KEY_SIZE - 48, WS_KEY_FORMAT_E },
+        /* 131 - 8 + 5 = 128 is aligned; wolfCrypt rejects a 24-byte k */
+        { "private key the wrong size", padGood, sizeof(padGood),
+          ED25519_KEY_SIZE + ED25519_PUB_KEY_SIZE - 8, WS_ED25519_E },
     };
     ed25519_key edKey;
     byte pub[ED25519_PUB_KEY_SIZE];
     byte blob[512];
     WS_KeySignature keySig;
+#ifndef WOLFSSL_STATIC_MEMORY
+    /* Any non-NULL marker; a static-memory heap hint must be real. */
+    int heapMark = 0;
+    void* heap = &heapMark;
+#else
+    void* heap = NULL;
+#endif
     word32 blobSz, idx, i;
     int ret, result = 0;
 
@@ -1627,6 +1641,7 @@ static int test_OpenSshKeyEd25519Parse(void)
         blobSz = OsshTest_Ed25519Blob(blob, pub, seed, cases[i].privSz,
                 cases[i].tail, cases[i].tailSz);
         WMEMSET(&keySig, 0, sizeof(keySig));
+        keySig.heap = heap;
         keySig.keyId = ID_NONE;
         idx = 0;
         ret = GetOpenSshKey(&keySig, blob, blobSz, &idx);
@@ -1635,13 +1650,38 @@ static int test_OpenSshKeyEd25519Parse(void)
                     cases[i].name, ret, cases[i].expect);
             result = -1722;
         }
-        else if (ret == WS_SUCCESS && keySig.keyId != ID_ED25519) {
-            printf("OpenSshKeyEd25519Parse: %s: keyId %d\n",
-                    cases[i].name, keySig.keyId);
+        else if (ret == WS_SUCCESS
+                && (keySig.keyId != ID_ED25519
+                    || keySig.ks.ed25519.key.heap != keySig.heap)) {
+            printf("OpenSshKeyEd25519Parse: %s: keyId %d, key heap is %s\n",
+                    cases[i].name, keySig.keyId,
+                    keySig.ks.ed25519.key.heap == keySig.heap ?
+                    "the caller's" : "not the caller's");
             result = -1723;
         }
         wolfSSH_KEY_clean(&keySig);
     }
+
+    /* Cut the 131-byte private section to 100 bytes, inside the k||ENC(A)
+     * string, so reading that string runs out of buffer. */
+    blobSz = OsshTest_Ed25519Blob(blob, pub, seed,
+            ED25519_KEY_SIZE + ED25519_PUB_KEY_SIZE, NULL, 0);
+    blobSz -= 131 - 100;
+    blob[blobSz - 100 - 4] = 0;
+    blob[blobSz - 100 - 3] = 0;
+    blob[blobSz - 100 - 2] = 0;
+    blob[blobSz - 100 - 1] = 100;
+    WMEMSET(&keySig, 0, sizeof(keySig));
+    keySig.heap = heap;
+    keySig.keyId = ID_NONE;
+    idx = 0;
+    ret = GetOpenSshKey(&keySig, blob, blobSz, &idx);
+    if (ret != WS_BUFFER_E) {
+        printf("OpenSshKeyEd25519Parse: truncated private string: ret %d, "
+                "expected %d\n", ret, WS_BUFFER_E);
+        result = -1724;
+    }
+    wolfSSH_KEY_clean(&keySig);
 
     return result;
 }
