@@ -1514,6 +1514,35 @@ static int test_OpenSshFormatNonCompositeRejected(void)
 #endif /* !WOLFSSH_NO_ECDSA_SHA2_NISTP256 */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* An OpenSSH private key whose key-type name wolfSSH does not know is
+ * WS_UNIMPLEMENTED_E, straight from GetOpenSshKey(). */
+static int test_IdentifyOpenSshKeyUnknownName(void)
+{
+    static const byte blob[] = {
+        'o', 'p', 'e', 'n', 's', 's', 'h', '-', 'k', 'e', 'y', '-',
+        'v', '1', 0x00,
+        0x00, 0x00, 0x00, 0x04, 'n', 'o', 'n', 'e',     /* ciphername */
+        0x00, 0x00, 0x00, 0x04, 'n', 'o', 'n', 'e',     /* kdfname */
+        0x00, 0x00, 0x00, 0x00,                         /* kdfoptions */
+        0x00, 0x00, 0x00, 0x01,                         /* key count */
+        0x00, 0x00, 0x00, 0x00,                         /* public key */
+        0x00, 0x00, 0x00, 0x13,                         /* private list */
+        0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, /* checkints */
+        0x00, 0x00, 0x00, 0x07, 's', 's', 'h', '-', 'f', 'o', 'o'
+    };
+    int ret;
+
+    ret = IdentifyOpenSshKey(blob, (word32)sizeof(blob), NULL);
+    if (ret != WS_UNIMPLEMENTED_E) {
+        printf("IdentifyOpenSshKeyUnknownName: wrong result %d\n", ret);
+        return -120;
+    }
+    return 0;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && \
     (!defined(WOLFSSH_NO_HMAC_SHA1) || \
      !defined(WOLFSSH_NO_HMAC_SHA1_96) || \
@@ -27122,6 +27151,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     unitResult = test_OpenSshFormatNonCompositeRejected();
     printf("OpenSshFormatNonCompositeRejected: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#ifdef WOLFSSH_TEST_INTERNAL
+    unitResult = test_IdentifyOpenSshKeyUnknownName();
+    printf("IdentifyOpenSshKeyUnknownName: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
