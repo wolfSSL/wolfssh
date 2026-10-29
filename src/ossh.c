@@ -736,9 +736,6 @@ int IdentifyOpenSshKey(const byte* in, word32 inSz, void* heap)
         if (ret == WS_SUCCESS) {
             ret = key->keyId;
         }
-        else if (key->keyId == ID_UNKNOWN) {
-            ret = WS_UNIMPLEMENTED_E;
-        }
 
         wolfSSH_KEY_clean(key);
         WFREE(key, heap, DYNTYPE_PRIVKEY);
