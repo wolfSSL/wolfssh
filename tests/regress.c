@@ -3088,6 +3088,228 @@ static void TestStrictKexResetsSequenceNumbersOnRekey(void)
     AssertRekeyResetsSequenceNumbers(0);
 }
 
+/* Run both ends like PumpDuplexPair(), but record the first fatal error on
+ * each side instead of asserting, so a test can look at how a broken rekey
+ * ended. Stops once both queues are empty and neither side is keying, or
+ * once either side has failed. */
+static void PumpDuplexPairNoAssert(KexReplyHarness* harness,
+        int* clientErr, int* serverErr)
+{
+    word32 step;
+
+    *clientErr = WS_SUCCESS;
+    *serverErr = WS_SUCCESS;
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        int ret;
+
+        ret = wolfSSH_worker(harness->client, NULL);
+        if (ret < WS_SUCCESS) {
+            int err = wolfSSH_get_error(harness->client);
+            if (!IsPumpRetryable(err)) {
+                *clientErr = err;
+            }
+        }
+
+        ret = wolfSSH_worker(harness->server, NULL);
+        if (ret < WS_SUCCESS) {
+            int err = wolfSSH_get_error(harness->server);
+            if (!IsPumpRetryable(err)) {
+                *serverErr = err;
+            }
+        }
+
+        if (*clientErr != WS_SUCCESS || *serverErr != WS_SUCCESS) {
+            return;
+        }
+
+        if (harness->clientIo.inbound.len == 0 &&
+                harness->serverIo.inbound.len == 0 &&
+                harness->client->isKeying == 0 &&
+                harness->server->isKeying == 0) {
+            return;
+        }
+    }
+}
+
+/* RFC 4253 7.1: once a side has sent KEXINIT it must not send another until
+ * it has sent NEWKEYS. Asking an established session for a rekey twice in a
+ * row must put one KEXINIT on the wire, keep the stored copy that feeds the
+ * exchange hash, and let the rekey finish on both ends. */
+static void AssertSecondTriggerSendsNoKexInit(byte serverTriggers)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    word32 msgCount, extraMsgs;
+    byte cookie[COOKIE_SZ];
+    int clientErr, serverErr, sameCookie;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = serverTriggers ? harness.server : harness.client;
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    AssertTrue((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) != 0);
+    AssertNotNull(ssh->handshake);
+    AssertNotNull(ssh->handshake->kexInit);
+    msgCount = ssh->txMsgCount;
+    /* The stored copy is length, msg id, then the cookie. */
+    WMEMCPY(cookie, ssh->handshake->kexInit + LENGTH_SZ + MSG_ID_SZ,
+            COOKIE_SZ);
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    extraMsgs = ssh->txMsgCount - msgCount;
+    AssertNotNull(ssh->handshake);
+    AssertNotNull(ssh->handshake->kexInit);
+    sameCookie = WMEMCMP(cookie,
+            ssh->handshake->kexInit + LENGTH_SZ + MSG_ID_SZ, COOKIE_SZ) == 0;
+
+    PumpDuplexPairNoAssert(&harness, &clientErr, &serverErr);
+
+    /* No second packet, and the stored KEXINIT is the one that was sent. */
+    AssertIntEQ(extraMsgs, 0);
+    AssertTrue(sameCookie);
+    AssertIntEQ(clientErr, WS_SUCCESS);
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+    AssertIntEQ(harness.client->disconnected, 0);
+    AssertIntEQ(harness.server->disconnected, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestSecondTriggerSendsNoKexInit(void)
+{
+    AssertSecondTriggerSendsNoKexInit(0);
+    AssertSecondTriggerSendsNoKexInit(1);
+}
+
+/* HighwaterCheck() latches the byte mark and the message mark separately,
+ * and both call the default callback, which rekeys. Arm them so the byte
+ * mark fires on the next send and the message mark fires on the KEXINIT
+ * that rekey sends: the second firing lands while this side is already
+ * keying and must not send another KEXINIT. */
+static void TestSecondHighwaterSendsNoKexInit(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    word32 msgCount, sentMsgs;
+    int clientErr, serverErr;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    /* The server: after the handshake it has received no more messages
+     * than it has sent, which the message mark below relies on. */
+    ssh = harness.server;
+    AssertIntEQ(ssh->isKeying, 0);
+    AssertIntEQ(ssh->highwaterFlag, 0);
+    AssertIntEQ(ssh->msgHighwaterFlag, 0);
+
+    msgCount = ssh->txMsgCount;
+    /* The IGNORE crosses the byte mark; the KEXINIT it triggers is the
+     * second packet and crosses the message mark. Received messages count
+     * toward that mark too, so start it past them; nothing arrives here
+     * before the KEXINIT goes out. */
+    AssertTrue(ssh->rxMsgCount < msgCount + 2);
+    ssh->highwaterMark = ssh->txCount + 1;
+    ssh->msgHighwaterMark = msgCount + 2;
+
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, NULL, 0), WS_SUCCESS);
+    AssertTrue((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) != 0);
+    AssertIntEQ(ssh->highwaterFlag, 1);
+    AssertIntEQ(ssh->msgHighwaterFlag, 1);
+    sentMsgs = ssh->txMsgCount - msgCount;
+
+    PumpDuplexPairNoAssert(&harness, &clientErr, &serverErr);
+
+    /* The IGNORE and one KEXINIT. */
+    AssertIntEQ(sentMsgs, 2);
+    AssertIntEQ(clientErr, WS_SUCCESS);
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* SendNewKeys() clears the self-keying flag as soon as this side's NEWKEYS
+ * goes out, while the peer's NEWKEYS is still to come and the handshake is
+ * still live. A rekey request in that window must not send a KEXINIT or
+ * touch the handshake: the client starts a rekey, the ends are stepped one
+ * worker call at a time until the probed side has sent its NEWKEYS but not
+ * yet received the peer's, and that side is asked to rekey. */
+static void AssertTriggerAfterNewKeysSendsNoKexInit(byte probeServer)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    HandshakeInfo* handshake;
+    byte* kexInit;
+    word32 step, msgCount;
+    int clientErr, serverErr, inWindow = 0;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = probeServer ? harness.server : harness.client;
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(harness.client), WS_SUCCESS);
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS && !inWindow; step++) {
+        WOLFSSH* next = (step & 1) ? harness.client : harness.server;
+        int ret;
+
+        ret = wolfSSH_worker(next, NULL);
+        if (ret < WS_SUCCESS) {
+            AssertTrue(IsPumpRetryable(wolfSSH_get_error(next)));
+        }
+        inWindow = (ssh->isKeying == WOLFSSH_PEER_IS_KEYING);
+    }
+    AssertTrue(inWindow);
+    AssertNotNull(ssh->handshake);
+
+    handshake = ssh->handshake;
+    kexInit = handshake->kexInit;
+    msgCount = ssh->txMsgCount;
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    AssertIntEQ(ssh->txMsgCount, msgCount);
+    AssertTrue(ssh->handshake == handshake);
+    AssertTrue(handshake->kexInit == kexInit);
+    AssertIntEQ(ssh->isKeying, WOLFSSH_PEER_IS_KEYING);
+
+    PumpDuplexPairNoAssert(&harness, &clientErr, &serverErr);
+
+    AssertIntEQ(clientErr, WS_SUCCESS);
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+    AssertIntEQ(harness.client->disconnected, 0);
+    AssertIntEQ(harness.server->disconnected, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestTriggerAfterNewKeysSendsNoKexInit(void)
+{
+    AssertTriggerAfterNewKeysSendsNoKexInit(1);
+    AssertTriggerAfterNewKeysSendsNoKexInit(0);
+}
+
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
 /* Shared with the client-side forwarding tests below. */
@@ -21813,6 +22035,9 @@ int main(int argc, char** argv)
     TestStrictKexMarkerNotSentOnRekey();
     TestStrictKexResetsSequenceNumbers();
     TestStrictKexResetsSequenceNumbersOnRekey();
+    TestSecondTriggerSendsNoKexInit();
+    TestSecondHighwaterSendsNoKexInit();
+    TestTriggerAfterNewKeysSendsNoKexInit();
     #ifndef WOLFSSH_NO_AES_GCM
     TestTerrapinInjectionAcceptedWithoutStrictKex();
     #endif

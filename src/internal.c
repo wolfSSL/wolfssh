@@ -15842,6 +15842,16 @@ int SendKexInit(WOLFSSH* ssh)
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
 
+    /* RFC 4253 7.1: one KEXINIT per key exchange. Already sent one, so
+     * there is nothing to do; replacing the stored copy would corrupt the
+     * exchange hash. Not an error: a highwater callback's return reaches
+     * the caller's unrelated send. */
+    if (ret == WS_SUCCESS && (ssh->isKeying & WOLFSSH_SELF_IS_KEYING)) {
+        WLOG(WS_LOG_DEBUG, "KEXINIT already sent, skipping");
+        WLOG(WS_LOG_DEBUG, "Leaving SendKexInit(), ret = %d", ret);
+        return ret;
+    }
+
     if (ret == WS_SUCCESS && ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER &&
             ssh->ctx->privateKeyCount == 0) {
         WLOG(WS_LOG_DEBUG, "Server needs at least one private key");
