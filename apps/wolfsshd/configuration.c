@@ -118,6 +118,7 @@ struct WOLFSSHD_CONFIG {
     byte permitRootLogin:2;
     byte permitEmptyPasswords:1;
     byte authKeysFileSet:1; /* if not set then no explicit authorized keys */
+    byte authKeysFileNone:1; /* AuthorizedKeysFile none: no file is read */
     byte strictModes:1; /* enforce file permission/ownership checks */
     byte useSystemCA:1;
     byte useUserCAStore:1;
@@ -408,6 +409,7 @@ static WOLFSSHD_CONFIG* wolfSSHD_ConfigCopy(WOLFSSHD_CONFIG* conf)
             newConf->permitRootLogin        = conf->permitRootLogin;
             newConf->permitEmptyPasswords   = conf->permitEmptyPasswords;
             newConf->authKeysFileSet        = conf->authKeysFileSet;
+            newConf->authKeysFileNone       = conf->authKeysFileNone;
             newConf->strictModes            = conf->strictModes;
             newConf->head                   = conf->head;
             newConf->useSystemCA            = conf->useSystemCA;
@@ -1120,8 +1122,12 @@ static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
             FreeString(&conf->chrootDir, conf->heap);
             conf->chrootDir = NULL;
         }
-        ret = CreateString(&conf->chrootDir, value,
+        /* "none" means no chroot, as in OpenSSH. The keyword is still
+         * recorded as set, so a Match block clears an inherited path. */
+        if (!wolfSSHD_ConfigIsNoneKeyword(value)) {
+            ret = CreateString(&conf->chrootDir, value,
                                         (int)WSTRLEN(value), conf->heap);
+        }
     }
 
     return ret;
@@ -1218,7 +1224,8 @@ static int ParseMatchCriteria(WOLFSSHD_CONFIG* config, const char* value)
  * is not User or Group (Address, Host, LocalAddress, LocalPort, RDomain, ...),
  * and a Match with no selector at all (bare "Match", "Match all"), is rejected.
  * This also catches mixed forms such as "User alice Address 10.0.0.0/8" where
- * the unsupported selector would otherwise be silently dropped. */
+ * the unsupported selector would otherwise be silently dropped. Group is
+ * rejected too under WOLFSSHD_NO_MATCH_GROUP. */
 static int CheckMatchSelectors(const char* value)
 {
     int ret = WS_SUCCESS;
@@ -1244,7 +1251,11 @@ static int CheckMatchSelectors(const char* value)
         }
         else if (len == (int)(sizeof("Group") - 1) &&
                 WSTRNCMP(value + i, "Group", sizeof("Group") - 1) == 0) {
+        #ifdef WOLFSSHD_NO_MATCH_GROUP
+            ret = WS_FATAL_ERROR;
+        #else
             found = 1;
+        #endif
         }
         else {
             ret = WS_FATAL_ERROR;
@@ -1286,9 +1297,15 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     if (ret == WS_SUCCESS) {
         ret = CheckMatchSelectors(value);
         if (ret != WS_SUCCESS) {
+        #ifdef WOLFSSHD_NO_MATCH_GROUP
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Unsupported Match selector, only User is handled on "
+                "this platform");
+        #else
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Unsupported Match selector, only User and Group are "
                 "handled");
+        #endif
         }
     }
 
@@ -1831,6 +1848,7 @@ static int ConfigComposeFrom(WOLFSSHD_CONFIG* dst, const WOLFSSHD_CONFIG* src)
     if (take & OPT_BIT(OPT_AUTH_KEYS_FILE)) {
         ret = ComposeString(&dst->authKeysFile, src->authKeysFile, dst->heap);
         dst->authKeysFileSet = src->authKeysFileSet;
+        dst->authKeysFileNone = src->authKeysFileNone;
     }
     if (ret == WS_SUCCESS && (take & OPT_BIT(OPT_BANNER))) {
         ret = ComposeString(&dst->banner, src->banner, dst->heap);
@@ -2022,6 +2040,26 @@ int wolfSSHD_ConfigGetAuthKeysFileSet(const WOLFSSHD_CONFIG* conf)
     return ret;
 }
 
+/* returns 1 if value is the keyword "none", in any case, as OpenSSH accepts
+ * for AuthorizedKeysFile and ChrootDirectory, and 0 if not */
+int wolfSSHD_ConfigIsNoneKeyword(const char* value)
+{
+    return (value != NULL && WSTRLEN(value) == 4 &&
+            WSTRNCASECMP(value, "none", 4) == 0) ? 1 : 0;
+}
+
+/* returns 1 if AuthorizedKeysFile is "none" and 0 if not */
+int wolfSSHD_ConfigGetAuthKeysFileNone(const WOLFSSHD_CONFIG* conf)
+{
+    int ret = 0;
+
+    if (conf != NULL) {
+        ret = conf->authKeysFileNone;
+    }
+
+    return ret;
+}
+
 /* returns 1 if StrictModes is enabled and 0 if not. Defaults to enabled (fail
  * safe) when conf is NULL. */
 int wolfSSHD_ConfigGetStrictModes(const WOLFSSHD_CONFIG* conf)
@@ -2039,9 +2077,18 @@ int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
 {
     int ret = WS_SUCCESS;
     char* newFile = NULL;
+    byte none = 0;
 
     if (conf == NULL) {
         ret = WS_BAD_ARGUMENT;
+    }
+
+    /* "none" disables the file, as in OpenSSH, rather than naming ~/none.
+     * The value is kept as "none", not NULL, because NULL selects the
+     * default ~/.ssh/authorized_keys. */
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigIsNoneKeyword(file)) {
+        none = 1;
+        file = "none";
     }
 
     /* allocate the replacement string first so a failure leaves the existing
@@ -2060,7 +2107,8 @@ int wolfSSHD_ConfigSetAuthKeysFile(WOLFSSHD_CONFIG* conf, const char* file)
          * set when a file is explicitly configured so certificate public-key
          * logins are still checked against it, cleared when removed */
         conf->authKeysFile = newFile;
-        conf->authKeysFileSet = (file != NULL) ? 1 : 0;
+        conf->authKeysFileSet = (file != NULL && !none) ? 1 : 0;
+        conf->authKeysFileNone = none;
     }
 
     return ret;

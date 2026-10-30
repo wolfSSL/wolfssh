@@ -35,6 +35,7 @@ extra_test_cases=(
  "strictmodes_authkeys_negative"
  "sshd_forcedcmd_test.sh"
  "sshd_match_overlap_test.sh"
+ "sshd_authkeys_none_test.sh"
  "sshd_window_full_test.sh"
  "sshd_stderr_eof_test.sh"
  "sshd_stderr_drain_test.sh"
@@ -48,6 +49,7 @@ extra_test_cases=(
  "sshd_login_grace_test.sh"
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
+ "sshd_chroot_none_test.sh"
  "sshd_fork_fail_test.sh"
  "sshd_exit_status_test.sh"
  "sshd_x509_test.sh"
@@ -761,6 +763,7 @@ fi
 local_sshd_tests=(
  "sshd_forcedcmd_test.sh"
  "sshd_match_overlap_test.sh"
+ "sshd_authkeys_none_test.sh"
  "sshd_window_full_test.sh"
  "sshd_stderr_eof_test.sh"
  "sshd_stderr_drain_test.sh"
@@ -774,6 +777,7 @@ local_sshd_tests=(
  "sshd_login_grace_test.sh"
  "sshd_privdrop_fail_test.sh"
  "sshd_chroot_fail_test.sh"
+ "sshd_chroot_none_test.sh"
  "sshd_fork_fail_test.sh"
  "sshd_exit_status_test.sh"
 )

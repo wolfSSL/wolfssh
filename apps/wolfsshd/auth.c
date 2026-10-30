@@ -1604,6 +1604,16 @@ WOLFSSHD_STATIC int SearchForPubKey(const char* path,
     char authKeysPath[MAX_PATH_SZ];
     int rc = 0;
 
+    /* AuthorizedKeysFile none: no file is searched, so no key matches. The
+     * config's authKeysFileNone flag is authoritative; the setter stores
+     * "none" whenever it sets that flag, so this string check sees the same
+     * state and keeps a relative "none" from ever resolving to ~/none. */
+    if (wolfSSHD_ConfigIsNoneKeyword(authKeysFile)) {
+        wolfSSH_Log(WS_LOG_INFO,
+            "[SSHD] AuthorizedKeysFile is none, no keys to check");
+        return WSSHD_AUTH_FAILURE;
+    }
+
     WMEMSET(authKeysPath, 0, sizeof(authKeysPath));
     rc = ResolveAuthKeysPath(path, authKeysFile, user, authKeysPath);
     if (rc != WS_SUCCESS) {
@@ -2943,9 +2953,12 @@ static int RequestAuthentication(WS_UserAuthData* authData,
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
         authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
         /* if this is a certificate and no specific authorized keys file has
-            * been set then rely on CA to have verified the cert */
+            * been set then rely on CA to have verified the cert. With
+            * AuthorizedKeysFile none the certificate goes to the key check
+            * below and is refused, so none never widens access. */
         if (authData->sf.publicKey.isCert &&
-                !wolfSSHD_ConfigGetAuthKeysFileSet(usrConf)) {
+                !wolfSSHD_ConfigGetAuthKeysFileSet(usrConf) &&
+                !wolfSSHD_ConfigGetAuthKeysFileNone(usrConf)) {
             /* The cert chain was already verified by wolfSSH against the CA
              * store loaded once from the global TrustedUserCAKeys. A per-user
              * Match override of TrustedUserCAKeys is not part of that store and
@@ -3737,8 +3750,8 @@ WOLFSSHD_CONFIG* wolfSSHD_AuthGetUserConf(const WOLFSSHD_AUTH* auth,
     if (auth != NULL) {
         if (usr != NULL) {
 #ifdef _WIN32
-            /* LogonUserEx(): group lookup is not implemented on Windows, so
-             * Match Group directives do not apply here */
+            /* group lookup is not implemented on Windows; config load
+             * refuses Match Group, so no block here depends on groups */
 #else
             struct passwd* p_passwd;
 
