@@ -2209,6 +2209,10 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestKeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
             const byte* f, word32 fSz);
 #endif /* !WOLFSSH_NO_ECDH */
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+    WOLFSSH_API int wolfSSH_TestKeyAgreeCurve25519_server(WOLFSSH* ssh,
+            byte hashId, byte* f, word32* fSz);
+#endif /* !WOLFSSH_NO_CURVE25519_SHA256 */
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)

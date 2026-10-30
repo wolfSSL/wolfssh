@@ -8522,6 +8522,7 @@ static int KeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
 {
     int ret = WS_SUCCESS;
     int primeId = ECC_CURVE_INVALID;
+    int keyInited = 0;
     ecc_key *key_ptr = NULL;
     #ifndef WOLFSSH_SMALL_STACK
         ecc_key key_s;
@@ -8539,8 +8540,11 @@ static int KeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
     #else /* ! WOLFSSH_SMALL_STACK */
         key_ptr = &key_s;
     #endif /* WOLFSSH_SMALL_STACK */
-    if (ret == 0)
+    if (ret == 0) {
         ret = wc_ecc_init(key_ptr);
+        if (ret == 0)
+            keyInited = 1;
+    }
     /* Enforce the negotiated curve on the peer point, matching the server. */
     if (ret == 0) {
         primeId = wcPrimeForId(ssh->handshake->kexId);
@@ -8563,7 +8567,8 @@ static int KeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
             ret = WS_CRYPTO_FAILED;
         }
     }
-    wc_ecc_free(key_ptr);
+    if (keyInited)
+        wc_ecc_free(key_ptr);
     #ifdef WOLFSSH_SMALL_STACK
     if (key_ptr) {
         WFREE(key_ptr, ssh->ctx->heap, DYNTYPE_PRIVKEY);
@@ -8595,6 +8600,7 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
 #ifndef WOLFSSH_NO_CURVE25519_SHA256
 {
     int ret;
+    int pubInited = 0;
     curve25519_key pub;
 
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeCurve25519_client()");
@@ -8602,6 +8608,7 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
 
     ret = wc_curve25519_init(&pub);
     if (ret == 0) {
+        pubInited = 1;
         ret = wc_curve25519_check_public(f, fSz,
                 EC25519_LITTLE_ENDIAN);
     }
@@ -8627,7 +8634,8 @@ static int KeyAgreeCurve25519_client(WOLFSSH* ssh, byte hashId,
         }
     }
 
-    wc_curve25519_free(&pub);
+    if (pubInited)
+        wc_curve25519_free(&pub);
     wc_curve25519_free(&ssh->handshake->privKey.curve25519);
 
     WLOG(WS_LOG_DEBUG, "Leaving KeyAgreeCurve25519_client(), ret = %d", ret);
@@ -16038,6 +16046,7 @@ int SendKexInit(WOLFSSH* ssh)
 struct wolfSSH_sigKeyBlockFull {
         byte pubKeyId; /* handshake->pubKeyId */
         byte pubKeyFmtId;
+        byte keyInit; /* sk key initialized, so it needs a free */
         word32 sz;
         const char *pubKeyName; /* IdToName(handshake->pubKeyId) */
         word32 pubKeyNameSz;
@@ -16446,6 +16455,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                 sigKeyBlock_ptr->sk.rsa.nSz =
                         (word32)sizeof(sigKeyBlock_ptr->sk.rsa.n);
                 ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, heap);
+                if (ret == 0)
+                    sigKeyBlock_ptr->keyInit = 1;
 
                 if (ret == 0 && certDer != NULL && certDerSz > 0) {
                     byte*  pubKeyDer = NULL;
@@ -16482,6 +16493,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                 sigKeyBlock_ptr->sk.rsa.nSz =
                         (word32)sizeof(sigKeyBlock_ptr->sk.rsa.n);
                 ret = wc_InitRsaKey(&sigKeyBlock_ptr->sk.rsa.key, heap);
+                if (ret == 0)
+                    sigKeyBlock_ptr->keyInit = 1;
             #ifdef WOLFSSH_TPM
                 if (ret == 0 && ssh->ctx->privateKey[keyIdx].isTpm) {
                     /* No private key in RAM; take the public key from the TPM. */
@@ -16601,6 +16614,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                     (word32)sizeof(sigKeyBlock_ptr->sk.ecc.q);
             ret = wc_ecc_init_ex(&sigKeyBlock_ptr->sk.ecc.key, heap,
                     INVALID_DEVID);
+            if (ret == 0)
+                sigKeyBlock_ptr->keyInit = 1;
             scratch = 0;
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
             /* A slot is never both cert-store and TPM backed; testing the
@@ -16736,6 +16751,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
             sigKeyBlock_ptr->sk.ed.qSz = sizeof(sigKeyBlock_ptr->sk.ed.q);
 
             ret = wc_ed25519_init(&sigKeyBlock_ptr->sk.ed.key);
+            if (ret == 0)
+                sigKeyBlock_ptr->keyInit = 1;
 
             scratch = 0;
             if (ret == 0)
@@ -16827,6 +16844,8 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
 
             ret = wc_MlDsaKey_Init(&sigKeyBlock_ptr->sk.mldsa.key,
                                    heap, INVALID_DEVID);
+            if (ret == 0)
+                sigKeyBlock_ptr->keyInit = 1;
             if (ret == 0)
                 ret = wc_MlDsaKey_SetParams(&sigKeyBlock_ptr->sk.mldsa.key,
                                             level);
@@ -16943,6 +16962,7 @@ static int SendKexGetSigningKey(WOLFSSH* ssh,
                              * rebuild via export/import; others copy flat safely. */
                             sigKeyBlock_ptr->sk.mldsa_composite.base.mldsa =
                                     keySig->ks.mldsa_composite.mldsa;
+                            sigKeyBlock_ptr->keyInit = 1;
                             wc_MlDsaKey_Free(&keySig->ks.mldsa_composite.mldsa);
                             {
                                 const CompositeTradOps* tradOps =
@@ -17528,6 +17548,8 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
     ecc_key privKey[1];
 #endif
     int primeId;
+    int pubKeyInited = 0;
+    int privKeyInited = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeEcdh_server()");
     WOLFSSH_UNUSED(hashId);
@@ -17536,10 +17558,16 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
     if (primeId == ECC_CURVE_INVALID)
         ret = WS_INVALID_PRIME_CURVE;
 
-    if (ret == 0)
+    if (ret == 0) {
         ret = wc_ecc_init_ex(pubKey, heap, INVALID_DEVID);
-    if (ret == 0)
+        if (ret == 0)
+            pubKeyInited = 1;
+    }
+    if (ret == 0) {
         ret = wc_ecc_init_ex(privKey, heap, INVALID_DEVID);
+        if (ret == 0)
+            privKeyInited = 1;
+    }
 #ifdef HAVE_WC_ECC_SET_RNG
     if (ret == 0)
         ret = wc_ecc_set_rng(privKey, ssh->rng);
@@ -17564,8 +17592,10 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
                                    ssh->k, &ssh->kSz);
         PRIVATE_KEY_LOCK();
     }
-    wc_ecc_free(privKey);
-    wc_ecc_free(pubKey);
+    if (privKeyInited)
+        wc_ecc_free(privKey);
+    if (pubKeyInited)
+        wc_ecc_free(pubKey);
 #ifdef WOLFSSH_SMALL_STACK
     WFREE(pubKey, heap, DYNTYPE_PUBKEY);
     WFREE(privKey, heap, DYNTYPE_PRIVKEY);
@@ -17609,14 +17639,22 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
 #else
     curve25519_key pubKey[1], privKey[1];
 #endif
+    int pubKeyInited = 0;
+    int privKeyInited = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering KeyAgreeCurve25519_server()");
     WOLFSSH_UNUSED(hashId);
 
-    if (ret == 0)
+    if (ret == 0) {
         ret = wc_curve25519_init_ex(pubKey, heap, INVALID_DEVID);
-    if (ret == 0)
+        if (ret == 0)
+            pubKeyInited = 1;
+    }
+    if (ret == 0) {
         ret = wc_curve25519_init_ex(privKey, heap, INVALID_DEVID);
+        if (ret == 0)
+            privKeyInited = 1;
+    }
     if (ret == 0)
         ret = wc_curve25519_check_public(ssh->handshake->e,
                 ssh->handshake->eSz, EC25519_LITTLE_ENDIAN);
@@ -17641,8 +17679,10 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
                   ssh->k, &ssh->kSz, EC25519_LITTLE_ENDIAN);
         PRIVATE_KEY_LOCK();
     }
-    wc_curve25519_free(privKey);
-    wc_curve25519_free(pubKey);
+    if (privKeyInited)
+        wc_curve25519_free(privKey);
+    if (pubKeyInited)
+        wc_curve25519_free(pubKey);
 #ifdef WOLFSSH_SMALL_STACK
     WFREE(pubKey, heap, DYNTYPE_PUBKEY);
     WFREE(privKey, heap, DYNTYPE_PRIVKEY);
@@ -19132,7 +19172,7 @@ int SendKexDhReply(WOLFSSH* ssh)
 
     /* Note: this free chain uses pubKeyFmtId, but it must structurally mirror
      * the initialization switch in SendKexGetSigningKey which dispatches on pubKeyFmtId. */
-    if (sigKeyBlock_ptr != NULL) {
+    if (sigKeyBlock_ptr != NULL && sigKeyBlock_ptr->keyInit) {
         if (sigKeyBlock_ptr->pubKeyFmtId == ID_SSH_RSA
         #ifdef WOLFSSH_CERTS
                 || sigKeyBlock_ptr->pubKeyFmtId == ID_X509V3_SSH_RSA
@@ -26850,6 +26890,14 @@ int wolfSSH_TestKeyAgreeEcdh_client(WOLFSSH* ssh, byte hashId,
     return KeyAgreeEcdh_client(ssh, hashId, f, fSz);
 }
 #endif /* !WOLFSSH_NO_ECDH */
+
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+int wolfSSH_TestKeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz)
+{
+    return KeyAgreeCurve25519_server(ssh, hashId, f, fSz);
+}
+#endif /* !WOLFSSH_NO_CURVE25519_SHA256 */
 
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \

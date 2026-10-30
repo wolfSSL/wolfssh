@@ -43,6 +43,9 @@
 #include <sys/stat.h>
 
 #include <wolfssl/wolfcrypt/coding.h>
+#ifdef WOLF_CRYPTO_CB
+    #include <wolfssl/wolfcrypt/cryptocb.h>
+#endif
 #include <wolfssh/port.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
@@ -2133,6 +2136,56 @@ static void TestKexDhReplyRejectsEccSigNameDowngrade(void)
     AssertHandshakeSucceeds("ecdsa-sha2-nistp256", REGRESS_SERVER_KEY_ECC_PATH);
     AssertHandshakeRejectsMutatedReply("ecdsa-sha2-nistp256",
             REGRESS_SERVER_KEY_ECC_PATH, "ecdsa-sha2-nistp384", WS_PARSE_E);
+}
+#endif
+
+#if !defined(WOLFSSH_NO_RSA_SHA2_256) && \
+    !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+#if defined(WOLF_CRYPTO_CB) && defined(WOLF_CRYPTO_CB_FREE)
+/* Device 0 is the devId a zeroed, never-initialized key carries, so a
+ * wolfCrypt free of one is dispatched here. */
+#define REGRESS_ZERO_DEVID 0
+static int noHostKeyRsaFrees;
+
+static int NoHostKeyFreeCb(int devId, wc_CryptoInfo* info, void* ctx)
+{
+    (void)devId;
+    (void)ctx;
+    if (info != NULL && info->algo_type == WC_ALGO_TYPE_FREE
+            && info->free.algo == WC_ALGO_TYPE_PK
+            && info->free.type == WC_PK_TYPE_RSA) {
+        noHostKeyRsaFrees++;
+    }
+    return CRYPTOCB_UNAVAILABLE;
+}
+#endif
+
+/* The server negotiates rsa-sha2-256 but only has an ECDSA host key, so
+ * SendKexDhReply finds no signing key. It must fail without freeing the
+ * RSA key it never initialized. */
+static void TestKexDhReplyNoMatchingHostKey(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitKexReplyHarness(&harness, "rsa-sha2-256", REGRESS_SERVER_KEY_ECC_PATH,
+            0, NULL);
+#if defined(WOLF_CRYPTO_CB) && defined(WOLF_CRYPTO_CB_FREE)
+    noHostKeyRsaFrees = 0;
+    AssertIntEQ(wc_CryptoCb_RegisterDevice(REGRESS_ZERO_DEVID,
+            NoHostKeyFreeCb, NULL), 0);
+#endif
+    RunKexReplyHandshake(&harness, &result);
+#if defined(WOLF_CRYPTO_CB) && defined(WOLF_CRYPTO_CB_FREE)
+    wc_CryptoCb_UnRegisterDevice(REGRESS_ZERO_DEVID);
+    AssertIntEQ(noHostKeyRsaFrees, 0);
+#endif
+
+    AssertFalse(result.serverSuccess);
+    AssertIntEQ(result.serverErr, WS_INVALID_ALGO_ID);
+    AssertFalse(result.clientSuccess);
+
+    FreeKexReplyHarness(&harness);
 }
 #endif
 
@@ -22171,6 +22224,10 @@ int main(int argc, char** argv)
     #endif
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     TestKexDhReplyRejectsEccSigNameDowngrade();
+    #endif
+    #if !defined(WOLFSSH_NO_RSA_SHA2_256) && \
+        !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256)
+    TestKexDhReplyNoMatchingHostKey();
     #endif
     #ifndef WOLFSSH_NO_ED25519
     TestKexDhReplyRejectsEd25519SigNameDowngrade();
