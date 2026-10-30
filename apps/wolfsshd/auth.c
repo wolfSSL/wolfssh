@@ -54,6 +54,8 @@
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/hash.h>
 
 #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
 /* Used to bind a client certificate to the requested user name: by UPN
@@ -80,6 +82,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <time.h>
 #ifdef WOLFSSH_OSSH_CERTS
 #include <netinet/in.h> /* in6_addr, AF_INET6 */
 #include <arpa/inet.h>  /* inet_pton for source-address matching */
@@ -611,6 +614,37 @@ int wolfSSHD_GetCachedFakeHashCountForTest(void)
 #endif /* WOLFSSHD_UNIT_TEST */
 #endif /* HAVE_SHADOW */
 
+/* Failed userauth replies take at least a per-user minimum, as OpenSSH sshd
+ * does: the floor plus 0 to 4.29 ms from a keyed hash of the username. */
+#ifndef WOLFSSHD_MIN_FAIL_DELAY_US
+    #define WOLFSSHD_MIN_FAIL_DELAY_US 5000
+#endif
+#ifndef WOLFSSHD_MAX_FAIL_DELAY_US
+    #define WOLFSSHD_MAX_FAIL_DELAY_US 5000000
+#endif
+
+/* Keys the per-user delay. Written once by wolfSSHD_AuthInit() before any
+ * connection is forked. */
+static byte failDelaySecret[16];
+
+static void InitFailDelaySecret(void)
+{
+    WC_RNG rng;
+    int ret;
+
+    ret = wc_InitRng(&rng);
+    if (ret == 0) {
+        ret = wc_RNG_GenerateBlock(&rng, failDelaySecret,
+                sizeof(failDelaySecret));
+        wc_FreeRng(&rng);
+    }
+    if (ret != 0) {
+        /* The delay still holds, but each user's share is predictable. */
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Error generating the auth failure delay key");
+    }
+}
+
 void wolfSSHD_AuthInit(void)
 {
 #ifdef HAVE_SHADOW
@@ -654,6 +688,8 @@ void wolfSSHD_AuthInit(void)
             " fixed-cost fake hash instead of matching real crypt() cost");
     }
 #endif
+
+    InitFailDelaySecret();
 }
 
 #ifndef _WIN32
@@ -3037,11 +3073,118 @@ static int RequestAuthentication(WS_UserAuthData* authData,
 }
 
 
+/* Monotonic microseconds, modulo 2^32; only differences are used. */
+static word32 AuthNowUs(void)
+{
+#ifdef _WIN32
+    /* GetTickCount64() ticks in 10-16 ms, coarser than the delay. */
+    LARGE_INTEGER cnt, freq;
+
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0
+            || !QueryPerformanceCounter(&cnt)) {
+        return 0;
+    }
+    return (word32)((cnt.QuadPart / freq.QuadPart) * 1000000
+            + (cnt.QuadPart % freq.QuadPart) * 1000000 / freq.QuadPart);
+#else
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (word32)ts.tv_sec * 1000000U + (word32)(ts.tv_nsec / 1000);
+#endif
+}
+
+
+static void AuthSleepUs(word32 us)
+{
+#ifdef _WIN32
+    Sleep((DWORD)((us + 999) / 1000));
+#else
+    struct timespec ts;
+
+    ts.tv_sec = (time_t)(us / 1000000U);
+    ts.tv_nsec = (long)(us % 1000000U) * 1000;
+    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+        /* resume the remaining time */
+    }
+#endif
+}
+
+
+#ifdef WOLFSSHD_UNIT_TEST
+void (*wsshd_authsleep_cb)(word32 us) = AuthSleepUs;
+#define AuthSleepUs wsshd_authsleep_cb
+#endif
+
+
+/* The minimum time, in microseconds, a failed userauth for usr takes. */
+WOLFSSHD_STATIC word32 UserFailDelayUs(const byte* usr, word32 usrSz)
+{
+    word32 h = 0;
+#if !defined(NO_SHA256)
+    #define FAIL_DELAY_HASH WC_HASH_TYPE_SHA256
+#elif defined(WOLFSSL_SHA512)
+    #define FAIL_DELAY_HASH WC_HASH_TYPE_SHA512
+#elif defined(WOLFSSL_SHA384)
+    #define FAIL_DELAY_HASH WC_HASH_TYPE_SHA384
+#endif
+#ifdef FAIL_DELAY_HASH
+    wc_HashAlg hash;
+    byte digest[WC_MAX_DIGEST_SIZE];
+
+    if (wc_HashInit(&hash, FAIL_DELAY_HASH) == 0) {
+        if (wc_HashUpdate(&hash, FAIL_DELAY_HASH, failDelaySecret,
+                    sizeof(failDelaySecret)) == 0
+                && (usr == NULL
+                    || wc_HashUpdate(&hash, FAIL_DELAY_HASH, usr, usrSz) == 0)
+                && wc_HashFinal(&hash, FAIL_DELAY_HASH, digest) == 0) {
+            h = ((word32)digest[0] << 24) | ((word32)digest[1] << 16)
+                | ((word32)digest[2] << 8) | (word32)digest[3];
+        }
+        wc_HashFree(&hash, FAIL_DELAY_HASH);
+        WS_FORCEZERO(digest, sizeof(digest));
+    }
+    #undef FAIL_DELAY_HASH
+#else
+    /* No hash to key the per-user share; the floor alone holds. */
+    (void)usr;
+    (void)usrSz;
+#endif
+
+    return WOLFSSHD_MIN_FAIL_DELAY_US + h / 1000000U;
+}
+
+
+/* Sleeps until delayUs has passed since startUs, doubling delayUs while the
+ * time already spent exceeds it. Past the maximum it returns at once. A sleep
+ * may wake early, so the elapsed time is rechecked after each one. */
+WOLFSSHD_STATIC void EnsureMinFailTime(word32 startUs, word32 delayUs)
+{
+    word32 elapsed = AuthNowUs() - startUs;
+    int tries;
+
+    if (elapsed > WOLFSSHD_MAX_FAIL_DELAY_US) {
+        return;
+    }
+    while (delayUs < elapsed) {
+        delayUs *= 2;
+    }
+    /* The bound keeps a stalled clock from looping forever. */
+    for (tries = 0; tries < 64 && elapsed < delayUs; tries++) {
+        AuthSleepUs(delayUs - elapsed);
+        elapsed = AuthNowUs() - startUs;
+    }
+}
+
+
 /* return WOLFSSH_USERAUTH_SUCCESS on success */
 int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     int ret = WOLFSSH_USERAUTH_SUCCESS;
     WOLFSSHD_AUTH* authCtx;
+    word32 startUs = AuthNowUs();
 
     if (ctx == NULL) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] No auth callbacks passed in");
@@ -3069,6 +3212,11 @@ int DefaultUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
     /* call to possibly privileged authenticator for password check */
     if (ret == WOLFSSH_USERAUTH_SUCCESS) {
         ret = RequestAuthentication(authData, authCtx);
+    }
+
+    if (ret != WOLFSSH_USERAUTH_SUCCESS) {
+        EnsureMinFailTime(startUs,
+                UserFailDelayUs(authData->username, authData->usernameSz));
     }
 
     return ret;

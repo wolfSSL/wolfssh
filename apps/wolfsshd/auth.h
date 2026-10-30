@@ -183,6 +183,12 @@ int IsRootLoginDenied(int isRoot, WOLFSSHD_CONFIG* usrConf);
 int IsRootPasswordAuthBlocked(int isRoot, WOLFSSHD_CONFIG* usrConf);
 int IsRootPubKeyForcedCmdMissing(int isRoot, WOLFSSHD_CONFIG* usrConf);
 int wolfSSHD_GetUserAuthTypes(const WOLFSSHD_CONFIG* usrConf);
+word32 UserFailDelayUs(const byte* usr, word32 usrSz);
+void EnsureMinFailTime(word32 startUs, word32 delayUs);
+#ifdef WOLFSSHD_UNIT_TEST
+/* EnsureMinFailTime() sleeps through this; a test may wake it early. */
+extern void (*wsshd_authsleep_cb)(word32 us);
+#endif
 #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
 int OsshPrefixMatch(const byte* a, const byte* b, int bits, int len);
 int OsshSourceAddrMatch(const byte* list, word32 listSz, const char* peerIp);
