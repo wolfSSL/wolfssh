@@ -1362,6 +1362,10 @@ struct WOLFSSH {
     byte peerMacId;
     byte peerMacSz;
     byte peerAeadMode;
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    byte noneCipherIn;  /* NEWKEYS installed the "none" cipher inbound */
+    byte noneCipherOut; /* NEWKEYS installed the "none" cipher outbound */
+#endif
 #ifndef WOLFSSH_NO_DH
     word32 primeGroupSz;
 #endif

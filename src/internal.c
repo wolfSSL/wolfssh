@@ -9463,6 +9463,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ssh->peerMacSz = ssh->handshake->peerMacSz;
         ssh->peerAeadMode = ssh->handshake->peerAeadMode;
         WMEMCPY(&ssh->peerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        ssh->noneCipherIn = (ssh->peerEncryptId == ID_NONE);
+#endif
 
         ret = CipherSetKey(&ssh->decryptCipher,
                 ssh->peerEncryptId, 0, ssh->peerKeys.iv,
@@ -10250,6 +10253,15 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
 #endif
 
 
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+/* Either direction negotiated the "none" cipher, so a secret sent now is in
+ * the clear. */
+static int IsTransportCleartext(const WOLFSSH* ssh)
+{
+    return ssh->noneCipherIn || ssh->noneCipherOut;
+}
+#endif
+
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int DoUserAuthInfoResponse(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
@@ -10281,6 +10293,19 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse on non-keyboard auth");
         ret = WS_FATAL_ERROR;
     }
+
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    if ((ret == WS_SUCCESS) && IsTransportCleartext(ssh)) {
+        /* A rekey to the none cipher came with a prompt outstanding. Refused
+         * before the callback sees a cleartext answer, and the exchange is
+         * over, so a later INFO_RESPONSE is fatal. */
+        WLOG(WS_LOG_DEBUG, "DUARKB: response refused over the none cipher");
+        ssh->authId = ID_NONE;
+        ssh->kbSetupPending = 0;
+        authFailure = 1;
+        ret = WS_USER_AUTH_E;
+    }
+#endif
 
     if (ret == WS_SUCCESS) {
         /* Response arrived; the exchange is answered. */
@@ -12221,6 +12246,19 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
              * disconnect is already sent; don't dispatch this request. */
             begin = len;
         }
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        else if ((authNameId == ID_USERAUTH_PASSWORD
+                    || authNameId == ID_USERAUTH_KEYBOARD)
+                && IsTransportCleartext(ssh)) {
+            /* Refused before the callback sees a cleartext secret. */
+            WLOG(WS_LOG_DEBUG, "DUAR: %s refused over the none cipher",
+                 IdToName(authNameId));
+            /* No exchange started; a later INFO_RESPONSE must not run. */
+            ssh->authId = ID_NONE;
+            ret = SendUserAuthFailureCount(ssh, 0, 1);
+            begin = len;
+        }
+#endif
         else if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
@@ -19468,6 +19506,9 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->macId = ssh->handshake->macId;
         ssh->aeadMode = ssh->handshake->aeadMode;
         WMEMCPY(&ssh->keys, &ssh->handshake->keys, sizeof(Keys));
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        ssh->noneCipherOut = (ssh->encryptId == ID_NONE);
+#endif
 
         ret = CipherSetKey(&ssh->encryptCipher,
                 ssh->encryptId, 1, ssh->keys.iv,
@@ -23275,6 +23316,11 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
     if (ssh->ctx && ssh->ctx->userAuthTypesCb) {
         typeAllowed = ssh->ctx->userAuthTypesCb(ssh, ssh->userAuthCtx);
     }
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    if (IsTransportCleartext(ssh)) {
+        typeAllowed &= ~(WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_KEYBOARD);
+    }
+#endif
     if (typeAllowed & WOLFSSH_USERAUTH_PUBLICKEY) {
         WSTRNCAT(authStr, "publickey,", MAX_AUTH_STRING-1);
     }
