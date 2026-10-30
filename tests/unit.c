@@ -19143,12 +19143,21 @@ static int certmanForgeChild(const byte* issuerCert, word32 issuerCertSz,
  * the same for ExtendedKeyUsage, taking wc_SetExtKeyUsage() names
  * ("serverAuth", "clientAuth", "any", ...) or, with WOLFSSL_EKU_OID, a
  * dotted OID. The issuer name is taken from issuerCert, the subject public
- * key from subjectKey, and the cert is signed with issuerKey. Fills
- * der/derSz on success. */
-static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
-        const char* extKeyUsage,
+ * key from subjectKey, and the cert is signed with issuerKey. keyIds of
+ * CERTMAN_NO_SKID or CERTMAN_NO_AKID leaves out that key ID, and a non-NULL
+ * akidKey takes the authority key ID from that key instead of from
+ * issuerCert: by RFC 5280 method 1, or with CERTMAN_AKID_SPKI as the SHA-1
+ * of its whole SubjectPublicKeyInfo, the ID wolfSSL derives for a cert
+ * without a subject key ID. Fills der/derSz on success. */
+#define CERTMAN_NO_SKID 0x01
+#define CERTMAN_NO_AKID 0x02
+#define CERTMAN_AKID_SPKI 0x04
+
+static int certmanForgeCertKeyIds(const char* cn, int isCA,
+        const char* keyUsage, const char* extKeyUsage,
         const byte* issuerCert, word32 issuerCertSz,
-        ecc_key* issuerKey, ecc_key* subjectKey, byte* der, word32* derSz)
+        ecc_key* issuerKey, ecc_key* subjectKey, int keyIds,
+        ecc_key* akidKey, byte* der, word32* derSz)
 {
     WC_RNG rng;
     Cert cert;
@@ -19205,10 +19214,28 @@ static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
 #ifdef WOLFSSL_CERT_EXT
     /* Key ids make the signer lookup go by key, not by the issuer name,
      * which a self-issued intermediate shares with the root. */
-    if (ret == 0)
+    if (ret == 0 && !(keyIds & CERTMAN_NO_SKID))
         ret = wc_SetSubjectKeyIdFromPublicKey_ex(&cert, ECC_TYPE, subjectKey);
-    if (ret == 0)
-        ret = wc_SetAuthKeyIdFromCert(&cert, issuerCert, (int)issuerCertSz);
+    if (ret == 0 && !(keyIds & CERTMAN_NO_AKID)) {
+        if (akidKey != NULL && (keyIds & CERTMAN_AKID_SPKI)) {
+            byte spki[256];
+
+            sz = wc_EccPublicKeyToDer(akidKey, spki, sizeof(spki), 1);
+            if (sz < 0)
+                ret = sz;
+            else
+                ret = wc_ShaHash(spki, (word32)sz, cert.akid);
+            cert.akidSz = WC_SHA_DIGEST_SIZE;
+        }
+        else if (akidKey != NULL)
+            ret = wc_SetAuthKeyIdFromPublicKey_ex(&cert, ECC_TYPE, akidKey);
+        else
+            ret = wc_SetAuthKeyIdFromCert(&cert, issuerCert,
+                    (int)issuerCertSz);
+    }
+#else
+    (void)keyIds;
+    (void)akidKey;
 #endif
     if (ret == 0) {
         sz = wc_MakeCert(&cert, der, *derSz, NULL, subjectKey, &rng);
@@ -19228,6 +19255,16 @@ static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
         wc_FreeRng(&rng);
 
     return ret;
+}
+
+static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
+        const char* extKeyUsage,
+        const byte* issuerCert, word32 issuerCertSz,
+        ecc_key* issuerKey, ecc_key* subjectKey, byte* der, word32* derSz)
+{
+    return certmanForgeCertKeyIds(cn, isCA, keyUsage, extKeyUsage,
+            issuerCert, issuerCertSz, issuerKey, subjectKey, 0, NULL,
+            der, derSz);
 }
 
 static void certmanPutU32(byte* p, word32 v)
@@ -19403,7 +19440,7 @@ static int certmanIsSelfIssued(const byte* der, word32 derSz)
  * own key and the root's signature, the shape of a CA key rollover cert.
  *
  * appendRoot also sends the trusted root at the end of the chain, so it goes
- * through CertManIntermediateIsCA too and must be promoted as well.
+ * through CertManIntermediateIsCA too and must stay trusted afterwards.
  *
  * expectPromote==1 asserts the intermediate was promoted and the leaf
  * verified through it: verify returns WS_SUCCESS, or WS_CERT_PROFILE_E when
@@ -19523,6 +19560,19 @@ static int certmanCheckIntermediate(const char* interKeyUsage, int selfIssued,
         result = -934; goto done;
     }
 
+    if (expectPromote) {
+        /* The intermediate stays in the manager, so the leaf alone now
+         * finds its signer. */
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+                leaf, leafSz);
+        ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+        if (ret != WS_SUCCESS && ret != WS_CERT_PROFILE_E) {
+            printf("CertMan: promoted intermediate CA not kept, ret=%d\n",
+                    ret);
+            result = -936; goto done;
+        }
+    }
+
 done:
     if (cm != NULL)
         wolfSSH_CERTMAN_free(cm);
@@ -19545,8 +19595,8 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 
     /* A CA intermediate with no KeyUsage extension must still be promoted. */
     result = certmanCheckIntermediate(NULL, 0, 0, 1);
-    /* A peer may send the trusted root too; it asserts keyCertSign, so it is
-     * promoted like any other CA. */
+    /* A peer may send the trusted root too; it asserts keyCertSign, so it
+     * passes the CA check like any other cert above the leaf. */
     if (result == 0)
         result = certmanCheckIntermediate(NULL, 0, 1, 1);
 #ifdef WOLFSSL_CERT_EXT
@@ -19567,6 +19617,408 @@ static int test_CertMan_PromoteValidCaIntermediate(void)
 #endif
     return result;
 }
+
+#ifdef WOLFSSL_CERT_EXT
+
+/* An intermediate CA with no subject key ID extension is found as the
+ * signer of a leaf whose authority key ID is the key ID wolfSSL derives for
+ * it, the SHA-1 of its SubjectPublicKeyInfo. wolfSSL finds no signer for a
+ * leaf whose authority key ID is anything else, here the RFC 5280 method 1
+ * ID of the intermediate's key or the ID of another key, and does not fall
+ * back to the issuer name; the intermediate must then not be left in the
+ * manager, so a leaf without an authority key ID, found by issuer name
+ * alone, still has no signer afterwards. */
+static int test_CertMan_IssuerWithoutSkid(void)
+{
+    int result = 0;
+    int ret;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    word32 rootSz = 0, rootKeySz = 0;
+    byte inter[2048];
+    word32 interSz = sizeof(inter);
+    byte leaf[2048];
+    word32 leafSz;
+    byte chain[4096];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, interKey, leafKey;
+    int haveRootKey = 0, haveInterKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    WOLFSSH_CERTMAN* cm = NULL;
+    int i;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0 ||
+            certmanLoadFile("./keys/ca-key-ecc.der",
+                &rootKeyBuf, &rootKeySz) != 0) {
+        printf("CertMan: can't load test certs\n");
+        result = -980; goto done;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        result = -981; goto done;
+    }
+    haveRng = 1;
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -982; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -983; goto done;
+    }
+    if (wc_ecc_init(&interKey) != 0) {
+        result = -984; goto done;
+    }
+    haveInterKey = 1;
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -985; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &interKey) != 0 ||
+            wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -986; goto done;
+    }
+    if (certmanForgeCertKeyIds("NoSkidCA", 1, NULL, NULL, root, rootSz,
+                &rootKey, &interKey, CERTMAN_NO_SKID, NULL,
+                inter, &interSz) != 0) {
+        result = -987; goto done;
+    }
+
+    /* 0: wolfSSL's ID for the intermediate, 1: the method 1 ID of its key,
+     * 2: an ID of another key */
+    for (i = 0; i < 3; i++) {
+        cm = wolfSSH_CERTMAN_new(NULL);
+        if (cm == NULL || wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz)
+                != WS_SUCCESS) {
+            result = -988; goto done;
+        }
+        leafSz = sizeof(leaf);
+        if (certmanForgeCertKeyIds("NoSkidLeaf", 0, NULL, NULL, inter,
+                    interSz, &interKey, &leafKey,
+                    i == 0 ? CERTMAN_AKID_SPKI : 0,
+                    i == 2 ? &leafKey : &interKey, leaf, &leafSz) != 0) {
+            result = -989; goto done;
+        }
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+                leaf, leafSz);
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+                inter, interSz);
+        ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+        if (i == 0 && ret != WS_SUCCESS && ret != WS_CERT_PROFILE_E) {
+            printf("CertMan: issuer without SKID not found, ret=%d\n", ret);
+            result = -990; goto done;
+        }
+        if (i > 0) {
+            if (ret != WS_CERT_NO_SIGNER_E) {
+                printf("CertMan: AKID case %d got %d\n", i, ret);
+                result = -991; goto done;
+            }
+            leafSz = sizeof(leaf);
+            if (certmanForgeCertKeyIds("NameLeaf", 0, NULL, NULL, inter,
+                        interSz, &interKey, &leafKey, CERTMAN_NO_AKID, NULL,
+                        leaf, &leafSz) != 0) {
+                result = -992; goto done;
+            }
+            chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+                    leaf, leafSz);
+            ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+            if (ret != WS_CERT_NO_SIGNER_E) {
+                printf("CertMan: intermediate left loaded, ret=%d\n", ret);
+                result = -993; goto done;
+            }
+        }
+        wolfSSH_CERTMAN_free(cm);
+        cm = NULL;
+    }
+
+done:
+    if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveInterKey)
+        wc_ecc_free(&interKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    return result;
+}
+
+#endif /* WOLFSSL_CERT_EXT */
+
+#ifdef WOLFSSH_TEST_SET_CERTMAN
+
+/* Verifies chain and expects expected, then, after the application clears
+ * the chain CAs, expects goodLeaf, signed by the root, to still verify. */
+static int certmanCheckRootKept(WOLFSSH_CERTMAN* cm, WOLFSSL_CERT_MANAGER* wcm,
+        const byte* chain, word32 chainSz, word32 count, int expected,
+        const byte* goodLeaf, word32 goodLeafSz)
+{
+    byte one[2048 + UINT32_SZ];
+    word32 oneSz;
+    int ret;
+
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, count);
+    if (ret != expected) {
+        printf("CertMan: chain got %d, expected %d\n", ret, expected);
+        return -940;
+    }
+#ifdef WOLFSSH_CERTMAN_CHAIN_CA
+    if (wolfSSL_CertManagerUnloadIntermediateCerts(wcm) != WOLFSSL_SUCCESS) {
+        printf("CertMan: unloading intermediate certs failed\n");
+        return -941;
+    }
+#else
+    (void)wcm;
+#endif
+    oneSz = certmanAppendCert(one, (word32)sizeof(one), 0,
+            goodLeaf, goodLeafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, one, oneSz, 1);
+    if (ret != WS_SUCCESS && ret != WS_CERT_PROFILE_E) {
+        printf("CertMan: trusted root lost, ret=%d\n", ret);
+        return -942;
+    }
+
+    return 0;
+}
+
+/* A peer chain that puts an already-trusted CA above a cert it does not
+ * sign must leave that CA a trusted root: wolfSSL's typed CA load retags
+ * an existing signer with the same key ID, which a later
+ * wolfSSL_CertManagerUnloadIntermediateCerts() would then remove.
+ *   1. [leaf not issued by the root, root]
+ *   2. [leaf, cert named as its issuer that shares the root's key ID]
+ *   3. a valid [leaf, intermediate] chain: the intermediate is a chain CA,
+ *      cleared by the unload, while the root stays. Before that, it is not
+ *      loaded above a leaf it did not issue, or above one the root signed. */
+static int test_CertMan_TrustedRootNotRetagged(void)
+{
+    int result = 0;
+    int ret;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    byte* fred = NULL;
+    word32 rootSz = 0, rootKeySz = 0, fredSz = 0;
+    byte goodLeaf[2048];
+    word32 goodLeafSz = sizeof(goodLeaf);
+    byte leaf[2048];
+    word32 leafSz;
+    byte ca[2048];
+    word32 caSz;
+    byte chain[6144];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, leafKey;
+    int haveRootKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSL_CERT_MANAGER* wcm = NULL;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0 ||
+            certmanLoadFile("./keys/ca-key-ecc.der",
+                &rootKeyBuf, &rootKeySz) != 0 ||
+            certmanLoadFile("./keys/fred-cert.der", &fred, &fredSz) != 0) {
+        printf("CertMan: can't load test certs\n");
+        result = -943; goto done;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        result = -944; goto done;
+    }
+    haveRng = 1;
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -945; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -946; goto done;
+    }
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -947; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -948; goto done;
+    }
+    if (certmanForgeCert("GoodLeaf", 0, NULL, NULL, root, rootSz, &rootKey,
+                &leafKey, goodLeaf, &goodLeafSz) != 0) {
+        result = -949; goto done;
+    }
+
+    /* Import the wolfSSL manager so the test can unload from it. */
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    wcm = wolfSSL_CertManagerNew();
+    if (ctx == NULL || wcm == NULL ||
+            wolfSSH_SetCertManager(ctx, wcm) != WS_SUCCESS) {
+        result = -950; goto done;
+    }
+    cm = ctx->certMan;
+    if (wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -951; goto done;
+    }
+
+    /* 1. A leaf issued under Fred's name, with the trusted root above. */
+    leafSz = sizeof(leaf);
+    if (certmanForgeCert("BogusLeaf", 0, NULL, NULL, fred, fredSz, &leafKey,
+                &leafKey, leaf, &leafSz) != 0) {
+        result = -952; goto done;
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            root, rootSz);
+    result = certmanCheckRootKept(cm, wcm, chain, chainSz, 2,
+            WS_CERT_NO_SIGNER_E, goodLeaf, goodLeafSz);
+    if (result != 0)
+        goto done;
+
+#ifdef WOLFSSL_CERT_EXT
+    /* 2. A CA under a new name with the root's key, so the same key ID,
+     * signed by the root, above a leaf issued under that name. The root
+     * is the signer the load finds by that key ID. */
+    caSz = sizeof(ca);
+    if (certmanForgeCert("RenamedRoot", 1, NULL, NULL, root, rootSz,
+                &rootKey, &rootKey, ca, &caSz) != 0) {
+        result = -953; goto done;
+    }
+    leafSz = sizeof(leaf);
+    if (certmanForgeCert("RenamedLeaf", 0, NULL, NULL, ca, caSz, &rootKey,
+                &leafKey, leaf, &leafSz) != 0) {
+        result = -954; goto done;
+    }
+    {
+        DecodedCert a, b;
+        int same = 0;
+
+        wc_InitDecodedCert(&a, root, rootSz, NULL);
+        wc_InitDecodedCert(&b, ca, caSz, NULL);
+        if (wc_ParseCert(&a, CERT_TYPE, NO_VERIFY, NULL) == 0 &&
+                wc_ParseCert(&b, CERT_TYPE, NO_VERIFY, NULL) == 0) {
+            same = WMEMCMP(a.extSubjKeyId, b.extSubjKeyId,
+                    sizeof(a.extSubjKeyId)) == 0;
+        }
+        wc_FreeDecodedCert(&b);
+        wc_FreeDecodedCert(&a);
+        if (!same) {
+            printf("CertMan: renamed root has its own key ID\n");
+            result = -955; goto done;
+        }
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            ca, caSz);
+    result = certmanCheckRootKept(cm, wcm, chain, chainSz, 2,
+            WS_CERT_NO_SIGNER_E, goodLeaf, goodLeafSz);
+    if (result != 0)
+        goto done;
+#endif /* WOLFSSL_CERT_EXT */
+
+    /* 3. A valid intermediate, cleared by the unload. */
+    caSz = sizeof(ca);
+    if (certmanForgeCert("IntermediateCA", 1, NULL, NULL, root, rootSz,
+                &rootKey, &leafKey, ca, &caSz) != 0) {
+        result = -956; goto done;
+    }
+    leafSz = sizeof(leaf);
+    if (certmanForgeCert("InterLeaf", 0, NULL, NULL, ca, caSz, &leafKey,
+                &leafKey, leaf, &leafSz) != 0) {
+        result = -957; goto done;
+    }
+    /* Above a leaf it did not issue, the intermediate is not loaded. */
+    {
+        byte bogus[2048];
+        word32 bogusSz = sizeof(bogus);
+
+        if (certmanForgeCert("BogusLeaf", 0, NULL, NULL, fred, fredSz,
+                    &leafKey, &leafKey, bogus, &bogusSz) != 0) {
+            result = -960; goto done;
+        }
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+                bogus, bogusSz);
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+                ca, caSz);
+        ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+        if (ret != WS_CERT_NO_SIGNER_E) {
+            printf("CertMan: bogus intermediate chain got %d\n", ret);
+            result = -961; goto done;
+        }
+        chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+                leaf, leafSz);
+        ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+        if (ret != WS_CERT_NO_SIGNER_E) {
+            printf("CertMan: intermediate loaded for a cert it did not "
+                   "issue, ret=%d\n", ret);
+            result = -962; goto done;
+        }
+    }
+    /* Nor above a leaf that has a signer without it. */
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            goodLeaf, goodLeafSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            ca, caSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+    if (ret != WS_SUCCESS && ret != WS_CERT_PROFILE_E) {
+        printf("CertMan: root-signed leaf under an intermediate got %d\n",
+                ret);
+        result = -963; goto done;
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: intermediate loaded for a leaf with a signer, "
+               "ret=%d\n", ret);
+        result = -964; goto done;
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            ca, caSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 2);
+    if (ret != WS_SUCCESS && ret != WS_CERT_PROFILE_E) {
+        printf("CertMan: intermediate chain failed, ret=%d\n", ret);
+        result = -958; goto done;
+    }
+    result = certmanCheckRootKept(cm, wcm, chain, chainSz, 2, ret,
+            goodLeaf, goodLeafSz);
+    if (result != 0)
+        goto done;
+#ifdef WOLFSSH_CERTMAN_CHAIN_CA
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != WS_CERT_NO_SIGNER_E) {
+        printf("CertMan: chain CA survived the unload, ret=%d\n", ret);
+        result = -959; goto done;
+    }
+#endif
+
+done:
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    if (wcm != NULL)
+        wolfSSL_CertManagerFree(wcm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    free(fred);
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_SET_CERTMAN */
 
 #ifdef WOLFSSL_CERT_EXT
 
@@ -19756,6 +20208,156 @@ static int test_CertMan_LeafKeyUsage(void)
 
     return result;
 }
+
+#if !defined(WOLFSSH_NO_FPKI) && defined(WOLFSSL_SUBJ_DIR_ATTR)
+
+/* A leaf that names its issuer as its own subject is self-issued, so the
+ * NO_VERIFY parse before CheckProfile() looks up no signer for it. Give it
+ * what the FPKI worksheet 6 profile checks ahead of the issuer-DN match and
+ * expect WS_CERT_PROFILE_E, not a NULL dereference. wolfSSL cannot write a
+ * subjectDirectoryAttributes extension, so the leaf carries the
+ * countryOfCitizenship value as a CRL distribution points extension whose
+ * OID is rewritten to 2.5.29.9 before signing. */
+static int test_CertMan_ProfileLeafNoSigner(void)
+{
+    static const byte sda[] = {
+        0x30, 0x12, 0x30, 0x10,
+        0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x09, 0x04,
+        0x31, 0x04, 0x13, 0x02, 'U', 'S'
+    };
+    static const byte crlDpOid[] = { 0x06, 0x03, 0x55, 0x1d, 0x1f };
+    int result = 0;
+    int ret;
+    int sz;
+    byte* root = NULL;
+    byte* rootKeyBuf = NULL;
+    word32 rootSz = 0, rootKeySz = 0;
+    byte leaf[2048];
+    word32 leafSz = 0;
+    byte chain[4096];
+    word32 chainSz;
+    word32 idx;
+    ecc_key rootKey, leafKey;
+    int haveRootKey = 0, haveLeafKey = 0;
+    WC_RNG rng;
+    int haveRng = 0;
+    Cert cert;
+    DecodedCert decoded;
+    WOLFSSH_CERTMAN* cm = NULL;
+
+    if (certmanLoadFile("./keys/ca-cert-ecc.der", &root, &rootSz) != 0 ||
+            certmanLoadFile("./keys/ca-key-ecc.der",
+                &rootKeyBuf, &rootKeySz) != 0) {
+        printf("CertMan: can't load test certs\n");
+        result = -970; goto done;
+    }
+    if (wc_InitRng(&rng) != 0) {
+        result = -971; goto done;
+    }
+    haveRng = 1;
+    if (wc_ecc_init(&rootKey) != 0) {
+        result = -972; goto done;
+    }
+    haveRootKey = 1;
+    idx = 0;
+    if (wc_EccPrivateKeyDecode(rootKeyBuf, &idx, &rootKey, rootKeySz) != 0) {
+        result = -973; goto done;
+    }
+    if (wc_ecc_init(&leafKey) != 0) {
+        result = -974; goto done;
+    }
+    haveLeafKey = 1;
+    if (wc_ecc_make_key(&rng, 32, &leafKey) != 0) {
+        result = -975; goto done;
+    }
+
+    ret = wc_InitCert(&cert);
+    if (ret == 0)
+        ret = wc_SetSubjectBuffer(&cert, root, (int)rootSz);
+    if (ret == 0)
+        ret = wc_SetIssuerBuffer(&cert, root, (int)rootSz);
+    if (ret == 0)
+        ret = wc_SetKeyUsage(&cert, "digitalSignature");
+    if (ret == 0)
+        ret = wc_SetSubjectKeyIdFromPublicKey_ex(&cert, ECC_TYPE, &leafKey);
+    if (ret == 0)
+        ret = wc_SetAuthKeyIdFromCert(&cert, root, (int)rootSz);
+    if (ret == 0) {
+        cert.sigType = CTC_SHA256wECDSA;
+        cert.daysValid = 365;
+        cert.isCA = 0;
+        WSTRNCPY(cert.certPolicies[0], "2.16.840.1.101.3.2.1.3.13",
+                CTC_MAX_CERTPOL_SZ - 1);
+        cert.certPoliciesNb = 1;
+        WMEMCPY(cert.crlInfo, sda, sizeof(sda));
+        cert.crlInfoSz = (int)sizeof(sda);
+        sz = wc_MakeCert(&cert, leaf, sizeof(leaf), NULL, &leafKey, &rng);
+        if (sz < 0)
+            ret = sz;
+    }
+    if (ret == 0) {
+        ret = -1;
+        for (idx = 0; idx + sizeof(crlDpOid) <= (word32)cert.bodySz; idx++) {
+            if (WMEMCMP(leaf + idx, crlDpOid, sizeof(crlDpOid)) == 0) {
+                leaf[idx + sizeof(crlDpOid) - 1] = 0x09;
+                ret = 0;
+                break;
+            }
+        }
+    }
+    if (ret == 0) {
+        sz = wc_SignCert(cert.bodySz, cert.sigType, leaf, sizeof(leaf), NULL,
+                &rootKey, &rng);
+        if (sz < 0)
+            ret = sz;
+        else
+            leafSz = (word32)sz;
+    }
+    if (ret != 0) {
+        printf("CertMan: forge profile leaf failed, ret=%d\n", ret);
+        result = -976; goto done;
+    }
+
+    /* The leaf must get as far as the issuer-DN match. */
+    wc_InitDecodedCert(&decoded, leaf, leafSz, NULL);
+    ret = wc_ParseCert(&decoded, CERT_TYPE, NO_VERIFY, NULL);
+    if (ret == 0 && WSTRCMP(decoded.countryOfCitizenship, "US") != 0) {
+        ret = -1;
+    }
+    wc_FreeDecodedCert(&decoded);
+    if (ret != 0 || !certmanIsSelfIssued(leaf, leafSz)) {
+        printf("CertMan: forged profile leaf is not as intended\n");
+        result = -977; goto done;
+    }
+
+    cm = wolfSSH_CERTMAN_new(NULL);
+    if (cm == NULL ||
+            wolfSSH_CERTMAN_LoadRootCA_buffer(cm, root, rootSz) != WS_SUCCESS) {
+        result = -978; goto done;
+    }
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0,
+            leaf, leafSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(cm, chain, chainSz, 1);
+    if (ret != WS_CERT_PROFILE_E) {
+        printf("CertMan: self-issued profile leaf got %d\n", ret);
+        result = -979; goto done;
+    }
+
+done:
+    if (cm != NULL)
+        wolfSSH_CERTMAN_free(cm);
+    if (haveRootKey)
+        wc_ecc_free(&rootKey);
+    if (haveLeafKey)
+        wc_ecc_free(&leafKey);
+    if (haveRng)
+        wc_FreeRng(&rng);
+    free(root);
+    free(rootKeyBuf);
+    return result;
+}
+
+#endif /* !WOLFSSH_NO_FPKI && WOLFSSL_SUBJ_DIR_ATTR */
 
 #endif /* WOLFSSL_CERT_EXT */
 
@@ -27049,10 +27651,31 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 
 #ifdef WOLFSSL_CERT_EXT
+    unitResult = test_CertMan_IssuerWithoutSkid();
+    printf("CertMan_IssuerWithoutSkid: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSH_TEST_SET_CERTMAN
+    unitResult = test_CertMan_TrustedRootNotRetagged();
+    printf("CertMan_TrustedRootNotRetagged: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#ifdef WOLFSSL_CERT_EXT
     unitResult = test_CertMan_LeafKeyUsage();
     printf("CertMan_LeafKeyUsage: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if !defined(WOLFSSH_NO_FPKI) && defined(WOLFSSL_SUBJ_DIR_ATTR)
+    unitResult = test_CertMan_ProfileLeafNoSigner();
+    printf("CertMan_ProfileLeafNoSigner: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 #endif
 #endif
 

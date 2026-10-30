@@ -334,7 +334,7 @@ static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
 
     if (decoded != NULL) {
         wc_InitDecodedCert(decoded, der, derSz, cm->heap);
-        if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, NULL) == 0) {
+        if (wc_ParseCert(decoded, CERT_TYPE, NO_VERIFY, NULL) == 0) {
             isCA = decoded->isCA;
         #ifndef ALLOW_INVALID_CERTSIGN
             if (isCA && decoded->extKeyUsageSet &&
@@ -358,6 +358,126 @@ static int CertManIntermediateIsCA(WOLFSSH_CERTMAN* cm,
     }
 
     return isCA;
+}
+
+/* Verifies one cert against cm->cm, mapping the result to a WS_ code. */
+static int CertManVerifyOne(WOLFSSH_CERTMAN* cm, const unsigned char* der,
+        word32 derSz)
+{
+    int ret;
+
+    ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, der, derSz,
+            WOLFSSL_FILETYPE_ASN1);
+    if (ret == WOLFSSL_SUCCESS) {
+        ret = WS_SUCCESS;
+    }
+    else if (ret == ASN_NO_SIGNER_E) {
+        WLOG(WS_LOG_CERTMAN, "cert verify: no signer");
+        ret = WS_CERT_NO_SIGNER_E;
+    }
+    else if (ret == ASN_AFTER_DATE_E) {
+        WLOG(WS_LOG_CERTMAN, "cert verify: expired");
+        ret = WS_CERT_EXPIRED_E;
+    }
+    else if (ret == ASN_SIG_CONFIRM_E) {
+        WLOG(WS_LOG_CERTMAN, "cert verify: bad sig");
+        ret = WS_CERT_SIG_CONFIRM_E;
+    }
+    else {
+        WLOG(WS_LOG_CERTMAN, "cert verify: other error (%d)", ret);
+        ret = WS_CERT_OTHER_E;
+    }
+
+    return ret;
+}
+
+/* Returns 1 when issuer is the signer wolfSSL looks up for child: its
+ * subject is child's issuer name and, when child carries an authority key
+ * ID, its subject key ID, which wolfSSL derives for a cert without one,
+ * matches it. */
+static int CertManIsIssuer(WOLFSSH_CERTMAN* cm,
+        const unsigned char* issuer, word32 issuerSz,
+        const unsigned char* child, word32 childSz)
+{
+    DecodedCert* decoded = NULL;
+#ifndef WOLFSSH_SMALL_STACK
+    DecodedCert decoded_s[2];
+#endif
+    int match = 0;
+
+#ifndef WOLFSSH_SMALL_STACK
+    decoded = decoded_s;
+#else
+    decoded = (DecodedCert*)WMALLOC(2 * sizeof(DecodedCert), cm->heap,
+        DYNTYPE_CERT);
+#endif
+
+    if (decoded != NULL) {
+        wc_InitDecodedCert(&decoded[0], issuer, issuerSz, cm->heap);
+        wc_InitDecodedCert(&decoded[1], child, childSz, cm->heap);
+        if (wc_ParseCert(&decoded[0], CERT_TYPE, NO_VERIFY, NULL) == 0 &&
+                wc_ParseCert(&decoded[1], CERT_TYPE, NO_VERIFY, NULL) == 0) {
+            match = WMEMCMP(decoded[0].subjectHash, decoded[1].issuerHash,
+                    sizeof(decoded[0].subjectHash)) == 0;
+        #ifndef NO_SKID
+            if (match && decoded[1].extAuthKeyIdSet) {
+                match = WMEMCMP(decoded[0].extSubjKeyId,
+                        decoded[1].extAuthKeyId,
+                        sizeof(decoded[0].extSubjKeyId)) == 0;
+            }
+        #endif
+        }
+        wc_FreeDecodedCert(&decoded[1]);
+        wc_FreeDecodedCert(&decoded[0]);
+    #ifdef WOLFSSH_SMALL_STACK
+        WFREE(decoded, cm->heap, DYNTYPE_CERT);
+    #endif
+    }
+    else {
+        WLOG(WS_LOG_CERTMAN, "could not allocate certs to match issuer");
+    }
+
+    return match;
+}
+
+/* Loads the verified CA cert above child into cm->cm as child's signer and
+ * returns child's verification result. The typed load retags whichever
+ * signer has the cert's key ID, so the cert is first loaded untyped and
+ * tagged WOLFSSL_CHAIN_CA, as TLS adds chain CAs, only once child finding
+ * a signer shows that load added it. Older wolfSSL and NO_SKID builds keep
+ * it as a trusted root. */
+static int CertManPromote(WOLFSSH_CERTMAN* cm,
+        const unsigned char* der, word32 derSz,
+        const unsigned char* child, word32 childSz)
+{
+    int ret;
+
+    if (!CertManIsIssuer(cm, der, derSz, child, childSz)) {
+        WLOG(WS_LOG_CERTMAN, "cert above is not the issuer; not promoting");
+        return WS_CERT_NO_SIGNER_E;
+    }
+
+    ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm, der, derSz);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_CERTMAN, "couldn't add intermediate cert (%d)", ret);
+        return WS_CERT_OTHER_E;
+    }
+
+    ret = CertManVerifyOne(cm, child, childSz);
+#ifdef WOLFSSH_CERTMAN_CHAIN_CA
+    if (ret != WS_CERT_NO_SIGNER_E &&
+            wolfSSL_CertManagerLoadCABufferType(cm->cm, der, (long)derSz,
+                WOLFSSL_FILETYPE_ASN1, 0, WOLFSSL_LOAD_VERIFY_DEFAULT_FLAGS,
+                WOLFSSL_CHAIN_CA) != WOLFSSL_SUCCESS) {
+        WLOG(WS_LOG_ERROR, "couldn't mark intermediate cert as chain CA; "
+                "it is left as a trusted root");
+        if (ret == WS_SUCCESS) {
+            ret = WS_CERT_OTHER_E;
+        }
+    }
+#endif
+
+    return ret;
 }
 
 /* Reads a DER tag and definite length at *idx. On success *idx is advanced
@@ -627,26 +747,16 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
     if (ret == WS_SUCCESS) {
         for (certIdx = certsCount - 1; certIdx >= 0; certIdx--) {
             WLOG(WS_LOG_CERTMAN, "verifying cert at index %d", certIdx);
-            ret = wolfSSL_CertManagerVerifyBuffer(cm->cm, certLoc[certIdx],
-                certLen[certIdx], WOLFSSL_FILETYPE_ASN1);
-            if (ret == WOLFSSL_SUCCESS) {
-                ret = WS_SUCCESS;
-            }
-            else if (ret == ASN_NO_SIGNER_E) {
-                WLOG(WS_LOG_CERTMAN, "cert verify: no signer");
-                ret = WS_CERT_NO_SIGNER_E;
-            }
-            else if (ret == ASN_AFTER_DATE_E) {
-                WLOG(WS_LOG_CERTMAN, "cert verify: expired");
-                ret = WS_CERT_EXPIRED_E;
-            }
-            else if (ret == ASN_SIG_CONFIRM_E) {
-                WLOG(WS_LOG_CERTMAN, "cert verify: bad sig");
-                ret = WS_CERT_SIG_CONFIRM_E;
-            }
-            else {
-                WLOG(WS_LOG_CERTMAN, "cert verify: other error (%d)", ret);
-                ret = WS_CERT_OTHER_E;
+            ret = CertManVerifyOne(cm, certLoc[certIdx], certLen[certIdx]);
+
+            /* Load the cert above as a signer only when this one has none
+             * without it. */
+            if (ret == WS_CERT_NO_SIGNER_E &&
+                    certIdx + 1 < (int)certsCount) {
+                WLOG(WS_LOG_CERTMAN, "adding intermediate cert as signer");
+                ret = CertManPromote(cm, certLoc[certIdx + 1],
+                        certLen[certIdx + 1], certLoc[certIdx],
+                        certLen[certIdx]);
             }
 
         #ifdef HAVE_OCSP
@@ -676,20 +786,14 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
             }
         #endif /* HAVE_OCSP */
 
-            /* promote the intermediate so the next cert has a signer, but
-             * only if it's actually a CA */
-            if (ret == WS_SUCCESS && certIdx > 0) {
-                if (CertManIntermediateIsCA(cm, certLoc[certIdx],
+            /* every cert above the leaf must be a CA, before the next
+             * pass can load it as a signer */
+            if (ret == WS_SUCCESS && certIdx > 0 &&
+                    !CertManIntermediateIsCA(cm, certLoc[certIdx],
                         certLen[certIdx])) {
-                    WLOG(WS_LOG_CERTMAN, "adding intermediate cert as trusted");
-                    ret = wolfSSH_CERTMAN_LoadRootCA_buffer(cm,
-                        certLoc[certIdx], certLen[certIdx]);
-                }
-                else {
-                    WLOG(WS_LOG_CERTMAN,
-                        "peer intermediate is not a CA; not promoting");
-                    ret = WS_CERT_NO_SIGNER_E;
-                }
+                WLOG(WS_LOG_CERTMAN,
+                    "peer intermediate is not a CA; not promoting");
+                ret = WS_CERT_NO_SIGNER_E;
             }
 
             if (ret != WS_SUCCESS) {
@@ -719,7 +823,7 @@ int wolfSSH_CERTMAN_VerifyCerts_buffer(WOLFSSH_CERTMAN* cm,
         /* NULL only when the small-stack allocation above failed */
         if (decoded != NULL) {
             wc_InitDecodedCert(decoded, certLoc[0], certLen[0], cm->heap);
-            if (wc_ParseCert(decoded, WOLFSSL_FILETYPE_ASN1, NO_VERIFY, cm->cm)
+            if (wc_ParseCert(decoded, CERT_TYPE, NO_VERIFY, cm->cm)
                     != 0) {
                 WLOG(WS_LOG_CERTMAN, "unable to parse leaf certificate");
                 ret = WS_CERT_OTHER_E;
@@ -851,6 +955,11 @@ static int CheckProfile(DecodedCert* cert, int profile)
     }
 
     /* encoding of issuer DN must be exact match to CA subject DN */
+    if (valid && cert->ca == NULL) {
+        /* a self-issued leaf parsed NO_VERIFY has no signer looked up */
+        WLOG(WS_LOG_CERTMAN, "CA for issuer DN match not found");
+        valid = 0;
+    }
     if (valid) {
         int sz = min(SIGNER_DIGEST_SIZE, KEYID_SIZE);
         if (XMEMCMP(cert->ca->subjectNameHash, cert->issuerHash, sz) != 0) {
