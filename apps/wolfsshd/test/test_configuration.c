@@ -41,6 +41,7 @@
     #include <stdio.h>
     #include <stdlib.h>
     #include <grp.h>
+    #include <time.h>
 #endif
 
 #ifndef WOLFSSH_DEFAULT_LOG_WIDTH
@@ -5093,6 +5094,153 @@ static int test_AuthCreateUser_privSepOff(void)
     return ret;
 }
 
+static word32 TestNowUs(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (word32)ts.tv_sec * 1000000U + (word32)(ts.tv_nsec / 1000);
+}
+
+/* The per-user failure delay is stable for a user and stays within OpenSSH's
+ * range: a 5 ms floor plus at most 4.29 ms. */
+static int test_UserFailDelayUs(void)
+{
+    static const byte alice[] = "alice";
+    static const byte bob[] = "bob";
+    word32 a, b;
+
+    a = UserFailDelayUs(alice, (word32)sizeof(alice) - 1);
+    b = UserFailDelayUs(bob, (word32)sizeof(bob) - 1);
+
+    if (a < 5000 || a > 5000 + 4295 || b < 5000 || b > 5000 + 4295) {
+        Log("    delay out of range: %u, %u\n", a, b);
+        return WS_FATAL_ERROR;
+    }
+    if (UserFailDelayUs(alice, (word32)sizeof(alice) - 1) != a) {
+        Log("    delay not stable for one user\n");
+        return WS_FATAL_ERROR;
+    }
+    if (UserFailDelayUs(NULL, 0) < 5000) {
+        return WS_FATAL_ERROR;
+    }
+    return WS_SUCCESS;
+}
+
+/* Time already spent past the delay doubles it, as OpenSSH does: 7 ms spent
+ * against a 5 ms delay waits until 10 ms. */
+static int test_EnsureMinFailTime(void)
+{
+    word32 start, spent;
+
+    start = TestNowUs() - 7000;
+    EnsureMinFailTime(start, 5000);
+    spent = TestNowUs() - start;
+    if (spent < 10000) {
+        Log("    returned after %u us, expected at least 10000\n", spent);
+        return WS_FATAL_ERROR;
+    }
+
+    /* Past the maximum it does not wait. */
+    start = TestNowUs() - 6000000;
+    EnsureMinFailTime(start, 5000);
+    spent = TestNowUs() - start;
+    if (spent >= 6000000 + 5000000) {
+        return WS_FATAL_ERROR;
+    }
+    return WS_SUCCESS;
+}
+
+static int s_shortSleepCalls = 0;
+
+/* Sleeps a quarter of the request, as a sleep that wakes early would. */
+static void ShortSleepUs(word32 us)
+{
+    struct timespec ts;
+
+    s_shortSleepCalls++;
+    us /= 4;
+    ts.tv_sec = (time_t)(us / 1000000U);
+    ts.tv_nsec = (long)(us % 1000000U) * 1000;
+    (void)nanosleep(&ts, NULL);
+}
+
+/* A sleep that returns early is rechecked and topped up, so the minimum
+ * still holds. */
+static int test_EnsureMinFailTime_earlyWake(void)
+{
+    int ret = WS_SUCCESS;
+    void (*savedSleep)(word32) = wsshd_authsleep_cb;
+    word32 start, spent;
+
+    wsshd_authsleep_cb = ShortSleepUs;
+    s_shortSleepCalls = 0;
+    start = TestNowUs();
+    EnsureMinFailTime(start, 20000);
+    spent = TestNowUs() - start;
+    wsshd_authsleep_cb = savedSleep;
+
+    if (spent < 20000) {
+        Log("    returned after %u us in %d sleeps, expected at least"
+            " 20000\n", spent, s_shortSleepCalls);
+        ret = WS_FATAL_ERROR;
+    }
+    return ret;
+}
+
+/* A failed userauth reply is held to the minimum delay, even on a path that
+ * fails at once without looking the user up. */
+static int test_DefaultUserAuth_minFailDelay(void)
+{
+    int ret = WS_SUCCESS;
+    int rc;
+    WOLFSSHD_CONFIG* conf;
+    WOLFSSHD_AUTH* authCtx;
+    WS_UserAuthData authData;
+    word32 start, spent;
+    static const char line[] = "UsePrivilegeSeparation no";
+
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        return WS_MEMORY_E;
+    }
+    if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0) != WS_SUCCESS) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+    authCtx = wolfSSHD_AuthCreateUser(NULL, conf);
+    if (authCtx == NULL) {
+        wolfSSHD_ConfigFree(conf);
+        return WS_FATAL_ERROR;
+    }
+
+    WMEMSET(&authData, 0, sizeof(authData));
+    authData.type = WOLFSSH_USERAUTH_KEYBOARD;
+    authData.username = (const byte*)"delay_test_user";
+    authData.usernameSz = (word32)WSTRLEN((const char*)authData.username);
+
+    start = TestNowUs();
+    rc = DefaultUserAuth(WOLFSSH_USERAUTH_KEYBOARD, &authData, authCtx);
+    spent = TestNowUs() - start;
+
+    if (rc != WOLFSSH_USERAUTH_INVALID_AUTHTYPE) {
+        Log("    unexpected result %d\n", rc);
+        ret = WS_FATAL_ERROR;
+    }
+    else if (spent < UserFailDelayUs(authData.username,
+                authData.usernameSz)) {
+        Log("    failure returned after %u us, expected at least %u\n",
+            spent, UserFailDelayUs(authData.username, authData.usernameSz));
+        ret = WS_FATAL_ERROR;
+    }
+
+    wolfSSHD_AuthFreeUser(authCtx);
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
 #if (defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)) && \
         defined(WOLFSSHD_HAVE_SHADOW)
 /* PasswordAuthentication no must reject through RequestAuthentication's
@@ -8657,6 +8805,10 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_AuthReducePermissionsUser_gid_fail),
     TEST_DECL(test_AuthReducePermissionsUser_uid_fail),
     TEST_DECL(test_AuthCreateUser_privSepOff),
+    TEST_DECL(test_UserFailDelayUs),
+    TEST_DECL(test_EnsureMinFailTime),
+    TEST_DECL(test_EnsureMinFailTime_earlyWake),
+    TEST_DECL(test_DefaultUserAuth_minFailDelay),
 #if (defined(WOLFSSH_HAVE_LIBCRYPT) || defined(WOLFSSH_HAVE_LIBLOGIN)) && \
         defined(WOLFSSHD_HAVE_SHADOW)
     TEST_DECL(test_RequestAuth_pwAuthNoRejectsBeforePasswordCheck),
