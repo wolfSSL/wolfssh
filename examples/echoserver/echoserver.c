@@ -2773,7 +2773,7 @@ static PwMap* PwMapNew(PwMapList* list, byte type, const byte* username,
         map->type = type;
         if (usernameSz >= sizeof(map->username))
             usernameSz = sizeof(map->username) - 1;
-        WMEMCPY(map->username, username, usernameSz + 1);
+        WMEMCPY(map->username, username, usernameSz);
         map->username[usernameSz] = 0;
         map->usernameSz = usernameSz;
 
@@ -3401,13 +3401,14 @@ static int wsUserAuthResult(byte res,
 
 
 static int userAuthWouldBlock = 0;
-static int wsUserAuth(byte authType,
-                      WS_UserAuthData* authData,
-                      void* ctx)
+/* authHash is WC_SHA256_DIGEST_SIZE bytes of scratch for the digest of the
+ * offered secret; the caller wipes it. */
+static int wsUserAuthCheck(byte authType,
+                           WS_UserAuthData* authData,
+                           void* ctx, byte* authHash)
 {
     PwMapList* list;
     PwMap* map;
-    byte authHash[WC_SHA256_DIGEST_SIZE] = {0};
     int userFound = 0;
 
     if (ctx == NULL) {
@@ -3504,6 +3505,8 @@ static int wsUserAuth(byte authType,
                     WFREE(uuid, NULL, 0);
             }
 
+            wc_FreeDecodedCert(&cert);
+
             /* failed to at least get UUID string */
             if (ret != 0) {
                 return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
@@ -3530,14 +3533,16 @@ static int wsUserAuth(byte authType,
 
             if (authData->type == WOLFSSH_USERAUTH_PUBLICKEY) {
                 userFound = 1;
-                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (wolfSSH_ConstantCompare(map->p, authHash,
+                        WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 /* Hash mismatch: continue checking other registered keys
                  * for this user (a user may have multiple public keys). */
             }
             else if (authData->type == WOLFSSH_USERAUTH_PASSWORD) {
-                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (wolfSSH_ConstantCompare(map->p, authHash,
+                        WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
@@ -3557,7 +3562,8 @@ static int wsUserAuth(byte authType,
                 }
 
                 /* do keyboard auth prompts */
-                if (WMEMCMP(map->p, authHash, WC_SHA256_DIGEST_SIZE) == 0) {
+                if (wolfSSH_ConstantCompare(map->p, authHash,
+                        WC_SHA256_DIGEST_SIZE) == 0) {
                     return WOLFSSH_USERAUTH_SUCCESS;
                 }
                 else {
@@ -3580,6 +3586,20 @@ static int wsUserAuth(byte authType,
     if (userFound)
         return WOLFSSH_USERAUTH_INVALID_PUBLICKEY;
     return WOLFSSH_USERAUTH_INVALID_USER;
+}
+
+
+static int wsUserAuth(byte authType,
+                      WS_UserAuthData* authData,
+                      void* ctx)
+{
+    byte authHash[WC_SHA256_DIGEST_SIZE] = {0};
+    int ret;
+
+    ret = wsUserAuthCheck(authType, authData, ctx, authHash);
+    wc_ForceZero(authHash, sizeof(authHash));
+
+    return ret;
 }
 
 
