@@ -450,6 +450,10 @@ int wsEmbedSend(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
             WLOG(WS_LOG_DEBUG,"    Socket EPIPE");
             return WS_CBIO_ERR_CONN_CLOSE;
         }
+        else if (err == SOCKET_ECONNABORTED) {
+            WLOG(WS_LOG_DEBUG,"    Connection aborted");
+            return WS_CBIO_ERR_CONN_CLOSE;
+        }
         else {
             WLOG(WS_LOG_DEBUG,"    General error %d", err);
             return WS_CBIO_ERR_GENERAL;
