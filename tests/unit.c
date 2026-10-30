@@ -2713,6 +2713,68 @@ done6:
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_CBC && HMAC-SHA2-256 */
 
 
+#ifdef WOLFSSH_TEST_INTERNAL
+/* Gives up after this many calls, so an unfixed reader that keeps
+ * retrying a 0 return still terminates. */
+#define RECV_ZERO_CALL_CAP 100
+
+static int RecvZeroCalls;
+
+static int RecvAlwaysZero(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(data);
+    WOLFSSH_UNUSED(sz);
+    WOLFSSH_UNUSED(ctx);
+
+    if (++RecvZeroCalls > RECV_ZERO_CALL_CAP)
+        return WS_CBIO_ERR_GENERAL;
+    return 0;
+}
+
+/* Verify DoReceive treats a 0 from the recv callback as the peer closing
+ * the connection: it fails after one call and marks the session closed,
+ * instead of calling the callback again. */
+static int test_DoReceive_RecvZeroIsClose(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -794;
+    wolfSSH_SetIORecv(ctx, RecvAlwaysZero);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -795;
+    }
+
+    RecvZeroCalls = 0;
+    ret = wolfSSH_TestDoReceive(ssh);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_SOCKET_ERROR_E) {
+        result = -796;
+        goto done;
+    }
+    if (RecvZeroCalls != 1) {
+        result = -797;
+        goto done;
+    }
+    if (!ssh->isClosed) {
+        result = -798;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
+
+
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
 /* Verify DoReceive rejects an AES-GCM record whose length field is not a
  * multiple of the cipher block size. RFC 5647 aligns the body alone, so a
@@ -25977,6 +26039,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_TEST_INTERNAL
     unitResult = test_DoReceive_RejectsMisalignedPacket();
     printf("DoReceiveRejectsMisalignedPacket: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoReceive_RecvZeroIsClose();
+    printf("DoReceiveRecvZeroIsClose: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
