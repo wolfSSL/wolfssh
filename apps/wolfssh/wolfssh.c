@@ -1270,6 +1270,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #endif
 
     MODES_STORE();
+    /* No stdio buffer keeps a copy of a typed password. */
+    if (setvbuf(stdin, NULL, _IONBF, 0) != 0)
+        fprintf(stderr, "Couldn't unbuffer stdin.\n");
 
     ((func_args*)args)->return_code = 0;
 
@@ -1377,6 +1380,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
 #endif
 
     ret = NonBlockSSH_connect(ssh);
+    ClientClearPassword();
     if (ret != WS_SUCCESS)
         err_sys("Couldn't connect SSH stream.");
 

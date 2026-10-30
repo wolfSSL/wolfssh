@@ -32,11 +32,19 @@ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
         void* heap, const char* tpmKeyAuth);
 int ClientUseCert(const char* certName, void* heap);
 int ClientSetEcho(int type);
+/* Makes stdin unbuffered, so no stdio buffer keeps a copy of a typed
+ * password or response. Call before any other stdin I/O; only the first
+ * call in a process acts. */
+void ClientUnbufferStdin(void);
 int ClientUserAuth(byte authType,
         WS_UserAuthData* authData, void* ctx);
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
 void ClientIPOverride(int flag);
 int ClientParsePort(const char* in, word16* port);
+/* Wipes the password and keyboard-interactive responses ClientUserAuth()
+ * last read. The library sends them after the callback returns, so call
+ * this once connect is done. */
+void ClientClearPassword(void);
 void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
         void* heap);
 #ifdef WOLFSSH_TPM
