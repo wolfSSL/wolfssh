@@ -103,6 +103,18 @@
     #include <sys/un.h>
 #endif /* WOLFSSH_AGENT */
 
+#if defined(WOLFSSH_FWD) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSL_NUCLEUS) && !defined(WOLFSSH_ZEPHYR) && \
+    !defined(NO_MAIN_DRIVER)
+    /* Gives up root before serving; forwarding opens sockets for the
+     * peer with the server's credentials. Standalone only: the tests run
+     * echoserver_test() inside their own process. */
+    #define ECHOSERVER_DROP_PRIVS
+    #include <grp.h>
+    #include <pwd.h>
+    #include <unistd.h>
+#endif
+
 #ifdef HAVE_SYS_SELECT_H
     #include <sys/select.h>
 #endif
@@ -199,8 +211,12 @@ typedef struct WS_AppCtx {
 
 
 #ifdef WOLFSSH_AGENT
+#define ECHOSERVER_AGENT_DIR "/tmp/wolfserver.XXXXXX"
+
 typedef struct WS_AgentCbActionCtx {
     struct sockaddr_un name;
+    /* The private directory holding name, empty when there is none. */
+    char dirName[sizeof(ECHOSERVER_AGENT_DIR)];
 } WS_AgentCbActionCtx;
 #endif
 
@@ -425,23 +441,34 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 
     if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
         struct sockaddr_un* name = &agentCtx->name;
-        size_t size;
+        size_t size = 0;
         int envSet = 0, nameBound = 0;
 
         WMEMSET(name, 0, sizeof(struct sockaddr_un));
         name->sun_family = AF_LOCAL;
 
-        ret = snprintf(name->sun_path, sizeof(name->sun_path),
-                "/tmp/wolfserver.%d", (int)getpid());
-
-        if (ret >= 0) {
-            name->sun_path[sizeof(name->sun_path) - 1] = '\0';
-            size = WSTRLEN(name->sun_path);
-            ret = (size < WSTRLEN("/tmp/wolfserver."));
+        /* mkdtemp() makes a new 0700 directory under an unpredictable name,
+         * so no other user can claim or reach the socket inside it. */
+        WMEMCPY(agentCtx->dirName, ECHOSERVER_AGENT_DIR,
+                sizeof(ECHOSERVER_AGENT_DIR));
+        if (mkdtemp(agentCtx->dirName) == NULL) {
+            agentCtx->dirName[0] = '\0';
+            ret = -1;
         }
 
         if (ret == 0) {
-            size += offsetof(struct sockaddr_un, sun_path);
+            ret = snprintf(name->sun_path, sizeof(name->sun_path),
+                    "%s/agent", agentCtx->dirName);
+            if (ret > 0 && (size_t)ret < sizeof(name->sun_path)) {
+                size = (size_t)ret + offsetof(struct sockaddr_un, sun_path);
+                ret = 0;
+            }
+            else {
+                ret = -1;
+            }
+        }
+
+        if (ret == 0) {
             ctx->listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
             ret = (ctx->listenFd == -1) ? -1 : 0;
         }
@@ -462,12 +489,15 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         }
 
         if (ret == 0) {
+            printf("Agent socket: %s\n", name->sun_path);
+            fflush(stdout);
             ctx->state = APP_STATE_LISTEN;
         }
         else {
             if (nameBound) {
                 unlink(agentCtx->name.sun_path);
             }
+            agentCtx->name.sun_path[0] = '\0';
             if (envSet) {
                 unsetenv(EnvNameAuthPort);
             }
@@ -475,14 +505,33 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
                 close(ctx->listenFd);
                 ctx->listenFd = -1;
             }
+            if (agentCtx->dirName[0] != '\0') {
+                rmdir(agentCtx->dirName);
+                agentCtx->dirName[0] = '\0';
+            }
             ret = WS_AGENT_SETUP_E;
         }
     }
     else if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
-        WCLOSESOCKET(ctx->listenFd);
-        ctx->listenFd = -1;
-        unlink(agentCtx->name.sun_path);
-        unsetenv(EnvNameAuthPort);
+        /* The accepted agent client goes with the listener. */
+        if (ctx->appFd >= 0) {
+            WCLOSESOCKET(ctx->appFd);
+            ctx->appFd = -1;
+        }
+        if (ctx->listenFd >= 0) {
+            WCLOSESOCKET(ctx->listenFd);
+            ctx->listenFd = -1;
+        }
+        if (agentCtx->name.sun_path[0] != '\0') {
+            unlink(agentCtx->name.sun_path);
+            agentCtx->name.sun_path[0] = '\0';
+            unsetenv(EnvNameAuthPort);
+        }
+        if (agentCtx->dirName[0] != '\0') {
+            rmdir(agentCtx->dirName);
+            agentCtx->dirName[0] = '\0';
+        }
+        ctx->state = APP_STATE_INIT;
     }
     else
         ret = WS_AGENT_INVALID_ACTION;
@@ -536,6 +585,101 @@ static WS_SOCKET_T connect_addr(const char* name, word16 port)
 }
 
 
+/* The -L arguments, each a comma separated list of host or host:port. */
+#define FWD_ALLOW_ARGS_MAX 8
+static const char* fwdAllowArgs[FWD_ALLOW_ARGS_MAX];
+static int fwdAllowArgsSz = 0;
+
+
+static int FwdIsLoopback(const char* host)
+{
+    static const byte loopback6[16] =
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+    struct in_addr addr4;
+    struct in6_addr addr6;
+
+    if (WSTRLEN(host) == sizeof("localhost") - 1
+            && WSTRNCASECMP(host, "localhost", sizeof("localhost") - 1) == 0)
+        return 1;
+    if (inet_pton(AF_INET, host, &addr4) == 1)
+        return (ntohl(addr4.s_addr) >> 24) == 127;
+    if (inet_pton(AF_INET6, host, &addr6) == 1)
+        return WMEMCMP(&addr6, loopback6, sizeof(loopback6)) == 0;
+    return 0;
+}
+
+
+/* Matches one allow-list entry, host or host:port, of entrySz bytes. An
+ * entry with more than one colon is an IPv6 address without a port. */
+static int FwdEntryMatches(const char* entry, word32 entrySz,
+        const char* host, word32 port)
+{
+    const char* colon = NULL;
+    word32 hostSz = entrySz;
+    word32 i;
+
+    for (i = 0; i < entrySz; i++) {
+        if (entry[i] == ':') {
+            if (colon != NULL) {
+                colon = NULL;
+                break;
+            }
+            colon = entry + i;
+        }
+    }
+
+    if (colon != NULL) {
+        word32 entryPort = 0;
+        const char* c;
+
+        hostSz = (word32)(colon - entry);
+        if (colon + 1 == entry + entrySz)
+            return 0;
+        for (c = colon + 1; c < entry + entrySz; c++) {
+            if (*c < '0' || *c > '9' || entryPort > 65535)
+                return 0;
+            entryPort = entryPort * 10 + (word32)(*c - '0');
+        }
+        if (entryPort != port)
+            return 0;
+    }
+
+    return hostSz > 0 && WSTRLEN(host) == hostSz
+        && WSTRNCASECMP(host, entry, hostSz) == 0;
+}
+
+
+/* Whether the peer may open a direct-tcpip channel to host:port: a loopback
+ * destination by default, or only the -L entries when there are any. */
+static int FwdDestAllowed(const char* host, word32 port)
+{
+    int i;
+
+    if (host == NULL)
+        return 0;
+    if (fwdAllowArgsSz == 0)
+        return FwdIsLoopback(host);
+
+    for (i = 0; i < fwdAllowArgsSz; i++) {
+        const char* entry = fwdAllowArgs[i];
+
+        while (*entry != '\0') {
+            const char* comma = WSTRCHR(entry, ',');
+            word32 entrySz = (comma != NULL) ? (word32)(comma - entry)
+                                             : (word32)WSTRLEN(entry);
+
+            if (FwdEntryMatches(entry, entrySz, host, port))
+                return 1;
+            entry += entrySz;
+            if (*entry == ',')
+                entry++;
+        }
+    }
+
+    return 0;
+}
+
+
 static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         const char* name, word32 port)
 {
@@ -544,10 +688,27 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
     int ret = 0;
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
-        fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
-        fwdCbCtx->hostPort = port;
-        fwdCbCtx->isDirect = 1;
-        appCtx->state = APP_STATE_CONNECT;
+        if (!FwdDestAllowed(name, port)) {
+            char shown[65];
+            word32 i;
+
+            /* The name is the peer's; log it bounded and printable. */
+            for (i = 0; name != NULL && name[i] != '\0'
+                    && i < sizeof(shown) - 1; i++) {
+                shown[i] = (name[i] >= ' ' && name[i] <= '~') ? name[i] : '?';
+            }
+            shown[i] = '\0';
+            /* The library refuses the open as administratively
+             * prohibited. */
+            printf("Refusing to forward to %s:%u.\n", shown, port);
+            ret = WS_FWD_SETUP_E;
+        }
+        else {
+            fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
+            fwdCbCtx->hostPort = port;
+            fwdCbCtx->isDirect = 1;
+            appCtx->state = APP_STATE_CONNECT;
+        }
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
         /* The channel id rides in the port parameter. A channel can outlive
@@ -603,20 +764,28 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         if (ret == 0) {
 
             WMEMSET(&addr, 0, sizeof addr);
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons((word16)port);
+            addrSz = sizeof addr;
             if (WSTRCMP(name, "") == 0 ||
-                WSTRCMP(name, "0.0.0.0") == 0 ||
-                WSTRCMP(name, "localhost") == 0 ||
+                WSTRCMP(name, "0.0.0.0") == 0) {
+                addr.sin_addr.s_addr = htonl(INADDR_ANY);
+            }
+            else if (WSTRCMP(name, "localhost") == 0 ||
                 WSTRCMP(name, "127.0.0.1") == 0) {
-
-                addr.sin_addr.s_addr = INADDR_ANY;
-                addr.sin_family = AF_INET;
-                addr.sin_port = htons((word16)port);
-                addrSz = sizeof addr;
+                addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             }
             else {
                 printf("Not using IPv6 yet.\n");
                 ret = -1;
             }
+        }
+
+        if (ret == 0 && (port > 65535 ||
+                    (port != 0 && port < WS_FWD_PORT_CHECK))) {
+            /* The peer does not get the server's privileged ports. */
+            printf("Refusing to forward port %u.\n", port);
+            ret = -1;
         }
 
         if (ret == 0) {
@@ -1461,8 +1630,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             if (!agentOpened) {
                 int agentRc = wolfSSH_AGENT_ChannelOpen(ssh);
 
-                if (agentRc == WS_SUCCESS)
+                if (agentRc == WS_SUCCESS) {
+                    /* The relay below addresses the agent channel by its
+                     * own id, which only internal.h exposes. */
+                    agentChannelId = ssh->agent->channel;
                     agentOpened = 1;
+                }
                 else if (agentRc == WS_WANT_WRITE)
                     wantWrite = 1;
             }
@@ -1621,23 +1794,41 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * pumps below, on every pass. */
                         #ifdef WOLFSSH_AGENT
                         if (lastChannel == agentChannelId) {
-                            cnt_r = wolfSSH_ChannelIdRead(ssh, agentChannelId,
-                                    threadCtx->agentCtx.fdBuffer,
-                                    sizeof threadCtx->agentCtx.fdBuffer);
-                            if (cnt_r <= 0) {
+                            int agentRxd = 0;
+
+                            /* One message can carry more than fdBuffer
+                             * holds, and no later report asks for the
+                             * rest, so drain it all now. */
+                            for (;;) {
+                                cnt_r = wolfSSH_ChannelIdRead(ssh,
+                                        agentChannelId,
+                                        threadCtx->agentCtx.fdBuffer,
+                                        sizeof threadCtx->agentCtx.fdBuffer);
+                                if (cnt_r <= 0)
+                                    break;
+                                agentRxd = 1;
+                                #ifdef SHELL_DEBUG
+                                    buf_dump(threadCtx->agentCtx.fdBuffer,
+                                            cnt_r);
+                                #endif
+                                /* A reply for an agent client that has
+                                 * hung up has nowhere to go; drop it. */
+                                if (agentFd >= 0 && app_write_all(agentFd,
+                                            threadCtx->agentCtx.fdBuffer,
+                                            (word32)cnt_r) < 0) {
+                                    agentRxd = -1;
+                                    break;
+                                }
+                            }
+                            if (agentRxd < 0)
+                                break;
+                            if (agentRxd == 0) {
                                 /* Nothing was buffered. Only an actual data
                                  * report makes that a failure. */
                                 if (rc == WS_REKEYING && cnt_r == 0)
                                     continue;
                                 break;
                             }
-                            #ifdef SHELL_DEBUG
-                                buf_dump(threadCtx->agentCtx.fdBuffer, cnt_r);
-                            #endif
-                            if (app_write_all(agentFd,
-                                        threadCtx->agentCtx.fdBuffer,
-                                        (word32)cnt_r) < 0)
-                                break;
                         }
                         #endif
                     }
@@ -2376,6 +2567,12 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         WCLOSESOCKET(threadCtx->fd);
         threadCtx->fd = -1;
     }
+#ifdef WOLFSSH_AGENT
+    /* The library never calls the cleanup on a server, so retire the
+     * listener, its socket and directory, and any agent client here. */
+    (void)wolfSSH_AGENT_DefaultActions(WOLFSSH_AGENT_LOCAL_CLEANUP,
+            &threadCtx->agentCtx);
+#endif
 #ifdef WOLFSSH_FWD
     if (threadCtx->fwdCbCtx.hostName != NULL) {
         WFREE(threadCtx->fwdCbCtx.hostName, NULL, 0);
@@ -3649,6 +3846,36 @@ static int SetDefaultSftpPath(WOLFSSH* ssh, const char* defaultSftpPath,
 #endif
 
 
+#ifdef ECHOSERVER_DROP_PRIVS
+/* Runs the process as userName for good. Without root this only checks
+ * that userName is the current user. Returns 0, or -1. */
+static int DropPrivileges(const char* userName)
+{
+    struct passwd* pw;
+    gid_t gid;
+    uid_t uid;
+
+    pw = getpwnam(userName);
+    if (pw == NULL)
+        return -1;
+    gid = pw->pw_gid;
+    uid = pw->pw_uid;
+
+    if (geteuid() != 0)
+        return (uid == geteuid()) ? 0 : -1;
+
+    if (setgroups(1, &gid) != 0 || setgid(gid) != 0 || setuid(uid) != 0)
+        return -1;
+
+    /* Make sure root cannot be taken back. */
+    if (uid != 0 && (setuid(0) == 0 || seteuid(0) == 0))
+        return -1;
+
+    return 0;
+}
+#endif
+
+
 static void ShowUsage(void)
 {
     printf("echoserver %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
@@ -3663,6 +3890,16 @@ static void ShowUsage(void)
     printf(" -A            drive channels from the application callbacks\n");
     printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
     printf(" -N            use non-blocking sockets\n");
+#ifdef WOLFSSH_FWD
+    printf(" -F            allow the peer's port forwarding requests\n");
+    printf(" -L <list>     with -F, the comma separated host or host:port\n"
+           "               destinations the peer may connect to, in place\n"
+           "               of the default of loopback only; repeatable\n");
+#endif
+#ifdef ECHOSERVER_DROP_PRIVS
+    printf(" -u <user>     run as user once listening; started as root with\n"
+           "               -F, the default is nobody\n");
+#endif
 #ifdef WOLFSSH_SFTP
     printf(" -d <string>   set the home directory for SFTP connections\n");
     printf(" -D            confine SFTP connections to the home directory,"
@@ -3714,7 +3951,7 @@ static void ShowUsage(void)
 }
 
 
-#define ECHOSERVER_OPTLIST "?1a:Ad:DefEp:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:"
+#define ECHOSERVER_OPTLIST "?1a:Ad:DefEFL:p:R:Ni:j:i:I:J:K:P:k:b:x:m:c:s:G:HW:u:"
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
 /* Detects whether argv or the environment requests a host key from the
@@ -3846,6 +4083,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int peerEcc = 0;
     int echo = 0;
     int appChannels = 0;
+#ifdef WOLFSSH_FWD
+    int allowFwd = 0;
+#endif
+#ifdef ECHOSERVER_DROP_PRIVS
+    const char* dropUser = NULL;
+#endif
     int ch;
     word16 port = wolfSshPort;
     char* readyFile = NULL;
@@ -3870,6 +4113,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     kbAuthData.promptCount = 0;
 #endif
 
+#ifdef WOLFSSH_FWD
+    fwdAllowArgsSz = 0;
+#endif
     if (argc > 0) {
         myoptind = 0;
         while ((ch = mygetopt(argc, argv, ECHOSERVER_OPTLIST)) != -1) {
@@ -3909,6 +4155,30 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
                 case 'A':
                     appChannels = 1;
+                    break;
+
+                case 'F':
+                    #ifdef WOLFSSH_FWD
+                        allowFwd = 1;
+                    #endif
+                    break;
+
+                case 'u':
+                    #ifdef ECHOSERVER_DROP_PRIVS
+                        dropUser = myoptarg;
+                    #else
+                        fprintf(stderr, "Warning: -u is ignored in this "
+                                "build\n");
+                    #endif
+                    break;
+
+                case 'L':
+                    #ifdef WOLFSSH_FWD
+                    if (fwdAllowArgsSz >= FWD_ALLOW_ARGS_MAX) {
+                        ES_ERROR("Too many -L options.\n");
+                    }
+                    fwdAllowArgs[fwdAllowArgsSz++] = myoptarg;
+                    #endif
                     break;
 
                 case 'p':
@@ -4161,7 +4431,11 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     wolfSSH_CTX_set_agent_cb(ctx, wolfSSH_AGENT_DefaultActions, NULL);
 #endif
 #ifdef WOLFSSH_FWD
-    wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
+    /* The callback opens sockets with the server's own credentials, so
+     * forwarding is refused unless asked for. Without a callback the
+     * library turns every forwarding request down. */
+    if (allowFwd)
+        wolfSSH_CTX_SetFwdCb(ctx, wolfSSH_FwdDefaultActions, NULL);
 #endif
     /* With -A the echoserver drives its own channels: accept() stops at
      * userauth and these callbacks start the shell, subsystem or transfer.
@@ -4579,6 +4853,23 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
     #endif
     }
+
+#ifdef ECHOSERVER_DROP_PRIVS
+    /* After the listener and the keys, before any peer is served. */
+    if (dropUser == NULL && allowFwd && geteuid() == 0) {
+        dropUser = "nobody";
+        fprintf(stderr, "Warning: running as nobody for -F; -u picks the "
+                "user.\n");
+    #ifdef WOLFSSH_SHELL
+        fprintf(stderr, "Warning: shells run as nobody too; a login whose "
+                "home has mode 0700 gets no shell.\n");
+    #endif
+    }
+    if (dropUser != NULL && DropPrivileges(dropUser) != 0) {
+        WCLOSESOCKET(listenFd);
+        ES_ERROR("Couldn't run as user %s.\n", dropUser);
+    }
+#endif
 
     SignalTcpReady(serverArgs->signal, port);
 

@@ -10,6 +10,10 @@
 # peer that disagreed about the counters would fail the first packet that
 # had to authenticate.
 #
+# Parts 1b and 1c reuse the OpenSSH client on the echoserver: 1b forwards
+# ssh-agent through it, 1c checks that it forwards ports only with -F and
+# connects only to allowed destinations.
+#
 # Part 3 has the wolfSSH client authenticate to sshd with an RSA key held
 # by OpenSSH's ssh-agent. The client has only the public half; the agent
 # makes the signature.
@@ -22,6 +26,7 @@ no_pid=-1
 server_pid=$no_pid
 sshd_pid=$no_pid
 agent_pid=$no_pid
+dest_pid=$no_pid
 work_dir="`pwd`/openssh_interop_test$$"
 ready_file="$work_dir/ready"
 client_out="$work_dir/client.out"
@@ -62,6 +67,11 @@ do_cleanup() {
     then
         kill $agent_pid 2>/dev/null
         agent_pid=$no_pid
+    fi
+    if [ $dest_pid != $no_pid ]
+    then
+        kill -9 $dest_pid 2>/dev/null
+        dest_pid=$no_pid
     fi
     rm -rf -- "$work_dir"
 }
@@ -242,15 +252,20 @@ echo "Test the OpenSSH client against the wolfSSH echoserver"
 # A build with neither has only Ed25519, and the checked-in Ed25519 key is
 # PKCS#8, which an OpenSSH on LibreSSL won't load, so make a key of
 # OpenSSH's own and hand the echoserver its public half.
+# Which of the attempts below opened the session, so the agent forwarding
+# check can repeat it.
+echo_keys=ecc
 run_openssh_client "$keys_dir/hansel-key-ecc.pem" -e
 session_status=$?
 if [ $session_status -ne 0 ]; then
     echo "the ECC attempt failed, retrying with the RSA sample key"
+    echo_keys=rsa
     run_openssh_client "$keys_dir/hansel-key-rsa.pem"
     session_status=$?
 fi
 if [ $session_status -ne 0 ] && command -v ssh-keygen > /dev/null 2>&1; then
     echo "the RSA attempt failed, retrying with an Ed25519 key"
+    echo_keys=ed25519
     ssh-keygen -q -t ed25519 -N '' -C hansel -f "$work_dir/ed25519" \
         < /dev/null || fail "couldn't make an Ed25519 client key"
     run_openssh_client "$work_dir/ed25519" -j "$work_dir/ed25519.pub"
@@ -283,6 +298,287 @@ else
 fi
 
 echo "the OpenSSH client negotiated strict KEX with the echoserver"
+
+# Part 1b forwards OpenSSH's ssh-agent through the echoserver. A local agent
+# client on the echoserver's side lists the forwarded key over the socket
+# the echoserver made for it, twice, so the second goes through a fresh
+# accept. The socket's directory must be private and gone once the session
+# is over.
+if ! ./apps/wolfssh-options 2>/dev/null | grep -qx 'AGENT'; then
+    echo "the echoserver has no agent support, skipping agent forwarding"
+elif ! command -v ssh-agent > /dev/null 2>&1 ||
+    ! command -v ssh-add > /dev/null 2>&1 ||
+    ! command -v ssh-keygen > /dev/null 2>&1 ||
+    ! command -v mkfifo > /dev/null 2>&1; then
+    echo "no ssh-agent, ssh-add, ssh-keygen or mkfifo," \
+        "skipping agent forwarding"
+else
+    echo "Test agent forwarding through the wolfSSH echoserver"
+
+    # The agent picks its own socket path; see Part 3.
+    SSH_AGENT_PID=
+    eval `ssh-agent -s` > /dev/null
+    [ -n "$SSH_AGENT_PID" ] || fail "couldn't start ssh-agent"
+    agent_pid=$SSH_AGENT_PID
+
+    ssh-keygen -q -t ed25519 -N '' -C wolfssh-agent-fwd \
+        -f "$work_dir/agent-fwd" < /dev/null \
+        || fail "couldn't make a key for the agent"
+    ssh-add -q "$work_dir/agent-fwd" 2>/dev/null \
+        || fail "couldn't add the key to ssh-agent"
+    # Long comments push the list reply past the echoserver's relay
+    # buffer, so it has to be drained in more than one read.
+    agent_pad=`printf '%1500s' '' | tr ' ' x`
+    for pad in 1 2 3 4; do
+        ssh-keygen -q -t ed25519 -N '' -C "wolfssh-agent-pad$pad-$agent_pad" \
+            -f "$work_dir/agent-pad$pad" < /dev/null \
+            || fail "couldn't make a padding key for the agent"
+        ssh-add -q "$work_dir/agent-pad$pad" 2>/dev/null \
+            || fail "couldn't add a padding key to ssh-agent"
+    done
+
+    # The client key was copied to $work_dir/id by the attempt that worked.
+    case $echo_keys in
+        ecc) start_echoserver -e ;;
+        rsa) start_echoserver ;;
+        *) start_echoserver -j "$work_dir/ed25519.pub" ;;
+    esac
+
+    # The session stays open while the agent is used through it.
+    rm -f "$work_dir/fwd_in" "$client_out" "$client_log"
+    mkfifo "$work_dir/fwd_in" || fail "couldn't make a fifo"
+    ssh -A -T -p $port \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o IdentitiesOnly=yes \
+        -o PreferredAuthentications=publickey \
+        -i "$work_dir/id" hansel@127.0.0.1 \
+        < "$work_dir/fwd_in" > "$client_out" 2> "$client_log" &
+    fwd_ssh_pid=$!
+    exec 3> "$work_dir/fwd_in"
+    printf '%s\n' "$probe" >&3
+
+    fwd_sock=
+    counter=0
+    while [ -z "$fwd_sock" ] && [ "$counter" -lt 100 ]; do
+        fwd_sock=`sed -n 's/^Agent socket: //p' "$work_dir/server.log"`
+        [ -z "$fwd_sock" ] && sleep 0.1
+        counter=$((counter + 1))
+    done
+    if [ -z "$fwd_sock" ]; then
+        exec 3>&-
+        cat "$work_dir/server.log"
+        fail "the echoserver never opened an agent socket"
+    fi
+    fwd_dir=`dirname "$fwd_sock"`
+
+    case `ls -ld "$fwd_dir"` in
+        drwx------*) ;;
+        *) exec 3>&-; fail "the agent socket's directory is not private" ;;
+    esac
+
+    for attempt in 1 2; do
+        SSH_AUTH_SOCK="$fwd_sock" ssh-add -l > "$work_dir/fwd_list" 2>&1 &
+        wait_with_limit $!
+        if ! grep -q 'wolfssh-agent-fwd' "$work_dir/fwd_list" ||
+            [ `grep -c 'wolfssh-agent-pad' "$work_dir/fwd_list"` -ne 4 ]; then
+            exec 3>&-
+            cat "$work_dir/fwd_list"
+            fail "the forwarded agent didn't list its keys (try $attempt)"
+        fi
+    done
+
+    printf '\003' >&3
+    exec 3>&-
+    wait_with_limit $fwd_ssh_pid
+    wait_with_limit $server_pid
+    server_pid=$no_pid
+
+    grep -q "$probe" "$client_out" \
+        || fail "the session didn't survive the forwarded agent"
+    [ -e "$fwd_dir" ] && fail "the echoserver left $fwd_dir behind"
+
+    kill $agent_pid 2>/dev/null
+    agent_pid=$no_pid
+
+    echo "the forwarded agent answered through the echoserver"
+fi
+
+# Part 1c: the echoserver forwards ports only when started with -F.
+# ExitOnForwardFailure turns a refused remote forward into exit status 255.
+#
+# $1 - the remote port to ask for, 0 to let the server pick
+# rest  - extra echoserver arguments
+run_openssh_forward() {
+    fwd_port=$1
+    shift
+    case $echo_keys in
+        ecc) start_echoserver -e "$@" ;;
+        rsa) start_echoserver "$@" ;;
+        *) start_echoserver -j "$work_dir/ed25519.pub" "$@" ;;
+    esac
+
+    rm -f "$client_out" "$client_log"
+    printf '%s\n\003' "$probe" | \
+        ssh -T -p $port \
+            -o ExitOnForwardFailure=yes \
+            -R $fwd_port:127.0.0.1:9 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -i "$work_dir/id" hansel@127.0.0.1 \
+            > "$client_out" 2> "$client_log" &
+    wait_with_limit $!
+}
+
+if ./apps/wolfssh-options 2>/dev/null | grep -qx 'FWD'; then
+    echo "Test the echoserver's forwarding opt-in"
+
+    run_openssh_forward 0
+    [ $? -eq 255 ] && grep -q 'remote port forwarding failed' "$client_log" \
+        || fail "the echoserver forwarded a port without -F"
+
+    run_openssh_forward 0 -F
+    if [ $? -ne 0 ] || ! grep -q "$probe" "$client_out"; then
+        cat "$client_log"
+        fail "the echoserver refused a forward with -F"
+    fi
+
+    # A privileged port is refused by the echoserver's own check, which
+    # logs it, not by a bind() failing for a non-root user. The server
+    # exits after the session, flushing its log.
+    run_openssh_forward 80 -F
+    fwd_status=$?
+    wait_with_limit $server_pid
+    server_pid=$no_pid
+    if [ $fwd_status -ne 255 ] ||
+        ! grep -q 'remote port forwarding failed' "$client_log" ||
+        ! grep -q 'Refusing to forward port 80\.' "$work_dir/server.log"; then
+        cat "$client_log" "$work_dir/server.log"
+        fail "the echoserver didn't refuse a forward of port 80"
+    fi
+
+    echo "the echoserver forwards only when asked to"
+
+    # A direct-tcpip open goes only to loopback by default, and only to
+    # the -L entries when there are any. Refused opens fail at once, so
+    # 192.0.2.1 (TEST-NET-1) is never dialed.
+    run_openssh_stdio() {
+        stdio_dest=$1
+        shift
+        case $echo_keys in
+            ecc) start_echoserver -e "$@" ;;
+            rsa) start_echoserver "$@" ;;
+            *) start_echoserver -j "$work_dir/ed25519.pub" "$@" ;;
+        esac
+
+        rm -f "$client_out" "$client_log"
+        ssh -T -W "$stdio_dest" -p $port \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -i "$work_dir/id" hansel@127.0.0.1 \
+            < /dev/null > "$client_out" 2> "$client_log" &
+        wait_with_limit $!
+    }
+
+    run_openssh_stdio 192.0.2.1:9 -F
+    [ $? -eq 255 ] && grep -q 'administratively prohibited' "$client_log" \
+        || fail "the echoserver forwarded to a non-loopback destination"
+
+    run_openssh_stdio 127.0.0.1:9 -F -L 192.0.2.1:9
+    [ $? -eq 255 ] && grep -q 'administratively prohibited' "$client_log" \
+        || fail "the echoserver forwarded to a destination -L left out"
+
+    # An allowed open reaches a second echoserver: an echo session with it
+    # runs through a local forward over the first. $1 is the -L list, with
+    # @PORT@ standing for the second echoserver's port.
+    run_openssh_forward_allowed() {
+        case $echo_keys in
+            ecc) dest_keys=-e ;;
+            rsa) dest_keys= ;;
+            *) dest_keys="-j $work_dir/ed25519.pub" ;;
+        esac
+
+        # A port to forward from: one the OS just handed out and let go.
+        start_echoserver
+        local_port=$port
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
+
+        rm -f "$work_dir/dest_ready"
+        ./examples/echoserver/echoserver -1 -f $dest_keys \
+            -R "$work_dir/dest_ready" > "$work_dir/dest.log" 2>&1 &
+        dest_pid=$!
+        counter=0
+        while [ ! -s "$work_dir/dest_ready" ] && [ "$counter" -lt 100 ]; do
+            sleep 0.1
+            counter=$((counter + 1))
+        done
+        [ ! -s "$work_dir/dest_ready" ] \
+            && fail "NO ready file, the destination echoserver never came up"
+        dest_port=`cat "$work_dir/dest_ready"`
+        allow_list=`echo "$1" | sed "s/@PORT@/$dest_port/g"`
+
+        start_echoserver $dest_keys -F -L "$allow_list"
+
+        # The outer session stays open while the inner one runs.
+        rm -f "$work_dir/fwd_in" "$client_out" "$client_log"
+        mkfifo "$work_dir/fwd_in" || fail "couldn't make a fifo"
+        ssh -v -T -p $port \
+            -o ExitOnForwardFailure=yes \
+            -L $local_port:127.0.0.1:$dest_port \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -i "$work_dir/id" hansel@127.0.0.1 \
+            < "$work_dir/fwd_in" > "$client_out" 2> "$client_log" &
+        outer_pid=$!
+        exec 4> "$work_dir/fwd_in"
+        counter=0
+        while ! grep -q 'Entering interactive session' "$client_log" &&
+            [ "$counter" -lt 100 ]; do
+            sleep 0.1
+            counter=$((counter + 1))
+        done
+
+        rm -f "$work_dir/inner_out"
+        printf '%s\n\003' "$probe" | \
+            ssh -T -p $local_port \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o IdentitiesOnly=yes \
+                -o PreferredAuthentications=publickey \
+                -i "$work_dir/id" hansel@127.0.0.1 \
+                > "$work_dir/inner_out" 2> "$work_dir/inner_log" &
+        wait_with_limit $!
+
+        printf '\003' >&4
+        exec 4>&-
+        wait_with_limit $outer_pid
+        kill -9 $dest_pid 2>/dev/null
+        wait $dest_pid 2>/dev/null
+        dest_pid=$no_pid
+
+        grep -q "$probe" "$work_dir/inner_out"
+    }
+
+    if ! run_openssh_forward_allowed 'example.invalid,127.0.0.1:@PORT@'; then
+        cat "$client_log" "$work_dir/inner_log"
+        fail "the echoserver refused a host:port destination -L named"
+    fi
+
+    if ! run_openssh_forward_allowed '127.0.0.1'; then
+        cat "$client_log" "$work_dir/inner_log"
+        fail "the echoserver refused a bare host -L named"
+    fi
+
+    echo "the echoserver forwards only to allowed destinations"
+fi
 
 # Part 2 needs an sshd to talk to, and a host key to give it. Neither is
 # worth failing the test over.
