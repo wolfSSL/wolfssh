@@ -15801,8 +15801,13 @@ static int IsHeldWhileKeying(byte msg)
 }
 
 
-/* Move the framed payload to keyingHold. Overflow ends the session. */
-static int HoldPacket(WOLFSSH* ssh)
+/* A keyingHold entry: the payload's size and its pad bucket, then the
+ * payload. */
+#define KEYING_HOLD_HDR_SZ (LENGTH_SZ + UINT32_SZ)
+
+/* Move the framed payload to keyingHold with the pad bucket it was framed
+ * for. Overflow ends the session. */
+static int HoldPacket(WOLFSSH* ssh, word32 padBucket)
 {
     WOLFSSH_BUFFER* hold = &ssh->keyingHold;
     word32 payloadIdx = ssh->packetStartIdx + LENGTH_SZ + PAD_LENGTH_SZ;
@@ -15813,13 +15818,14 @@ static int HoldPacket(WOLFSSH* ssh)
 
     if (hold->length > DEFAULT_KEYING_HOLD_SZ ||
             payloadSz > DEFAULT_KEYING_HOLD_SZ - hold->length ||
-            LENGTH_SZ > DEFAULT_KEYING_HOLD_SZ - hold->length - payloadSz) {
+            KEYING_HOLD_HDR_SZ >
+                DEFAULT_KEYING_HOLD_SZ - hold->length - payloadSz) {
         WLOG(WS_LOG_ERROR, "Too much output held back during the rekey");
         overflow = 1;
         ret = WS_BUFFER_E;
     }
     else {
-        needSz = LENGTH_SZ + payloadSz;
+        needSz = KEYING_HOLD_HDR_SZ + payloadSz;
     }
 
     /* Double, up to the cap. GrowBuffer() copies even when it has room. */
@@ -15836,6 +15842,8 @@ static int HoldPacket(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         c32toa(payloadSz, hold->buffer + hold->length);
         hold->length += LENGTH_SZ;
+        c32toa(padBucket, hold->buffer + hold->length);
+        hold->length += UINT32_SZ;
         WMEMCPY(hold->buffer + hold->length,
                 ssh->outputBuffer.buffer + payloadIdx, payloadSz);
         hold->length += payloadSz;
@@ -15857,7 +15865,15 @@ static int HoldPacket(WOLFSSH* ssh)
 }
 
 
-static int BundlePacket(WOLFSSH* ssh)
+/* Packets carrying a userauth secret pad up to a multiple of this, so their
+ * length hides the secret's length. OpenSSH uses 64. */
+#ifndef WOLFSSH_USERAUTH_PAD_BUCKET
+    #define WOLFSSH_USERAUTH_PAD_BUCKET 64
+#endif
+
+/* padBucket: 0 for minimum padding, else pad the packet up to a multiple of
+ * it. PreparePacket() must have reserved padBucket extra bytes. */
+static int BundlePacketPad(WOLFSSH* ssh, word32 padBucket)
 {
     byte* output = NULL;
     word32 idx = 0;
@@ -15873,7 +15889,7 @@ static int BundlePacket(WOLFSSH* ssh)
                 ssh->packetStartIdx + LENGTH_SZ + PAD_LENGTH_SZ &&
             IsHeldWhileKeying(ssh->outputBuffer.buffer[ssh->packetStartIdx +
                 LENGTH_SZ + PAD_LENGTH_SZ])) {
-        return HoldPacket(ssh);
+        return HoldPacket(ssh, padBucket);
     }
 
     if (ret == WS_SUCCESS) {
@@ -15893,6 +15909,19 @@ static int BundlePacket(WOLFSSH* ssh)
                      PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
         if (paddingSz < MIN_PAD_LENGTH)
             paddingSz += ssh->blockSz;
+
+        if (padBucket > 0) {
+            word32 alignSz, extraSz;
+
+            /* Whole blocks, so the extra keeps the block alignment. */
+            padBucket = ((padBucket + ssh->blockSz - 1) / ssh->blockSz)
+                    * ssh->blockSz;
+            alignSz = (ssh->aeadMode ? 0 : LENGTH_SZ) + PAD_LENGTH_SZ
+                    + payloadSz + paddingSz;
+            extraSz = (padBucket - (alignSz % padBucket)) % padBucket;
+            if (paddingSz + extraSz <= 0xFF)
+                paddingSz += (byte)extraSz;
+        }
 
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
 
@@ -15980,8 +16009,14 @@ static int BundlePacket(WOLFSSH* ssh)
     return ret;
 }
 
+static int BundlePacket(WOLFSSH* ssh)
+{
+    return BundlePacketPad(ssh, 0);
+}
 
-/* Frame the held payloads in order. Call with the self keying flag clear. */
+
+/* Frame the held payloads in order, each padded as when it was held. Call
+ * with the self keying flag clear. */
 static int ReleaseHeldPackets(WOLFSSH* ssh)
 {
     WOLFSSH_BUFFER* hold = &ssh->keyingHold;
@@ -15991,36 +16026,38 @@ static int ReleaseHeldPackets(WOLFSSH* ssh)
 
     /* PreparePacket() grows to the exact size, so reserve for the batch
      * once rather than copying the queue for every packet. */
-    while (hold->length - idx >= LENGTH_SZ) {
-        word32 payloadSz;
+    while (hold->length - idx >= KEYING_HOLD_HDR_SZ) {
+        word32 payloadSz, padBucket;
 
         ato32(hold->buffer + idx, &payloadSz);
-        idx += LENGTH_SZ;
+        ato32(hold->buffer + idx + LENGTH_SZ, &padBucket);
+        idx += KEYING_HOLD_HDR_SZ;
         if (payloadSz > hold->length - idx)
             break;
-        reserveSz += LENGTH_SZ + PAD_LENGTH_SZ + payloadSz +
+        reserveSz += LENGTH_SZ + PAD_LENGTH_SZ + payloadSz + padBucket +
                 (byte)(ssh->blockSz * 2) + ssh->macSz;
         idx += payloadSz;
     }
     ret = GrowBuffer(&ssh->outputBuffer, reserveSz);
     idx = 0;
 
-    while (ret == WS_SUCCESS && hold->length - idx >= LENGTH_SZ) {
-        word32 payloadSz;
+    while (ret == WS_SUCCESS && hold->length - idx >= KEYING_HOLD_HDR_SZ) {
+        word32 payloadSz, padBucket;
 
         ato32(hold->buffer + idx, &payloadSz);
-        idx += LENGTH_SZ;
+        ato32(hold->buffer + idx + LENGTH_SZ, &padBucket);
+        idx += KEYING_HOLD_HDR_SZ;
         if (payloadSz > hold->length - idx) {
             ret = WS_BUFFER_E;
             break;
         }
 
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + padBucket);
         if (ret == WS_SUCCESS) {
             WMEMCPY(ssh->outputBuffer.buffer + ssh->outputBuffer.length,
                     hold->buffer + idx, payloadSz);
             ssh->outputBuffer.length += payloadSz;
-            ret = BundlePacket(ssh);
+            ret = BundlePacketPad(ssh, padBucket);
         }
         idx += payloadSz;
     }
@@ -23364,7 +23401,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
         ret = PrepareUserAuthResponseKeyboard(ssh, &payloadSz, &authData);
     }
     if (ret == WS_SUCCESS) {
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23377,7 +23414,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->outputBuffer.length = idx;
-        ret = BundlePacket(ssh);
+        ret = BundlePacketPad(ssh, WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23409,6 +23446,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_KeySignature *keySig_ptr = NULL;
     byte authId = ID_NONE;
     int delivered = 0;
+    word32 padBucket = 0;
 
     WOLFSSH_UNUSED(addSig);
 
@@ -23515,8 +23553,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     ssh->userNameSz + serviceNameSz + authNameSz;
-        if (authId == ID_USERAUTH_PASSWORD)
+        if (authId == ID_USERAUTH_PASSWORD) {
+            padBucket = WOLFSSH_USERAUTH_PAD_BUCKET;
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
+        }
         else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {
             authData.sf.publicKey.hasSignature = 1;
             ssh->userAuthPkDone = 1;
@@ -23532,7 +23572,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     }
 
     if (ret == WS_SUCCESS)
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + padBucket);
 
     if (ret == WS_SUCCESS) {
         byte* sigStart;
@@ -23583,7 +23623,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         if (ret == WS_SUCCESS) {
             ssh->outputBuffer.length = idx;
-            ret = BundlePacket(ssh);
+            ret = BundlePacketPad(ssh, padBucket);
         }
     }
 
@@ -26986,6 +27026,11 @@ int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg, byte state)
 int wolfSSH_TestDoReceive(WOLFSSH* ssh)
 {
     return DoReceive(ssh);
+}
+
+int wolfSSH_TestReleaseHeldPackets(WOLFSSH* ssh)
+{
+    return ReleaseHeldPackets(ssh);
 }
 
 int wolfSSH_TestDoPacket(WOLFSSH* ssh, byte* bufferConsumed)

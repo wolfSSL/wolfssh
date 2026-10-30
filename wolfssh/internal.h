@@ -704,7 +704,8 @@ enum NameIdType {
     #define DEFAULT_MAX_PACKET_SZ 32768
 #endif
 #ifndef DEFAULT_KEYING_HOLD_SZ
-    /* Bytes keyingHold may hold: each payload plus its 4-byte length. */
+    /* Bytes keyingHold may hold: each payload plus its 4-byte length and
+     * 4-byte pad bucket. */
     #define DEFAULT_KEYING_HOLD_SZ DEFAULT_MAX_PACKET_SZ
 #endif
 #ifndef DEFAULT_NEXT_CHANNEL
@@ -1397,8 +1398,8 @@ struct WOLFSSH {
 
     WOLFSSH_BUFFER inputBuffer;
     WOLFSSH_BUFFER outputBuffer;
-    WOLFSSH_BUFFER keyingHold; /* Length-prefixed payloads held until
-                                * our NEWKEYS */
+    WOLFSSH_BUFFER keyingHold; /* Payloads held until our NEWKEYS, each
+                                * after its length and pad bucket */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];
@@ -2151,6 +2152,7 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestIsMessageAllowed(WOLFSSH* ssh, byte msg,
             byte state);
     WOLFSSH_API int wolfSSH_TestDoReceive(WOLFSSH* ssh);
+    WOLFSSH_API int wolfSSH_TestReleaseHeldPackets(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoPacket(WOLFSSH* ssh,
             byte* bufferConsumed);
     WOLFSSH_API int wolfSSH_TestDoUserAuthBanner(WOLFSSH* ssh, byte* buf,
