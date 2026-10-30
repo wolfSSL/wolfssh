@@ -306,6 +306,10 @@ static int test_ParseConfigLine(void)
         {"Port 0", "Port 0", 1},
         {"Port NaN", "Port wolfsshd", 1},
         {"Port no value", "Port \n", 1},
+        {"Port trailing junk", "Port 22abc", 1},
+        {"Port leading plus", "Port +22", 1},
+        {"Port overflow", "Port 99999999999999999999", 1},
+        {"Protocol trailing junk", "Protocol 2x", 1},
 
         /* Whitespace tests. */
         {"Extra leading whitespace", "Port   22", 0},
@@ -360,6 +364,22 @@ static int test_ParseConfigLine(void)
         {"Valid login grace time zero minutes", "LoginGraceTime 0m", 0},
         {"Valid login grace time zero hours", "LoginGraceTime 0h", 0},
         {"Invalid zero padded login grace time", "LoginGraceTime 00", 1},
+        {"Valid login grace time s suffix", "LoginGraceTime 60s", 0},
+        {"Valid login grace time days", "LoginGraceTime 1d", 0},
+        {"Valid login grace time weeks", "LoginGraceTime 1w", 0},
+        {"Valid login grace time upper case", "LoginGraceTime 2M", 0},
+        {"Login grace time trailing junk", "LoginGraceTime 2junk", 1},
+        {"Login grace time word suffix", "LoginGraceTime 60seconds", 1},
+        {"Login grace time two suffixes", "LoginGraceTime 1m1", 1},
+        {"Login grace time overflow", "LoginGraceTime 9999999999w", 1},
+        /* the limit is CONFIG_INT_MAX seconds, before and after the
+         * multiplier: 2147483647 / 604800 is 3550, / 60 is 35791394 */
+        {"Login grace time max", "LoginGraceTime 2147483647", 0},
+        {"Login grace time max plus one", "LoginGraceTime 2147483648", 1},
+        {"Login grace time max weeks", "LoginGraceTime 3550w", 0},
+        {"Login grace time weeks overflow", "LoginGraceTime 3551w", 1},
+        {"Login grace time max minutes", "LoginGraceTime 35791394m", 0},
+        {"Login grace time minutes overflow", "LoginGraceTime 35791395m", 1},
 
         /* Permit empty password tests. */
         {"Permit empty password no", "PermitEmptyPasswords no", 0},
@@ -398,6 +418,9 @@ static int test_ParseConfigLine(void)
         {"Include file DNE", "Include sshd_config.d/test-dne.conf", 1},
         {"Include wildcard exists", "Include sshd_config.d/*.conf", 0},
         {"Include wildcard NDE", "Include sshd_config.d/*.dne", 0},
+        /* a leading '*' with no directory part is still a wildcard, so a
+         * pattern that matches nothing is not opened as a literal file */
+        {"Include leading wildcard NDE", "Include *.wolfsshd-dne", 0},
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
@@ -454,6 +477,31 @@ static int test_ParseConfigLine(void)
     if (ret == WS_SUCCESS) {
         Log("    Testing scenario: bare keyword matches, then fails.");
         ret = CheckScenario(PCL("StrictModes") == WS_BAD_ARGUMENT);
+    }
+
+    /* the time suffixes scale the value to seconds */
+    if (ret == WS_SUCCESS) {
+        static const struct {
+            const char* line;
+            long expect;
+        } times[] = {
+            { "LoginGraceTime 60s", 60 },
+            { "LoginGraceTime 2M", 120 },
+            { "LoginGraceTime 1h", 3600 },
+            { "LoginGraceTime 1d", 86400 },
+            { "LoginGraceTime 1w", 604800 },
+            { "LoginGraceTime 3550w", 2147040000L },
+            { "LoginGraceTime 35791394m", 2147483640L },
+            { "LoginGraceTime 2147483647", 2147483647L },
+        };
+
+        for (i = 0; ret == WS_SUCCESS &&
+                i < (int)(sizeof(times) / sizeof(*times)); i++) {
+            Log("    Testing scenario: %s is %ld seconds.", times[i].line,
+                    times[i].expect);
+            ret = CheckScenario(PCL(times[i].line) == WS_SUCCESS &&
+                    wolfSSHD_ConfigGetGraceTime(conf) == times[i].expect);
+        }
     }
 #undef PCL
 
@@ -814,6 +862,20 @@ static int test_MatchUnsupportedSelector(void)
          * unsupported part must not be silently dropped */
         {"Mixed User+Address", "Match User alice Address 10.0.0.0/8", 1},
         {"Mixed Group+Host", "Match Group dev Host example.com", 1},
+
+        /* comma separated lists of exact names are supported */
+        {"Match User list", "Match User alice,bob", 0},
+        {"Match Group list", "Match Group dev,ops", 0},
+
+        /* pattern syntax and empty list entries would be kept as literals
+         * that never match, so they are rejected */
+        {"Match User wildcard", "Match User a*", 1},
+        {"Match User single char wildcard", "Match User a?c", 1},
+        {"Match User negation", "Match User !root", 1},
+        {"Match Group negated entry", "Match Group dev,!ops", 1},
+        {"Match User empty entry", "Match User a,,b", 1},
+        {"Match User leading comma", "Match User ,a", 1},
+        {"Match Group trailing comma", "Match Group dev,", 1},
     };
     const int numVectors = (int)(sizeof(vectors) / sizeof(*vectors));
 
@@ -971,6 +1033,52 @@ static int test_GetUserConfMatchGroupAnd(void)
         grps[0] = "staff";
         ret = CheckForcedCmd(head, "anyuser", grps, 1, "/bin/staff");
     }
+
+    wolfSSHD_ConfigFree(head);
+    return ret;
+}
+
+/* 'Match User a,b' and 'Match Group a,b' apply when any one entry equals the
+ * user or one of the user's groups. The list itself, or a prefix of an entry,
+ * is not a match. */
+static int test_GetUserConfMatchCommaList(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* head;
+    WOLFSSHD_CONFIG* conf;
+    const char* grps[2];
+
+    head = wolfSSHD_ConfigNew(NULL);
+    if (head == NULL)
+        ret = WS_MEMORY_E;
+    conf = head;
+
+#define PCL(s) ParseConfigLine(&conf, s, (int)WSTRLEN(s), 0)
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand internal-sftp");
+    if (ret == WS_SUCCESS) ret = PCL("Match User alice,bob");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/users");
+    if (ret == WS_SUCCESS) ret = PCL("Match Group admins,staff");
+    if (ret == WS_SUCCESS) ret = PCL("ForceCommand /bin/groups");
+#undef PCL
+
+    grps[0] = "users";
+    grps[1] = "staff";
+
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "alice", grps, 1, "/bin/users");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "bob", grps, 1, "/bin/users");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "carol", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "alice,bob", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "ali", grps, 1, "internal-sftp");
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "bo", grps, 1, "internal-sftp");
+    /* the second group entry, reached through a supplementary group */
+    if (ret == WS_SUCCESS)
+        ret = CheckForcedCmd(head, "carol", grps, 2, "/bin/groups");
 
     wolfSSHD_ConfigFree(head);
     return ret;
@@ -1298,6 +1406,285 @@ static int WriteConfigFile(const char* path, const char* contents)
     return ret;
 }
 
+
+/* Applies 'line' to a fresh config preset to LoginGraceTime 5 and checks the
+ * resulting grace time against 'expect'. */
+static int CheckIncludeGraceTime(const char* line, long expect)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf;
+
+    Log("    Testing scenario: %s.", line);
+    conf = wolfSSHD_ConfigNew(NULL);
+    if (conf == NULL) {
+        ret = WS_MEMORY_E;
+    }
+    if (ret == WS_SUCCESS) {
+        ret = ParseConfigLine(&conf, "LoginGraceTime 5",
+                (int)WSTRLEN("LoginGraceTime 5"), 0);
+    }
+    if (ret == WS_SUCCESS) {
+        ret = ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0);
+    }
+    if (ret == WS_SUCCESS && wolfSSHD_ConfigGetGraceTime(conf) != expect) {
+        ret = WS_FATAL_ERROR;
+    }
+    Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+    wolfSSHD_ConfigFree(conf);
+    return ret;
+}
+
+/* A '*' in an Include pattern may match an empty sequence, so 'foo*' and
+ * '*foo' both pick up a file named exactly 'foo'. The fixed prefix and
+ * postfix must not overlap, so 'ab*ba' does not pick up 'aba'. As in
+ * glob(3), a leading '.' in a file name is only matched by a literal '.', so
+ * '*.bak' skips '.bak' and '.x.bak'. */
+static int test_IncludeWildcardEmptyMatch(void)
+{
+    int ret;
+    const char* fooPath = "./sshd_config.d/foo";
+    const char* abaPath = "./sshd_config.d/aba";
+    const char* dotPath = "./sshd_config.d/.bak";
+    const char* dotXPath = "./sshd_config.d/.x.bak";
+
+    ret = WriteConfigFile(fooPath, "LoginGraceTime 7\n");
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(abaPath, "LoginGraceTime 9\n");
+    }
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(dotPath, "LoginGraceTime 8\n");
+    }
+    if (ret == WS_SUCCESS) {
+        ret = WriteConfigFile(dotXPath, "LoginGraceTime 6\n");
+    }
+
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/foo*", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/*foo", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/f*o", 7);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/ab*ba", 5);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/a*a", 9);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/*.bak", 5);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/.b*", 8);
+    if (ret == WS_SUCCESS)
+        ret = CheckIncludeGraceTime("Include sshd_config.d/.*.bak", 6);
+
+    (void)WREMOVE(NULL, fooPath);
+    (void)WREMOVE(NULL, abaPath);
+    (void)WREMOVE(NULL, dotPath);
+    (void)WREMOVE(NULL, dotXPath);
+    return ret;
+}
+
+/* ConfigLoad reads a line in one buffer of WOLFSSHD_MAX_LINE_SIZE (1024)
+ * bytes. A longer comment is skipped whole, so its tail is never parsed as a
+ * directive of its own. A longer directive is an error rather than being cut
+ * short, also when leading whitespace pushes it past the buffer. Whitespace
+ * past the buffer does not make a line too long. A line that just fits still
+ * loads. */
+#define TEST_LINE_MAX 1023
+
+/* Writes 'contents' to 'path' and loads it into a new config returned in
+ * *conf, which the caller frees. Returns the result of the load. */
+static int LoadConfigText(const char* path, const char* contents,
+        WOLFSSHD_CONFIG** conf)
+{
+    int ret;
+
+    *conf = NULL;
+    ret = WriteConfigFile(path, contents);
+    if (ret == WS_SUCCESS) {
+        *conf = wolfSSHD_ConfigNew(NULL);
+        if (*conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSHD_ConfigLoad(*conf, path);
+    }
+
+    return ret;
+}
+
+static int test_ConfigLoadLongLine(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_CONFIG* conf = NULL;
+    const char* path = "./long_line.conf";
+    const char* fill = "/bin/true";
+    char* contents;
+    word32 i, fillSz, prefixSz;
+    const char* cmd;
+
+    contents = (char*)WMALLOC(TEST_LINE_MAX * 2 + 64, NULL, DYNTYPE_STRING);
+    if (contents == NULL) {
+        return WS_MEMORY_E;
+    }
+
+    /* a comment that fills the buffer exactly, followed on the same line by
+     * text that looks like a directive */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: long comment tail is not parsed.");
+        WSTRNCPY(contents, "Port 2222\n", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        contents[prefixSz] = '#';
+        WMEMSET(contents + prefixSz + 1, 'x', TEST_LINE_MAX - 1);
+        WMEMCPY(contents + prefixSz + TEST_LINE_MAX, "Port 2223\n",
+                sizeof("Port 2223\n"));
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = wolfSSHD_ConfigLoad(conf, path);
+        }
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPort(conf) != 2222) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a directive one byte too long for the buffer */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: over-long directive is rejected.");
+        WSTRNCPY(contents, "ForceCommand ", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        fillSz = (word32)WSTRLEN(fill);
+        for (i = prefixSz; i < TEST_LINE_MAX + 1; i++) {
+            contents[i] = ((i - prefixSz) % (fillSz + 1) == fillSz) ?
+                    ' ' : fill[(i - prefixSz) % (fillSz + 1)];
+        }
+        contents[TEST_LINE_MAX + 1] = '\n';
+        contents[TEST_LINE_MAX + 2] = '\0';
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = (wolfSSHD_ConfigLoad(conf, path) == WS_SUCCESS) ?
+                    WS_FATAL_ERROR : WS_SUCCESS;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* the same directive at exactly the buffer limit loads whole */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: directive at the limit loads.");
+        contents[TEST_LINE_MAX] = '\n';
+        contents[TEST_LINE_MAX + 1] = '\0';
+        if (contents[TEST_LINE_MAX - 1] == ' ') {
+            contents[TEST_LINE_MAX - 1] = 'x';
+        }
+
+        ret = WriteConfigFile(path, contents);
+        if (ret == WS_SUCCESS) {
+            conf = wolfSSHD_ConfigNew(NULL);
+            if (conf == NULL) {
+                ret = WS_MEMORY_E;
+            }
+        }
+        if (ret == WS_SUCCESS) {
+            ret = wolfSSHD_ConfigLoad(conf, path);
+        }
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(conf);
+            if (cmd == NULL ||
+                    WSTRLEN(cmd) != (size_t)(TEST_LINE_MAX - prefixSz) ||
+                    WSTRNCMP(cmd, contents + prefixSz,
+                        TEST_LINE_MAX - prefixSz) != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* the same directive ending in CRLF, at the limit and one byte short of
+     * it, loads whole. At the limit the buffer leftover is "\r\n"; one short,
+     * the buffer ends in '\r' and the leftover is "\n". */
+    for (i = 0; ret == WS_SUCCESS && i < 2; i++) {
+        word32 lineSz = TEST_LINE_MAX - i;
+
+        Log("    Testing scenario: CRLF directive %u bytes loads.", lineSz);
+        contents[lineSz - 1] = 'x';
+        contents[lineSz] = '\r';
+        contents[lineSz + 1] = '\n';
+        contents[lineSz + 2] = '\0';
+
+        ret = LoadConfigText(path, contents, &conf);
+        if (ret == WS_SUCCESS) {
+            cmd = wolfSSHD_ConfigGetForcedCmd(conf);
+            if (cmd == NULL ||
+                    WSTRLEN(cmd) != (size_t)(lineSz - prefixSz) ||
+                    WSTRNCMP(cmd, contents + prefixSz,
+                        lineSz - prefixSz) != 0) {
+                ret = WS_FATAL_ERROR;
+            }
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a directive pushed past the buffer by leading whitespace is rejected,
+     * even when what is left in the buffer looks like an empty line */
+    for (i = 0; ret == WS_SUCCESS && i < 4; i++) {
+        static const word32 pads[] = { 1021, 1022, 1023, 1100 };
+
+        Log("    Testing scenario: %u spaces then a directive is rejected.",
+                pads[i]);
+        WMEMSET(contents, ' ', pads[i]);
+        WMEMCPY(contents + pads[i], "PasswordAuthentication no\n",
+                sizeof("PasswordAuthentication no\n"));
+
+        ret = (LoadConfigText(path, contents, &conf) == WS_SUCCESS) ?
+                WS_FATAL_ERROR : WS_SUCCESS;
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    /* a line of nothing but whitespace is still an empty line, however long */
+    if (ret == WS_SUCCESS) {
+        Log("    Testing scenario: long blank line is skipped.");
+        WSTRNCPY(contents, "Port 2222\n", TEST_LINE_MAX);
+        prefixSz = (word32)WSTRLEN(contents);
+        WMEMSET(contents + prefixSz, ' ', TEST_LINE_MAX + 100);
+        WMEMCPY(contents + prefixSz + TEST_LINE_MAX + 100, "\n",
+                sizeof("\n"));
+
+        ret = LoadConfigText(path, contents, &conf);
+        if (ret == WS_SUCCESS && wolfSSHD_ConfigGetPort(conf) != 2222) {
+            ret = WS_FATAL_ERROR;
+        }
+        Log("%s", ret == WS_SUCCESS ? " PASSED.\n" : " FAILED.\n");
+        wolfSSHD_ConfigFree(conf);
+        conf = NULL;
+    }
+
+    (void)WREMOVE(NULL, path);
+    WFREE(contents, NULL, DYNTYPE_STRING);
+    return ret;
+}
 
 /* Bounded recursion through Include directives: a self-including config
  * must fail with WS_BAD_ARGUMENT once the depth limit is hit, and the
@@ -7775,12 +8162,15 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_GetUserConfMatchRepeatedKeyword),
     TEST_DECL(test_GetUserConfMatchGroupAnd),
     TEST_DECL(test_GetUserConfMatchSecondaryGroup),
+    TEST_DECL(test_GetUserConfMatchCommaList),
     TEST_DECL(test_CAKeysFileDiffers),
     TEST_DECL(test_PermitRootLoginModes),
     TEST_DECL(test_ConfigParseAuthorizedUPNDomains),
     TEST_DECL(test_MatchUPNToUser),
     TEST_DECL(test_IncludeRecursionBound),
     TEST_DECL(test_ConfigLineTooLong),
+    TEST_DECL(test_IncludeWildcardEmptyMatch),
+    TEST_DECL(test_ConfigLoadLongLine),
     TEST_DECL(test_GetUserConfMatchNoInherit),
     TEST_DECL(test_GetUserConfMatchOverlapCompose),
     TEST_DECL(test_ConfigIncludeMatchChain),

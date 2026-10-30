@@ -134,51 +134,63 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth);
 static int CountWhitespace(const char* in, int inSz, byte inv);
 static int SetFileString(char** dst, const char* src, void* heap);
 
-/* convert a string into seconds, handles if 'm' for minutes follows the string
- * number, i.e. 2m
+/* Largest value GetConfigInt returns, before and after a time multiplier. It
+ * fits in a long on every target. */
+#define CONFIG_INT_MAX 0x7FFFFFFFL
+
+/* Convert a decimal string into a number. With isTime, one trailing unit
+ * suffix (s, m, h, d or w, either case) scales the number to seconds. The whole
+ * string must be consumed: no sign, whitespace or trailing text. A zero must be
+ * written as a single '0'.
  * Returns the value on success and negative value on failure */
 static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
     long ret = 0;
-    int mult = 1; /* multiplier */
+    long mult = 1; /* multiplier */
     int sz   = inSz;
+    int i;
+
+    (void)heap;
 
     if (in == NULL || inSz <= 0) {
-        ret = WS_BAD_ARGUMENT;
+        return WS_BAD_ARGUMENT;
     }
 
     /* check for multipliers */
-    if (ret == 0 && isTime) {
-        if (in[sz - 1] == 'm') {
-            sz--;
-            mult = 60;
-        }
-        else if (in[sz - 1] == 'h') {
-            sz--;
-            mult = 60*60;
-        }
-    }
-
-    if (ret == 0) {
-        char* num = (char*)WMALLOC(sz + 1, heap, DYNTYPE_SSHD);
-        if (num == NULL) {
-            ret = WS_MEMORY_E;
-        }
-        else {
-            WMEMCPY(num, in, sz);
-            num[sz] = '\0';
-            ret = atol(num);
-            if (ret == 0 && WSTRCMP(num, "0") != 0) {
-                ret = WS_BAD_ARGUMENT;
-            }
-            else if (ret > 0) {
-                ret = ret * mult;
-            }
-            WFREE(num, heap, DYNTYPE_SSHD);
+    if (isTime) {
+        switch (in[sz - 1]) {
+            case 's': case 'S': mult = 1;           sz--; break;
+            case 'm': case 'M': mult = 60;          sz--; break;
+            case 'h': case 'H': mult = 60*60;       sz--; break;
+            case 'd': case 'D': mult = 60*60*24;    sz--; break;
+            case 'w': case 'W': mult = 60*60*24*7;  sz--; break;
+            default: break;
         }
     }
 
-    return ret;
+    if (sz <= 0) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    for (i = 0; i < sz; i++) {
+        if (in[i] < '0' || in[i] > '9') {
+            return WS_BAD_ARGUMENT;
+        }
+        if (ret > (CONFIG_INT_MAX - (in[i] - '0')) / 10) {
+            return WS_BAD_ARGUMENT;
+        }
+        ret = ret * 10 + (in[i] - '0');
+    }
+
+    if (ret == 0 && sz != 1) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (ret > CONFIG_INT_MAX / mult) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    return ret * mult;
 }
 
 /* returns WS_SUCCESS on success, removes trailng newlines */
@@ -875,9 +887,9 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
             }
         }
 
-        /* Find wildcards */
+        /* Find wildcards, value[0] included */
         ptr2 = ptr;
-        while (ptr2 != value) {
+        for (;;) {
             if (*ptr2 == '*') {
                 /* Wildcard found */
                 found = 1;
@@ -889,6 +901,9 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
             if (*ptr2 == '/') {
                 /* Found slash before wildcard directory-wildcards
                  * not supported */
+                break;
+            }
+            if (ptr2 == value) {
                 break;
             }
             ptr2--;
@@ -1028,29 +1043,31 @@ static int HandleInclude(WOLFSSHD_CONFIG *conf, const char *value, int depth)
                         fileFilled = i;
 
                         for (i = 0; ret == WS_SUCCESS && i < fileFilled; i++) {
-                            /* Check if filename prefix matches */
-                            if (prefixLen > 0) {
-                                if ((int)WSTRLEN(fileNames[i]) <= prefixLen) {
-                                    continue;
-                                }
-                                if (WSTRNCMP(fileNames[i], prefix, prefixLen)
-                                        != 0) {
-                                    continue;
-                                }
+                            int nameLen = (int)WSTRLEN(fileNames[i]);
+                            int postfixLen = (postfix != NULL) ?
+                                    (int)WSTRLEN(postfix) : 0;
+
+                            /* The '*' may match nothing, but the prefix and
+                             * postfix must not overlap. */
+                            if (nameLen < prefixLen + postfixLen) {
+                                continue;
                             }
-                            if (postfix) {
-                                /* Skip if file is too short */
-                                if (WSTRLEN(fileNames[i]) <= WSTRLEN(postfix)) {
-                                    continue;
-                                }
-                                if (WSTRNCMP(fileNames[i] +
-                                            WSTRLEN(fileNames[i]) -
-                                            WSTRLEN(postfix),
-                                            postfix, WSTRLEN(postfix))
+                            /* as in glob(3), a leading '.' is only
+                             * matched by a literal '.', never by the '*' */
+                            if (fileNames[i][0] == '.' &&
+                                    (prefixLen == 0 || prefix[0] != '.')) {
+                                continue;
+                            }
+                            if (prefixLen > 0 &&
+                                    WSTRNCMP(fileNames[i], prefix, prefixLen)
                                         != 0) {
-                                    /* Not a match */
-                                    continue;
-                                }
+                                continue;
+                            }
+                            if (postfixLen > 0 &&
+                                    WSTRNCMP(fileNames[i] + nameLen -
+                                        postfixLen, postfix, postfixLen)
+                                        != 0) {
+                                continue;
                             }
                             ret = WSNPRINTF(filepath, PATH_MAX, "%s/%s", path,
                                         fileNames[i]);
@@ -1128,6 +1145,57 @@ static int HandleChrootDir(WOLFSSHD_CONFIG* conf, const char* value)
 }
 
 
+/* Match names are a comma separated list of exact names. OpenSSH pattern
+ * syntax ('*', '?', '!') and empty list entries are rejected rather than kept
+ * as literals that could never match. Returns WS_SUCCESS when 'list' is
+ * usable. */
+static int CheckMatchList(const char* list, int listSz)
+{
+    int ret = WS_SUCCESS;
+    int i;
+    int entrySz = 0;
+
+    for (i = 0; ret == WS_SUCCESS && i < listSz; i++) {
+        if (list[i] == '*' || list[i] == '?' || list[i] == '!') {
+            ret = WS_FATAL_ERROR;
+        }
+        else if (list[i] == ',') {
+            if (entrySz == 0) {
+                ret = WS_FATAL_ERROR;
+            }
+            entrySz = 0;
+        }
+        else {
+            entrySz++;
+        }
+    }
+    if (ret == WS_SUCCESS && entrySz == 0) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+/* returns 1 when 'name' equals one entry of the comma separated 'list' */
+static int MatchList(const char* list, const char* name)
+{
+    word32 nameSz = (word32)WSTRLEN(name);
+    const char* entry = list;
+    const char* end;
+
+    for (;;) {
+        end = WSTRCHR(entry, ',');
+        if (end == NULL) {
+            return WSTRCMP(entry, name) == 0;
+        }
+        if ((word32)(end - entry) == nameSz &&
+                WSTRNCMP(entry, name, nameSz) == 0) {
+            return 1;
+        }
+        entry = end + 1;
+    }
+}
+
 /* Parse the value of a Match directive into the user and group applies-to
  * fields of 'config'. The value is a whitespace separated sequence of
  * keyword/name pairs, e.g. "User alice Group admins". The token immediately
@@ -1194,6 +1262,13 @@ static int ParseMatchCriteria(WOLFSSHD_CONFIG* config, const char* value)
             if (tokSz == 0) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Match %s directive is missing a name",
+                    (out == &config->usrAppliesTo) ? "User" : "Group");
+                ret = WS_FATAL_ERROR;
+            }
+            else if (CheckMatchList(tok, tokSz) != WS_SUCCESS) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Match %s supports only a comma separated list of "
+                    "exact names",
                     (out == &config->usrAppliesTo) ? "User" : "Group");
                 ret = WS_FATAL_ERROR;
             }
@@ -1303,8 +1378,6 @@ static int HandleMatch(WOLFSSHD_CONFIG** conf, const char* value, int valueSz)
     if (ret == WS_SUCCESS) {
         ret = ParseMatchCriteria(newConf, value);
     }
-
-    /* @TODO handle , separated user/group list */
 
     /* on failure free the config that will not be added to the list */
     if (ret != WS_SUCCESS && newConf != NULL) {
@@ -1761,21 +1834,29 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
     currentConfig = conf;
     while ((current = XFGETS(buf, WOLFSSHD_MAX_LINE_SIZE, f)) != NULL) {
         int currentSz = (int)XSTRLEN(current);
+        int tooLong = 0;
 
-        /* A full buffer with no newline is a cut line, and its leftover is
-         * read as a line of its own, so going on applies a truncated
-         * directive. One more byte tells a cut line from one that ends at
-         * the buffer: a newline, or the end of the file. */
+        /* A full buffer without a newline means the line goes on. Drain the
+         * rest so it is not parsed as a line of its own. */
         if (currentSz == WOLFSSHD_MAX_LINE_SIZE - 1 &&
-                buf[currentSz - 1] != '\n') {
-            char next;
+                current[currentSz - 1] != '\n') {
+            char rest[64];
 
-            if (WFREAD(NULL, &next, 1, 1, f) == 1 && next != '\n') {
-                wolfSSH_Log(WS_LOG_ERROR,
-                    "[SSHD] Config line longer than %d in %s",
-                    WOLFSSHD_MAX_LINE_SIZE - 1, filename);
-                ret = WS_FATAL_ERROR;
-                break;
+            while (XFGETS(rest, (int)sizeof(rest), f) != NULL) {
+                word32 restSz = (word32)XSTRLEN(rest);
+                word32 k;
+
+                /* only text past the buffer makes the line too long,
+                 * trailing whitespace and the line ending do not */
+                for (k = 0; k < restSz; k++) {
+                    if (rest[k] != ' ' && rest[k] != '\t' &&
+                            rest[k] != '\r' && rest[k] != '\n') {
+                        tooLong = 1;
+                    }
+                }
+                if (restSz > 0 && rest[restSz - 1] == '\n') {
+                    break;
+                }
             }
         }
 
@@ -1786,12 +1867,21 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth)
             current   = current + 1;
         }
 
-        if (currentSz <= 2) { /* \n or \r\n */
-            continue; /* empty line */
-        }
-
         if (current[0] == '#') {
             continue; /* commented out line */
+        }
+
+        /* check before the empty line test, leading whitespace may have
+         * pushed the text of the line past the buffer */
+        if (tooLong) {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Config line longer than %d "
+                    "bytes in %s", WOLFSSHD_MAX_LINE_SIZE - 1, filename);
+            ret = WS_FATAL_ERROR;
+            break;
+        }
+
+        if (currentSz <= 2) { /* \n or \r\n */
+            continue; /* empty line */
         }
 
         ret = ParseConfigLine(&currentConfig, current, currentSz, depth);
@@ -1908,22 +1998,22 @@ static int MatchApplies(const WOLFSSHD_CONFIG* node, const char* usr,
         matches = 1;
 
         if (node->usrAppliesTo != NULL) {
-            if (usr == NULL || XSTRCMP(node->usrAppliesTo, usr) != 0) {
+            if (usr == NULL || !MatchList(node->usrAppliesTo, usr)) {
                 matches = 0;
             }
         }
 
-        /* The group selector matches when it equals any group the user belongs
-         * to, primary or supplementary, mirroring how OpenSSH evaluates
-         * 'Match Group'. An empty group list matches no group selector, so
-         * combined blocks fail closed. */
+        /* The group selector matches when a list entry equals any group the
+         * user belongs to, primary or supplementary, mirroring how OpenSSH
+         * evaluates 'Match Group'. An empty group list matches no group
+         * selector, so combined blocks fail closed. */
         if (matches && node->groupAppliesTo != NULL) {
             matches = 0;
             if (grps != NULL) {
                 for (i = 0; i < grpCount; i++) {
                     if (grps[i] == NULL)
                         continue;
-                    if (XSTRCMP(node->groupAppliesTo, grps[i]) == 0) {
+                    if (MatchList(node->groupAppliesTo, grps[i])) {
                         matches = 1;
                         break;
                     }
