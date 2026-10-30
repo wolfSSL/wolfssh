@@ -2060,11 +2060,7 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
     switch (type) {
         case WOLFSSH_SESSION_SHELL:
             /* shell has no name; drop any name left by a prior subsystem/exec */
-            if (ssh->channelName != NULL) {
-                WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
-                ssh->channelName = NULL;
-            }
-            ssh->channelNameSz = 0;
+            FreeChannelName(ssh, ssh->ctx->heap);
             ssh->connectChannelId = type;
             break;
 
@@ -2101,9 +2097,7 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
                     }
                     WMEMCPY(newName, name, nameSz);
                     newName[nameSz] = 0;
-                    if (ssh->channelName != NULL) {
-                        WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
-                    }
+                    FreeChannelName(ssh, ssh->ctx->heap);
                     ssh->channelName = newName;
                     ssh->channelNameSz = nameSz;
                 }
@@ -2129,11 +2123,7 @@ int wolfSSH_SetChannelType(WOLFSSH* ssh, byte type, byte* name, word32 nameSz)
         case WOLFSSH_SESSION_TERMINAL:
             /* send a pseudo-terminal request and shell channel */
             ssh->sendTerminalRequest = 1;
-            if (ssh->channelName != NULL) {
-                WFREE(ssh->channelName, ssh->ctx->heap, DYNTYPE_STRING);
-                ssh->channelName = NULL;
-            }
-            ssh->channelNameSz = 0;
+            FreeChannelName(ssh, ssh->ctx->heap);
             ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
             break;
 #endif
