@@ -623,7 +623,7 @@ void wolfSSHD_AuthInit(void)
 
 #ifndef WOLFSSHD_UNIT_TEST
     /* /etc/shadow is commonly root:shadow 0640; don't reject group-readable. */
-    if (wolfSSHD_OpenSecureFile(WSSHD_SHADOW_FILE, 0 /* ownerUid: root */,
+    if (wolfSSHD_OpenSecretFile(WSSHD_SHADOW_FILE, 0 /* ownerUid: root */,
             0 /* rejectReadable */, 0 /* relaxPerms */, NULL, &f)
             == WS_SUCCESS && f != NULL) {
         ScanShadowFile(f);
@@ -1387,7 +1387,7 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     }
 
     /* The target is a regular file, so restore blocking semantics for the
-     * buffered reads the caller will perform. */
+     * reads the caller will perform. */
     if (ret == WS_SUCCESS) {
         flags = fcntl(fd, F_GETFL);
         if (flags != -1) {
@@ -1429,6 +1429,22 @@ int wolfSSHD_OpenSecureFile(const char* path, WUID_T ownerUid,
     }
     return WS_SUCCESS;
 #endif
+}
+
+/* wolfSSHD_OpenSecureFile() for a secret: the stream is unbuffered, so the
+ * host key or shadow records are not left in a libc buffer that is freed
+ * unwiped. Public files keep the buffered stream for their line scans. */
+int wolfSSHD_OpenSecretFile(const char* path, WUID_T ownerUid,
+        int rejectReadable, int relaxPerms, void* heap, WFILE** out)
+{
+    int ret;
+
+    ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable, relaxPerms,
+            heap, out);
+    if (ret == WS_SUCCESS) {
+        WFSETNOBUF(NULL, *out);
+    }
+    return ret;
 }
 
 /* Scan keys file. Fails closed on no match.

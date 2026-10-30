@@ -463,6 +463,8 @@ extern "C" {
     #define WFSTAT(fs,fd,b)     fstat((fd),(b))
     #define WREWIND(fs,s)       do { fseek((s),0,SEEK_SET); \
                                      clearerr((s)); } while (0)
+    /* Unbuffered, so libc keeps no copy of a secret file's contents. */
+    #define WFSETNOBUF(fs,f)    ((void)setvbuf((f), NULL, _IONBF, 0))
     #define WSEEK_END           SEEK_END
     #define WBADFILE            NULL
     #ifdef WOLFSSL_VXWORKS
@@ -1774,6 +1776,12 @@ extern "C" {
  * callers pass the WFSEEK() call in directly. */
 #ifndef WFSEEK_SUCCESS
     #define WFSEEK_SUCCESS(r)   ((r) == 0)
+#endif
+
+/* Catch-all for ports with no stdio buffer to turn off. Must be called on a
+ * freshly opened file, before any other operation on it. */
+#ifndef WFSETNOBUF
+    #define WFSETNOBUF(fs,f)    do { } while (0)
 #endif
 
 /* wIsSymlink lives in the always-compiled port.c, but its filesystem

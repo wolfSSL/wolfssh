@@ -3047,6 +3047,9 @@ static int ReadFileIntoBuffer(const char* name, byte** out, word32* outSz,
     ret = WFOPEN(NULL, &file, name, "rb");
     if (ret != 0 || file == WBADFILE) return WS_BAD_FILE_E;
 #endif
+    /* Read straight into 'in', leaving no copy in a libc buffer that is
+     * freed unwiped. */
+    WFSETNOBUF(NULL, file);
 
     if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
         WFCLOSE(NULL, file);
