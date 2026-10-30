@@ -43,6 +43,7 @@
 #include <sys/stat.h>
 
 #include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/hmac.h>
 #ifdef WOLF_CRYPTO_CB
     #include <wolfssl/wolfcrypt/cryptocb.h>
 #endif
@@ -5241,6 +5242,318 @@ static void TestClientInfoRequestAfterHighwaterErrorAnswered(void)
     FreeChannelOpenHarness(&harness);
 }
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+
+/* The secret length the padding callback answers with. */
+static word32 padSecretSz;
+
+/* Answers a password, or a single keyboard prompt, with padSecretSz bytes. */
+static int PadSecretUserAuthCb(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static byte secret[64];
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    static byte* responses[1];
+    static word32 responseLengths[1];
+#endif
+
+    (void)ctx;
+    WMEMSET(secret, 'p', sizeof(secret));
+    if (padSecretSz > sizeof(secret))
+        return WOLFSSH_USERAUTH_FAILURE;
+
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        authData->sf.password.password = secret;
+        authData->sf.password.passwordSz = padSecretSz;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD &&
+            authData->sf.keyboard.promptCount == 1) {
+        responses[0] = secret;
+        responseLengths[0] = padSecretSz;
+        authData->sf.keyboard.responseCount = 1;
+        authData->sf.keyboard.responses = responses;
+        authData->sf.keyboard.responseLengths = responseLengths;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+#endif
+    return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+}
+
+/* Transports the padding test sends a secret over. */
+enum {
+    PAD_XPORT_NONE = 0,     /* null cipher, no MAC: a fresh session */
+    PAD_XPORT_CTR,          /* aes256-ctr with hmac-sha2-256 */
+    PAD_XPORT_GCM           /* aes256-gcm, AEAD: length field in clear */
+};
+
+#if !defined(WOLFSSH_NO_AES_CTR) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
+    #define PAD_TEST_CTR
+#endif
+#if !defined(WOLFSSH_NO_AES_GCM) && !defined(WOLFSSH_NO_AEAD)
+    #define PAD_TEST_GCM
+#endif
+
+#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
+static const byte padTestKey[AES_256_KEY_SIZE] = {
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A
+};
+static const byte padTestIv[AES_BLOCK_SIZE] = {
+    0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
+    0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31
+};
+#ifdef PAD_TEST_CTR
+static const byte padTestMacKey[WC_SHA256_DIGEST_SIZE] = {
+    0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B,
+    0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B,
+    0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B,
+    0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B
+};
+#endif
+
+/* Sets the session's outbound direction as key exchange would leave it. */
+static void SetPadTestTransport(WOLFSSH* ssh, int xport)
+{
+    AssertIntEQ(wc_AesInit(&ssh->encryptCipher.aes, ssh->ctx->heap,
+                INVALID_DEVID), 0);
+    ssh->encryptCipher.isInit = 1;
+    ssh->blockSz = AES_BLOCK_SIZE;
+#ifdef PAD_TEST_CTR
+    if (xport == PAD_XPORT_CTR) {
+        ssh->encryptCipher.cipherType = ID_AES256_CTR;
+        AssertIntEQ(wc_AesSetKey(&ssh->encryptCipher.aes, padTestKey,
+                    sizeof(padTestKey), padTestIv, AES_ENCRYPTION), 0);
+        ssh->encryptId = ID_AES256_CTR;
+        ssh->aeadMode = 0;
+        ssh->macId = ID_HMAC_SHA2_256;
+        ssh->macSz = WC_SHA256_DIGEST_SIZE;
+        WMEMCPY(ssh->keys.macKey, padTestMacKey, sizeof(padTestMacKey));
+        ssh->keys.macKeySz = sizeof(padTestMacKey);
+    }
+#endif
+#ifdef PAD_TEST_GCM
+    if (xport == PAD_XPORT_GCM) {
+        ssh->encryptCipher.cipherType = ID_AES256_GCM;
+        AssertIntEQ(wc_AesGcmSetKey(&ssh->encryptCipher.aes, padTestKey,
+                    sizeof(padTestKey)), 0);
+        ssh->encryptId = ID_AES256_GCM;
+        ssh->aeadMode = 1;
+        ssh->macId = ID_NONE;
+        ssh->macSz = AES_BLOCK_SIZE;
+        WMEMCPY(ssh->keys.iv, padTestIv, AEAD_NONCE_SZ);
+        ssh->keys.ivSz = AEAD_NONCE_SZ;
+    }
+#endif
+}
+
+/* Decrypts and authenticates the one packet in out, sent with sequence
+ * number seq, into plain. Returns the size of the span the sender aligns to
+ * the cipher block: the whole packet without its MAC, or for AEAD without
+ * the clear length field either. */
+static word32 OpenPadTestPacket(int xport, word32 seq, const byte* out,
+        word32 outSz, byte* plain, word32 plainSz)
+{
+    word32 packetLen = 0;
+    word32 alignSz = 0;
+    Aes aes;
+
+    AssertIntEQ(wc_AesInit(&aes, NULL, INVALID_DEVID), 0);
+#ifdef PAD_TEST_CTR
+    if (xport == PAD_XPORT_CTR) {
+        Hmac hmac;
+        byte flatSeq[UINT32_SZ];
+        byte mac[WC_SHA256_DIGEST_SIZE];
+
+        AssertTrue(outSz > WC_SHA256_DIGEST_SIZE);
+        alignSz = outSz - WC_SHA256_DIGEST_SIZE;
+        AssertTrue(alignSz <= plainSz);
+        AssertIntEQ(wc_AesSetKey(&aes, padTestKey, sizeof(padTestKey),
+                    padTestIv, AES_ENCRYPTION), 0);
+        AssertIntEQ(wc_AesCtrEncrypt(&aes, plain, out, alignSz), 0);
+        packetLen = ReadUint32(plain);
+        AssertIntEQ(UINT32_SZ + packetLen, alignSz);
+
+        flatSeq[0] = (byte)(seq >> 24);
+        flatSeq[1] = (byte)(seq >> 16);
+        flatSeq[2] = (byte)(seq >> 8);
+        flatSeq[3] = (byte)seq;
+        AssertIntEQ(wc_HmacInit(&hmac, NULL, INVALID_DEVID), 0);
+        AssertIntEQ(wc_HmacSetKey(&hmac, WC_SHA256, padTestMacKey,
+                    sizeof(padTestMacKey)), 0);
+        AssertIntEQ(wc_HmacUpdate(&hmac, flatSeq, sizeof(flatSeq)), 0);
+        AssertIntEQ(wc_HmacUpdate(&hmac, plain, alignSz), 0);
+        AssertIntEQ(wc_HmacFinal(&hmac, mac), 0);
+        wc_HmacFree(&hmac);
+        AssertIntEQ(WMEMCMP(mac, out + alignSz, sizeof(mac)), 0);
+    }
+#endif
+#ifdef PAD_TEST_GCM
+    if (xport == PAD_XPORT_GCM) {
+        byte iv[AEAD_NONCE_SZ];
+
+        (void)seq;
+        packetLen = ReadUint32(out);
+        AssertIntEQ(UINT32_SZ + packetLen + AES_BLOCK_SIZE, outSz);
+        AssertTrue(UINT32_SZ + packetLen <= plainSz);
+        alignSz = packetLen;
+        /* The first packet under these keys uses the initial nonce. */
+        WMEMCPY(iv, padTestIv, sizeof(iv));
+        WMEMCPY(plain, out, UINT32_SZ);
+        AssertIntEQ(wc_AesGcmSetKey(&aes, padTestKey, sizeof(padTestKey)), 0);
+        AssertIntEQ(wc_AesGcmDecrypt(&aes, plain + UINT32_SZ,
+                    out + UINT32_SZ, packetLen, iv, sizeof(iv),
+                    out + UINT32_SZ + packetLen, AES_BLOCK_SIZE,
+                    out, UINT32_SZ), 0);
+    }
+#endif
+    wc_AesFree(&aes);
+    (void)packetLen;
+    return alignSz;
+}
+#endif /* PAD_TEST_CTR || PAD_TEST_GCM */
+
+/* Sends the client's password request, or its keyboard INFO_RESPONSE, with a
+ * secret of secretSz bytes over the transport xport. With held, the packet is
+ * held during our rekey and released as NEWKEYS releases it. Checks the
+ * packet opens to the secret, with padding in bounds, and returns the size of
+ * the span the sender aligns: the packet less its MAC, and for AEAD less its
+ * length field too. */
+static word32 SecretPacketSz(int xport, int keyboard, word32 secretSz,
+        int held)
+{
+    ChannelOpenHarness harness;
+    byte plain[512];
+    word32 sz, seq, packetLen, payloadEnd, i;
+    byte padLen;
+
+    InitChannelOpenHarnessClient(&harness, NULL, 0);
+    wolfSSH_SetUserAuth(harness.ctx, PadSecretUserAuthCb);
+    AssertIntEQ(wolfSSH_SetUsername(harness.ssh, "user"), WS_SUCCESS);
+    padSecretSz = secretSz;
+#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
+    if (xport != PAD_XPORT_NONE)
+        SetPadTestTransport(harness.ssh, xport);
+#endif
+    seq = harness.ssh->seq;
+    if (held)
+        harness.ssh->isKeying |= WOLFSSH_SELF_IS_KEYING;
+
+    if (!keyboard) {
+        AssertIntEQ(SendUserAuthRequest(harness.ssh,
+                    WOLFSSH_USERAUTH_PASSWORD, 0), WS_SUCCESS);
+    }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    else {
+        void* heap = harness.ctx->heap;
+        byte** prompts;
+
+        /* As DoUserAuthInfoRequest() leaves one hidden prompt. */
+        prompts = (byte**)WMALLOC(sizeof(byte*), heap, DYNTYPE_STRING);
+        AssertNotNull(prompts);
+        prompts[0] = (byte*)WMALLOC(sizeof("Password: "), heap,
+                DYNTYPE_STRING);
+        AssertNotNull(prompts[0]);
+        WMEMCPY(prompts[0], "Password: ", sizeof("Password: "));
+        harness.ssh->kbAuth.promptEcho = (byte*)WMALLOC(1, heap,
+                DYNTYPE_STRING);
+        AssertNotNull(harness.ssh->kbAuth.promptEcho);
+        harness.ssh->kbAuth.promptEcho[0] = 0;
+        harness.ssh->kbAuth.prompts = prompts;
+        harness.ssh->kbAuth.promptCount = 1;
+
+        AssertIntEQ(SendUserAuthKeyboardResponse(harness.ssh), WS_SUCCESS);
+    }
+#endif
+
+    if (held) {
+        AssertIntEQ(harness.io.outSz, 0);
+        AssertTrue(harness.ssh->keyingHold.length > 0);
+        harness.ssh->isKeying &= ~WOLFSSH_SELF_IS_KEYING;
+        AssertIntEQ(wolfSSH_TestReleaseHeldPackets(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(wolfSSH_SendPacket(harness.ssh), WS_SUCCESS);
+        AssertIntEQ(harness.ssh->keyingHold.length, 0);
+    }
+
+    if (xport == PAD_XPORT_NONE) {
+        /* One packet, no MAC. */
+        AssertIntEQ(NextPacketOffset(harness.io.out, harness.io.outSz),
+                harness.io.outSz);
+        AssertTrue(harness.io.outSz <= sizeof(plain));
+        WMEMCPY(plain, harness.io.out, harness.io.outSz);
+        sz = harness.io.outSz;
+    }
+    else {
+#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
+        sz = OpenPadTestPacket(xport, seq, harness.io.out, harness.io.outSz,
+                plain, (word32)sizeof(plain));
+#else
+        sz = 0;
+        AssertTrue(0);
+#endif
+    }
+    (void)seq;
+
+    /* The secret is the payload's last string, right before the padding. */
+    packetLen = ReadUint32(plain);
+    padLen = plain[UINT32_SZ];
+    AssertTrue(padLen >= MIN_PAD_LENGTH);
+    AssertTrue(padLen < MIN_PAD_LENGTH + AES_BLOCK_SIZE + 64);
+    AssertTrue(packetLen > (word32)PAD_LENGTH_SZ + padLen + UINT32_SZ
+            + secretSz);
+    AssertIntEQ(plain[UINT32_SZ + PAD_LENGTH_SZ], keyboard ?
+            MSGID_USERAUTH_INFO_RESPONSE : MSGID_USERAUTH_REQUEST);
+    payloadEnd = UINT32_SZ + packetLen - padLen;
+    AssertIntEQ(ReadUint32(plain + payloadEnd - secretSz - UINT32_SZ),
+            secretSz);
+    for (i = payloadEnd - secretSz; i < payloadEnd; i++)
+        AssertIntEQ(plain[i], 'p');
+
+    FreeChannelOpenHarness(&harness);
+    return sz;
+}
+
+/* The client pads a password request and a keyboard INFO_RESPONSE up to a
+ * 64-byte multiple, as OpenSSH does, so secrets of nearby lengths send
+ * packets of the same size. Under AEAD the clear length field is outside
+ * the alignment, so the bucket covers the rest of the packet. A packet held
+ * during our rekey keeps its padding when released. */
+static void TestClientUserAuthSecretPadding(void)
+{
+    int keyboard, xport;
+    word32 secretSz;
+
+    for (xport = PAD_XPORT_NONE; xport <= PAD_XPORT_GCM; xport++) {
+#ifndef PAD_TEST_CTR
+        if (xport == PAD_XPORT_CTR)
+            continue;
+#endif
+#ifndef PAD_TEST_GCM
+        if (xport == PAD_XPORT_GCM)
+            continue;
+#endif
+        for (keyboard = 0; keyboard < 2; keyboard++) {
+#ifndef WOLFSSH_KEYBOARD_INTERACTIVE
+            if (keyboard)
+                break;
+#endif
+            for (secretSz = 1; secretSz <= 64; secretSz++) {
+                word32 sz = SecretPacketSz(xport, keyboard, secretSz, 0);
+
+                AssertIntEQ(sz % 64, 0);
+                AssertIntEQ(SecretPacketSz(xport, keyboard, secretSz, 1),
+                        sz);
+            }
+            /* One and eight bytes land in different cipher blocks but the
+             * same bucket. */
+            AssertIntEQ(SecretPacketSz(xport, keyboard, 1, 0),
+                    SecretPacketSz(xport, keyboard, 8, 0));
+        }
+    }
+}
 
 
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
@@ -23472,6 +23785,7 @@ int main(int argc, char** argv)
     TestClientInfoRequestAfterBlockedRequestAnswered();
     TestClientInfoRequestAfterHighwaterErrorAnswered();
 #endif
+    TestClientUserAuthSecretPadding();
     TestClientBannerBehindServiceAccept();
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
