@@ -15423,6 +15423,195 @@ static void TestOct2DecRejectsInvalidNonLeadingDigit(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+
+/* SSH_MSG_CHANNEL_DATA carrying the start of an SFTP reply: the header with
+ * the given length field, then bodySz bytes of body. */
+static word32 BuildSftpReplyPacket(word32 recipientChannelId, word32 wireLen,
+        byte type, word32 reqId, const byte* body, word32 bodySz,
+        byte* out, word32 outSz)
+{
+    byte payload[64];
+    word32 idx = 0;
+
+    idx = AppendUint32(payload, sizeof(payload), idx, recipientChannelId);
+    idx = AppendUint32(payload, sizeof(payload), idx,
+            WOLFSSH_SFTP_HEADER + bodySz);
+    idx = AppendUint32(payload, sizeof(payload), idx, wireLen);
+    idx = AppendByte(payload, sizeof(payload), idx, type);
+    idx = AppendUint32(payload, sizeof(payload), idx, reqId);
+    idx = AppendData(payload, sizeof(payload), idx, body, bodySz);
+
+    return WrapPacket(MSGID_CHANNEL_DATA, payload, idx, out, outSz);
+}
+
+enum {
+    SFTP_OP_OPEN,
+    SFTP_OP_CLOSE,
+    SFTP_OP_READ,
+    SFTP_OP_WRITE,
+    SFTP_OP_STAT,
+    SFTP_OP_LSTAT,
+    SFTP_OP_SETSTAT,
+    SFTP_OP_MKDIR,
+    SFTP_OP_RMDIR,
+    SFTP_OP_RENAME,
+    SFTP_OP_REMOVE,
+    SFTP_OP_COUNT
+};
+
+/* Run one client request against a reply of the given type whose header
+ * carries wireLen in its length field and no body. Remove asks for an LSTAT
+ * first, so it gets a well-formed ATTRS reply ahead of the one under test.
+ * readSz is the out buffer size given to the READ. Returns the call's result;
+ * the session error goes to outErr. */
+static int SftpClientReplyLen(int op, byte replyType, word32 wireLen,
+        word32 readSz, int* outErr)
+{
+    static const byte noAttrs[] = { 0x00, 0x00, 0x00, 0x00 };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    WS_SFTP_FILEATRB atrb;
+    byte in[256];
+    byte out[1024];
+    byte handle[4] = { 0, 0, 0, 1 };
+    word32 handleSz = sizeof(handle);
+    word32 ofst[2] = { 0, 0 };
+    word32 chId;
+    word32 reqId;
+    word32 inSz = 0;
+    byte* data;
+    char path[] = "/x";
+    int ret = WS_FATAL_ERROR;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    ssh->connectState = CONNECT_DONE;
+    ssh->sftpState = SFTP_DONE;
+    AddSessionChannel(ssh);
+    chId = ssh->channelList->channel;
+    reqId = ssh->reqId;
+
+    if (op == SFTP_OP_REMOVE) {
+        inSz = BuildSftpReplyPacket(chId,
+                MSG_ID_SZ + UINT32_SZ + (word32)sizeof(noAttrs),
+                WOLFSSH_FTP_ATTRS, reqId++, noAttrs, (word32)sizeof(noAttrs),
+                in, sizeof(in));
+    }
+    inSz += BuildSftpReplyPacket(chId, wireLen, replyType, reqId,
+            NULL, 0, in + inSz, sizeof(in) - inSz);
+
+    MemIoInit(&io, in, inSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    data = (byte*)WMALLOC(readSz, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(data);
+    WMEMSET(data, 0, readSz);
+    WMEMSET(&atrb, 0, sizeof(atrb));
+
+    switch (op) {
+        case SFTP_OP_OPEN:
+            ret = wolfSSH_SFTP_Open(ssh, path, WOLFSSH_FXF_READ, &atrb,
+                    handle, &handleSz);
+            break;
+        case SFTP_OP_CLOSE:
+            ret = wolfSSH_SFTP_Close(ssh, handle, handleSz);
+            break;
+        case SFTP_OP_READ:
+            ret = wolfSSH_SFTP_SendReadPacket(ssh, handle, handleSz, ofst,
+                    data, readSz);
+            break;
+        case SFTP_OP_WRITE:
+            ret = wolfSSH_SFTP_SendWritePacket(ssh, handle, handleSz, ofst,
+                    data, 16);
+            break;
+        case SFTP_OP_STAT:
+            ret = wolfSSH_SFTP_STAT(ssh, path, &atrb);
+            break;
+        case SFTP_OP_LSTAT:
+            ret = wolfSSH_SFTP_LSTAT(ssh, path, &atrb);
+            break;
+        case SFTP_OP_SETSTAT:
+            ret = wolfSSH_SFTP_SetSTAT(ssh, path, &atrb);
+            break;
+        case SFTP_OP_MKDIR:
+            ret = wolfSSH_SFTP_MKDIR(ssh, path, &atrb);
+            break;
+        case SFTP_OP_RMDIR:
+            ret = wolfSSH_SFTP_RMDIR(ssh, path);
+            break;
+        case SFTP_OP_RENAME:
+            ret = wolfSSH_SFTP_Rename(ssh, path, "/y");
+            break;
+        case SFTP_OP_REMOVE:
+            ret = wolfSSH_SFTP_Remove(ssh, path);
+            break;
+        default:
+            AssertTrue(op < SFTP_OP_COUNT);
+    }
+
+    *outErr = wolfSSH_get_error(ssh);
+    /* every reply byte reached the SFTP layer */
+    AssertIntEQ(io.inOff, io.inSz);
+
+    WFREE(data, NULL, DYNTYPE_BUFFER);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    return ret;
+}
+
+/* fenrir 10598, 13430, 14433: a client reply's declared length is bounded
+ * before the client allocates a buffer of that size. A reply at the bound is
+ * taken and the call waits for its body; one past the bound fails at once. */
+static void TestSftpClientReplyLenBound(void)
+{
+    const word32 hdrSz = MSG_ID_SZ + UINT32_SZ;
+    const word32 bigRead = 2 * WOLFSSH_MAX_SFTP_PACKET;
+    int op;
+    int ret;
+    int err;
+
+    for (op = 0; op < SFTP_OP_COUNT; op++) {
+        ret = SftpClientReplyLen(op, WOLFSSH_FTP_STATUS,
+                hdrSz + WOLFSSH_MAX_SFTP_PACKET, 16, &err);
+        AssertTrue(ret < 0);
+        AssertIntEQ(err, WS_WANT_READ);
+
+        ret = SftpClientReplyLen(op, WOLFSSH_FTP_STATUS,
+                hdrSz + WOLFSSH_MAX_SFTP_PACKET + 1, 16, &err);
+        AssertTrue(ret < 0);
+        AssertIntEQ(err, WS_BUFFER_E);
+
+        /* a length field the header itself does not fit in */
+        ret = SftpClientReplyLen(op, WOLFSSH_FTP_STATUS, hdrSz - 1, 16, &err);
+        AssertTrue(ret < 0);
+        AssertIntEQ(err, WS_BUFFER_E);
+
+        ret = SftpClientReplyLen(op, WOLFSSH_FTP_STATUS, 0xFFFFFFFF, 16, &err);
+        AssertTrue(ret < 0);
+        AssertIntEQ(err, WS_BUFFER_E);
+    }
+
+    /* A READ may ask for more than WOLFSSH_MAX_SFTP_PACKET; the DATA reply
+     * holding all of it, a string of readSz bytes, is still taken. */
+    ret = SftpClientReplyLen(SFTP_OP_READ, WOLFSSH_FTP_DATA,
+            hdrSz + UINT32_SZ + bigRead, bigRead, &err);
+    AssertTrue(ret < 0);
+    AssertIntEQ(err, WS_WANT_READ);
+
+    ret = SftpClientReplyLen(SFTP_OP_READ, WOLFSSH_FTP_DATA,
+            hdrSz + UINT32_SZ + bigRead + 1, bigRead, &err);
+    AssertTrue(ret < 0);
+    AssertIntEQ(err, WS_BUFFER_E);
+}
 #endif /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT */
 
 
@@ -21837,6 +22026,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_SFTP
 #ifndef NO_WOLFSSH_CLIENT
     TestOct2DecRejectsInvalidNonLeadingDigit();
+    TestSftpClientReplyLenBound();
 #endif
     TestSftpBufferSendPendingOutput();
     /* the attribute encoder and decoder agree, extensions included */
