@@ -4418,6 +4418,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
                     /* FXF_APPEND: the offset is ignored and the O_APPEND
                      * fd puts the write at EOF. pwrite() would honor the
                      * offset on every POSIX system but Linux. */
+                    /* cppcheck-suppress constStatement */
                     ret = WWRITE(ssh->fs, fd, (byte*)str + written,
                             strSz - written);
                 }

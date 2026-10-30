@@ -4631,8 +4631,9 @@ static int StartSSHD(int argc, char** argv)
                 "wolfSSH_HostKeyStore. Use one or the other.");
             ret = WS_BAD_ARGUMENT;
         }
+        else
     #endif
-        if (ret == WS_SUCCESS) {
+        {
             wolfSSHD_ConfigSetHostKeyFile(conf, hostKeyFile);
         }
     }

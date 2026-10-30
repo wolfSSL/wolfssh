@@ -25464,28 +25464,19 @@ static int CompositeEccSign(void* key, WC_RNG* rng, void* heap,
         word32 rSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ,
                sSz = MAX_ECC_BYTES + ECC_MAX_PAD_SZ;
 #ifdef WOLFSSH_SMALL_STACK
-        byte* rBuf = NULL;
-        byte* sBuf = NULL;
-
-        rBuf = (byte*)WMALLOC(MAX_ECC_BYTES + ECC_MAX_PAD_SZ, heap,
+        byte* rBuf = (byte*)WMALLOC(MAX_ECC_BYTES + ECC_MAX_PAD_SZ, heap,
                 DYNTYPE_TEMP);
-        if (rBuf == NULL)
-            ret = WS_MEMORY_E;
-        if (ret == 0) {
-            sBuf = (byte*)WMALLOC(MAX_ECC_BYTES + ECC_MAX_PAD_SZ, heap,
-                    DYNTYPE_TEMP);
-            if (sBuf == NULL)
-                ret = WS_MEMORY_E;
-        }
-#else
-        byte rStore[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-        byte sStore[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
-        byte* rBuf = rStore;
-        byte* sBuf = sStore;
-#endif
+        byte* sBuf = (byte*)WMALLOC(MAX_ECC_BYTES + ECC_MAX_PAD_SZ, heap,
+                DYNTYPE_TEMP);
 
-        /* NULL only when a small-stack allocation above failed */
-        if (rBuf != NULL && sBuf != NULL) {
+        if (rBuf == NULL || sBuf == NULL)
+            ret = WS_MEMORY_E;
+        else
+#else
+        byte rBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+        byte sBuf[MAX_ECC_BYTES + ECC_MAX_PAD_SZ];
+#endif
+        {
             ret = wc_ecc_sig_to_rs(asnSig, asnSigSz, rBuf, &rSz, sBuf, &sSz);
         }
         if (ret == 0) {
