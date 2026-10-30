@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <stdint.h>
 #if ((defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)) || \
      (defined(WOLFSSH_SCP) && defined(WOLFSSH_HAVE_SYMLINK) && \
       !defined(WOLFSSH_SCP_USER_CALLBACKS))) && \
@@ -283,6 +284,9 @@ static void test_wolfSSH_SetUsername(void)
                 (const byte*)empty, 0));
     AssertIntNE(WS_SUCCESS, wolfSSH_SetUsernameRaw(ssh,
                 (const byte*)username, 0));
+    /* usernameSz + 1 would wrap to a zero-byte allocation. */
+    AssertIntEQ(WS_BAD_ARGUMENT, wolfSSH_SetUsernameRaw(ssh,
+                (const byte*)username, UINT32_MAX));
     wolfSSH_free(ssh);
     AssertNotNull(ssh = wolfSSH_new(ctx));
     AssertIntEQ(WS_SUCCESS, wolfSSH_SetUsername(ssh, username));
@@ -2885,6 +2889,25 @@ static void test_wolfSSH_ReadKey_sshNoComment(void)
     WFREE(keyRef, NULL, DYNTYPE_PRIVKEY);
     WFREE(keyTrim, NULL, DYNTYPE_PRIVKEY);
 #endif
+}
+
+
+static void test_wolfSSH_ReadKey_sshMaxSize(void)
+{
+    /* An SSH format key of size UINT32_MAX must be refused before
+     * DoSshPubKey() allocates inSz + 1, which wraps to zero. The buffer is
+     * never read past its end, the size is refused first. */
+    static const char in[] = "ssh-ed25519 AAAA\n";
+    byte* key = NULL;
+    word32 keySz = 0;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+    int ret;
+
+    ret = wolfSSH_ReadKey_buffer((const byte*)in, UINT32_MAX,
+            WOLFSSH_FORMAT_SSH, &key, &keySz, &keyType, &keyTypeSz, NULL);
+    AssertIntEQ(ret, WS_BAD_ARGUMENT);
+    AssertNull(key);
 }
 
 
@@ -9440,6 +9463,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
     test_wolfSSH_ReadKey_sshNoComment();
+    test_wolfSSH_ReadKey_sshMaxSize();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_StrictKex();
