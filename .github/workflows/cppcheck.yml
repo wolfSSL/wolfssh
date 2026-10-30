@@ -24,6 +24,8 @@ jobs:
       - name: Run CppCheck
         id: cpp_check_run
         if: always()
+        # bash gets -o pipefail, so tee keeps cppcheck's exit code
+        shell: bash
         run: >
           cppcheck
           -UWSCPFILEHDR -UXSNPRINTF
@@ -41,7 +43,7 @@ jobs:
           3>&1 1>&2 2>&3 | tee cppcheck.txt
 
       - name: Upload cppcheck results as artifact
-        if: always()
+        if: failure() && steps.cpp_check_run.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: wolfssh-${{ github.sha }}-cppcheck_results.txt
