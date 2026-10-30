@@ -3085,6 +3085,15 @@ static int ReadFileIntoBuffer(const char* name, byte** out, word32* outSz,
 }
 
 
+/* Compares only the first bytes of in, not the secret key body after them. */
+static int KeyFileHasPrefix(const byte* in, word32 inSz, const char* prefix)
+{
+    word32 prefixSz = (word32)WSTRLEN(prefix);
+
+    return inSz >= prefixSz && WMEMCMP(in, prefix, prefixSz) == 0;
+}
+
+
 /* Reads a key from the file name into a buffer. An SSH algorithm name marks
    an SSH format public key and "-----BEGIN " a PEM one, otherwise it is an
    ASN.1 private key. The buffer goes to wolfSSH_ReadKey_buffer_ex(). */
@@ -3106,24 +3115,21 @@ int wolfSSH_ReadKey_file(const char* name,
 
     ret = ReadFileIntoBuffer(name, &in, &inSz, heap);
     if (ret == WS_SUCCESS) {
-        if (WSTRNSTR((const char*)in, "ssh-rsa", inSz) == (const char*)in
-                || WSTRNSTR((const char*)in,
-                    "ecdsa-sha2-nistp", inSz) == (const char*)in
-                || WSTRNSTR((const char*)in,
-                    "ssh-ed25519", inSz) == (const char*)in
-                || WSTRNSTR((const char*)in,
-                    "ssh-mldsa-", inSz) == (const char*)in
-                || WSTRNSTR((const char*)in,
-                    "x509v3-ssh-mldsa-", inSz) == (const char*)in) {
+        if (KeyFileHasPrefix(in, inSz, "ssh-rsa")
+                || KeyFileHasPrefix(in, inSz, "ecdsa-sha2-nistp")
+                || KeyFileHasPrefix(in, inSz, "ssh-ed25519")
+                || KeyFileHasPrefix(in, inSz, "ssh-mldsa")
+                || KeyFileHasPrefix(in, inSz, "x509v3-ssh-mldsa-")) {
             *isPrivate = 0;
             format = WOLFSSH_FORMAT_SSH;
         }
-        else if (WSTRNSTR((const char*)in, PrivBeginOpenSSH, inSz) != NULL) {
+        else if (KeyFileHasPrefix(in, inSz, PrivBeginOpenSSH)) {
             *isPrivate = 1;
             format = WOLFSSH_FORMAT_OPENSSH;
         }
-        else if ((WSTRNSTR((const char*)in, PrivBeginPrefix, inSz)
-                    == (const char*)in)
+        /* The suffix is searched for, not anchored: an EC PARAMETERS block
+         * can come before the private key. */
+        else if (KeyFileHasPrefix(in, inSz, PrivBeginPrefix)
                 && (WSTRNSTR((const char*)in, PrivSuffix, inSz)
                     != NULL)) {
             *isPrivate = 1;
