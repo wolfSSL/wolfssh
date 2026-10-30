@@ -1967,11 +1967,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
     if (ssh->userName) {
         WFREE(ssh->userName, heap, DYNTYPE_STRING);
     }
-    if (ssh->channelName != NULL) {
-        WFREE(ssh->channelName, heap, DYNTYPE_STRING);
-        ssh->channelName = NULL;
-        ssh->channelNameSz = 0;
-    }
+    FreeChannelName(ssh, heap);
     if (ssh->peerProtoId) {
         WFREE(ssh->peerProtoId, heap, DYNTYPE_STRING);
     }
@@ -4467,6 +4463,20 @@ static void FreeChannelCommand(void* heap, char* command, word32 commandSz)
         WS_FORCEZERO(command, commandSz);
         WFREE(command, heap, DYNTYPE_STRING);
     }
+}
+
+
+/* Wipe and free the client's stored exec/subsystem name. */
+void FreeChannelName(WOLFSSH* ssh, void* heap)
+{
+    WOLFSSH_UNUSED(heap);
+
+    if (ssh->channelName != NULL) {
+        WS_FORCEZERO(ssh->channelName, ssh->channelNameSz);
+        WFREE(ssh->channelName, heap, DYNTYPE_STRING);
+        ssh->channelName = NULL;
+    }
+    ssh->channelNameSz = 0;
 }
 
 

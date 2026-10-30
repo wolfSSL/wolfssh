@@ -1571,6 +1571,7 @@ WOLFSSH_LOCAL WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap);
 WOLFSSH_LOCAL void CtxResourceFree(WOLFSSH_CTX* ctx);
 WOLFSSH_LOCAL WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx);
 WOLFSSH_LOCAL void SshResourceFree(WOLFSSH* ssh, void* heap);
+WOLFSSH_LOCAL void FreeChannelName(WOLFSSH* ssh, void* heap);
 
 WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH* ssh, byte channelType,
         word32 initialWindowSz, word32 maxPacketSz);
