@@ -13866,6 +13866,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 else
                     WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
             }
+            WS_FORCEZERO(value, sizeof(value));
         }
         else if (ChannelRequestIs(type, typeSz, "shell")) {
             ret = DoChannelRequestSession(ssh, channelId, channel,
