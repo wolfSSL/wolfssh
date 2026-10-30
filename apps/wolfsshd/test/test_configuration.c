@@ -34,6 +34,7 @@
 
 #ifndef _WIN32
     #include <unistd.h>
+    #include <fcntl.h>
     #include <sys/stat.h>
     #include <sys/resource.h>
     #include <signal.h>
@@ -7137,6 +7138,103 @@ static int test_OpenSecureFile(void)
     return ret;
 }
 
+/* Read one byte through a secure-open stream and report how far the
+ * descriptor advanced. A buffered stream reads ahead into a libc buffer that
+ * fclose frees unwiped; an unbuffered one reads only the byte asked for. */
+static int smReadAhead(const char* path, WUID_T ownerUid, int rejectReadable,
+        int secret, long* pos)
+{
+    WFILE* f = WBADFILE;
+    int ret;
+
+    *pos = -1;
+    if (secret)
+        ret = wolfSSHD_OpenSecretFile(path, ownerUid, rejectReadable, 0, NULL,
+                &f);
+    else
+        ret = wolfSSHD_OpenSecureFile(path, ownerUid, rejectReadable, 0, NULL,
+                &f);
+    if (ret == WS_SUCCESS) {
+        if (fgetc(f) == EOF) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            *pos = (long)lseek(fileno(f), 0, SEEK_CUR);
+        }
+        (void)WFCLOSE(NULL, f);
+    }
+    return ret;
+}
+
+static int test_OpenSecretFileUnbuffered(void)
+{
+    int ret = WS_SUCCESS;
+    char base[] = "/tmp/wolfsshd_nbXXXXXX";
+    char secret[64] = "";
+    /* written with write(), not stdio, so the setup leaves no copy of its
+     * own in a libc buffer */
+    const char data[] = "root:$6$salt$hash:19000:0:99999:7:::\n"
+                        "user:$6$salt$hash:19000:0:99999:7:::\n";
+    WUID_T uid = getuid();
+    int fd;
+    long pos;
+    int rejectReadable;
+
+    if (mkdtemp(base) == NULL) {
+        Log("    mkdtemp failed.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    if (ret == WS_SUCCESS) {
+        snprintf(secret, sizeof(secret), "%s/secret", base);
+        fd = open(secret, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd < 0) {
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            if (write(fd, data, sizeof(data) - 1) != (ssize_t)sizeof(data) - 1)
+                ret = WS_FATAL_ERROR;
+            close(fd);
+        }
+    }
+    if (ret == WS_SUCCESS)
+        ret = smChmod(secret, 0600);
+
+    /* the host key opens with rejectReadable set, /etc/shadow without */
+    for (rejectReadable = 0; ret == WS_SUCCESS && rejectReadable <= 1;
+            rejectReadable++) {
+        ret = smReadAhead(secret, uid, rejectReadable, 1, &pos);
+        Log("    Testing scenario: secret open is unbuffered "
+            "(rejectReadable %d, read %ld for 1).", rejectReadable, pos);
+        if (ret != WS_SUCCESS || pos != 1) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    /* authorized_keys and the user CA keys are public and scanned a line at
+     * a time, so their stream keeps its read-ahead buffer */
+    if (ret == WS_SUCCESS) {
+        ret = smReadAhead(secret, uid, 0, 0, &pos);
+        Log("    Testing scenario: secure open is buffered "
+            "(read %ld for 1).", pos);
+        if (ret != WS_SUCCESS || pos != (long)sizeof(data) - 1) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    unlink(secret);
+    rmdir(base);
+
+    return ret;
+}
+
 /* write a config file whose PidFile is 'pidTarget' */
 static int pidConfWrite(const char* confPath, const char* pidTarget)
 {
@@ -8539,6 +8637,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_ConfigFree),
 #ifndef _WIN32
     TEST_DECL(test_OpenSecureFile),
+    TEST_DECL(test_OpenSecretFileUnbuffered),
     TEST_DECL(test_ConfigSavePID),
 #endif
     TEST_DECL(test_DetectPrivKeyFormat),

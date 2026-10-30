@@ -410,14 +410,22 @@ static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
          * StrictModes. The owner is the daemon's effective user (or root), and
          * the host private key (SECRET) is also refused if group/world
          * readable, unless WOLFSSHD_HOSTKEY_RELAX_PERMS. */
-        if (wolfSSHD_OpenSecureFile(fileName,
+        int ret;
 #ifndef _WIN32
-                geteuid(),
+        WUID_T owner = geteuid();
 #else
-                0,
+        WUID_T owner = 0;
 #endif
-                loadClass == WOLFSSHD_LOAD_SECRET /* rejectReadable */,
-                relaxPerms, heap, &file) != WS_SUCCESS) {
+
+        if (loadClass == WOLFSSHD_LOAD_SECRET) {
+            ret = wolfSSHD_OpenSecretFile(fileName, owner,
+                    1 /* rejectReadable */, relaxPerms, heap, &file);
+        }
+        else {
+            ret = wolfSSHD_OpenSecureFile(fileName, owner,
+                    0 /* rejectReadable */, relaxPerms, heap, &file);
+        }
+        if (ret != WS_SUCCESS) {
             return NULL;
         }
     }
