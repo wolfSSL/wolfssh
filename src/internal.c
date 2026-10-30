@@ -15648,7 +15648,15 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
     return ret;
 }
 
-static int BundlePacket(WOLFSSH* ssh)
+/* Packets carrying a userauth secret pad up to a multiple of this, so their
+ * length hides the secret's length. OpenSSH uses 64. */
+#ifndef WOLFSSH_USERAUTH_PAD_BUCKET
+    #define WOLFSSH_USERAUTH_PAD_BUCKET 64
+#endif
+
+/* padBucket: 0 for minimum padding, else pad the packet up to a multiple of
+ * it. PreparePacket() must have reserved padBucket extra bytes. */
+static int BundlePacketPad(WOLFSSH* ssh, word32 padBucket)
 {
     byte* output = NULL;
     word32 idx = 0;
@@ -15675,6 +15683,19 @@ static int BundlePacket(WOLFSSH* ssh)
                      PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
         if (paddingSz < MIN_PAD_LENGTH)
             paddingSz += ssh->blockSz;
+
+        if (padBucket > 0) {
+            word32 alignSz, extraSz;
+
+            /* Whole blocks, so the extra keeps the block alignment. */
+            padBucket = ((padBucket + ssh->blockSz - 1) / ssh->blockSz)
+                    * ssh->blockSz;
+            alignSz = (ssh->aeadMode ? 0 : LENGTH_SZ) + PAD_LENGTH_SZ
+                    + payloadSz + paddingSz;
+            extraSz = (padBucket - (alignSz % padBucket)) % padBucket;
+            if (paddingSz + extraSz <= 0xFF)
+                paddingSz += (byte)extraSz;
+        }
 
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
 
@@ -15760,6 +15781,11 @@ static int BundlePacket(WOLFSSH* ssh)
     }
 
     return ret;
+}
+
+static int BundlePacket(WOLFSSH* ssh)
+{
+    return BundlePacketPad(ssh, 0);
 }
 
 
@@ -23037,7 +23063,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
         ret = PrepareUserAuthResponseKeyboard(ssh, &payloadSz, &authData);
     }
     if (ret == WS_SUCCESS) {
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23050,7 +23076,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->outputBuffer.length = idx;
-        ret = BundlePacket(ssh);
+        ret = BundlePacketPad(ssh, WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23082,6 +23108,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_KeySignature *keySig_ptr = NULL;
     byte authId = ID_NONE;
     int delivered = 0;
+    word32 padBucket = 0;
 
     WOLFSSH_UNUSED(addSig);
 
@@ -23188,8 +23215,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     ssh->userNameSz + serviceNameSz + authNameSz;
-        if (authId == ID_USERAUTH_PASSWORD)
+        if (authId == ID_USERAUTH_PASSWORD) {
+            padBucket = WOLFSSH_USERAUTH_PAD_BUCKET;
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
+        }
         else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {
             authData.sf.publicKey.hasSignature = 1;
             ssh->userAuthPkDone = 1;
@@ -23205,7 +23234,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     }
 
     if (ret == WS_SUCCESS)
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + padBucket);
 
     if (ret == WS_SUCCESS) {
         byte* sigStart;
@@ -23256,7 +23285,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         if (ret == WS_SUCCESS) {
             ssh->outputBuffer.length = idx;
-            ret = BundlePacket(ssh);
+            ret = BundlePacketPad(ssh, padBucket);
         }
     }
 
