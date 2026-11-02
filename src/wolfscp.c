@@ -3922,6 +3922,10 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 break;
             }
             WMEMCPY(recvBuffer->name, fileName, sz);
+            recvBuffer->name[sz] = '\0';
+            recvBuffer->nameSz = (word32)sz;
+            recvBuffer->idx    = 0;
+            recvBuffer->fileSz = 0;
             recvBuffer->mTime = mTime;
             recvBuffer->mode = fileMode;
             if (recvBuffer->status) {
@@ -4023,7 +4027,13 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             ret = ExtractFileName(peerRequest, fileName, fileNameSz);
-            if (ret == WS_SUCCESS && sendBuffer->status) {
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_ERROR, scpState, "bad file name, abort");
+                wolfSSH_SetScpErrorMsg(ssh, "bad file name");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            if (sendBuffer->status) {
                 if ( sendBuffer->status(ssh, fileName,
                             WOLFSSH_SCP_SINGLE_FILE_REQUEST, sendBuffer)
                             != WS_SUCCESS) {
@@ -4042,7 +4052,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
             *totalFileSz = sendBuffer->fileSz;
             *mTime = sendBuffer->mTime;
-            *aTime = sendBuffer->mTime;
+            *aTime = 0; /* ScpBuffer has no access time */
             *fileMode = sendBuffer->mode;
 
             /* copy over buffer info, idx past fileSz wraps the unsigned
