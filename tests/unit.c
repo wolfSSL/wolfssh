@@ -5018,6 +5018,13 @@ static int test_ScpParseCommand(void)
         WRMDIR(NULL, "scp_parse_dir");
     }
 #endif
+    /* the path is taken as given, spaces and quotes included */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -f /tmp/a b", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "/tmp/a b", NULL, 0);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -f '/tmp/a b'", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "'/tmp/a b'", NULL, 0);
 
     return result;
 }
@@ -5106,6 +5113,53 @@ static int test_ScpReceiveMessageAfterWarning(void)
     return result;
 }
 
+#ifndef NO_WOLFSSH_CLIENT
+/* The client's exec command carries the remote path as given, the way
+ * OpenSSH scp sends it, and the built-in server reads back the same path. */
+static int test_ScpMakeCmd(void)
+{
+    static const struct {
+        const char* name;
+        const char* cmd;
+    } cases[] = {
+        { "/tmp/a.txt",       "scp -f /tmp/a.txt" },
+        { "/tmp/a b",         "scp -f /tmp/a b" },
+        { "/tmp/it's;$(x)",   "scp -f /tmp/it's;$(x)" },
+        { "-x",               "scp -f -- -x" },
+        { "-a b",             "scp -f -- -a b" }
+    };
+    static const char* bad[] = { "a\nb", "a\rb", "a\tb", "a\x7f" };
+    char* cmd = NULL;
+    int result = 0;
+    int ret;
+    word32 i;
+
+    for (i = 0; result == 0 && i < sizeof(cases) / sizeof(cases[0]); i++) {
+        cmd = NULL;
+        ret = wolfSSH_TestScpMakeCmd(cases[i].name, 'f', &cmd, NULL);
+        if (ret != WS_SUCCESS || cmd == NULL)
+            result = -4880;
+        else if (WSTRCMP(cmd, cases[i].cmd) != 0)
+            result = -4881;
+    #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API)
+        if (result == 0)
+            result = ScpParseCommandCase(cmd, WS_SUCCESS, WOLFSSH_SCP_FROM,
+                    cases[i].name, NULL, 0);
+    #endif
+        if (cmd != NULL)
+            WFREE(cmd, NULL, DYNTYPE_STRING);
+    }
+
+    for (i = 0; result == 0 && i < sizeof(bad) / sizeof(bad[0]); i++) {
+        cmd = NULL;
+        ret = wolfSSH_TestScpMakeCmd(bad[i], 't', &cmd, NULL);
+        if (ret != WS_BAD_ARGUMENT || cmd != NULL)
+            result = -4882;
+    }
+
+    return result;
+}
+#endif /* !NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -29340,6 +29394,12 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
 
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_ScpMakeCmd();
+    printf("ScpMakeCmd: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif
 #endif
 
     unitResult = test_MsgHighwater();

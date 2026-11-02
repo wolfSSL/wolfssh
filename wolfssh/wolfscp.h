@@ -162,6 +162,10 @@ WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh);
 WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message);
 
 WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd);
+/* Client side. The remote path, dst for _to and src for _from, goes to the
+ * server as given and, as with OpenSSH scp, the remote shell expands it;
+ * quote a path that must be taken literally. A control character in it
+ * returns WS_ERROR with WS_BAD_ARGUMENT as the session error. */
 WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH* ssh, const char* src,
         const char* dst);
 /* As the receiving side, here and in wolfSSH_SCP_accept(), a warning record
