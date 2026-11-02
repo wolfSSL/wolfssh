@@ -18595,8 +18595,8 @@ static void TestSftpFailedRequestsAnswered(void)
     char badFile[64];
     char badDir[64];
     const byte pathTypes[] = {
-        WOLFSSH_FTP_OPEN, WOLFSSH_FTP_MKDIR, WOLFSSH_FTP_REMOVE,
-        WOLFSSH_FTP_REALPATH,
+        WOLFSSH_FTP_OPEN, WOLFSSH_FTP_MKDIR, WOLFSSH_FTP_RMDIR,
+        WOLFSSH_FTP_REMOVE, WOLFSSH_FTP_REALPATH,
     #ifndef NO_WOLFSSH_DIR
         WOLFSSH_FTP_OPENDIR,
     #endif

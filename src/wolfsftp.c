@@ -2247,6 +2247,11 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
+    if (ret != WS_SUCCESS && ret != WS_PERMISSIONS) {
+        WLOG(WS_LOG_SFTP, "Unable to resolve directory path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, err);
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
+    }
 
     if (ret == 0) {
     #ifndef USE_WINDOWS_API
