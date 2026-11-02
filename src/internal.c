@@ -20591,6 +20591,10 @@ int SendIgnore(WOLFSSH* ssh, const unsigned char* data, word32 dataSz)
     if (ssh == NULL || (data == NULL && dataSz > 0))
         ret = WS_BAD_ARGUMENT;
 
+    /* Also keeps the size sums in PreparePacket() from wrapping. */
+    if (ret == WS_SUCCESS && dataSz > MAX_IGNORE_DATA_SZ)
+        ret = WS_BAD_ARGUMENT;
+
     if (ret == WS_SUCCESS)
         ret = PreparePacket(ssh, MSG_ID_SZ + LENGTH_SZ + dataSz);
 
