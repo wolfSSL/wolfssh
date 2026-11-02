@@ -3921,7 +3921,18 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 ret = WS_SCP_ABORT;
                 break;
             }
+            if (totalFileSz > recvBuffer->bufferSz) {
+                WLOG(WS_LOG_ERROR, scpState, "SCP buffer too small for file");
+                wolfSSH_SetScpErrorMsg(ssh,
+                        "buffer is not large enough for file");
+                ret = WS_SCP_ABORT;
+                break;
+            }
             WMEMCPY(recvBuffer->name, fileName, sz);
+            recvBuffer->name[sz] = '\0';
+            recvBuffer->nameSz = (word32)sz;
+            recvBuffer->idx    = 0;
+            recvBuffer->fileSz = 0;
             recvBuffer->mTime = mTime;
             recvBuffer->mode = fileMode;
             if (recvBuffer->status) {
@@ -3934,11 +3945,9 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             break;
 
         case WOLFSSH_SCP_FILE_PART:
-            /* read file, or file part; an empty file gives a null buffer */
-            sz = (bufSz < recvBuffer->bufferSz - recvBuffer->idx) ?
-                bufSz : recvBuffer->bufferSz - recvBuffer->idx;
-
-            if (recvBuffer->idx >= recvBuffer->bufferSz) {
+            /* empty file gives a null buffer; overflow aborts */
+            if (recvBuffer->idx > recvBuffer->bufferSz ||
+                    bufSz > recvBuffer->bufferSz - recvBuffer->idx) {
                 wolfSSH_SetScpErrorMsg(ssh,
                         "buffer is not large enough for file");
                 WLOG(WS_LOG_ERROR, scpState, "SCP buffer too small for file");
@@ -3946,6 +3955,7 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
                 break;
             }
 
+            sz = (int)bufSz;
             if (buf != NULL && sz > 0) {
                 WMEMCPY(recvBuffer->buffer + recvBuffer->idx, buf, sz);
                 recvBuffer->idx    += sz;
@@ -3988,7 +3998,6 @@ int wsScpRecvCallback(WOLFSSH* ssh, int state, const char* basePath,
             ret = WS_SCP_ABORT;
     }
 
-    WOLFSSH_UNUSED(totalFileSz);
     WOLFSSH_UNUSED(fileOffset);
     WOLFSSH_UNUSED(aTime);
     WOLFSSH_UNUSED(basePath);
@@ -4023,7 +4032,15 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
 
             ret = ExtractFileName(peerRequest, fileName, fileNameSz);
-            if (ret == WS_SUCCESS && sendBuffer->status) {
+            if (ret != WS_SUCCESS) {
+                WLOG(WS_LOG_ERROR, scpState, "bad file name, abort");
+                wolfSSH_SetScpErrorMsg(ssh, "bad file name");
+                ret = WS_SCP_ABORT;
+                break;
+            }
+            /* start each request at 0; status may move idx */
+            sendBuffer->idx = 0;
+            if (sendBuffer->status) {
                 if ( sendBuffer->status(ssh, fileName,
                             WOLFSSH_SCP_SINGLE_FILE_REQUEST, sendBuffer)
                             != WS_SUCCESS) {
@@ -4042,6 +4059,7 @@ int wsScpSendCallback(WOLFSSH* ssh, int state, const char* peerRequest,
             }
             *totalFileSz = sendBuffer->fileSz;
             *mTime = sendBuffer->mTime;
+            /* no aTime in ScpBuffer; 0 would stamp the epoch with -p */
             *aTime = sendBuffer->mTime;
             *fileMode = sendBuffer->mode;
 
