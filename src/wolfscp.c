@@ -911,8 +911,8 @@ int wolfSSH_SCP_accept(WOLFSSH* ssh)
     ret = DoScpRequest(ssh);
 
     if (ret >= WS_SUCCESS) {
-        /* The tail of DoScpRequest() passes a read count through, so treat
-         * anything non-negative as done the way wolfSSH_accept() does. */
+        /* treat anything non-negative as done, the way wolfSSH_accept()
+         * does */
         ret = WS_SCP_COMPLETE;
     }
     else if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_WANT_READ) {
@@ -995,6 +995,9 @@ int DoScpRequest(WOLFSSH* ssh)
         }
         else {
             WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
+            /* data after the transfer is done is ignored */
+            if (ret > 0)
+                ret = WS_SUCCESS;
         }
     }
 
@@ -1103,8 +1106,12 @@ static int GetScpFileMode(WOLFSSH* ssh, byte* buf, word32 bufSz,
 
     idx = *inOutIdx;
 
+    /* room for the leading "C" or "D" and the whole mode field */
+    if (idx >= bufSz || bufSz - idx < SCP_MODE_OCTET_LEN + 1)
+        return WS_BAD_ARGUMENT;
+
     /* skip leading "C" or "D" */
-    if ((buf[idx] != 'C' && buf[idx] != 'D') || (idx + 1 > bufSz))
+    if (buf[idx] != 'C' && buf[idx] != 'D')
         return WS_BAD_ARGUMENT;
     idx++;
 
@@ -1492,6 +1499,26 @@ static int ScpCheckForRename(WOLFSSH* ssh)
     char buf[DEFAULT_SCP_MSG_SZ];
     int  sz = (int)WSTRLEN(ssh->scpBasePath);
     int  idx;
+    int  bare = 0;
+
+    if (sz == 0) {
+        return WS_BAD_ARGUMENT;
+    }
+
+#ifndef NO_FILESYSTEM
+    {
+        /* an existing directory, "." included, is where the files go, not a
+         * new name for them */
+        ScpSendCtx ctx;
+
+        WMEMSET(&ctx, 0, sizeof(ScpSendCtx));
+        if (ScpPushDir(ssh->fs, &ctx, ssh->scpBasePath, ssh->ctx->heap)
+                == WS_SUCCESS) {
+            (void)ScpPopDir(ssh->fs, &ctx, ssh->ctx->heap);
+            return WS_SUCCESS;
+        }
+    }
+#endif
 
     /* buf holds scpBasePath plus the "/.." suffix and a terminator, so bound
      * by sz. The old checks bounded by cmdSz, the peer command/source length,
@@ -1523,6 +1550,13 @@ static int ScpCheckForRename(WOLFSSH* ssh)
         idx--; /* no delimiter at base */
     }
 #endif
+    /* CleanPath reads a bare name as absolute and leaves "/", so a name with
+     * no delimiter starts at 0 */
+    if (WSTRCHR(ssh->scpBasePath, '/') == NULL &&
+            WSTRCHR(ssh->scpBasePath, '\\') == NULL) {
+        bare = 1;
+        idx = 0;
+    }
     /* idx is the offset of the filename component within scpBasePath, so it
      * cannot exceed the base path length. */
     if (idx > sz) {
@@ -1561,7 +1595,14 @@ static int ScpCheckForRename(WOLFSSH* ssh)
             WSTRNCPY(ssh->scpFileName, ssh->scpBasePath + idx, sz + 1);
             ssh->scpFileName[sz]  = '\0';
             ssh->scpFileNameSz    = sz;
-            *((char*)ssh->scpBasePath + idx) = '\0';
+            if (bare) {
+                /* the file goes in the current directory */
+                ((char*)ssh->scpBasePath)[0] = '.';
+                ((char*)ssh->scpBasePath)[1] = '\0';
+            }
+            else {
+                *((char*)ssh->scpBasePath + idx) = '\0';
+            }
         }
     }
 
@@ -1626,6 +1667,48 @@ static int ParseBasePathHelper(WOLFSSH* ssh)
 }*/
 
 #ifndef NO_WOLFSSH_SERVER
+/* Copy the scp command from cmd[idx] on into a new scpBasePathDynamic and
+ * point scpBasePath at it. Leaves scpBasePath NULL when no path follows. */
+static int ScpSetCommandPath(WOLFSSH* ssh, const char* cmd, word32 cmdSz,
+        word32 idx)
+{
+    if (ssh->scpBasePathDynamic != NULL) {
+        WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap, DYNTYPE_BUFFER);
+        ssh->scpBasePathDynamic = NULL;
+    }
+    /* scpBasePath may alias the buffer just freed */
+    ssh->scpBasePath = NULL;
+    ssh->scpBasePathSz = 0;
+
+    /* "--" ends the options; OpenSSH sends it before a path starting "-" */
+    if (idx + 2 <= cmdSz && WSTRNCMP(cmd + idx, "--", 2) == 0 &&
+            (idx + 2 == cmdSz || cmd[idx + 2] == ' ')) {
+        idx += 3;
+    }
+
+    if (idx >= cmdSz) {
+        return WS_SUCCESS;
+    }
+
+    ssh->scpBasePathDynamic = (char*)WMALLOC(cmdSz + WOLFSSH_MAX_FILENAME,
+            ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (ssh->scpBasePathDynamic == NULL) {
+        return WS_MEMORY_E;
+    }
+    ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
+    WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
+    WMEMCPY(ssh->scpBasePathDynamic, cmd + idx, cmdSz - idx);
+    ssh->scpBasePath = ssh->scpBasePathDynamic;
+
+    if (wolfSSH_CleanPath(ssh, ssh->scpBasePathDynamic,
+            ssh->scpBasePathSz) < 0) {
+        return WS_FATAL_ERROR;
+    }
+
+    return WS_SUCCESS;
+}
+
+
 /* Parse scp command received, currently only looks for and stores the
  * SCP base path being written to.
  *
@@ -1636,6 +1719,7 @@ int ParseScpCommand(WOLFSSH* ssh)
     int ret = WS_SUCCESS;
     const char* cmd;
     word32 cmdSz, idx = 0;
+    int pathDone = 0;
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
@@ -1647,7 +1731,7 @@ int ParseScpCommand(WOLFSSH* ssh)
     if (ret == WS_SUCCESS) {
         cmdSz = (word32)WSTRLEN(cmd);
 
-        while ((idx + 1 < cmdSz) && (ret == WS_SUCCESS)) {
+        while ((idx + 1 < cmdSz) && (ret == WS_SUCCESS) && !pathDone) {
 
             if (cmd[idx] == ' ' && cmd[idx + 1] == '-' && (idx + 2 < cmdSz)) {
                 idx = idx + 2;
@@ -1663,68 +1747,17 @@ int ParseScpCommand(WOLFSSH* ssh)
                         break;
 
                     case 't':
-                        ssh->scpDirection = WOLFSSH_SCP_TO;
-                        if (ssh->scpBasePathDynamic != NULL) {
-                            WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap,
-                                    DYNTYPE_BUFFER);
-                            ssh->scpBasePathDynamic = NULL;
-                            /* scpBasePath aliases the buffer just freed */
-                            ssh->scpBasePath = NULL;
-                            ssh->scpBasePathSz = 0;
-                        }
-                        ssh->scpBasePathDynamic = (char*)WMALLOC(
-                                cmdSz + WOLFSSH_MAX_FILENAME,
-                                ssh->ctx->heap, DYNTYPE_BUFFER);
-                        if (ssh->scpBasePathDynamic == NULL) {
-                            return WS_MEMORY_E;
-                        }
-                        ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
-                        WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
-                        if (idx + 2 < cmdSz) {
-                            /* skip space */
-                            idx += 2;
-                            ssh->scpBasePath = ssh->scpBasePathDynamic;
-                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx,
-                                cmdSz - idx);
-                            if (wolfSSH_CleanPath(ssh,
-                                    ssh->scpBasePathDynamic,
-                                    ssh->scpBasePathSz) < 0) {
-                                ret = WS_FATAL_ERROR;
-                            }
-                            else {
-                                ret = ParseBasePathHelper(ssh);
-                            }
-                        }
-                        break;
-
                     case 'f':
-                        ssh->scpDirection = WOLFSSH_SCP_FROM;
-                        if (ssh->scpBasePathDynamic != NULL) {
-                            WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap,
-                                    DYNTYPE_BUFFER);
-                            ssh->scpBasePathDynamic = NULL;
-                            /* scpBasePath aliases the buffer just freed */
-                            ssh->scpBasePath = NULL;
-                            ssh->scpBasePathSz = 0;
-                        }
-                        ssh->scpBasePathDynamic = (char*)WMALLOC(
-                                cmdSz + WOLFSSH_MAX_FILENAME,
-                                ssh->ctx->heap, DYNTYPE_BUFFER);
-                        if (ssh->scpBasePathDynamic == NULL) {
-                            return WS_MEMORY_E;
-                        }
-                        ssh->scpBasePathSz = cmdSz + WOLFSSH_MAX_FILENAME;
-                        WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
-                        if (idx + 2 < cmdSz) {
-                            /* skip space */
-                            idx += 2;
-                            ssh->scpBasePath = ssh->scpBasePathDynamic;
-                            WMEMCPY(ssh->scpBasePathDynamic, cmd + idx,
-                                cmdSz - idx);
-                            if (wolfSSH_CleanPath(ssh,
-                                        ssh->scpBasePathDynamic,
-                                        ssh->scpBasePathSz) < 0)
-                                ret = WS_FATAL_ERROR;
+                        ssh->scpDirection = (cmd[idx] == 't') ?
+                                WOLFSSH_SCP_TO : WOLFSSH_SCP_FROM;
+                        /* the rest of the command is the path, so stop
+                         * scanning for options */
+                        pathDone = 1;
+                        /* skip the option letter and the space */
+                        ret = ScpSetCommandPath(ssh, cmd, cmdSz, idx + 2);
+                        if (ret == WS_SUCCESS && ssh->scpBasePath != NULL &&
+                                ssh->scpDirection == WOLFSSH_SCP_TO) {
+                            ret = ParseBasePathHelper(ssh);
                         }
                         break;
                 } /* end switch */
