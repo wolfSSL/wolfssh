@@ -2047,13 +2047,15 @@ int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
 
 void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh, WS_CallbackTerminalSize cb)
 {
-    ssh->termResizeCb = cb;
+    if (ssh != NULL)
+        ssh->termResizeCb = cb;
 }
 
 
 void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
-    ssh->termCtx = usrCtx;
+    if (ssh != NULL)
+        ssh->termCtx = usrCtx;
 }
 #endif
 

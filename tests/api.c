@@ -2674,6 +2674,45 @@ static void test_wolfSSH_ReadKey_asn1PubCallerBuf(void)
 }
 
 
+#ifdef WOLFSSH_TERM
+static int TermResizeNopCb(WOLFSSH* ssh, word32 columns, word32 rows,
+        word32 widthPixels, word32 heightPixels, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(columns);
+    WOLFSSH_UNUSED(rows);
+    WOLFSSH_UNUSED(widthPixels);
+    WOLFSSH_UNUSED(heightPixels);
+    WOLFSSH_UNUSED(ctx);
+    return WS_SUCCESS;
+}
+#endif
+
+/* The terminal resize setters treat a NULL session as a no-op. */
+static void test_wolfSSH_SetTerminalResize(void)
+{
+#ifdef WOLFSSH_TERM
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int marker = 0;
+
+    wolfSSH_SetTerminalResizeCb(NULL, TermResizeNopCb);
+    wolfSSH_SetTerminalResizeCtx(NULL, &marker);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    wolfSSH_SetTerminalResizeCb(ssh, TermResizeNopCb);
+    wolfSSH_SetTerminalResizeCtx(ssh, &marker);
+    AssertTrue(ssh->termResizeCb == TermResizeNopCb);
+    AssertTrue(ssh->termCtx == (void*)&marker);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif
+}
+
+
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
 
@@ -9648,6 +9687,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadPublicKey_pem();
     test_wolfSSH_ReadKey_asn1PubCallerBuf();
+    test_wolfSSH_SetTerminalResize();
     test_wolfSSH_ReadKey_badPad();
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
