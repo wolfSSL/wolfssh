@@ -2207,6 +2207,7 @@ enum WS_MessageIdLimits {
             word32 bufSz, word32* inOutIdx);
     WOLFSSH_API int wolfSSH_TestScpGetFileName(WOLFSSH* ssh, byte* buf,
             word32 bufSz, word32* inOutIdx);
+    WOLFSSH_API int wolfSSH_TestDoScpSink(WOLFSSH* ssh);
     WOLFSSH_API int wolfSSH_TestDoScpSource(WOLFSSH* ssh);
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     WOLFSSH_API int wolfSSH_TestScpPushDir(const char* path);
