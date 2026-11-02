@@ -667,7 +667,6 @@ static int doCmds(func_args* args)
         }
 
         if ((pt = WSTRNSTR(msg, "mkdir", sizeof(msg))) != NULL) {
-            WS_SFTP_FILEATRB atrb;
             int sz;
             char* f = NULL;
 
@@ -691,7 +690,7 @@ static int doCmds(func_args* args)
 
             do {
                 err = WS_SUCCESS;
-                if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, &atrb)) != WS_SUCCESS) {
+                if ((ret = wolfSSH_SFTP_MKDIR(ssh, pt, NULL)) != WS_SUCCESS) {
                     err = wolfSSH_get_error(ssh);
                     if (ret == WS_PERMISSIONS) {
                         if (SFTP_FPUTS(args, "Insufficient permissions\n") < 0) {

@@ -7514,8 +7514,94 @@ static void test_wolfSSH_SFTP_GetResume(void)
 }
 
 
+/* MKDIR sends the caller's attributes: the in-process echoserver creates the
+ * directory with the requested permissions. */
+static void test_wolfSSH_SFTP_MKDIR_attrs(void)
+{
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WS_SFTP_FILEATRB atr;
+    char dirName[48];
+
+    /* pid-stamped so concurrent runs in one tree don't share it */
+    WSNPRINTF(dirName, sizeof(dirName), "wolfssh_14634_mkdir_%d.tmp",
+            (int)getpid());
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    (void)wolfSSH_SFTP_RMDIR(ssh, dirName); /* normally absent */
+
+    /* A private directory, which the fixed 0777 request never produced. */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_PERM;
+    atr.per = 0700;
+    AssertIntEQ(wolfSSH_SFTP_MKDIR(ssh, dirName, &atr), WS_SUCCESS);
+    WMEMSET(&atr, 0, sizeof(atr));
+    AssertIntEQ(wolfSSH_SFTP_STAT(ssh, dirName, &atr), WS_SUCCESS);
+    AssertTrue((atr.flags & WOLFSSH_FILEATRB_PERM) != 0);
+    AssertIntEQ(atr.per & 0777, 0700);
+    AssertIntEQ(wolfSSH_SFTP_RMDIR(ssh, dirName), WS_SUCCESS);
+
+    /* A NULL atr still makes a directory the owner can use. */
+    AssertIntEQ(wolfSSH_SFTP_MKDIR(ssh, dirName, NULL), WS_SUCCESS);
+    WMEMSET(&atr, 0, sizeof(atr));
+    AssertIntEQ(wolfSSH_SFTP_STAT(ssh, dirName, &atr), WS_SUCCESS);
+    AssertIntEQ(atr.per & 0700, 0700);
+    AssertIntEQ(wolfSSH_SFTP_RMDIR(ssh, dirName), WS_SUCCESS);
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = AbsorbBenignReset(ssh, wolfSSH_shutdown(ssh));
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+#endif /* !USE_WINDOWS_API && !WOLFSSH_FATFS && !WOLFSSH_ZEPHYR */
+}
+
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+static void test_wolfSSH_SFTP_MKDIR_attrs(void) { ; }
 static void test_wolfSSH_SFTP_PartialSend(void) { ; }
 static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
@@ -9723,6 +9809,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SendPacketType_negotiation_non_block();
     test_wolfSSH_SFTP_PutResume();
     test_wolfSSH_SFTP_GetResume();
+    test_wolfSSH_SFTP_MKDIR_attrs();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
