@@ -1107,11 +1107,6 @@ typedef struct HandshakeInfo {
     } privKey;
 } HandshakeInfo;
 
-#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
-WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
-    word32 inSz, char* out, word32* outSz);
-#endif
-
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3
 
