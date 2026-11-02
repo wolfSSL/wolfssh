@@ -1002,8 +1002,12 @@ WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
 /* Starts a key exchange. A clean start leaves ssh->error alone; only a
  * failure records its code there. */
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
-/* Returns WS_INVALID_STATE_E before the initial KEX completes when strict
- * KEX is offered. */
+/* Sends an SSH_MSG_IGNORE carrying buf. A NULL buf with a zero bufSz sends
+ * 128 zero bytes instead. A bufSz whose packet, with worst-case padding and
+ * MAC, would exceed MAX_PACKET_SZ is WS_BAD_ARGUMENT; the largest allowed is
+ * 34907 with the default MAX_PACKET_SZ and a 64-byte maximum digest. Returns
+ * WS_INVALID_STATE_E before the initial KEX completes when strict KEX is
+ * offered. */
 WOLFSSH_API int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz);
 /* One disconnect ends the session, so a second call reports WS_DISCONNECT.
  * The exception is a disconnect of this side's own, left short by a

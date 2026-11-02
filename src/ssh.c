@@ -1836,10 +1836,7 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
     byte scratch[128];
     byte keyed;
 
-    WOLFSSH_UNUSED(buf);
-    WOLFSSH_UNUSED(bufSz);
-
-    if (ssh == NULL)
+    if (ssh == NULL || (buf == NULL && bufSz > 0))
         return WS_BAD_ARGUMENT;
 
     if (SendAfterDisconnect(ssh))
@@ -1852,6 +1849,9 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
             (ssh->connectState >= CONNECT_KEYED);
     if (ssh->sendStrictKex && !keyed)
         return WS_INVALID_STATE_E;
+
+    if (buf != NULL)
+        return SendIgnore(ssh, buf, bufSz);
 
     WMEMSET(scratch, 0, sizeof(scratch));
 

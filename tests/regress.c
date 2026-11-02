@@ -730,7 +730,13 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
 
-#define REGRESS_DUPLEX_QUEUE_SZ 32768U
+/* Holds a handshake flight, or one packet a little over MAX_PACKET_SZ so
+ * the peer is what judges its size. */
+#if MAX_PACKET_SZ + 256 > 32768
+    #define REGRESS_DUPLEX_QUEUE_SZ ((word32)MAX_PACKET_SZ + 256U)
+#else
+    #define REGRESS_DUPLEX_QUEUE_SZ 32768U
+#endif
 #define REGRESS_MUTATION_SCRATCH_SZ 4096U
 #define REGRESS_SERVER_KEY_ECC_PATH "keys/server-key-ecc.der"
 #define REGRESS_SERVER_KEY_ED25519_PATH "keys/server-key-ed25519.der"
@@ -3021,6 +3027,51 @@ static void PumpDuplexPair(KexReplyHarness* harness)
     }
 
     Fail(("the rekey to finish"), ("it ran out of steps"));
+}
+
+/* The largest IGNORE wolfSSH_SendIgnore() takes reaches a keyed wolfSSH
+ * peer intact, under the largest MAC where the build has it. */
+static void TestSendIgnoreLargestKeyed(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    byte* data;
+    word32 peerSeq;
+
+    InitStrictKexHarness(&harness, MSGID_NONE, 1, 1);
+    /* A rekey mid-test would add packets and, under strict KEX, reset
+     * peerSeq; keep a build-time DEFAULT_HIGHWATER_MARK from firing one. */
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.server, 0), WS_SUCCESS);
+#if !defined(WOLFSSH_NO_AES_CTR) && !defined(WOLFSSH_NO_HMAC_SHA2_512)
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(harness.client, "aes256-ctr"),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(harness.client, "hmac-sha2-512"),
+            WS_SUCCESS);
+#endif
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    PumpDuplexPair(&harness);
+
+    data = (byte*)WMALLOC(MAX_IGNORE_DATA_SZ + 1, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(data);
+    WMEMSET(data, 0xA5, MAX_IGNORE_DATA_SZ + 1);
+
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, data,
+            MAX_IGNORE_DATA_SZ + 1), WS_BAD_ARGUMENT);
+    AssertIntEQ(harness.serverIo.inbound.len, 0);
+
+    peerSeq = harness.server->peerSeq;
+    AssertIntEQ(wolfSSH_SendIgnore(harness.client, data, MAX_IGNORE_DATA_SZ),
+            WS_SUCCESS);
+    AssertTrue(harness.serverIo.inbound.len > MAX_IGNORE_DATA_SZ);
+    PumpDuplexPair(&harness);
+    AssertIntEQ(harness.server->peerSeq, peerSeq + 1);
+    AssertTrue(wolfSSH_get_error(harness.server) != WS_OVERFLOW_E);
+
+    WFREE(data, NULL, DYNTYPE_BUFFER);
+    FreeKexReplyHarness(&harness);
 }
 
 /* draft-miller-sshm-strict-kex resets the sequence numbers at every
@@ -14136,6 +14187,129 @@ static void TestShutdownFlushClearsWantWrite(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+
+/* wolfSSH_SendIgnore() sends the caller's payload; a NULL payload sends 128
+ * zero bytes. */
+static void TestSendIgnorePayload(void)
+{
+    static const byte payload[] = { 'w', 'o', 'l', 'f', 'S', 'S', 'H' };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte out[512];
+    word32 dataSz;
+    word32 i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+    wolfSSH_CTX_SetStrictKex(ctx, 0);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, NULL, 1), WS_BAD_ARGUMENT);
+    AssertIntEQ(io.outSz, 0);
+
+    /* A size that would wrap the packet size sums is refused before the
+     * payload is read; payload is far shorter than the size claimed. */
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, payload, 0xFFFFFFFB),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, payload, MAX_IGNORE_DATA_SZ + 1),
+            WS_BAD_ARGUMENT);
+    AssertIntEQ(io.outSz, 0);
+    AssertFalse(wolfSSH_OutputPending(ssh));
+
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, payload, sizeof(payload)),
+            WS_SUCCESS);
+    AssertTrue(io.outSz >= 10 + sizeof(payload));
+    AssertIntEQ(ParseMsgId(out, io.outSz), MSGID_IGNORE);
+    dataSz = ((word32)out[6] << 24) | ((word32)out[7] << 16) |
+             ((word32)out[8] << 8) | (word32)out[9];
+    AssertIntEQ(dataSz, sizeof(payload));
+    AssertIntEQ(WMEMCMP(out + 10, payload, sizeof(payload)), 0);
+
+    MemIoInit(&io, NULL, 0, out, sizeof(out));
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, NULL, 0), WS_SUCCESS);
+    AssertTrue(io.outSz >= 10 + 128);
+    AssertIntEQ(ParseMsgId(out, io.outSz), MSGID_IGNORE);
+    dataSz = ((word32)out[6] << 24) | ((word32)out[7] << 16) |
+             ((word32)out[8] << 8) | (word32)out[9];
+    AssertIntEQ(dataSz, 128);
+    for (i = 0; i < dataSz; i++) {
+        AssertIntEQ(out[10 + i], 0);
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* The largest IGNORE wolfSSH_SendIgnore() takes is accepted by a wolfSSH
+ * peer before keys are active. */
+static void TestSendIgnoreLargestPlain(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* tx;
+    WOLFSSH* rx;
+    MemIo txIo, rxIo;
+    byte* data;
+    byte* wire;
+    byte rxOut[64];
+    /* Room for an oversized packet, so the peer is what judges it. */
+    word32 wireSz = MAX_PACKET_SZ + 256;
+
+    data = (byte*)WMALLOC(MAX_IGNORE_DATA_SZ, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(data);
+    wire = (byte*)WMALLOC(wireSz, NULL, DYNTYPE_BUFFER);
+    AssertNotNull(wire);
+    WMEMSET(data, 0x5A, MAX_IGNORE_DATA_SZ);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+    wolfSSH_CTX_SetStrictKex(ctx, 0);
+
+    tx = wolfSSH_new(ctx);
+    AssertNotNull(tx);
+    tx->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+    /* A rekey's KEXINIT fits neither buffer, so keep a build-time
+     * DEFAULT_HIGHWATER_MARK from firing one on either end. */
+    AssertIntEQ(wolfSSH_SetHighwater(tx, 0), WS_SUCCESS);
+    MemIoInit(&txIo, NULL, 0, wire, wireSz);
+    wolfSSH_SetIOReadCtx(tx, &txIo);
+    wolfSSH_SetIOWriteCtx(tx, &txIo);
+
+    AssertIntEQ(wolfSSH_SendIgnore(tx, data, MAX_IGNORE_DATA_SZ),
+            WS_SUCCESS);
+    AssertTrue(txIo.outSz > MAX_IGNORE_DATA_SZ);
+
+    rx = wolfSSH_new(ctx);
+    AssertNotNull(rx);
+    rx->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+    AssertIntEQ(wolfSSH_SetHighwater(rx, 0), WS_SUCCESS);
+    MemIoInit(&rxIo, wire, txIo.outSz, rxOut, sizeof(rxOut));
+    wolfSSH_SetIOReadCtx(rx, &rxIo);
+    wolfSSH_SetIOWriteCtx(rx, &rxIo);
+
+    AssertIntEQ(DoReceive(rx), WS_SUCCESS);
+    AssertIntEQ(rxIo.inOff, rxIo.inSz);
+    AssertIntEQ(rx->peerSeq, 1);
+
+    wolfSSH_free(rx);
+    wolfSSH_free(tx);
+    wolfSSH_CTX_free(ctx);
+    WFREE(wire, NULL, DYNTYPE_BUFFER);
+    WFREE(data, NULL, DYNTYPE_BUFFER);
+}
 #endif /* !NO_WOLFSSH_CLIENT */
 
 
@@ -22345,6 +22519,8 @@ int main(int argc, char** argv)
     TestPeerDisconnectKeepsTrafficQueued(1);
     TestShutdownFlushesWithNoChannel();
     TestShutdownFlushClearsWantWrite();
+    TestSendIgnorePayload();
+    TestSendIgnoreLargestPlain();
 #endif
 #ifndef NO_WOLFSSH_SERVER
     TestShutdownFlushesQueuedUserAuthFailure();
@@ -22445,6 +22621,7 @@ int main(int argc, char** argv)
     TestOutOfTurnKexMsgRejectedWithStrictKex();
     TestStrictKexFailedNewKeysNotCounted();
     TestStrictKexHoldsSendIgnore();
+    TestSendIgnoreLargestKeyed();
     #ifndef WOLFSSH_NO_AES_GCM
     TestPreKexInitInjectionAcceptedWithoutStrictKex();
     #endif
