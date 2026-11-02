@@ -20107,12 +20107,14 @@ static int test_UsePrivateKeyFromStoreArgs(void)
 
 #ifdef WOLFSSH_TEST_INTERNAL
 
-/* Tests below install a custom allocator via wolfSSL_SetAllocators. The
+/* Tests below install a custom allocator via wolfSSL_SetAllocators, which
+ * wolfSSL defines only under USE_WOLFSSL_MEMORY. The
  * wolfSSL_Malloc_cb / wolfSSL_Free_cb / wolfSSL_Realloc_cb typedefs gain
  * extra parameters when wolfSSL is built with WOLFSSL_STATIC_MEMORY or
  * WOLFSSL_DEBUG_MEMORY, so the capturing-allocator tests only compile
  * against the default signature. */
-#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
 #define WOLFSSH_TEST_CAPTURING_ALLOCATOR
 
 /* Retain-on-free allocator. Pass-through malloc/realloc; the free

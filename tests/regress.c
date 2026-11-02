@@ -17659,7 +17659,8 @@ static void TestSftpReadDirLongName(void)
     wolfSSH_CTX_free(ctx);
 }
 
-#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
 /* Allocator that fails the sftpAllocNth allocation (1-based; 0 fails none)
  * and tracks the live count, so a test can see a failed request free what it
  * took. A free of a block from before the window counts down; a request that
@@ -17846,7 +17847,7 @@ static void TestSftpOpenDirAllocFailure(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
-#endif /* !WOLFSSL_STATIC_MEMORY && !WOLFSSL_DEBUG_MEMORY */
+#endif /* USE_WOLFSSL_MEMORY && !WOLFSSL_STATIC_MEMORY && ... */
 #endif /* NO_WOLFSSH_DIR */
 
 #ifdef WOLFSSH_SFTP_ERRNO
@@ -22413,7 +22414,8 @@ int main(int argc, char** argv)
     TestSftpReadDirBounded();
     /* an entry too long to stat is listed, not an error */
     TestSftpReadDirLongName();
-    #if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+    #if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+        !defined(WOLFSSL_DEBUG_MEMORY)
     /* allocation failures in READDIR/OPENDIR are errors, not EOF or leaks */
     TestSftpReadDirAllocFailure();
     TestSftpOpenDirAllocFailure();
