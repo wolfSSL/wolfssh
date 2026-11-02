@@ -10356,9 +10356,13 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         ret = WS_FATAL_ERROR;
     }
 
+    if ((ret == WS_SUCCESS) && !ssh->kbSetupPending) {
+        WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse with no INFO_REQUEST "
+            "outstanding");
+        ret = WS_FATAL_ERROR;
+    }
+
     if (ret == WS_SUCCESS) {
-        /* Response arrived; the exchange is answered. */
-        ssh->kbSetupPending = 0;
         WMEMSET(&authData, 0, sizeof(authData));
         begin = *idx;
         kb = &authData.sf.keyboard;
@@ -10469,6 +10473,11 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         *idx = begin;
     }
 
+    if (ssh != NULL && ret != WS_AUTH_PENDING) {
+        /* Answered; a pending one is redispatched and must pass the gate. */
+        ssh->kbSetupPending = 0;
+    }
+
     if (authFailure || partialSuccess) {
         /* Charge every non-authenticating outcome: an uncounted partial
          * success replays forever, and a rejection isn't fatal on its own if
@@ -10480,6 +10489,10 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
     }
     else if (ret == WOLFSSH_USERAUTH_SUCCESS_ANOTHER) {
         ret = SendUserAuthKeyboardRequest(ssh, &authData);
+        if (ret == WS_AUTH_PENDING) {
+            /* Setup blocked; this response is redispatched. */
+            ssh->kbSetupPending = 1;
+        }
     }
     else if (ret == WS_SUCCESS) {
         ssh->clientState = CLIENT_USERAUTH_DONE;
@@ -20789,6 +20802,7 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
     word32 idx;
     word32 payloadSz = 0;
     int ret = WS_SUCCESS;
+    int delivered = 0;
 
     WLOG(WS_LOG_DEBUG, "Entering SendUserAuthKeyboardRequest()");
 
@@ -20898,11 +20912,15 @@ int SendUserAuthKeyboardRequest(WOLFSSH* ssh, WS_UserAuthData* authData)
     }
 
     if (ret == WS_SUCCESS) {
+        word32 flushes = ssh->txFlushCount;
+
         ret = wolfSSH_SendPacket(ssh);
+        delivered = SendPacketDelivered(ssh, flushes, ret);
     }
 
-    if ((ret == WS_WANT_WRITE) || (ret == WS_SUCCESS)) {
-        /* INFO_REQUEST sent or buffered; the exchange is now outstanding. */
+    if (delivered) {
+        /* INFO_REQUEST sent or buffered, whatever the highwater check made
+         * of it; the exchange is now outstanding. */
         ssh->kbSetupPending = 1;
     }
     else {

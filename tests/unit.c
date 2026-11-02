@@ -13693,6 +13693,279 @@ static int test_DoUserAuthRequest_badServiceClearsKb(void)
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+static int s_kbStaleSetupRet = WOLFSSH_USERAUTH_SUCCESS;
+static int s_kbStaleRespRet = WOLFSSH_USERAUTH_INVALID_PASSWORD;
+static int s_kbStaleRespCalls = 0;
+static word32 s_kbStalePromptLen = 9;
+static byte s_kbStalePromptEcho = 0;
+static byte* s_kbStalePrompts[1] = { (byte*)"Password:" };
+
+/* Setup returns s_kbStaleSetupRet with one prompt; each response is counted
+ * and answered with s_kbStaleRespRet. */
+static int UnitAuthKbStale(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        authData->sf.keyboard.promptCount = 1;
+        authData->sf.keyboard.promptLengths = &s_kbStalePromptLen;
+        authData->sf.keyboard.prompts = s_kbStalePrompts;
+        authData->sf.keyboard.promptEcho = &s_kbStalePromptEcho;
+        return s_kbStaleSetupRet;
+    }
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD) {
+        s_kbStaleRespCalls++;
+        return s_kbStaleRespRet;
+    }
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+/* A server session with UnitAuthKbStale. When kbRequest is set, it has
+ * taken a keyboard-interactive USERAUTH_REQUEST. */
+static WOLFSSH* NewKbStaleSession(WOLFSSH_CTX** ctx, int kbRequest,
+        int setupRet, int respRet)
+{
+    WOLFSSH* ssh;
+    byte kbReq[64];
+    word32 kbReqSz, idx = 0;
+
+    s_kbStaleSetupRet = setupRet;
+    s_kbStaleRespRet = respRet;
+    s_kbStaleRespCalls = 0;
+
+    kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
+            "ssh-connection", "keyboard-interactive");
+    if (kbReqSz == 0)
+        return NULL;
+    *ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (*ctx == NULL)
+        return NULL;
+    wolfSSH_SetUserAuth(*ctx, UnitAuthKbStale);
+    wolfSSH_SetIOSend(*ctx, UnitIoSendSink);
+    ssh = wolfSSH_new(*ctx);
+    if (ssh != NULL && kbRequest &&
+            wolfSSH_TestDoUserAuthRequest(ssh, kbReq, kbReqSz, &idx)
+                != WS_SUCCESS) {
+        wolfSSH_free(ssh);
+        ssh = NULL;
+    }
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(*ctx);
+        *ctx = NULL;
+    }
+    return ssh;
+}
+
+/* Feed one INFO_RESPONSE with responseCount responses of "x". */
+static int KbStaleInfoResponse(WOLFSSH* ssh, word32 responseCount)
+{
+    byte infoRsp[UINT32_SZ * 2 + 1];
+    word32 infoRspSz = UINT32_SZ, idx = 0;
+
+    PutU32BE(infoRsp, responseCount);
+    if (responseCount == 1) {
+        PutU32BE(infoRsp + UINT32_SZ, 1);
+        infoRsp[UINT32_SZ * 2] = 'x';
+        infoRspSz = (word32)sizeof(infoRsp);
+    }
+    return wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp, infoRspSz, &idx);
+}
+
+/* An INFO_RESPONSE with no INFO_REQUEST outstanding is refused before the
+ * callback. kbRequest sends a keyboard-interactive request first;
+ * answerFirst answers its INFO_REQUEST once. Returns 0 or a negative code. */
+static int RunStaleInfoResponse(const char* label, int kbRequest,
+        int answerFirst, int setupRet, int respRet, word32 staleCount)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh;
+    int result = 0;
+    int ret;
+
+    ssh = NewKbStaleSession(&ctx, kbRequest, setupRet, respRet);
+    if (ssh == NULL)
+        return -900;
+
+    if (answerFirst) {
+        (void)KbStaleInfoResponse(ssh, 1);
+        if (s_kbStaleRespCalls != 1) {
+            printf("StaleInfoResponse(%s): solicited response calls=%d "
+                   "expected 1\n", label, s_kbStaleRespCalls);
+            result = -901;
+        }
+    }
+
+    if (result == 0) {
+        s_kbStaleRespCalls = 0;
+        ret = KbStaleInfoResponse(ssh, staleCount);
+        if (ret != WS_FATAL_ERROR) {
+            printf("StaleInfoResponse(%s): ret=%d expected %d\n",
+                   label, ret, WS_FATAL_ERROR);
+            result = -902;
+        }
+        else if (s_kbStaleRespCalls != 0) {
+            printf("StaleInfoResponse(%s): userauth callback reached\n",
+                   label);
+            result = -903;
+        }
+        else if (ssh->clientState == CLIENT_USERAUTH_DONE) {
+            printf("StaleInfoResponse(%s): session authenticated\n", label);
+            result = -904;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A response kept for redispatch on WS_AUTH_PENDING still passes the gate:
+ * a blocked check (anotherRound 0), or a blocked second-round setup
+ * (anotherRound 1). Returns 0 or a negative code. */
+static int RunPendingInfoResponse(const char* label, int anotherRound)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh;
+    int result = 0;
+    int ret;
+
+    ssh = NewKbStaleSession(&ctx, 1, WOLFSSH_USERAUTH_SUCCESS,
+            anotherRound ? WOLFSSH_USERAUTH_SUCCESS_ANOTHER
+                         : WOLFSSH_USERAUTH_WOULD_BLOCK);
+    if (ssh == NULL)
+        return -910;
+    if (anotherRound)
+        s_kbStaleSetupRet = WOLFSSH_USERAUTH_WOULD_BLOCK;
+
+    ret = KbStaleInfoResponse(ssh, 1);
+    if (ret != WS_AUTH_PENDING || !ssh->kbSetupPending) {
+        printf("PendingInfoResponse(%s): ret=%d pending=%d expected %d, 1\n",
+               label, ret, ssh->kbSetupPending, WS_AUTH_PENDING);
+        result = -911;
+    }
+
+    if (result == 0) {
+        /* Redispatch of the kept packet. */
+        s_kbStaleSetupRet = WOLFSSH_USERAUTH_SUCCESS;
+        if (!anotherRound)
+            s_kbStaleRespRet = WOLFSSH_USERAUTH_SUCCESS;
+        ret = KbStaleInfoResponse(ssh, 1);
+        if (ret != WS_SUCCESS) {
+            printf("PendingInfoResponse(%s): retry ret=%d expected %d\n",
+                   label, ret, WS_SUCCESS);
+            result = -912;
+        }
+    }
+
+    if (result == 0 && anotherRound) {
+        /* The retry sent the second INFO_REQUEST; answer it. */
+        if (!ssh->kbSetupPending) {
+            printf("PendingInfoResponse(%s): second round not outstanding\n",
+                   label);
+            result = -913;
+        }
+        else {
+            s_kbStaleRespRet = WOLFSSH_USERAUTH_SUCCESS;
+            ret = KbStaleInfoResponse(ssh, 1);
+            if (ret != WS_SUCCESS) {
+                printf("PendingInfoResponse(%s): second round ret=%d "
+                       "expected %d\n", label, ret, WS_SUCCESS);
+                result = -914;
+            }
+        }
+    }
+
+    if (result == 0 && (ssh->clientState != CLIENT_USERAUTH_DONE
+                        || ssh->kbSetupPending)) {
+        printf("PendingInfoResponse(%s): clientState=%d pending=%d after "
+               "success\n", label, ssh->clientState, ssh->kbSetupPending);
+        result = -915;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The highwater callback runs once INFO_REQUEST is out, so its error leaves
+ * the exchange outstanding and the response is still taken. Returns 0 or a
+ * negative code. */
+static int RunHighwaterInfoRequest(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh;
+    byte kbReq[64];
+    word32 kbReqSz, idx = 0;
+    int result = 0;
+    int ret;
+
+    ssh = NewKbStaleSession(&ctx, 0, WOLFSSH_USERAUTH_SUCCESS,
+            WOLFSSH_USERAUTH_SUCCESS);
+    if (ssh == NULL)
+        return -920;
+    /* Level 0 leaves the byte count off; the first packet trips the
+     * message count. */
+    wolfSSH_SetHighwaterCb(ctx, 0, FailHighwater);
+    ssh->msgHighwaterMark = 1;
+
+    kbReqSz = BuildAuthMethodRequest(kbReq, (word32)sizeof(kbReq),
+            "ssh-connection", "keyboard-interactive");
+    ret = wolfSSH_TestDoUserAuthRequest(ssh, kbReq, kbReqSz, &idx);
+    if (ret != WS_FATAL_ERROR || !ssh->kbSetupPending) {
+        printf("HighwaterInfoRequest: ret=%d pending=%d expected %d, 1\n",
+               ret, ssh->kbSetupPending, WS_FATAL_ERROR);
+        result = -921;
+    }
+
+    if (result == 0) {
+        ret = KbStaleInfoResponse(ssh, 1);
+        if (ret != WS_SUCCESS || s_kbStaleRespCalls != 1) {
+            printf("HighwaterInfoRequest: response ret=%d calls=%d "
+                   "expected %d, 1\n", ret, s_kbStaleRespCalls, WS_SUCCESS);
+            result = -922;
+        }
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+static int test_DoUserAuthInfoResponse_unsolicited(void)
+{
+    int result = 0, r;
+
+    /* No keyboard-interactive request at all. */
+    r = RunStaleInfoResponse("no request", 0, 0,
+            WOLFSSH_USERAUTH_SUCCESS, WOLFSSH_USERAUTH_SUCCESS, 0);
+    if (result == 0) result = r;
+    /* Setup declined, so no INFO_REQUEST went out. A callback that accepts
+     * would authenticate the session. */
+    r = RunStaleInfoResponse("setup declined", 1, 0,
+            WOLFSSH_USERAUTH_FAILURE, WOLFSSH_USERAUTH_SUCCESS, 0);
+    if (result == 0) result = r;
+    /* A round answered and failed; a second response replays it. */
+    r = RunStaleInfoResponse("after failed round", 1, 1,
+            WOLFSSH_USERAUTH_SUCCESS, WOLFSSH_USERAUTH_INVALID_PASSWORD, 1);
+    if (result == 0) result = r;
+    /* A round answered with partial success; a second response is checked
+     * again without a new INFO_REQUEST. */
+    r = RunStaleInfoResponse("after partial success", 1, 1,
+            WOLFSSH_USERAUTH_SUCCESS, WOLFSSH_USERAUTH_PARTIAL_SUCCESS, 1);
+    if (result == 0) result = r;
+    r = RunPendingInfoResponse("check would block", 0);
+    if (result == 0) result = r;
+    r = RunPendingInfoResponse("setup would block", 1);
+    if (result == 0) result = r;
+    r = RunHighwaterInfoRequest();
+    if (result == 0) result = r;
+
+    return result;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+
+
 /* userauth callback that records whether it was invoked. Returns SUCCESS so
  * that, if it were ever reached for a password-change request, the request
  * would be (incorrectly) authenticated - making a missed rejection visible. */
@@ -28577,6 +28850,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     unitResult = test_DoUserAuthRequest_badServiceClearsKb();
     printf("DoUserAuthRequest_badServiceClearsKb: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoUserAuthInfoResponse_unsolicited();
+    printf("DoUserAuthInfoResponse_unsolicited: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif

@@ -593,6 +593,7 @@ static void InitKbInfoResponseHarness(ChannelOpenHarness* harness,
     harness->ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
     harness->ssh->authId = ID_USERAUTH_KEYBOARD;
     harness->ssh->kbAuth.promptCount = promptCount;
+    harness->ssh->kbSetupPending = 1;
 }
 
 /* Post-condition for a rejected INFO_RESPONSE: the transport survives and the
@@ -649,6 +650,8 @@ static void TestKbInfoResponseMismatchKeepsFraming(void)
             MSGID_USERAUTH_FAILURE);
     firstOutSz = harness.io.outSz;
 
+    /* As if a second INFO_REQUEST went out. */
+    harness.ssh->kbSetupPending = 1;
     ret = DoReceive(harness.ssh);
     AssertIntEQ(ret, WS_SUCCESS);
     AssertIntEQ(harness.io.inOff, harness.io.inSz);
