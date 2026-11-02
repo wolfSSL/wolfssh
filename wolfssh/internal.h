@@ -716,6 +716,14 @@ enum NameIdType {
      * MaxAuthTries default. */
     #define DEFAULT_MAX_AUTH_ATTEMPTS 6
 #endif
+#ifndef WOLFSSH_MAX_CHANNELS
+    /* Cap on open channels; a peer CHANNEL_OPEN past it is refused with
+     * OPEN_RESOURCE_SHORTAGE. Each channel holds a window-sized buffer. */
+    #define WOLFSSH_MAX_CHANNELS 64
+#endif
+#if WOLFSSH_MAX_CHANNELS < 1
+    #error "WOLFSSH_MAX_CHANNELS must be at least 1"
+#endif
 #ifndef MAX_PACKET_SZ
     /* This is from RFC 4253 section 6.1. */
     #define MAX_PACKET_SZ 35000

@@ -6063,6 +6063,7 @@ static void TestAgentRelayChannelDrainsOversizeBacklog(void)
     FreeChannelOpenHarness(&harness.base);
 }
 
+#if WOLFSSH_MAX_CHANNELS >= 2 /* opens a second channel */
 /* A partial request on one channel is dropped rather than prepended to the
  * next channel's data. */
 static void TestAgentRelayChannelResetsOnChannelChange(void)
@@ -6097,6 +6098,7 @@ static void TestAgentRelayChannelResetsOnChannelChange(void)
 
     FreeChannelOpenHarness(&harness.base);
 }
+#endif
 
 /* A declared length past the build's ceiling is refused and nothing is sent
  * to the agent. */
@@ -6603,6 +6605,7 @@ static void TestAgentRelayChannelFlushesUnderRekey(void)
 }
 
 
+#if WOLFSSH_MAX_CHANNELS >= 2 /* opens a second channel */
 /* Shifting a held request down leaves a copy of it above the buffer's
  * length, and a channel change scrubs that copy too. */
 static void TestAgentRelayChannelScrubsShiftedRequest(void)
@@ -6652,6 +6655,7 @@ static void TestAgentRelayChannelScrubsShiftedRequest(void)
 
     FreeChannelOpenHarness(&harness.base);
 }
+#endif
 
 
 #endif /* WOLFSSH_AGENT */
@@ -7219,6 +7223,11 @@ static void TestSecondSessionChannelRejected(void)
     word32 in1Sz;
     word32 in2Sz;
     int ret;
+#if WOLFSSH_MAX_CHANNELS < 2
+    const word32 reason = OPEN_RESOURCE_SHORTAGE;
+#else
+    const word32 reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
+#endif
 
     in1Sz = BuildChannelOpenPacket("session", 7, 0x4000, 0x8000,
             NULL, 0, in1, sizeof(in1));
@@ -7253,7 +7262,7 @@ static void TestSecondSessionChannelRejected(void)
     AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out, harness.io.outSz),
             8); /* RFC 4254 5.1: server must echo the peer's channel ID */
     AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
-            OPEN_ADMINISTRATIVELY_PROHIBITED);
+            reason);
     AssertIntEQ(harness.ssh->channelListSz, 1); /* original channel intact */
 
     FreeChannelOpenHarness(&harness);
@@ -10300,6 +10309,54 @@ static void TestDirectTcpipNoFwdCbSendsOpenFail(void)
 
     ret = DoReceive(harness.ssh);
     AssertChannelOpenFailResponse(&harness, ret);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* Peer opens up to WOLFSSH_MAX_CHANNELS are accepted; the next is refused
+ * with OPEN_RESOURCE_SHORTAGE, the session stays up, and closing a channel
+ * makes room again. */
+static void TestChannelOpenPastCapSendsResourceShortage(void)
+{
+    ChannelOpenHarness harness;
+    byte extra[128];
+    byte in[192];
+    word32 extraSz;
+    word32 inSz;
+    word32 i;
+
+    extraSz = BuildDirectTcpipExtra("127.0.0.1", 8080, "127.0.0.1", 2222,
+            extra, sizeof(extra));
+
+    InitChannelOpenHarness(&harness, NULL, 0);
+    AssertIntEQ(wolfSSH_CTX_SetFwdCb(harness.ctx, AcceptFwdCb, NULL),
+            WS_SUCCESS);
+    /* Keep the test's footprint small; the cap is on count, not size. */
+    AssertIntEQ(wolfSSH_CTX_SetWindowPacketSize(harness.ctx, 1024, 1024),
+            WS_SUCCESS);
+
+    for (i = 0; i < WOLFSSH_MAX_CHANNELS; i++) {
+        inSz = BuildChannelOpenPacket("direct-tcpip", 100 + i, 0x4000, 0x8000,
+                extra, extraSz, in, sizeof(in));
+        AssertIntEQ(ReplyToPacket(&harness, in, inSz),
+                MSGID_CHANNEL_OPEN_CONF);
+    }
+    AssertIntEQ(harness.ssh->channelListSz, WOLFSSH_MAX_CHANNELS);
+
+    inSz = BuildChannelOpenPacket("direct-tcpip", 9, 0x4000, 0x8000,
+            extra, extraSz, in, sizeof(in));
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_OPEN_FAIL);
+    AssertIntEQ(ParseChannelOpenFailRecipient(harness.io.out,
+            harness.io.outSz), 9);
+    AssertIntEQ(ParseChannelOpenFailReason(harness.io.out, harness.io.outSz),
+            OPEN_RESOURCE_SHORTAGE);
+    AssertIntEQ(harness.ssh->channelListSz, WOLFSSH_MAX_CHANNELS);
+    AssertFalse(harness.ssh->disconnected);
+
+    AssertIntEQ(ChannelRemove(harness.ssh, 100, WS_CHANNEL_ID_PEER),
+            WS_SUCCESS);
+    AssertIntEQ(ReplyToPacket(&harness, in, inSz), MSGID_CHANNEL_OPEN_CONF);
+    AssertIntEQ(harness.ssh->channelListSz, WOLFSSH_MAX_CHANNELS);
 
     FreeChannelOpenHarness(&harness);
 }
@@ -14691,6 +14748,7 @@ static void TestForwardedTcpipPortZeroFoldSettlesQueuedCancel(void)
     FreeChannelOpenHarness(&harness);
 }
 
+#if WOLFSSH_MAX_CHANNELS >= 2 /* opens a second channel */
 static void TestForwardedTcpipRepliesPairInSendOrder(void)
 {
     ChannelOpenHarness harness;
@@ -14718,6 +14776,7 @@ static void TestForwardedTcpipRepliesPairInSendOrder(void)
 
     FreeChannelOpenHarness(&harness);
 }
+#endif
 
 /* A port-0 request whose reply names no usable port leaves nothing to match
  * on, so the registration goes. */
@@ -24085,7 +24144,9 @@ int main(int argc, char** argv)
     TestAgentRelayChannelReassemblesFragmentedRequest();
     TestAgentRelayChannelKeepsTrailingBytes();
     TestAgentRelayChannelDrainsOversizeBacklog();
+#if WOLFSSH_MAX_CHANNELS >= 2
     TestAgentRelayChannelResetsOnChannelChange();
+#endif
     TestAgentRelayChannelRejectsOversizeLength();
     TestAgentRelayChannelRejectsZeroLength();
     TestAgentRelayChannelReplyReachesChannel();
@@ -24103,7 +24164,9 @@ int main(int argc, char** argv)
     TestAgentRelayChannelReconnectsOnDeadSocket();
     TestAgentRelayChannelHoldsOnRekey();
     TestAgentRelayChannelFlushesUnderRekey();
+#if WOLFSSH_MAX_CHANNELS >= 2
     TestAgentRelayChannelScrubsShiftedRequest();
+#endif
 #endif
 #endif
 #if defined(WOLFSSH_AGENT) && !defined(NO_WOLFSSH_SERVER)
@@ -24201,6 +24264,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSH_FWD
     TestDirectTcpipRejectSendsOpenFail();
     TestDirectTcpipNoFwdCbSendsOpenFail();
+    TestChannelOpenPastCapSendsResourceShortage();
     TestDirectTcpipOpenCbRejectBeatsFwdCb();
     TestDirectTcpipFwdCbRejectAfterOpenCbAccept();
     TestDirectTcpipFwdCbRejectsChannelId();
@@ -24360,7 +24424,9 @@ int main(int argc, char** argv)
     TestForwardedTcpipInterruptedSendStillRegisters();
     TestInterruptedSendRetriesForAnySender();
     TestGlobalRequestNoReplyQueuesNothing();
+#if WOLFSSH_MAX_CHANNELS >= 2
     TestForwardedTcpipRepliesPairInSendOrder();
+#endif
     TestForwardedTcpipUnusablePortReplySendsOpenFail();
     TestForwardedTcpipPortZeroOtherPortSendsOpenFail();
 #endif /* WOLFSSH_FWD && !NO_WOLFSSH_CLIENT */
