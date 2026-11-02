@@ -173,6 +173,7 @@ static int SendFailure(WOLFSSH_AGENT_CTX* agent)
 }
 
 
+#if 0
 static int SendSuccess(WOLFSSH_AGENT_CTX* agent)
 {
     int ret = WS_SUCCESS;
@@ -199,7 +200,6 @@ static int SendSuccess(WOLFSSH_AGENT_CTX* agent)
 }
 
 
-#if 0
 static int SendRequestIdentities(WOLFSSH_AGENT_CTX* agent)
 {
     int ret = WS_SUCCESS;
@@ -1903,11 +1903,9 @@ int wolfSSH_AGENT_worker(WOLFSSH* ssh)
             ret = WS_AGENT_NULL_E;
     }
 
-    if (ret == WS_SUCCESS) {
-        SendSuccess(NULL);
-        DoMessage(NULL, NULL, 0, NULL);
-        ssh->agent->state = AGENT_STATE_DONE;
-    }
+    /* Not implemented; nothing drives the agent from here. */
+    if (ret == WS_SUCCESS)
+        ret = WS_UNIMPLEMENTED_E;
 
     WLOG_LEAVE(ret);
     return ret;
