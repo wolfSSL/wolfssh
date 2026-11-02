@@ -9586,6 +9586,117 @@ static void TestUserAuthPipelinedAfterServiceRequest(void)
     FreeChannelOpenHarness(&harness);
 }
 
+#define REGRESS_WIPE_SECRET "Rejected-Secret-17105"
+
+/* Whether the secret sits anywhere in the input buffer's allocation. */
+static int InputBufferHoldsSecret(WOLFSSH* ssh)
+{
+    word32 secretSz = (word32)WSTRLEN(REGRESS_WIPE_SECRET);
+    word32 i;
+
+    for (i = 0; i + secretSz <= ssh->inputBuffer.bufferSz; i++) {
+        if (WMEMCMP(ssh->inputBuffer.buffer + i, REGRESS_WIPE_SECRET,
+                    secretSz) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* fenrir 17105: a password request after auth has succeeded is refused
+ * before dispatch, and the refused packet is wiped, not left for
+ * wolfSSH_free(). */
+static void TestPostAuthUserAuthRequestWiped(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthPasswordRequest("alice", REGRESS_WIPE_SECRET,
+            in, sizeof(in));
+
+    ResetAuthCbRecord();
+    InitChannelOpenHarness(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, AcceptPasswordUserAuthCb);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(authCbInvoked, 0);
+    AssertIntEQ(ParseMsgId(harness.io.out, harness.io.outSz),
+            MSGID_DISCONNECT);
+    AssertFalse(InputBufferHoldsSecret(harness.ssh));
+
+    /* A retry still fails. */
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+
+    FreeChannelOpenHarness(&harness);
+}
+
+/* fenrir 17105: padding under the minimum is refused before dispatch too. */
+static void TestShortPaddingPacketWiped(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthPasswordRequest("alice", REGRESS_WIPE_SECRET,
+            in, sizeof(in));
+    in[UINT32_SZ] = MIN_PAD_LENGTH - 1;
+
+    InitChannelOpenHarness(&harness, in, inSz);
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_BUFFER_E);
+    AssertFalse(InputBufferHoldsSecret(harness.ssh));
+
+    FreeChannelOpenHarness(&harness);
+}
+
+static int pendingAuthCbCalls;
+
+static int PendingThenAcceptUserAuthCb(byte authType,
+        WS_UserAuthData* authData, void* ctx)
+{
+    (void)authData;
+    (void)ctx;
+
+    pendingAuthCbCalls++;
+    if (authType != WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_FAILURE;
+    return (pendingAuthCbCalls == 1) ?
+            WOLFSSH_USERAUTH_WOULD_BLOCK : WOLFSSH_USERAUTH_SUCCESS;
+}
+
+/* fenrir 17105: a pending auth keeps its packet, since the next call
+ * dispatches the same request again. */
+static void TestPendingUserAuthPacketKept(void)
+{
+    ChannelOpenHarness harness;
+    byte in[128];
+    word32 inSz;
+
+    inSz = BuildUserAuthPasswordRequest("alice", REGRESS_WIPE_SECRET,
+            in, sizeof(in));
+
+    pendingAuthCbCalls = 0;
+    InitChannelOpenHarness(&harness, in, inSz);
+    wolfSSH_SetUserAuth(harness.ctx, PendingThenAcceptUserAuthCb);
+    harness.ssh->acceptState = ACCEPT_CLIENT_USERAUTH_REQUEST_DONE;
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_FATAL_ERROR);
+    AssertIntEQ(harness.ssh->error, WS_AUTH_PENDING);
+    AssertIntEQ(pendingAuthCbCalls, 1);
+    AssertTrue(harness.ssh->clientState != CLIENT_USERAUTH_DONE);
+    AssertTrue(InputBufferHoldsSecret(harness.ssh));
+
+    AssertIntEQ(DoReceive(harness.ssh), WS_SUCCESS);
+    AssertIntEQ(pendingAuthCbCalls, 2);
+    AssertIntEQ(harness.ssh->clientState, CLIENT_USERAUTH_DONE);
+    AssertFalse(InputBufferHoldsSecret(harness.ssh));
+
+    FreeChannelOpenHarness(&harness);
+}
+
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static word32 BuildUserAuthKeyboardRequest(const char* user,
         byte* out, word32 outSz)
@@ -23591,6 +23702,9 @@ int main(int argc, char** argv)
     TestSameUserRetryAllowed();
     TestUserAuthBeforeServiceRequestDisconnects();
     TestUserAuthPipelinedAfterServiceRequest();
+    TestPostAuthUserAuthRequestWiped();
+    TestShortPaddingPacketWiped();
+    TestPendingUserAuthPacketKept();
     TestOutputBacklogBoundedUnimplemented();
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
     TestKbInfoResponseCountMismatchSendsFailure();
