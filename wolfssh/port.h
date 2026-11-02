@@ -1798,7 +1798,9 @@ extern "C" {
 
     /* Open a file for reading without following a final-component symlink.
      * Returns 0 on success, non-zero on failure, matching the wfopen
-     * convention.  Shared, un-followed read-open used by the SCP send guards. */
+     * convention; WOLFSSH_FOPEN_NOT_REGULAR for a special file.  Shared,
+     * un-followed read-open used by the SCP send guards. */
+    #define WOLFSSH_FOPEN_NOT_REGULAR 2
     WOLFSSH_LOCAL int wFopenNoFollow(void* fs, WFILE** f, const char* path);
     /* Open a directory without following a final-component symlink; returns 0
      * on success, non-zero on failure, matching WOPENDIR.  Not provided for
