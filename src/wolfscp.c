@@ -2262,34 +2262,48 @@ int wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd)
 }
 
 
-/* Shared format so the size probe and the write cannot drift. */
-#define SCP_CMD_FMT "scp -%c %s"
-
-static char* MakeScpCmd(const char* name, char dir, void* heap)
+/* Builds "scp -<dir> <name>" for the exec request. As with OpenSSH, the
+ * name goes to the server's shell as given, after "--" when it starts with
+ * "-". */
+static int MakeScpCmd(const char* name, char dir, char** cmd, void* heap)
 {
-    char* cmd;
-    int sz;
+    const char* dashes = (name[0] == '-') ? "-- " : "";
+    word32 nameSz, dashesSz, sz, i;
+    char* out;
 
-#ifdef USE_WINDOWS_API
-    sz = WSCPRINTF(SCP_CMD_FMT, dir, name) + 1;
-#else
-    sz = WSNPRINTF(NULL, 0, SCP_CMD_FMT, dir, name) + 1;
-#endif
-    if (sz <= 0) {
-        return NULL;
-    }
-    cmd = (char*)WMALLOC(sz, heap, DYNTYPE_STRING);
-    if (cmd == NULL) {
-        return NULL;
-    }
-    sz = WSNPRINTF(cmd, sz, SCP_CMD_FMT, dir, name);
-    if (sz <= 0) {
-        WFREE(cmd, heap, DYNTYPE_STRING);
-        return NULL;
+    nameSz = (word32)WSTRLEN(name);
+    for (i = 0; i < nameSz; i++) {
+        /* a control character would end or split the shell command */
+        if ((byte)name[i] < 0x20 || (byte)name[i] == 0x7F)
+            return WS_BAD_ARGUMENT;
     }
 
-    return cmd;
+    /* "scp -", dir, space, dashes, name and terminator */
+    dashesSz = (word32)WSTRLEN(dashes);
+    sz = 5 + 2 + dashesSz + nameSz + 1;
+    out = (char*)WMALLOC(sz, heap, DYNTYPE_STRING);
+    if (out == NULL)
+        return WS_MEMORY_E;
+
+    WMEMCPY(out, "scp -", 5);
+    out[5] = dir;
+    out[6] = ' ';
+    WMEMCPY(out + 7, dashes, dashesSz);
+    WMEMCPY(out + 7 + dashesSz, name, nameSz);
+    out[sz - 1] = '\0';
+
+    *cmd = out;
+    return WS_SUCCESS;
 }
+
+
+#ifdef WOLFSSH_TEST_INTERNAL
+int wolfSSH_TestScpMakeCmd(const char* name, char dir, char** cmd,
+        void* heap)
+{
+    return MakeScpCmd(name, dir, cmd, heap);
+}
+#endif /* WOLFSSH_TEST_INTERNAL */
 
 
 int wolfSSH_SCP_to(WOLFSSH* ssh, const char* src, const char* dst)
@@ -2303,10 +2317,12 @@ int wolfSSH_SCP_to(WOLFSSH* ssh, const char* src, const char* dst)
         return WS_BAD_ARGUMENT;
 
     if (ssh->scpState == SCP_SETUP) {
-        char* cmd = MakeScpCmd(dst, 't', ssh->ctx->heap);
-        if (cmd == NULL) {
-            WLOG(WS_LOG_SCP, "Cannot allocate scp command");
-            ssh->error = WS_MEMORY_E;
+        char* cmd = NULL;
+
+        ret = MakeScpCmd(dst, 't', &cmd, ssh->ctx->heap);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_SCP, "Cannot make scp command");
+            ssh->error = ret;
             return WS_ERROR;
         }
 
@@ -2341,14 +2357,35 @@ int wolfSSH_SCP_from(WOLFSSH* ssh, const char* src, const char* dst)
         return WS_BAD_ARGUMENT;
 
     if (ssh->scpState == SCP_SETUP) {
-        char* cmd = MakeScpCmd(src, 'f', ssh->ctx->heap);
-        if (cmd == NULL) {
-            WLOG(WS_LOG_SCP, "Cannot allocate scp command");
-            ssh->error = WS_MEMORY_E;
+        char* cmd = NULL;
+        word32 dstSz = (word32)WSTRLEN(dst);
+
+        ret = MakeScpCmd(src, 'f', &cmd, ssh->ctx->heap);
+        if (ret != WS_SUCCESS) {
+            WLOG(WS_LOG_SCP, "Cannot make scp command");
+            ssh->error = ret;
             return WS_ERROR;
         }
 
-        ssh->scpBasePath = dst;
+        /* the receive side rewrites the base path, so work on a copy;
+         * leave room for names appended to it */
+        if (ssh->scpBasePathDynamic != NULL) {
+            WFREE(ssh->scpBasePathDynamic, ssh->ctx->heap, DYNTYPE_BUFFER);
+        }
+        ssh->scpBasePath = NULL;
+        ssh->scpBasePathSz = dstSz + WOLFSSH_MAX_FILENAME;
+        ssh->scpBasePathDynamic = (char*)WMALLOC(ssh->scpBasePathSz,
+                ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (ssh->scpBasePathDynamic == NULL) {
+            ssh->scpBasePathSz = 0;
+            WFREE(cmd, ssh->ctx->heap, DYNTYPE_STRING);
+            ssh->error = WS_MEMORY_E;
+            return WS_ERROR;
+        }
+        WMEMSET(ssh->scpBasePathDynamic, 0, ssh->scpBasePathSz);
+        WMEMCPY(ssh->scpBasePathDynamic, dst, dstSz);
+
+        ssh->scpBasePath = ssh->scpBasePathDynamic;
         ret = wolfSSH_SCP_connect(ssh, (byte*)cmd);
         if (ret == WS_SUCCESS) {
             ret = ParseBasePathHelper(ssh);

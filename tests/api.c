@@ -7850,11 +7850,7 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
     char file1[300];
     char file2[300];
     char fifo[300];
-    /* wolfSSH_SCP_from() mutates its src/dst buffers in place (e.g.
-     * ScpCheckForRename() writes a NUL into the path), so these cannot be
-     * string literals. */
     char srcBuf[256];
-    char dstBuf[32];
     THREAD_TYPE serThread;
 
     for (i = 0; i < sizeof(data1); i++)
@@ -7864,7 +7860,6 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
 
     AssertNotNull(WGETCWD(NULL, cwdBuf, sizeof(cwdBuf)));
     WSNPRINTF(srcBuf, sizeof(srcBuf), "%s/scp_recur_src", cwdBuf);
-    WSTRNCPY(dstBuf, dstDir, sizeof(dstBuf));
     WSNPRINTF(file1, sizeof(file1), "%s/a_short.txt", srcBuf);
     WSNPRINTF(file2, sizeof(file2), "%s/b_longer_name.txt", srcBuf);
     WSNPRINTF(fifo, sizeof(fifo), "%s/c_fifo", srcBuf);
@@ -7917,8 +7912,10 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
             &rcvTimeout, sizeof(rcvTimeout));
 #endif
 
-    /* The skipped FIFO fails the transfer once both files are written. */
-    ret = wolfSSH_SCP_from(ssh, srcBuf, dstBuf);
+    /* a string literal destination: wolfSSH_SCP_from() must not write
+     * through it. The skipped FIFO fails the transfer once both files are
+     * written. */
+    ret = wolfSSH_SCP_from(ssh, srcBuf, dstDir);
     AssertIntEQ(ret, WS_FATAL_ERROR);
 
     ret = wolfSSH_shutdown(ssh);
@@ -8115,6 +8112,8 @@ static void test_wolfSSH_SCP_SendZeroFirst(void)
 
     ret = wolfSSH_SCP_from(ssh, srcBuf, fromBuf);
     AssertIntEQ(ret, WS_SUCCESS);
+    /* the destination argument is const and is left as it was */
+    AssertStrEQ(fromBuf, fromName);
 
     ret = wolfSSH_shutdown(ssh);
     (void)ret;

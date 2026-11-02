@@ -2193,6 +2193,10 @@ enum WS_MessageIdLimits {
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     WOLFSSH_API int wolfSSH_TestScpPushDir(const char* path);
 #endif
+#ifndef NO_WOLFSSH_CLIENT
+    WOLFSSH_API int wolfSSH_TestScpMakeCmd(const char* name, char dir,
+            char** cmd, void* heap);
+#endif
 #endif /* WOLFSSH_SCP */
 #ifndef WOLFSSH_NO_DH
     WOLFSSH_API int wolfSSH_TestKeyAgreeDh_client(WOLFSSH* ssh, byte hashId,
