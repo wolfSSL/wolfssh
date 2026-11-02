@@ -9032,6 +9032,7 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
 int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
 {
     struct WS_SFTP_MKDIR_STATE* state;
+    WS_SFTP_FILEATRB defAtr;
     int   ret;
     byte type;
 
@@ -9058,13 +9059,23 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
             if (wolfSSH_SFTP_buffer_size(&state->buffer) == 0) {
                 /* packet not created yet */
                 int sz = (int)WSTRLEN(dir);
+                int atrSz;
+
+                if (atr == NULL) {
+                    WMEMSET(&defAtr, 0, sizeof(defAtr));
+                    defAtr.flags = WOLFSSH_FILEATRB_PERM;
+                    defAtr.per = 0777;
+                    atr = &defAtr;
+                }
+                atrSz = SFTP_AttributesSz(ssh, atr);
+
                 if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, sz +
-                            WOLFSSH_SFTP_HEADER + UINT32_SZ * 3) != 0) {
+                            WOLFSSH_SFTP_HEADER + UINT32_SZ + atrSz) != 0) {
                     return WS_MEMORY_E;
                 }
 
                 if (SFTP_SetHeader(ssh, ssh->reqId, WOLFSSH_FTP_MKDIR,
-                    sz + UINT32_SZ * 3,
+                    sz + UINT32_SZ + atrSz,
                     wolfSSH_SFTP_buffer_data(&state->buffer)) != WS_SUCCESS) {
                     return WS_FATAL_ERROR;
                 }
@@ -9078,11 +9089,11 @@ int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr)
                 wolfSSH_SFTP_buffer_seek(&state->buffer,
                     wolfSSH_SFTP_buffer_idx(&state->buffer), sz);
 
-                wolfSSH_SFTP_buffer_c32toa(&state->buffer, UINT32_SZ);
-
-                /* @TODO handle setting attributes */
-                WOLFSSH_UNUSED(atr);
-                wolfSSH_SFTP_buffer_c32toa(&state->buffer, 0777);
+                SFTP_SetAttributes(ssh,
+                    wolfSSH_SFTP_buffer_data(&state->buffer) +
+                    wolfSSH_SFTP_buffer_idx(&state->buffer), atrSz, atr);
+                wolfSSH_SFTP_buffer_seek(&state->buffer,
+                    wolfSSH_SFTP_buffer_idx(&state->buffer), atrSz);
 
                 ret = wolfSSH_SFTP_buffer_set_size(&state->buffer,
                         wolfSSH_SFTP_buffer_idx(&state->buffer));

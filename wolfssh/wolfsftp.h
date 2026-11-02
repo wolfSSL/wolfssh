@@ -293,6 +293,8 @@ WOLFSSH_API void wolfSSH_SFTP_Interrupt(WOLFSSH* ssh);
 
 /* functions used for commands */
 WOLFSSH_API int wolfSSH_SFTP_Remove(WOLFSSH* ssh, char* f);
+/* Sends atr with the request; the server picks the mode when atr carries no
+ * permissions. A NULL atr requests permissions 0777. */
 WOLFSSH_API int wolfSSH_SFTP_MKDIR(WOLFSSH* ssh, char* dir,
         WS_SFTP_FILEATRB* atr);
 WOLFSSH_API int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir);
