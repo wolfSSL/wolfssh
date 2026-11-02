@@ -1142,7 +1142,7 @@ static int DoAddIdentity(WOLFSSH_AGENT_CTX* agent,
         ato32(buf + begin, &sz);
         begin += LENGTH_SZ;
 
-        if (begin + sz > len)
+        if (sz > len - begin)
             ret = WS_PARSE_E;
     }
 
