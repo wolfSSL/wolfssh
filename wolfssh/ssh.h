@@ -989,7 +989,8 @@ WOLFSSH_API int wolfSSH_stream_exit(WOLFSSH* ssh, int status);
 WOLFSSH_API int wolfSSH_extended_data_read(WOLFSSH* ssh, byte* out,
         word32 outSz);
 /* Starts a key exchange. A clean start leaves ssh->error alone; only a
- * failure records its code there. */
+ * failure records its code there. While a key exchange is already in
+ * progress this is a no-op that returns WS_SUCCESS without sending. */
 WOLFSSH_API int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh);
 /* Returns WS_INVALID_STATE_E before the initial KEX completes when strict
  * KEX is offered. */
