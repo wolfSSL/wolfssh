@@ -968,15 +968,14 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
     int rej = 1;
 
     if (vCtx && channel) {
-        const char* cmd = wolfSSH_ChannelGetSessionCommand(channel);
-
         if (SessionInUse((thread_ctx_t*)vCtx)) {
             return 1;
         }
 
 #ifdef WOLFSSH_SCP
-        /* The prefix ChannelCommandIsScp() matches, so both modes agree. */
-        if (cmd != NULL && WSTRNCMP(cmd, "scp", 3) == 0) {
+        /* The test wolfSSH_accept() diverts on, so a command granted here
+         * as a transfer is served as one. */
+        if (wolfSSH_ChannelCommandIsScp(channel) == 1) {
             /* An scp command the transfer cannot be run for is refused
              * rather than served as a session. */
             if (TransferChannel((thread_ctx_t*)vCtx, channel)) {
@@ -989,7 +988,6 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         {
             rej = wsShellStartCb(channel, vCtx);
         }
-        (void)cmd;
     }
 
     return rej;
