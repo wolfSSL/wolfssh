@@ -85,8 +85,11 @@
         #include <termios.h>
     #endif
 #ifndef USE_WINDOWS_API
+    #include <grp.h>
     #include <pwd.h>
+    #include <sys/stat.h>
     #include <sys/wait.h>
+    #include <unistd.h>
 #endif
     #include <signal.h>
 #if defined(__QNX__) || defined(__QNXNTO__)
@@ -850,6 +853,27 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
                 printf("userName is %s\n", userName);
                 system("env");
             #endif
+
+            /* Started as root, the shell runs as the user who logged in,
+             * or not at all. Otherwise the process has no root to give
+             * up. */
+            if (geteuid() == 0) {
+                /* Give the user its terminal, so it can reopen it by
+                 * name. */
+                if (fchown(STDIN_FILENO, p_passwd->pw_uid, (gid_t)-1) != 0
+                        || fchmod(STDIN_FILENO, 0620) != 0) {
+                    _exit(EXIT_FAILURE);
+                }
+                if (initgroups(p_passwd->pw_name, p_passwd->pw_gid) != 0
+                        || setgid(p_passwd->pw_gid) != 0
+                        || setuid(p_passwd->pw_uid) != 0) {
+                    _exit(EXIT_FAILURE);
+                }
+                if (p_passwd->pw_uid != 0
+                        && (setuid(0) == 0 || seteuid(0) == 0)) {
+                    _exit(EXIT_FAILURE);
+                }
+            }
 
             setenv("HOME", p_passwd->pw_dir, 1);
             setenv("LOGNAME", p_passwd->pw_name, 1);
