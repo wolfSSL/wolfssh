@@ -17365,17 +17365,13 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
 
     /* Normalize the peer's signature. Some SSH implementations remove
      * leading zeros on the signatures they encode. We need to pad the
-     * front of the signature to the key size. */
+     * front of the signature to the key size. A longer one is refused. */
+    if (ret == WS_SUCCESS && sigSz > keySz) {
+        WLOG(WS_LOG_DEBUG, "%s: %s", loc, "RSA signature too long");
+        ret = WS_RSA_E;
+    }
     if (ret == WS_SUCCESS) {
-        word32 offset;
-
-        if (keySz > sigSz) {
-            offset = keySz - sigSz;
-        }
-        else {
-            sigSz = keySz;
-            offset = 0;
-        }
+        word32 offset = keySz - sigSz;
 
         WMEMSET(checkSig, 0, offset);
         WMEMCPY(checkSig + offset, sig, sigSz);
