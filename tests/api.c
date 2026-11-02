@@ -46,6 +46,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -2528,6 +2529,144 @@ static void test_wolfSSH_ReadPublicKey_pem(void)
     }
 #endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
+}
+
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519_KEY_IMPORT) && \
+    defined(HAVE_ED25519_KEY_EXPORT)
+    #define API_READKEY_ED25519_PUB
+#endif
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    defined(WOLFSSL_MLDSA_PUBLIC_KEY) && defined(WC_ENABLE_ASYM_KEY_EXPORT)
+    #define API_READKEY_MLDSA_PUB
+#endif
+
+#if (!defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_TEST_INTERNAL)) || \
+    (!defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)) || \
+    defined(API_READKEY_ED25519_PUB) || defined(API_READKEY_MLDSA_PUB)
+/* Reads the public DER key twice, into a new allocation and into a caller
+ * buffer, and expects the same blob in the caller's buffer. */
+static void ReadKeyAsn1PubCallerBuf(const byte* der, word32 derSz)
+{
+    byte buf[2048];
+    byte* alloc = NULL;
+    word32 allocSz = 0;
+    byte* key;
+    word32 keySz;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &alloc, &allocSz, &keyType, &keyTypeSz, 0, NULL), WS_SUCCESS);
+    AssertNotNull(alloc);
+    AssertIntGT(allocSz, 0);
+    AssertIntLE(allocSz, (word32)sizeof(buf));
+
+    key = buf;
+    keySz = (word32)sizeof(buf);
+    WMEMSET(buf, 0, sizeof(buf));
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, 0, NULL), WS_SUCCESS);
+    AssertTrue(key == buf);
+    AssertIntEQ(keySz, allocSz);
+    AssertIntEQ(WMEMCMP(buf, alloc, allocSz), 0);
+
+    /* One byte short is refused, and the caller's buffer stays put. */
+    key = buf;
+    keySz = allocSz - 1;
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, 0, NULL), WS_BUFFER_E);
+    AssertTrue(key == buf);
+    AssertIntEQ(keySz, allocSz - 1);
+
+    WFREE(alloc, NULL, DYNTYPE_PRIVKEY);
+}
+#endif
+
+
+/* An ASN.1 public key read fills a caller-supplied output buffer instead of
+ * replacing it with a new allocation. */
+static void test_wolfSSH_ReadKey_asn1PubCallerBuf(void)
+{
+#if !defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_TEST_INTERNAL)
+    {
+        byte* der = NULL;
+        word32 derSz = 0;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyRsaPubDer, &der, &derSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        ReadKeyAsn1PubCallerBuf(der, derSz);
+        WFREE(der, NULL, 0);
+    }
+#endif
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)
+    {
+        ecc_key ecc;
+        byte* privDer = NULL;
+        word32 privDerSz = 0;
+        byte pubDer[256];
+        word32 idx = 0;
+        int pubDerSz;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyEccDer, &privDer, &privDerSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        AssertIntEQ(wc_ecc_init(&ecc), 0);
+        AssertIntEQ(wc_EccPrivateKeyDecode(privDer, &idx, &ecc, privDerSz),
+                0);
+        pubDerSz = wc_EccPublicKeyToDer(&ecc, pubDer, sizeof(pubDer), 1);
+        wc_ecc_free(&ecc);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(privDer, NULL, 0);
+    }
+#endif
+#ifdef API_READKEY_ED25519_PUB
+    {
+        ed25519_key ed;
+        byte* privDer = NULL;
+        word32 privDerSz = 0;
+        byte pubDer[128];
+        word32 idx = 0;
+        int pubDerSz;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyEd25519Der, &privDer, &privDerSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        AssertIntEQ(wc_ed25519_init(&ed), 0);
+        AssertIntEQ(wc_Ed25519PrivateKeyDecode(privDer, &idx, &ed, privDerSz),
+                0);
+        pubDerSz = wc_Ed25519PublicKeyToDer(&ed, pubDer, sizeof(pubDer), 1);
+        wc_ed25519_free(&ed);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(privDer, NULL, 0);
+    }
+#endif
+#ifdef API_READKEY_MLDSA_PUB
+    {
+        MlDsaKey mlKey;
+        WC_RNG rng;
+        byte* pubDer;
+        int pubDerSz;
+
+        AssertIntEQ(wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID), 0);
+        AssertIntEQ(wc_MlDsaKey_SetParams(&mlKey, WC_ML_DSA_44), 0);
+        AssertIntEQ(wc_InitRng(&rng), 0);
+        AssertIntEQ(wc_MlDsaKey_MakeKey(&mlKey, &rng), 0);
+        wc_FreeRng(&rng);
+        pubDer = (byte*)WMALLOC(WC_MLDSA_44_PUB_KEY_DER_SIZE, NULL, 0);
+        AssertNotNull(pubDer);
+        pubDerSz = wc_MlDsaKey_PublicKeyToDer(&mlKey, pubDer,
+                WC_MLDSA_44_PUB_KEY_DER_SIZE, 1);
+        wc_MlDsaKey_Free(&mlKey);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(pubDer, NULL, 0);
+    }
+#endif
 }
 
 
@@ -9365,6 +9504,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadPublicKey_pem();
+    test_wolfSSH_ReadKey_asn1PubCallerBuf();
     test_wolfSSH_ReadKey_badPad();
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
