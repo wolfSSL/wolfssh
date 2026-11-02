@@ -1291,6 +1291,7 @@ struct WOLFSSH {
     byte   scpIsRecursive;        /* recursive transfer requested */
     byte   scpRequestType;        /* directory or single file */
     byte   scpMsgType;
+    byte   scpPeerWarned;         /* sink read a warning record */
     int    scpFileMode;           /* mode/permission of file/dir */
     word32 scpFileSz;             /* total size of file/dir being transferred */
     char*  scpFileName;           /* file name, dynamic */
@@ -2373,6 +2374,7 @@ enum WS_ScpStates {
     SCP_SEND_EXIT_DIRECTORY,
     SCP_SEND_EXIT_DIRECTORY_FINAL,
     SCP_SEND_TIMESTAMP,
+    SCP_SEND_WARNING,
     SCP_DONE
 };
 
@@ -2380,7 +2382,8 @@ enum WS_ScpMsgTypes {
     WOLFSSH_SCP_MSG_FILE = 0,
     WOLFSSH_SCP_MSG_TIME,
     WOLFSSH_SCP_MSG_DIR,
-    WOLFSSH_SCP_MSG_END_DIR
+    WOLFSSH_SCP_MSG_END_DIR,
+    WOLFSSH_SCP_MSG_WARN
 };
 
 enum WS_ScpDirection {

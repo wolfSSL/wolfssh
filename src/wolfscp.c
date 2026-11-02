@@ -241,6 +241,8 @@ int DoScpSink(WOLFSSH* ssh)
 
                 ssh->scpState = SCP_SEND_CONFIRMATION;
                 ssh->scpNextState = SCP_RECEIVE_MESSAGE;
+                ssh->scpPeerWarned = 0;
+                ssh->scpRecvMsgSz = 0;
 
                 ssh->scpConfirm = ssh->ctx->scpRecvCb(ssh,
                         WOLFSSH_SCP_NEW_REQUEST, ssh->scpBasePath,
@@ -255,6 +257,19 @@ int DoScpSink(WOLFSSH* ssh)
                     if (ret == WS_EOF) {
                         ret = WS_SUCCESS; /* successfully received message */
                         ssh->scpState = SCP_DONE;
+                        /* fail a transfer cut off mid-record, or one that
+                         * skipped entries, as OpenSSH scp exits non-zero */
+                        if (ssh->scpRecvMsgSz > 0) {
+                            ret = WS_SCP_BAD_MSG_E;
+                            WLOG(WS_LOG_ERROR, scpError,
+                                 "record cut off at EOF", ret);
+                        }
+                        else if (ssh->scpPeerWarned) {
+                            ret = WS_FATAL_ERROR;
+                            ssh->error = ret;
+                            WLOG(WS_LOG_ERROR, scpError,
+                                 "peer skipped entries", ret);
+                        }
                         break;
                     }
 
@@ -262,7 +277,11 @@ int DoScpSink(WOLFSSH* ssh)
                     break;
                 }
 
-                if (ssh->scpMsgType == WOLFSSH_SCP_MSG_DIR) {
+                if (ssh->scpMsgType == WOLFSSH_SCP_MSG_WARN) {
+                    /* read the record that follows the warning */
+                    continue;
+
+                } else if (ssh->scpMsgType == WOLFSSH_SCP_MSG_DIR) {
                     ssh->scpState = SCP_SEND_CONFIRMATION;
                     ssh->scpNextState = SCP_RECEIVE_MESSAGE;
                     ssh->scpFileState = WOLFSSH_SCP_NEW_DIR;
@@ -571,6 +590,39 @@ static int SendScpExitDirectory(WOLFSSH* ssh)
     return ret;
 }
 
+/* Sends the message set with wolfSSH_SetScpErrorMsg() as a warning record.
+ * The sink does not answer it. */
+static int SendScpWarning(WOLFSSH* ssh)
+{
+    char defaultMsg[] = " scp: skipped an entry\n";
+    char* msg = defaultMsg;
+    int msgSz, ret;
+
+    if (ssh->scpConfirmMsg != NULL &&
+            ssh->scpConfirmMsgSz > SCP_MIN_CONFIRM_SZ) {
+        msg = ssh->scpConfirmMsg;
+    }
+    msg[0] = SCP_CONFIRM_ERR;
+
+    msgSz = (int)WSTRLEN(msg);
+    ret = ScpStreamSend(ssh, (byte*)msg, msgSz);
+    if (ret == msgSz) {
+        ret = WS_SUCCESS;
+        if (ssh->scpConfirmMsg != NULL) {
+            WFREE(ssh->scpConfirmMsg, ssh->ctx->heap, DYNTYPE_STRING);
+            ssh->scpConfirmMsg = NULL;
+            ssh->scpConfirmMsgSz = 0;
+        }
+    }
+    /* leave a non-blocking want for the caller to retry */
+    else if (ret != WS_WANT_READ && ret != WS_WANT_WRITE) {
+        ret = WS_FATAL_ERROR;
+    }
+
+    return ret;
+}
+
+
 int DoScpSource(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
@@ -685,6 +737,11 @@ int DoScpSource(WOLFSSH* ssh)
                     ssh->scpState = SCP_DONE;
                     continue;
 
+                } else if (ssh->scpConfirm == WS_SCP_CONTINUE) {
+                    /* entry skipped, warn the peer and ask for the next */
+                    ssh->scpState = SCP_SEND_WARNING;
+                    continue;
+
                 } else if (ssh->scpConfirm == WS_SCP_ABORT) {
                 #if !defined(NO_FILESYSTEM) && \
                         !defined(WOLFSSH_SCP_USER_CALLBACKS)
@@ -774,6 +831,17 @@ int DoScpSource(WOLFSSH* ssh)
                 ssh->scpState = SCP_RECEIVE_CONFIRMATION;
                 ssh->scpNextState = SCP_DONE;
                 continue;
+            case SCP_SEND_WARNING:
+                WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_WARNING");
+
+                if ( (ret = SendScpWarning(ssh)) < WS_SUCCESS) {
+                    LogScpStateError("SEND_WARNING", ret);
+                    break;
+                }
+
+                ssh->scpState = SCP_TRANSFER;
+                continue;
+
             case SCP_SEND_FILE_HEADER:
                 WLOG(WS_LOG_DEBUG, scpState, "SCP_SEND_FILE_HEADER");
 
@@ -865,6 +933,7 @@ int DoScpSource(WOLFSSH* ssh)
                     ssh->scpState = SCP_CONFIRMATION_WITH_RECEIPT;
                     if (ssh->scpIsRecursive) {
                         ssh->scpFileOffset = 0;
+                        ssh->scpFileSz = 0;
                         ssh->scpBufferedSz = 0;
                         ssh->scpFileHeaderSent = 0;
                         ssh->scpNoProgress = 0;
@@ -1788,9 +1857,23 @@ int ParseScpCommand(WOLFSSH* ssh)
  *
  * returns WS_SUCCESS on success, negative upon error
  */
+/* Returns the offset of the first newline in buf, or -1 if there is none. */
+static int ScpFindNewline(const byte* buf, int sz)
+{
+    int i;
+
+    for (i = 0; i < sz; i++) {
+        if (buf[i] == 0x0a)
+            return i;
+    }
+
+    return -1;
+}
+
 int ReceiveScpMessage(WOLFSSH* ssh)
 {
     int sz = 0, ret = WS_SUCCESS;
+    int nl;
     word32 idx = 0;
     byte* buf;
 
@@ -1808,8 +1891,9 @@ int ReceiveScpMessage(WOLFSSH* ssh)
     }
     buf = (byte*)ssh->scpRecvMsg;
 
-    /* keep reading until newline found */
-    do {
+    /* keep reading until newline found; a record that followed the last one
+     * in the same read may already be buffered */
+    while ((nl = ScpFindNewline(buf, ssh->scpRecvMsgSz)) < 0) {
         int err;
         word32 lastChannel = 0;
 
@@ -1888,12 +1972,11 @@ int ReceiveScpMessage(WOLFSSH* ssh)
                 return WS_EOF;
             }
         }
-    } while (sz == 0 || buf[sz - 1] != 0x0a);
-
-    /* null-terminate request, replace newline */
-    if (sz > 0) {
-        buf[sz - 1] = '\0';
     }
+
+    /* null-terminate the first record, replacing its newline */
+    sz = nl + 1;
+    buf[nl] = '\0';
 
     switch (buf[0]) {
         case 'C':
@@ -1927,6 +2010,20 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             ssh->scpFileState = WOLFSSH_SCP_END_DIR;
             break;
 
+        case SCP_CONFIRM_ERR:
+            /* a warning from the source; nothing is sent back */
+            WLOG(WS_LOG_SCP, "scp: peer warning: %s", buf + 1);
+            ssh->scpMsgType = WOLFSSH_SCP_MSG_WARN;
+            ssh->scpPeerWarned = 1;
+            break;
+
+        case SCP_CONFIRM_FATAL:
+            /* the source aborted the transfer */
+            WLOG(WS_LOG_SCP, "scp: peer error: %s", buf + 1);
+            ret = WS_FATAL_ERROR;
+            ssh->error = ret;
+            break;
+
         case 'T':
             WLOG(WS_LOG_DEBUG, "scp: Receiving timestamp: %s\n", buf);
             ssh->scpMsgType = WOLFSSH_SCP_MSG_TIME;
@@ -1941,7 +2038,11 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             break;
     }
 
-    ssh->scpRecvMsgSz = 0;
+    /* keep what followed the record for the next call */
+    ssh->scpRecvMsgSz -= sz;
+    if (ssh->scpRecvMsgSz > 0) {
+        WMEMMOVE(buf, buf + sz, ssh->scpRecvMsgSz);
+    }
 
     return ret;
 }
@@ -1981,7 +2082,7 @@ int SendScpConfirmation(WOLFSSH* ssh)
 {
     char* msg;
     int msgSz, ret = WS_SUCCESS;
-    char defaultMsg[2] = { 0x00, 0x00 };
+    char defaultMsg[3] = { 0x00, 0x00, 0x00 };
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
@@ -1996,7 +2097,10 @@ int SendScpConfirmation(WOLFSSH* ssh)
 
     switch (ssh->scpConfirm) {
         case WS_SCP_ABORT:
-            msg[0] = SCP_CONFIRM_ERR;
+            msg[0] = SCP_CONFIRM_FATAL;
+            /* the peer reads an error record up to its newline */
+            if (msg == defaultMsg)
+                msg[1] = '\n';
             break;
 
         case WS_SCP_CONTINUE:
@@ -3047,6 +3151,10 @@ static int _GetFileSize(void* fs, WFILE* fp, word32* fileSz)
         if (tmpSz < 0) {
             return WS_BAD_FILE_E;
         }
+        /* the SCP file header carries a word32 size */
+        if ((tmpSz >> 16 >> 16) != 0) {
+            return WS_BAD_FILE_E;
+        }
         *fileSz = (word32)tmpSz;
         WREWIND(fs, fp);
 
@@ -3440,6 +3548,8 @@ static int ScpFileIsFile(ScpSendCtx* ctx)
  *         WS_SCP_ABORT on fail case
  *         WS_NEXT_ERROR when next call to the function will cause an error
  *         WS_SUCCESS when successfully opening a file
+ *         WS_SCP_CONTINUE when the entry is neither file nor directory and
+ *         is skipped with a warning for the peer
  */
 static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
         word64* aTime, int* fileMode, word32* totalFileSz, byte* buf,
@@ -3567,6 +3677,23 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
                 WFCLOSE(ssh->fs, sendCtx->fp);
                 sendCtx->fp = NULL;
             }
+        } else {
+            /* FIFO, socket or device: not sent, the peer is warned */
+            /* sized so the record fits the sink's message buffer */
+            char msg[DEFAULT_SCP_MSG_SZ - SCP_MIN_CONFIRM_SZ];
+
+            WLOG(WS_LOG_DEBUG, "scp: skipping %s, not a regular file",
+                    filePath);
+            /* cut the path so the whole message fits */
+            WSNPRINTF(msg, sizeof(msg), "scp: %.*s: not a regular file",
+                    (int)(sizeof(msg) - sizeof("scp: : not a regular file")),
+                    filePath);
+            if (wolfSSH_SetScpErrorMsg(ssh, msg) == WS_SUCCESS) {
+                ret = WS_SCP_CONTINUE;
+            }
+            else {
+                ret = WS_SCP_ABORT;
+            }
         }
 
     } else {
@@ -3657,6 +3784,9 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  *                                   has "exited" a directory.
  *     WS_SCP_EXIT_DIR_FINAL       - return when recursive directory transfer
  *                                   is complete.
+ *     WS_SCP_CONTINUE             - entry skipped, the message set with
+ *                                   wolfSSH_SetScpErrorMsg() is sent as a
+ *                                   warning and the callback called again
  *     WS_SCP_ABORT                - abort file transfer request
  *     WS_BAD_FILE_E               - local file open error hit
  *
