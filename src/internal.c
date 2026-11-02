@@ -12741,8 +12741,8 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
                     WLOG(WS_LOG_WARN, "Forward cleanup after rejection failed, "
                             "ret = %d", cleanupRet);
                 }
-                ret = WS_RESOURCE_E;
             }
+            ret = WS_RESOURCE_E;
         }
     }
 
