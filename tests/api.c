@@ -3592,6 +3592,37 @@ static void test_wolfSSH_agent_signrequest_unimplemented_reply(void)
     cleanup_agent_test(ctx, ssh);
 }
 
+/* An add-identity key type length near UINT32_MAX is refused with
+ * WS_PARSE_E and adds no identity. */
+static void test_wolfSSH_agent_add_identity_type_wrap(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte body[16];
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+
+    memset(&io, 0, sizeof(io));
+    memset(body, 0, sizeof(body));
+    put_uint32(body, 0xFFFFFFFF);
+    memcpy(body + LENGTH_SZ, "ssh-rsa", 7);
+    build_agent_message(io.response, &io.responseSz,
+        MSGID_AGENT_ADD_IDENTITY, body, sizeof(body));
+    setup_agent_test(&ctx, &ssh, &io);
+
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_PARSE_E);
+    AssertIntEQ(sigSz, 0);
+    AssertNull(ssh->agent->idList);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
 static void test_wolfSSH_agent_signrequest_signature_too_large(void)
 {
     WOLFSSH_CTX* ctx;
@@ -9708,6 +9739,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_agent_signrequest_bad_args();
     test_wolfSSH_agent_signrequest_wrong_message();
     test_wolfSSH_agent_signrequest_unimplemented_reply();
+    test_wolfSSH_agent_add_identity_type_wrap();
     test_wolfSSH_agent_signrequest_signature_too_large();
     test_wolfSSH_agent_signrequest_success();
     test_wolfSSH_agent_signrequest_large_response();
