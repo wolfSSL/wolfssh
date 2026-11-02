@@ -4063,20 +4063,12 @@ static INLINE void SignalTcpReady(tcp_ready* ready, word16 port)
 #endif
 }
 
-#ifdef WOLFSSH_TPM
+/* Unwinds echoserver_test() through echoserverFail, which frees whatever
+ * has been set up so far. */
 #define ES_ERROR(...) do { \
     fprintf(stderr, __VA_ARGS__); \
-    serverArgs->return_code = EXIT_FAILURE; \
-    EchoserverCleanupTpmHostKey(); \
-    WOLFSSL_RETURN_FROM_THREAD(0); \
+    goto echoserverFail; \
 } while(0)
-#else
-#define ES_ERROR(...) do { \
-    fprintf(stderr, __VA_ARGS__); \
-    serverArgs->return_code = EXIT_FAILURE; \
-    WOLFSSL_RETURN_FROM_THREAD(0); \
-} while(0)
-#endif
 
 
 static byte wantwrite = 0; /*flag to return want write on first highwater call*/
@@ -4132,6 +4124,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     const char* macList = NULL;
     const char* cipherList = NULL;
     ES_HEAP_HINT* heap = NULL;
+    int doneLockInit = 0;
+    int sshInit = 0;
     #ifdef WOLFSSH_TPM
         char* tpmKeyPath = NULL;
         char* tpmHostKeyPath = NULL;
@@ -4167,8 +4161,9 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     int     argc = serverArgs->argc;
     char**  argv = serverArgs->argv;
     serverArgs->return_code = EXIT_SUCCESS;
+    WMEMSET(&pwMapList, 0, sizeof(pwMapList));
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    kbAuthData.promptCount = 0;
+    WMEMSET(&kbAuthData, 0, sizeof(kbAuthData));
 #endif
 
 #ifdef WOLFSSH_FWD
@@ -4181,7 +4176,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 case '?' :
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
-                    WOLFSSL_RETURN_FROM_THREAD(0);
+                    goto echoserverFail;
 
                 case '1':
                     multipleConnections = 0;
@@ -4354,7 +4349,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                 default:
                     ShowUsage();
                     serverArgs->return_code = MY_EX_USAGE;
-                    WOLFSSL_RETURN_FROM_THREAD(0);
+                    goto echoserverFail;
             }
         }
     }
@@ -4377,15 +4372,16 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #if defined(WOLFSSH_TPM) && defined(WOLFSSH_WINDOWS_CERT_STORE)
     /* Both register a host key on the same CTX; loading both would leave
      * which key the server presents up to algorithm negotiation. The SFTP
-     * client and wolfsshd reject the equivalent mixes the same way.
-     * Checked before wc_InitMutex(&doneLock) so ES_ERROR's return path
-     * does not leak an initialized mutex. */
+     * client and wolfsshd reject the equivalent mixes the same way. */
     if (tpmHostKeyPath != NULL && certStoreSpec != NULL) {
         ES_ERROR("-W cannot be combined with -G\n");
     }
 #endif
 
-    wc_InitMutex(&doneLock);
+    if (wc_InitMutex(&doneLock) != 0) {
+        ES_ERROR("Couldn't initialize the done lock.\n");
+    }
+    doneLockInit = 1;
 
 #ifdef WOLFSSH_TEST_BLOCK
     if (!nonBlock) {
@@ -4410,6 +4406,7 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
     if (wolfSSH_Init() != WS_SUCCESS) {
         ES_ERROR("Couldn't initialize wolfSSH.\n");
     }
+    sshInit = 1;
 
     /* Load custom TPM key if specified */
     #ifdef WOLFSSH_TPM
@@ -4472,7 +4469,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
     }
 
-    WMEMSET(&pwMapList, 0, sizeof(pwMapList));
     if (serverArgs->user_auth == NULL)
         wolfSSH_SetUserAuth(ctx, wsUserAuth);
     else
@@ -4553,15 +4549,12 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         }
         kbAuthData.promptLengths = (word32*)WMALLOC(sizeof(word32), NULL, 0);
         if (kbAuthData.promptLengths == NULL) {
-            WFREE(kbAuthData.prompts, NULL, 0);
             ES_ERROR("Error allocating promptLengths\n");
         }
         kbAuthData.prompts[0] = (byte*)"KB Auth Password: ";
         kbAuthData.promptLengths[0] = 18;
         kbAuthData.promptEcho = (byte*)WMALLOC(sizeof(byte), NULL, 0);
         if (kbAuthData.promptEcho == NULL) {
-            WFREE(kbAuthData.prompts, NULL, 0);
-            WFREE(kbAuthData.promptLengths, NULL, 0);
             ES_ERROR("Error allocating promptEcho\n");
         }
         kbAuthData.promptEcho[0] = 0;
@@ -4629,16 +4622,6 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             }
             if (storeErr != NULL) {
                 KeyLoadBufFree(keyLoadBuf);
-                #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-                if (kbAuthData.promptCount > 0) {
-                    WFREE(kbAuthData.promptLengths, NULL, 0);
-                    WFREE(kbAuthData.prompts, NULL, 0);
-                    WFREE(kbAuthData.promptEcho, NULL, 0);
-                }
-                #endif
-                wc_FreeMutex(&doneLock);
-                PwMapListDelete(&pwMapList);
-                wolfSSH_CTX_free(ctx);
                 ES_ERROR("%s", storeErr);
             }
             loadDefaultHostKeys = 0;
@@ -4947,6 +4930,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 
     #ifdef WOLFSSH_SFTP
         if (SetDefaultSftpPath(ssh, defaultSftpPath, confineSftpPath) != 0) {
+            wolfSSH_free(ssh);
+            WFREE(threadCtx, NULL, 0);
             ES_ERROR("Couldn't store default sftp path.\n");
         }
     #endif
@@ -4963,6 +4948,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
             /* Get the local IP address for the socket.
              * 0.0.0.0 if ip adder any */
             if (NU_Get_Sock_Name(listenFd, &sock, &addrLength) != NU_SUCCESS) {
+                wolfSSH_free(ssh);
+                WFREE(threadCtx, NULL, 0);
                 ES_ERROR("Couldn't find network.\r\n");
             }
 
@@ -4979,6 +4966,8 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
                                                          &clientAddrSz);
     #endif
         if (clientFd == -1) {
+            wolfSSH_free(ssh);
+            WFREE(threadCtx, NULL, 0);
             ES_ERROR("tcp accept failed\n");
         }
 
@@ -5041,12 +5030,50 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
 #endif
 
     if (wolfSSH_Cleanup() != WS_SUCCESS) {
-        ES_ERROR("Couldn't clean up wolfSSH.\n");
+        fprintf(stderr, "Couldn't clean up wolfSSH.\n");
+        serverArgs->return_code = EXIT_FAILURE;
     }
 #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
+    (void)defaultSftpPath;
+    (void)confineSftpPath;
+    WOLFSSL_RETURN_FROM_THREAD(0);
+
+echoserverFail:
+    if (serverArgs->return_code == EXIT_SUCCESS)
+        serverArgs->return_code = EXIT_FAILURE;
+    if (listenFd != WOLFSSH_SOCKET_INVALID) {
+        WCLOSESOCKET(listenFd);
+    }
+#ifndef NO_FILESYSTEM
+    StrListFree(sshPubKeyList);
+    StrListFree(pemPubKeyList);
+    StrListFree(derPubKeyList);
+#endif
+    StrListFree(passwdList);
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    StrListFree(keyboardList);
+    if (kbAuthData.promptLengths != NULL)
+        WFREE(kbAuthData.promptLengths, NULL, 0);
+    if (kbAuthData.prompts != NULL)
+        WFREE(kbAuthData.prompts, NULL, 0);
+    if (kbAuthData.promptEcho != NULL)
+        WFREE(kbAuthData.promptEcho, NULL, 0);
+#endif
+    if (doneLockInit)
+        wc_FreeMutex(&doneLock);
+    PwMapListDelete(&pwMapList);
+    wolfSSH_CTX_free(ctx);
+#ifdef WOLFSSH_TPM
+    EchoserverCleanupTpmHostKey();
+#endif
+    if (sshInit)
+        (void)wolfSSH_Cleanup();
+#if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+    wc_ecc_fp_free();
+#endif
     (void)defaultSftpPath;
     (void)confineSftpPath;
     WOLFSSL_RETURN_FROM_THREAD(0);
