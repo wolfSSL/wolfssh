@@ -2713,6 +2713,84 @@ static void test_wolfSSH_SetTerminalResize(void)
 }
 
 
+/* wolfSSH_GetText() always terminates its output and returns the full text
+ * length, so a return of strSz or more flags truncation on every build. */
+static void test_wolfSSH_GetText(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    char str[80];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_GetText(NULL, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 0);
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, NULL,
+            sizeof(str)), 0);
+    str[0] = 'X';
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 0), 0);
+    AssertIntEQ(str[0], 'X');
+
+    /* Nothing negotiated yet, and an unknown id: an empty string. */
+    ssh->kexId = ID_NONE;
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 0);
+    AssertIntEQ(str[0], '\0');
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, (WS_Text)0x7F, str, sizeof(str)), 0);
+    AssertIntEQ(str[0], '\0');
+
+    /* Fits, fits exactly, and truncated. */
+    ssh->kexId = ID_ECDH_SHA2_NISTP256;
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 4);
+    AssertStrEQ(str, "ECDH");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 5), 4);
+    AssertStrEQ(str, "ECDH");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 3), 4);
+    AssertStrEQ(str, "EC");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 1), 4);
+    AssertIntEQ(str[0], '\0');
+
+#ifndef WOLFSSH_NO_DH
+    {
+        static const char gexText[] =
+            "2048-bit Diffie-Hellman with server-supplied group";
+        static const char g14Text[] =
+            "2048-bit Diffie-Hellman with standard group 14";
+
+        ssh->primeGroupSz = 256;
+        ssh->kexId = ID_DH_GEX_SHA256;
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+                sizeof(str)), WSTRLEN(gexText));
+        AssertStrEQ(str, gexText);
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 9),
+                WSTRLEN(gexText));
+        AssertStrEQ(str, "2048-bit");
+
+        ssh->kexId = ID_DH_GROUP14_SHA256;
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+                sizeof(str)), WSTRLEN(g14Text));
+        AssertStrEQ(str, g14Text);
+    }
+#endif
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
 
@@ -9688,6 +9766,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadPublicKey_pem();
     test_wolfSSH_ReadKey_asn1PubCallerBuf();
     test_wolfSSH_SetTerminalResize();
+    test_wolfSSH_GetText();
     test_wolfSSH_ReadKey_badPad();
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)

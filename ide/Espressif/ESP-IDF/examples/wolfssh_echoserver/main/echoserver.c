@@ -353,7 +353,7 @@ static void printKeyCompleteText(WOLFSSH* ssh, WS_Text id, const char* tag)
     size_t ret;
 
     ret = wolfSSH_GetText(ssh, id, str, strSz);
-    if (ret == strSz) {
+    if (ret >= strSz) {
         printf("\tString size was not large enough for %s\n", tag);
     }
     printf("\t%-30s : %s\n", tag, str);
