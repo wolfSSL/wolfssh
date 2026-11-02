@@ -357,6 +357,7 @@ int DoScpSink(WOLFSSH* ssh)
                 ssh->scpFileOffset += ssh->scpFileBufferSz;
 
                 /* reset recv buffer */
+                WS_FORCEZERO(ssh->scpFileBuffer, ssh->scpFileBufferSz);
                 ssh->scpFileBufferSz = 0;
 
                 if (ssh->scpConfirm != WS_SCP_CONTINUE) {
@@ -413,6 +414,7 @@ static int ScpSourceInit(WOLFSSH* ssh)
 
     /* file buffer */
     if (ssh->scpFileBuffer != NULL) {
+        WS_FORCEZERO(ssh->scpFileBuffer, DEFAULT_SCP_BUFFER_SZ);
         WFREE(ssh->scpFileBuffer, ssh->ctx->heap, DYNTYPE_BUFFER);
         ssh->scpFileBuffer = NULL;
         ssh->scpFileBufferSz = 0;
@@ -945,6 +947,9 @@ int DoScpSource(WOLFSSH* ssh)
                                  ssh->scpBufferedSz - ret);
                     }
                     ssh->scpBufferedSz -= ret;
+                    /* wipe the sent bytes vacated at the tail */
+                    WS_FORCEZERO(ssh->scpFileBuffer + ssh->scpBufferedSz,
+                                 (word32)ret);
                     ret = WS_SUCCESS;
                 }
 
@@ -1602,6 +1607,11 @@ int wolfSSH_TestScpGetTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
 {
     return GetScpTimestamp(ssh, buf, bufSz, inOutIdx);
 }
+
+int wolfSSH_TestDoScpSource(WOLFSSH* ssh)
+{
+    return DoScpSource(ssh);
+}
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
@@ -2112,6 +2122,8 @@ int ReceiveScpFile(WOLFSSH* ssh)
                 ssh->ctx->heap, DYNTYPE_BUFFER);
         if (ssh->scpFileBuffer == NULL)
             ret = WS_MEMORY_E;
+        else
+            WMEMSET(ssh->scpFileBuffer, 0, DEFAULT_SCP_BUFFER_SZ);
     }
 
     if (ret == WS_SUCCESS) {
