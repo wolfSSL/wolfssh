@@ -18520,8 +18520,20 @@ static int SftpRawRequest(WOLFSSH* ssh, byte type, int reqId, byte* pkt,
             return wolfSSH_SFTP_RecvOpen(ssh, reqId, pkt, sz);
         case WOLFSSH_FTP_MKDIR:
             return wolfSSH_SFTP_RecvMKDIR(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_RMDIR:
+            return wolfSSH_SFTP_RecvRMDIR(ssh, reqId, pkt, sz);
         case WOLFSSH_FTP_REMOVE:
             return wolfSSH_SFTP_RecvRemove(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_RENAME:
+            return wolfSSH_SFTP_RecvRename(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_STAT:
+            return wolfSSH_SFTP_RecvSTAT(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_LSTAT:
+            return wolfSSH_SFTP_RecvLSTAT(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_WRITE:
+            return wolfSSH_SFTP_RecvWrite(ssh, reqId, pkt, sz);
+        case WOLFSSH_FTP_CLOSE:
+            return wolfSSH_SFTP_RecvClose(ssh, reqId, pkt, sz);
         case WOLFSSH_FTP_REALPATH:
             return wolfSSH_SFTP_TestRecvRealPath(ssh, reqId, pkt, sz);
         case WOLFSSH_FTP_READ:
@@ -18565,7 +18577,8 @@ static word32 SftpBuildPathPkt(byte* pkt, const char* path, word32 pathSz,
 /* Every request gets exactly one response. A handler refusing a request it
  * cannot resolve, a handle it does not own or attributes with unknown flag
  * bits must still queue a status for that request id, or the client waits
- * forever. An oversized READ is clamped to a short read. */
+ * forever. A request too short to parse gets BAD_MESSAGE. An oversized READ
+ * is clamped to a short read. */
 static void TestSftpFailedRequestsAnswered(void)
 {
     WOLFSSH_CTX* ctx;
@@ -18586,6 +18599,16 @@ static void TestSftpFailedRequestsAnswered(void)
         WOLFSSH_FTP_REALPATH,
     #ifndef NO_WOLFSSH_DIR
         WOLFSSH_FTP_OPENDIR,
+    #endif
+    };
+    const byte allTypes[] = {
+        WOLFSSH_FTP_OPEN, WOLFSSH_FTP_MKDIR, WOLFSSH_FTP_RMDIR,
+        WOLFSSH_FTP_REMOVE, WOLFSSH_FTP_RENAME, WOLFSSH_FTP_REALPATH,
+        WOLFSSH_FTP_STAT, WOLFSSH_FTP_LSTAT, WOLFSSH_FTP_FSTAT,
+        WOLFSSH_FTP_SETSTAT, WOLFSSH_FTP_FSETSTAT, WOLFSSH_FTP_READ,
+        WOLFSSH_FTP_WRITE, WOLFSSH_FTP_CLOSE,
+    #ifndef NO_WOLFSSH_DIR
+        WOLFSSH_FTP_OPENDIR, WOLFSSH_FTP_READDIR,
     #endif
     };
     const byte handleTypes[] = {
@@ -18708,6 +18731,44 @@ static void TestSftpFailedRequestsAnswered(void)
         AssertIntEQ((int)SftpGetU32(reply + WOLFSSH_SFTP_HEADER),
                 WOLFSSH_MAX_SFTP_RW);
     }
+
+    /* a request too short to parse is a bad message: first a string field
+     * whose length runs past the end of the packet */
+    for (i = 0; i < (word32)sizeof(allTypes); i++) {
+        idx = 0;
+        SftpPutU32(10, pkt + idx); idx += UINT32_SZ;
+        pkt[idx++] = 'a';
+        pkt[idx++] = 'b';
+        AssertTrue(SftpRawRequest(ssh, allTypes[i], ++rid, pkt, idx)
+                != WS_SUCCESS);
+        AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
+    }
+
+    /* then a packet that ends after a valid leading field */
+    idx = SftpBuildPathPkt(pkt, file, (word32)WSTRLEN(file), 0, 0, 0);
+    AssertTrue(SftpRawRequest(ssh, WOLFSSH_FTP_OPEN, ++rid, pkt, idx)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
+    AssertTrue(SftpRawRequest(ssh, WOLFSSH_FTP_RENAME, ++rid, pkt, idx)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
+
+    idx = 0;
+    SftpPutU32(WOLFSSH_HANDLE_ID_SZ, pkt + idx); idx += UINT32_SZ;
+    WMEMCPY(pkt + idx, handle, WOLFSSH_HANDLE_ID_SZ);
+    idx += WOLFSSH_HANDLE_ID_SZ;
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    AssertTrue(SftpRawRequest(ssh, WOLFSSH_FTP_READ, ++rid, pkt, idx)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
+    AssertTrue(SftpRawRequest(ssh, WOLFSSH_FTP_WRITE, ++rid, pkt, idx)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
+    SftpPutU32(0, pkt + idx); idx += UINT32_SZ;
+    SftpPutU32(10, pkt + idx); idx += UINT32_SZ;
+    AssertTrue(SftpRawRequest(ssh, WOLFSSH_FTP_WRITE, ++rid, pkt, idx)
+            != WS_SUCCESS);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_BADMSG);
 
     /* unknown attribute flag bits are a bad message (F-17077) */
     idx = 0;
