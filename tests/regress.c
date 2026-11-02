@@ -796,6 +796,8 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 /* The splice ahead of the client's KEXDH_INIT, while the server waits for
  * the message that opens the negotiated KEX. */
 #define REGRESS_MUTATE_TERRAPIN_PRE_KEXDH 11
+/* A zero byte appended to the host key signature data. */
+#define REGRESS_MUTATE_SIG_TRAIL 12
 
 /* 4 (len) + 1 (padLen) + 1 (msgId) + 4 (empty string payload) + 6 (pad) */
 #define REGRESS_INJECT_PACKET_SZ 16U
@@ -1078,6 +1080,15 @@ static int RewriteSingleKexDhReplyPacket(const byte* packet, word32 packetSz,
             flipIdx = dataStart + LENGTH_SZ;
         }
         innerSig[flipIdx] ^= 0xFF;
+    }
+    else if (mode == REGRESS_MUTATE_SIG_TRAIL) {
+        innerSigSz = AppendBlob(innerSig, sizeof(innerSig), innerSigSz,
+                sigName, sigNameSz);
+        innerSigSz = AppendUint32(innerSig, sizeof(innerSig), innerSigSz,
+                sigDataSz + 1);
+        innerSigSz = AppendData(innerSig, sizeof(innerSig), innerSigSz,
+                sigData, sigDataSz);
+        innerSigSz = AppendByte(innerSig, sizeof(innerSig), innerSigSz, 0x00);
     }
     else if (mode == REGRESS_MUTATE_SIG_NAME_OVERRUN) {
         /* Nothing but a name length prefix, so the name it claims runs off
@@ -2210,15 +2221,14 @@ static void TestKexDhReplyRejectsWhenCallbackRejects(void)
 #endif
 }
 
-/* Valid name, flipped data byte: the client reaches the verify and rejects. */
-static void AssertHandshakeRejectsCorruptedSig(const char* keyAlgo,
-        const char* keyPath, int expectedErr)
+/* Valid name, altered data: the client reaches the verify and rejects. */
+static void AssertHandshakeRejectsSigMutation(const char* keyAlgo,
+        const char* keyPath, byte mode, int expectedErr)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
-    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 1,
-            REGRESS_MUTATE_SIG_DATA, NULL, 0);
+    InitKexReplyHarnessEx(&harness, keyAlgo, keyPath, 1, mode, NULL, 0);
     RunKexReplyHandshake(&harness, &result);
 
     AssertIntEQ(harness.mutator.parseError, 0);
@@ -2234,6 +2244,13 @@ static void AssertHandshakeRejectsCorruptedSig(const char* keyAlgo,
     AssertTrue(KexSecretWiped(harness.client));
 
     FreeKexReplyHarness(&harness);
+}
+
+static void AssertHandshakeRejectsCorruptedSig(const char* keyAlgo,
+        const char* keyPath, int expectedErr)
+{
+    AssertHandshakeRejectsSigMutation(keyAlgo, keyPath,
+            REGRESS_MUTATE_SIG_DATA, expectedErr);
 }
 
 /* Every key agreement, the ML-KEM hybrids included, wipes K on both sides. */
@@ -2306,6 +2323,25 @@ static void TestKexDhReplyRejectsRsaSha2_256CorruptSig(void)
 static void TestKexDhReplyRejectsRsaSha2_512CorruptSig(void)
 {
     AssertHandshakeRejectsCorruptedSig("rsa-sha2-512",
+            REGRESS_SERVER_KEY_PATH, WS_RSA_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_RSA_SHA2_256
+static void TestKexDhReplyRejectsRsaSigTrailingByte(void)
+{
+    AssertHandshakeRejectsSigMutation("rsa-sha2-256",
+            REGRESS_SERVER_KEY_PATH, REGRESS_MUTATE_SIG_TRAIL, WS_RSA_E);
+}
+#endif
+
+#ifndef WOLFSSH_NO_SSH_RSA_SHA1
+/* ssh-rsa signs H with SHA-1, which wc_SignatureVerify() refuses on newer
+ * wolfSSL. */
+static void TestKexDhReplyAcceptsSshRsa(void)
+{
+    AssertHandshakeSucceeds("ssh-rsa", REGRESS_SERVER_KEY_PATH);
+    AssertHandshakeRejectsCorruptedSig("ssh-rsa",
             REGRESS_SERVER_KEY_PATH, WS_RSA_E);
 }
 #endif
@@ -22182,6 +22218,12 @@ int main(int argc, char** argv)
     #endif
     #ifndef WOLFSSH_NO_RSA_SHA2_512
     TestKexDhReplyRejectsRsaSha2_512CorruptSig();
+    #endif
+    #ifndef WOLFSSH_NO_RSA_SHA2_256
+    TestKexDhReplyRejectsRsaSigTrailingByte();
+    #endif
+    #ifndef WOLFSSH_NO_SSH_RSA_SHA1
+    TestKexDhReplyAcceptsSshRsa();
     #endif
     #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     TestKexDhReplyRejectsEccCorruptSig();
