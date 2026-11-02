@@ -2005,7 +2005,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
         ssh->scpConfirmMsgSz = 0;
     }
     if (ssh->scpFileBuffer) {
-        WS_FORCEZERO(ssh->scpFileBuffer, ssh->scpFileBufferSz);
+        WS_FORCEZERO(ssh->scpFileBuffer, DEFAULT_SCP_BUFFER_SZ);
         WFREE(ssh->scpFileBuffer, heap, DYNTYPE_BUFFER);
         ssh->scpFileBuffer = NULL;
         ssh->scpFileBufferSz = 0;

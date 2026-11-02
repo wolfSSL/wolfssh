@@ -22241,6 +22241,116 @@ out:
     return result;
 }
 
+#ifdef WOLFSSH_SCP
+/* Allocates a DEFAULT_SCP_BUFFER_SZ scpFileBuffer filled with 0xA5 whose
+ * scpFileBufferSz is chunkSz, as a sink run leaves it. */
+static int ScpFillFileBuffer(WOLFSSH* ssh, word32 chunkSz)
+{
+    ssh->scpFileBuffer = (byte*)WMALLOC(DEFAULT_SCP_BUFFER_SZ, ssh->ctx->heap,
+            DYNTYPE_BUFFER);
+    if (ssh->scpFileBuffer == NULL)
+        return -1;
+    WMEMSET(ssh->scpFileBuffer, 0xA5, DEFAULT_SCP_BUFFER_SZ);
+    ssh->scpFileBufferSz = chunkSz;
+    return 0;
+}
+
+static int ScpBufferIsZero(const byte* buf)
+{
+    word32 i;
+
+    for (i = 0; i < DEFAULT_SCP_BUFFER_SZ; i++) {
+        if (buf[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+/* Verify the SCP transfer buffer is wiped across its whole allocation when
+ * it is released, both by SshResourceFree and by ScpSourceInit replacing it,
+ * even though scpFileBufferSz holds only a sink chunk length (or zero). */
+static int test_ScpFileBuffer_zeroedOnFree(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    const byte* buf;
+    int result = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -720;
+
+    /* SshResourceFree, chunk length already reset to zero */
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -721;
+        goto out;
+    }
+    if (ScpFillFileBuffer(ssh, 0) != 0) {
+        result = -722;
+        goto out;
+    }
+    buf = ssh->scpFileBuffer;
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -723;
+        goto out;
+    }
+    wolfSSH_free(ssh);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    ssh = NULL;
+
+    if (!IsRetained((void*)buf))
+        result = -724;
+    else if (!ScpBufferIsZero(buf))
+        result = -725;
+    DrainRetained();
+    if (result != 0)
+        goto out;
+
+    /* ScpSourceInit replacing a buffer holding a short sink chunk */
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -726;
+        goto out;
+    }
+    if (ScpFillFileBuffer(ssh, 16) != 0) {
+        result = -727;
+        goto out;
+    }
+    buf = ssh->scpFileBuffer;
+    ssh->scpState = SCP_SOURCE_INIT;
+
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -728;
+        goto out;
+    }
+    /* fails reading the confirmation with no channel, after the init */
+    (void)wolfSSH_TestDoScpSource(ssh);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+
+    if (ssh->scpFileBuffer == buf)
+        result = -729;
+    else if (!IsRetained((void*)buf))
+        result = -730;
+    else if (!ScpBufferIsZero(buf))
+        result = -731;
+
+out:
+    DrainRetained();
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_SCP */
+
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 #endif /* WOLFSSH_TEST_CAPTURING_ALLOCATOR */
@@ -29318,6 +29428,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("ChannelName_zeroedOnFree: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_SCP)
+    unitResult = test_ScpFileBuffer_zeroedOnFree();
+    printf("ScpFileBuffer_zeroedOnFree: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #ifdef WOLFSSH_TEST_INTERNAL
     unitResult = test_DoChannelRequest_zeroesRefusedCommand();
