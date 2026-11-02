@@ -139,6 +139,44 @@ else
     exit 1
 fi
 
+# "." names the current directory, as OpenSSH sends for "host:", so the file
+# keeps its own name.
+echo "Test copy from local to server directory ."
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:.
+RESULT=$?
+remove_ready_file
+stop_server
+check_timeout $RESULT "copy from local to server directory ."
+
+if test -e $PWD/scp.test; then
+    rm $PWD/scp.test
+else
+    echo -e "\n\nfailed to send file to directory ."
+    do_cleanup
+    exit 1
+fi
+
+echo "Test copy from server to local directory ."
+./examples/echoserver/echoserver -1 -R $ready_file &
+server_pid=$!
+create_port
+$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:.
+RESULT=$?
+remove_ready_file
+stop_server
+check_timeout $RESULT "copy from server to local directory ."
+
+if test -e $PWD/scp.test; then
+    rm $PWD/scp.test
+else
+    echo -e "\n\nfailed to get file into directory ."
+    do_cleanup
+    exit 1
+fi
+
 # With -A the echoserver binds the scp command itself and runs the transfer
 # through wolfSSH_SCP_accept(); the cases above take the accept() re-entry
 # instead. -N reaches that call's want-read/want-write retry path, which a
