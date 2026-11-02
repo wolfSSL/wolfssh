@@ -8008,12 +8008,13 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                     continue;
                 }
 
-                state->state = STATE_LSTAT_CHECK_REQ_ID;
                 if (wolfSSH_SFTP_buffer_create(ssh, &state->buffer, ret)
                         != WS_SUCCESS) {
                     ssh->error = WS_MEMORY_E;
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_LSTAT);
                     return WS_FATAL_ERROR;
                 }
+                state->state = STATE_LSTAT_CHECK_REQ_ID;
                 FALL_THROUGH;
 
             case STATE_LSTAT_CHECK_REQ_ID:
