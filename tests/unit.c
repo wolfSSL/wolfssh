@@ -24655,28 +24655,48 @@ enum SftpReplyIdOp {
     REPLY_ID_SETSTAT,
     REPLY_ID_OPEN,
     REPLY_ID_REALPATH,
+    REPLY_ID_LSTAT,
     REPLY_ID_OP_COUNT
 };
 
 enum SftpReplyIdMode {
     REPLY_ID_MATCH,
     REPLY_ID_WRONG_ID,
-    REPLY_ID_WRONG_TYPE
+    REPLY_ID_WRONG_TYPE,
+    REPLY_ID_NO_MEMORY
 };
 
+/* reply body size whose buffer allocation REPLY_ID_NO_MEMORY fails */
+#define REPLY_ID_FAIL_SZ 37
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+static void* SftpReplyIdMalloc(size_t size)
+{
+    if (size == REPLY_ID_FAIL_SZ)
+        return NULL;
+    return malloc(size);
+}
+#endif
+
 /* Answer one client request with a reply carrying the request id, a wrong
- * id, or (REALPATH and OPEN only) the right id on a wrong message type. A
- * matched reply advances the request id once; a mismatch fails with a
- * specific error and frees the request state. */
+ * id, (REALPATH and OPEN only) the right id on a wrong message type, or
+ * (LSTAT only) a body that cannot be allocated. A matched reply advances the
+ * request id once; any other reply fails with a specific error and frees the
+ * request state. */
 static int SftpReplyIdCase(int op, int mode)
 {
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
     WS_SFTP_FILEATRB atr;
     WS_SFTPNAME* name = NULL;
-    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 3];
+    byte reply[WOLFSSH_SFTP_HEADER + REPLY_ID_FAIL_SZ];
     byte handle[WOLFSSH_MAX_HANDLE];
     word32 handleSz = sizeof(handle);
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+    wolfSSL_Malloc_cb prevMf;
+    wolfSSL_Free_cb prevFf;
+    wolfSSL_Realloc_cb prevRf;
+#endif
     word32 sz;
     word32 id;
     word32 status = WOLFSSH_FTP_OK;
@@ -24720,6 +24740,12 @@ static int SftpReplyIdCase(int op, int mode)
         reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
         ret = wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
     }
+    else if (mode == REPLY_ID_NO_MEMORY) {
+        WMEMSET(reply, 0, sizeof(reply));
+        sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_ATTRS, id,
+                REPLY_ID_FAIL_SZ);
+        ret = wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
+    }
     else {
         ret = SftpGetStatus(ssh, mode == REPLY_ID_WRONG_ID ? id + 1 : id,
                 status);
@@ -24754,6 +24780,20 @@ static int SftpReplyIdCase(int op, int mode)
             stateLeft = ssh->openState != NULL ||
                     ssh->getHandleState != NULL;
             break;
+        case REPLY_ID_LSTAT:
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+            if (mode == REPLY_ID_NO_MEMORY) {
+                wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+                wolfSSL_SetAllocators(SftpReplyIdMalloc, prevFf, prevRf);
+            }
+#endif
+            ret = wolfSSH_SFTP_LSTAT(ssh, (char*)"f", &atr);
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+            if (mode == REPLY_ID_NO_MEMORY)
+                wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+#endif
+            stateLeft = ssh->lstatState != NULL;
+            break;
         default:
             name = wolfSSH_SFTP_RealPath(ssh, (char*)"p");
             ret = name == NULL ? WS_FATAL_ERROR : WS_SUCCESS;
@@ -24775,11 +24815,12 @@ static int SftpReplyIdCase(int op, int mode)
         }
     }
     else if (ret == WS_SUCCESS || wolfSSH_get_error(ssh) !=
-            (mode == REPLY_ID_WRONG_ID ?
-             WS_SFTP_BAD_REQ_ID : WS_SFTP_BAD_REQ_TYPE)) {
+            (mode == REPLY_ID_WRONG_ID ? WS_SFTP_BAD_REQ_ID :
+             mode == REPLY_ID_NO_MEMORY ? WS_MEMORY_E :
+             WS_SFTP_BAD_REQ_TYPE)) {
         result = -1204;
     }
-    else if (ssh->reqId != (mode == REPLY_ID_WRONG_ID ? id : id + 1)) {
+    else if (ssh->reqId != (mode == REPLY_ID_WRONG_TYPE ? id + 1 : id)) {
         result = -1205;
     }
 
@@ -24796,9 +24837,15 @@ static int test_SftpReplyId(void)
     int ret;
 
     for (op = 0; op < REPLY_ID_OP_COUNT; op++) {
-        for (mode = REPLY_ID_MATCH; mode <= REPLY_ID_WRONG_TYPE; mode++) {
+        for (mode = REPLY_ID_MATCH; mode <= REPLY_ID_NO_MEMORY; mode++) {
             if (mode == REPLY_ID_WRONG_TYPE && op != REPLY_ID_REALPATH &&
                     op != REPLY_ID_OPEN)
+                continue;
+#ifndef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+            if (mode == REPLY_ID_NO_MEMORY)
+                continue;
+#endif
+            if (mode == REPLY_ID_NO_MEMORY && op != REPLY_ID_LSTAT)
                 continue;
             ret = SftpReplyIdCase(op, mode);
             if (ret != 0) {
