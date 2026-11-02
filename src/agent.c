@@ -165,6 +165,7 @@ static int SendFailure(WOLFSSH_AGENT_CTX* agent)
 
     if (ret == WS_SUCCESS) {
         DUMP(agent->msg, agent->msgSz);
+        AgentMsgFree(agent);
     }
 
     WLOG_LEAVE(ret);
