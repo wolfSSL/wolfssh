@@ -824,13 +824,18 @@ int wIsDirNoFollow(const char* path)
  * On POSIX this is atomic through O_NOFOLLOW: the open itself fails if the leaf
  * is a link, closing the check-then-open race.  Where no such primitive exists
  * (Windows, or O_NOFOLLOW undefined) it falls back to a best-effort wIsSymlink
- * test before the follow-prone open.  Returns 0 on success and non-zero on
- * failure, matching the wfopen convention. */
+ * test before the follow-prone open.  Opens regular files only; on POSIX the
+ * open is non-blocking and checked with fstat.  Returns 0 on success,
+ * WOLFSSH_FOPEN_NOT_REGULAR for a special file, else non-zero. */
 int wFopenNoFollow(void* fs, WFILE** f, const char* path)
 {
     int ret = 0;
+#ifndef USE_WINDOWS_API
+    WSTAT_T st;
+#endif
 #if !defined(USE_WINDOWS_API) && defined(O_NOFOLLOW)
     WFD fd = -1;
+    int flags;
 #endif
 
     if (f != NULL)
@@ -840,9 +845,31 @@ int wFopenNoFollow(void* fs, WFILE** f, const char* path)
 
 #if !defined(USE_WINDOWS_API) && defined(O_NOFOLLOW)
     if (ret == 0) {
-        fd = WOPEN(fs, path, WOLFSSH_O_RDONLY | WOLFSSH_O_NOFOLLOW, 0);
+    #ifdef O_NONBLOCK
+        flags = O_NONBLOCK;
+    #else
+        flags = 0;
+    #endif
+        fd = WOPEN(fs, path, WOLFSSH_O_RDONLY | WOLFSSH_O_NOFOLLOW | flags, 0);
         if (fd < 0)
             ret = 1;
+    }
+    if (ret == 0) {
+        if (fstat(fd, &st) != 0)
+            ret = 1;
+        else if (!S_ISREG(st.st_mode))
+            ret = WOLFSSH_FOPEN_NOT_REGULAR;
+    }
+#ifdef O_NONBLOCK
+    /* restore blocking reads */
+    if (ret == 0) {
+        flags = fcntl(fd, F_GETFL);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != 0)
+            ret = 1;
+    }
+#endif
+    if (ret != 0 && fd >= 0) {
+        WCLOSE(fs, fd);
     }
     if (ret == 0 && WFDOPEN(fs, f, fd, "rb") != 0) {
         WCLOSE(fs, fd);
@@ -851,6 +878,11 @@ int wFopenNoFollow(void* fs, WFILE** f, const char* path)
 #else
     if (ret == 0 && wIsSymlink(path))
         ret = 1;
+    #ifndef USE_WINDOWS_API
+    /* best effort, racy */
+    if (ret == 0 && WLSTAT(fs, path, &st) == 0 && !S_ISREG(st.st_mode))
+        ret = WOLFSSH_FOPEN_NOT_REGULAR;
+    #endif
     if (ret == 0 && WFOPEN(fs, f, path, "rb") != 0)
         ret = 1;
 #endif
