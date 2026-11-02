@@ -4528,6 +4528,72 @@ static int test_ScpGetFileName(void)
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+static int scpSinkPartSeen;
+static word32 scpSinkPartSz;
+
+static int scpSinkPartRecv(WOLFSSH* ssh, int state, const char* basePath,
+        const char* fileName, int fileMode, word64 mTime, word64 aTime,
+        word32 totalFileSz, byte* buf, word32 bufSz, word32 fileOffset,
+        void* ctx)
+{
+    (void)ssh; (void)basePath; (void)fileName; (void)fileMode; (void)mTime;
+    (void)aTime; (void)totalFileSz; (void)buf; (void)fileOffset; (void)ctx;
+
+    if (state == WOLFSSH_SCP_FILE_PART) {
+        scpSinkPartSeen = 1;
+        scpSinkPartSz = bufSz;
+    }
+    return WS_SCP_ABORT;
+}
+
+/* A sink run of an empty file on a session whose last SCP run was a source
+ * must not hand the receive callback the source run's stale buffer. The
+ * source leaves scpFileBufferSz at the buffer capacity. */
+static int test_ScpSinkEmptyFileAfterSource(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -490;
+    wolfSSH_SetScpRecv(ctx, scpSinkPartRecv);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -491;
+    }
+
+    ssh->scpFileBuffer = (byte*)WMALLOC(DEFAULT_SCP_BUFFER_SZ, ssh->ctx->heap,
+            DYNTYPE_BUFFER);
+    if (ssh->scpFileBuffer == NULL)
+        result = -492;
+
+    if (result == 0) {
+        WMEMSET(ssh->scpFileBuffer, 0xA5, DEFAULT_SCP_BUFFER_SZ);
+        ssh->scpFileBufferSz = DEFAULT_SCP_BUFFER_SZ;
+        ssh->scpFileSz = 0;
+        ssh->scpFileOffset = 0;
+        ssh->scpState = SCP_RECEIVE_FILE;
+        scpSinkPartSeen = 0;
+        scpSinkPartSz = 0;
+
+        /* the confirmation send fails with no channel; only the callback
+         * arguments matter here */
+        (void)wolfSSH_TestDoScpSink(ssh);
+
+        if (!scpSinkPartSeen)
+            result = -493;
+        else if (scpSinkPartSz != 0)
+            result = -494;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -26839,6 +26905,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_ScpGetFileName();
     printf("ScpGetFileName: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpSinkEmptyFileAfterSource();
+    printf("ScpSinkEmptyFileAfterSource: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
 

@@ -1485,6 +1485,11 @@ int wolfSSH_TestScpGetTimestamp(WOLFSSH* ssh, byte* buf, word32 bufSz,
     return GetScpTimestamp(ssh, buf, bufSz, inOutIdx);
 }
 
+int wolfSSH_TestDoScpSink(WOLFSSH* ssh)
+{
+    return DoScpSink(ssh);
+}
+
 int wolfSSH_TestDoScpSource(WOLFSSH* ssh)
 {
     return DoScpSource(ssh);
@@ -1929,6 +1934,9 @@ int ReceiveScpFile(WOLFSSH* ssh)
 
     if (ssh == NULL)
         return WS_BAD_ARGUMENT;
+
+    /* no chunk yet; a prior source run leaves the buffer capacity here */
+    ssh->scpFileBufferSz = 0;
 
     /* We don't want to over-read the buffer. The file data is
      * terminated by the sender with a nul which is checked later. */
