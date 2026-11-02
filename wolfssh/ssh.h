@@ -250,6 +250,9 @@ typedef enum WS_Text {
  * available.
  *
  * Thus, a return value of strSz or more means that the output was truncated.
+ * This holds on every build. Unless ssh or str is NULL or strSz is 0, str is
+ * always terminated; an unknown id, or a value not yet negotiated, gives an
+ * empty string and returns 0.
  */
 
 WOLFSSH_API size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str,

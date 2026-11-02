@@ -5694,9 +5694,12 @@ static const char* MacNameForId(byte macid, byte cipherid)
 
 size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 {
-    int ret = 0;
-
+    const char* text = "";
+    size_t textSz;
 #ifndef WOLFSSH_NO_DH
+    /* Big enough for the longest DH text with any int bit count. */
+    char dhText[80];
+    int dhGroup = 0;
     static const char standard_dh_format[] =
         "%d-bit Diffie-Hellman with standard group %d";
 #endif
@@ -5706,30 +5709,27 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 
     switch (id) {
         case WOLFSSH_TEXT_KEX_HASH:
-            ret = WSNPRINTF(str, strSz, "%s", HashNameForId(ssh->kexId));
+            text = HashNameForId(ssh->kexId);
             break;
 
         case WOLFSSH_TEXT_KEX_CURVE:
-            ret = WSNPRINTF(str, strSz, "%s", CurveNameForId(ssh->kexId));
+            text = CurveNameForId(ssh->kexId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_IN_CIPHER:
-            ret = WSNPRINTF(str, strSz, "%s",
-                CipherNameForId(ssh->peerEncryptId));
+            text = CipherNameForId(ssh->peerEncryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_OUT_CIPHER:
-            ret = WSNPRINTF(str, strSz, "%s", CipherNameForId(ssh->encryptId));
+            text = CipherNameForId(ssh->encryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_IN_MAC:
-            ret = WSNPRINTF(str, strSz, "%s", MacNameForId(ssh->peerMacId,
-                ssh->peerEncryptId));
+            text = MacNameForId(ssh->peerMacId, ssh->peerEncryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_OUT_MAC:
-            ret = WSNPRINTF(str, strSz, "%s", MacNameForId(ssh->macId,
-                ssh->encryptId));
+            text = MacNameForId(ssh->macId, ssh->encryptId);
             break;
 
         case WOLFSSH_TEXT_KEX_ALGO:
@@ -5741,75 +5741,79 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                 case ID_CURVE25519_SHA256:
                 case ID_CURVE25519_SHA256_LIBSSH:
             #endif
-                    ret = WSNPRINTF(str, strSz, "%s", "ECDH");
+                    text = "ECDH";
                     break;
 
             #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
                 case ID_NISTP256_MLKEM768_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-NISTP256-MLKEM768");
+                    text = "ECDH-NISTP256-MLKEM768";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
                 case ID_NISTP384_MLKEM1024_SHA384:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-NISTP384-MLKEM1024");
+                    text = "ECDH-NISTP384-MLKEM1024";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
                 case ID_CURVE25519_MLKEM768_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-CURVE25519-MLKEM768");
+                    text = "ECDH-CURVE25519-MLKEM768";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_DH
                 case ID_DH_GROUP1_SHA1:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 1);
+                    dhGroup = 1;
                     break;
 
                 case ID_DH_GROUP14_SHA1:
                 case ID_DH_GROUP14_SHA256:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 14);
+                    dhGroup = 14;
                     break;
 
                 case ID_DH_GROUP16_SHA512:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 16);
+                    dhGroup = 16;
                     break;
 
                 case ID_DH_GEX_SHA256:
-                    ret = WSNPRINTF(str, strSz,
-                        "%d-bit Diffie-Hellman with server-supplied group",
-                        ssh->primeGroupSz*8);
+                    if (WSNPRINTF(dhText, sizeof(dhText),
+                            "%d-bit Diffie-Hellman with server-supplied group",
+                            ssh->primeGroupSz*8) > 0) {
+                        text = dhText;
+                    }
                     break;
             #endif /* !WOLFSSH_NO_DH */
 
                 case ID_EXT_INFO_S:
-                   #if defined(__CCRX__)
-                    ret = WSNPRINTF0(str, strSz, "Server extensions KEX");
-                   #else
-                    ret = WSNPRINTF(str, strSz, "Server extensions KEX");
-                   #endif
+                    text = "Server extensions KEX";
                     break;
 
                 case ID_EXT_INFO_C:
-                   #if defined(__CCRX__)
-                    ret = WSNPRINTF0(str, strSz, "Client extensions KEX");
-                   #else
-                    ret = WSNPRINTF(str, strSz, "Client extensions KEX");
-                   #endif
+                    text = "Client extensions KEX";
                     break;
-
             }
+        #ifndef WOLFSSH_NO_DH
+            if (dhGroup != 0 && WSNPRINTF(dhText, sizeof(dhText),
+                    standard_dh_format, ssh->primeGroupSz*8, dhGroup) > 0) {
+                text = dhText;
+            }
+        #endif
             break;
     }
 
-    return ret < 0 ? 0 : (size_t)ret;
+    /* Format locally and copy, so truncation reads the same whichever
+     * function WSNPRINTF maps to. */
+    textSz = WSTRLEN(text);
+    if (textSz < strSz) {
+        WMEMCPY(str, text, textSz + 1);
+    }
+    else {
+        WMEMCPY(str, text, strSz - 1);
+        str[strSz - 1] = '\0';
+    }
+
+    return textSz;
 }
 
 void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX* ctx, WS_CallbackKeyingCompletion cb)
