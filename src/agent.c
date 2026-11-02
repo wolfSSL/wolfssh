@@ -77,6 +77,19 @@
     #define WOLFSSH_AGENT_RELAY_CHUNK_SZ 512
 #endif
 
+/* Wipes and releases the message built in agent->msg. */
+static void AgentMsgFree(WOLFSSH_AGENT_CTX* agent)
+{
+    if (agent->msg != NULL) {
+        WS_FORCEZERO(agent->msg, agent->msgSz);
+        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
+    }
+    agent->msg = NULL;
+    agent->msgSz = 0;
+    agent->msgIdx = 0;
+}
+
+
 /* payloadSz is an estimate, but it shall be greater-than/equal-to
  * the actual value. */
 static int PrepareMessage(WOLFSSH_AGENT_CTX* agent, word32 payloadSz)
@@ -90,8 +103,7 @@ static int PrepareMessage(WOLFSSH_AGENT_CTX* agent, word32 payloadSz)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (agent->msg != NULL)
-            WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
+        AgentMsgFree(agent);
         payloadSz += LENGTH_SZ;
         msg = (byte*)WMALLOC(payloadSz, agent->heap, DYNTYPE_AGENT_BUFFER);
         if (msg == NULL)
@@ -178,10 +190,7 @@ static int SendSuccess(WOLFSSH_AGENT_CTX* agent)
 
     if (ret == WS_SUCCESS) {
         DUMP(agent->msg, agent->msgSz);
-
-        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
-        agent->msg = NULL;
-        agent->msgSz = 0;
+        AgentMsgFree(agent);
     }
 
     WLOG_LEAVE(ret);
@@ -265,10 +274,7 @@ static int SendIdentitiesAnswer(WOLFSSH_AGENT_CTX* agent)
 
     if (ret == WS_SUCCESS) {
         DUMP(agent->msg, agent->msgSz);
-
-        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
-        agent->msg = NULL;
-        agent->msgSz = 0;
+        AgentMsgFree(agent);
     }
 
     WLOG_LEAVE(ret);
@@ -355,10 +361,7 @@ static int SendSignResponse(WOLFSSH_AGENT_CTX* agent,
 
     if (ret == WS_SUCCESS) {
         DUMP(agent->msg, agent->msgSz);
-
-        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
-        agent->msg = 0;
-        agent->msgSz = 0;
+        AgentMsgFree(agent);
     }
 
     WLOG_LEAVE(ret);
@@ -1567,7 +1570,7 @@ static WOLFSSH_AGENT_CTX* AgentInit(WOLFSSH_AGENT_CTX* agent, void* heap)
 
         ret = wc_InitRng(&agent->rng);
         if (ret != 0) {
-            WMEMSET(agent, 0, sizeof(WOLFSSH_AGENT_CTX));
+            WS_FORCEZERO(agent, sizeof(WOLFSSH_AGENT_CTX));
             WFREE(agent, heap, DYNTYPE_AGENT);
             agent = NULL;
         }
@@ -1654,13 +1657,12 @@ void wolfSSH_AGENT_free(WOLFSSH_AGENT_CTX* agent)
 
     if (agent != NULL) {
         heap = agent->heap;
-        if (agent->msg != NULL)
-            WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
+        AgentMsgFree(agent);
         AgentBufferFree(agent, &agent->rxBuf);
         AgentBufferFree(agent, &agent->relayBuf);
         wc_FreeRng(&agent->rng);
         wolfSSH_AGENT_ID_list_free(agent->idList, heap);
-        WMEMSET(agent, 0, sizeof(*agent));
+        WS_FORCEZERO(agent, sizeof(*agent));
         WFREE(agent, heap, DYNTYPE_AGENT);
     }
 
@@ -2337,11 +2339,8 @@ int wolfSSH_AGENT_SignRequest(WOLFSSH* ssh,
     if (ret == WS_SUCCESS)
         ret = AgentWriteAll(ssh, agent->msg, agent->msgSz, NULL);
 
-    if (agent != NULL && agent->msg != NULL) {
-        WFREE(agent->msg, agent->heap, DYNTYPE_AGENT_BUFFER);
-        agent->msg = NULL;
-        agent->msgSz = 0;
-    }
+    if (agent != NULL)
+        AgentMsgFree(agent);
 
     if (ret == WS_SUCCESS)
         ret = AgentReadMessage(ssh, &rsp, &rspSz);
