@@ -2366,12 +2366,40 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
 }
 
 
+/* Points *newKey at the caller's *out when it holds keySz bytes, or at a new
+ * allocation when *out is NULL. */
+static int GetPubKeyOut(byte** out, word32 outSz, word32 keySz,
+        byte** newKey, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    WOLFSSH_UNUSED(heap);
+
+    if (*out == NULL) {
+        *newKey = (byte*)WMALLOC(keySz, heap, DYNTYPE_PRIVKEY);
+        if (*newKey == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    else if (outSz < keySz) {
+        WLOG(WS_LOG_DEBUG, "DER public key output size too small");
+        ret = WS_BUFFER_E;
+    }
+    else {
+        *newKey = *out;
+    }
+
+    return ret;
+}
+
+
 static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
         int isPrivate, void* heap)
 {
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
+    word32 newKeySz = 0;
     WS_KeySignature* key = NULL;
 
     WOLFSSH_UNUSED(heap);
@@ -2414,12 +2442,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    *outSz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
-                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                    if (newKey == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-                    else {
+                    newKeySz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
+                    ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                    if (ret == WS_SUCCESS) {
                         c32toa(nameLen, &newKey[localIdx]);
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], name, nameLen);
@@ -2428,7 +2453,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], rawPub, rawPubSz);
                         *out = newKey;
-                        ret = WS_SUCCESS;
+                        *outSz = newKeySz;
                     }
                 }
                 WFREE(rawPub, heap, DYNTYPE_PUBKEY);
@@ -2476,13 +2501,10 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + curveNameSz +
-                        LENGTH_SZ + qSz;
-                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                    if (newKey == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-                    else {
+                    newKeySz = LENGTH_SZ + *outTypeSz + LENGTH_SZ +
+                        curveNameSz + LENGTH_SZ + qSz;
+                    ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                    if (ret == WS_SUCCESS) {
                         c32toa(*outTypeSz, &newKey[localIdx]);
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
@@ -2495,7 +2517,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], q, qSz);
                         *out = newKey;
-                        ret = WS_SUCCESS;
+                        *outSz = newKeySz;
                     }
                 }
                 WFREE(q, heap, DYNTYPE_PUBKEY);
@@ -2515,12 +2537,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 ret = WS_CRYPTO_FAILED;
             }
             else {
-                *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + qSz;
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                if (newKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-                else {
+                newKeySz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + qSz;
+                ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                if (ret == WS_SUCCESS) {
                     c32toa(*outTypeSz, &newKey[localIdx]);
                     localIdx += LENGTH_SZ;
                     WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
@@ -2529,7 +2548,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     localIdx += LENGTH_SZ;
                     WMEMCPY(&newKey[localIdx], q, qSz);
                     *out = newKey;
-                    ret = WS_SUCCESS;
+                    *outSz = newKeySz;
                 }
             }
         }
@@ -2558,14 +2577,11 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     /* if MSB is set need leading zero */
                     nMsb = 1;
                 }
-                *outSz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
+                newKeySz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
                     LENGTH_SZ + eSz +
                     LENGTH_SZ + nSz + nMsb;
 
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                if (newKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
+                ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
             }
             if (ret == WS_SUCCESS) {
                 /* encode the key format string */
@@ -2589,6 +2605,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 WMEMCPY(&newKey[idx], n, nSz);
 
                 *out = newKey;
+                *outSz = newKeySz;
             }
         }
         else
