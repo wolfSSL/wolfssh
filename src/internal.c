@@ -15359,6 +15359,12 @@ int DoReceive(WOLFSSH* ssh)
                     ret == WS_EOF)) {
                 ret = WS_FATAL_ERROR;
             }
+            /* Refused before dispatch, so the packet stays unconsumed. Only
+             * a pending auth comes back for it. */
+            if (!bufferConsumed && ret == WS_FATAL_ERROR
+                    && ssh->error != WS_AUTH_PENDING) {
+                WipeInputPacket(ssh, UINT32_SZ + ssh->curSz + peerMacSz);
+            }
             break;
 
 #ifndef WOLFSSH_NO_AES_CBC
