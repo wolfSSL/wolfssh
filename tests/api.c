@@ -51,6 +51,7 @@
     #include <wolfssh/wolfscp.h>
 #endif
 #ifdef WOLFSSH_AGENT
+    #include <stdlib.h>
     #include <wolfssh/agent.h>
 #endif
 #ifdef WOLFSSH_OSSH_CERTS
@@ -3510,6 +3511,83 @@ static void test_wolfSSH_agent_signrequest_wrong_message(void)
     AssertIntEQ(sigSz, 0);
     AssertIntEQ(io.writeCalls, 1);
     AssertIntEQ(io.readCalls, 2);
+
+    cleanup_agent_test(ctx, ssh);
+}
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
+#define WOLFSSH_TEST_AGENT_ALLOC_COUNT
+static int agentAllocLive = 0;
+
+static void* AgentCountMalloc(size_t size)
+{
+    void* p = malloc(size);
+
+    if (p != NULL)
+        agentAllocLive++;
+    return p;
+}
+
+static void AgentCountFree(void* ptr)
+{
+    if (ptr != NULL) {
+        agentAllocLive--;
+        free(ptr);
+    }
+}
+
+static void* AgentCountRealloc(void* ptr, size_t size)
+{
+    void* p = realloc(ptr, size);
+
+    if (ptr == NULL && p != NULL)
+        agentAllocLive++;
+    return p;
+}
+#endif
+
+/* A reply the agent code does not implement is refused, and the failure
+ * reply built for it is released. */
+static void test_wolfSSH_agent_signrequest_unimplemented_reply(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    AgentTestCtx io;
+    byte digest[16] = {0};
+    byte keyBlob[8] = {0};
+    byte sig[16];
+    word32 sigSz = sizeof(sig);
+    int ret;
+#ifdef WOLFSSH_TEST_AGENT_ALLOC_COUNT
+    wolfSSL_Malloc_cb prevMf;
+    wolfSSL_Free_cb prevFf;
+    wolfSSL_Realloc_cb prevRf;
+#endif
+
+    memset(&io, 0, sizeof(io));
+    build_simple_response(&io, MSGID_AGENT_EXTENSION_FAILURE);
+    setup_agent_test(&ctx, &ssh, &io);
+
+    /* The first exchange allocates rxBuf, which the agent keeps. */
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    AssertIntEQ(ret, WS_UNIMPLEMENTED_E);
+    AssertIntEQ(sigSz, 0);
+    AssertNull(ssh->agent->msg);
+
+#ifdef WOLFSSH_TEST_AGENT_ALLOC_COUNT
+    sigSz = sizeof(sig);
+    agentAllocLive = 0;
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    AssertIntEQ(wolfSSL_SetAllocators(AgentCountMalloc, AgentCountFree,
+        AgentCountRealloc), 0);
+    ret = wolfSSH_AGENT_SignRequest(ssh, digest, sizeof(digest),
+        sig, &sigSz, keyBlob, sizeof(keyBlob), 0);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    AssertIntEQ(ret, WS_UNIMPLEMENTED_E);
+    AssertIntEQ(agentAllocLive, 0);
+#endif
 
     cleanup_agent_test(ctx, ssh);
 }
@@ -9629,6 +9707,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_agent_signrequest_setup_failure();
     test_wolfSSH_agent_signrequest_bad_args();
     test_wolfSSH_agent_signrequest_wrong_message();
+    test_wolfSSH_agent_signrequest_unimplemented_reply();
     test_wolfSSH_agent_signrequest_signature_too_large();
     test_wolfSSH_agent_signrequest_success();
     test_wolfSSH_agent_signrequest_large_response();
