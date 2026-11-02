@@ -5080,7 +5080,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* unlink() refuses a directory swapped in after the check */
         else if (WUNLINK(ssh->fs, name) < 0)
     #else
-        else if (WREMOVE(ssh->fs, name) < 0)
+        else if ((rc = WREMOVE(ssh->fs, name)) < 0)
     #endif
     #else /* USE_WINDOWS_API */
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
@@ -5089,13 +5089,13 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             type = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Error removing file");
         #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
-            if (ret == NUF_ACCES)
+            if (rc == NUF_ACCES)
                 WLOG(WS_LOG_SFTP, "access error");
-            if (ret == NUF_BAD_USER)
+            if (rc == NUF_BAD_USER)
                 WLOG(WS_LOG_SFTP, "bad user");
-            if (ret == NUF_IO_ERROR)
+            if (rc == NUF_IO_ERROR)
                 WLOG(WS_LOG_SFTP, "io error");
-            if (ret == NUF_NOFILE)
+            if (rc == NUF_NOFILE)
                 WLOG(WS_LOG_SFTP, "%s file not found", name);
         #endif
             ret = WS_BAD_FILE_E;
