@@ -172,6 +172,15 @@ AC_LINK_IFELSE(
    AC_MSG_RESULT([yes])],
   [AC_MSG_RESULT([no])])
 
+# closefrom(): glibc 2.34+, BSDs, Solaris; not macOS.
+AC_MSG_CHECKING([for closefrom])
+AC_LINK_IFELSE(
+  [AC_LANG_PROGRAM([[#include <unistd.h>]],
+                   [[closefrom(3);]])],
+  [AC_DEFINE([HAVE_CLOSEFROM], [1], [closefrom() available and declared])
+   AC_MSG_RESULT([yes])],
+  [AC_MSG_RESULT([no])])
+
 AC_MSG_CHECKING([for utimensat])
 AC_LINK_IFELSE(
   [AC_LANG_PROGRAM([[#include <fcntl.h>
