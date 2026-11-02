@@ -5022,6 +5022,90 @@ static int test_ScpParseCommand(void)
     return result;
 }
 #endif /* !NO_WOLFSSH_SERVER */
+
+/* A warning record carries no reply, so the record after it can arrive in
+ * the same read. ReceiveScpMessage takes one record per call and keeps the
+ * rest buffered, and notes the warning so the transfer fails at its end. An
+ * error record fails at once. The records are placed in the receive buffer
+ * directly, as a read would leave them. */
+static int test_ScpReceiveMessageAfterWarning(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    static const char full[] = "\x01scp: a: not a regular file\n"
+                               "C0644 5 name\n";
+    static const char part[] = "\x01scp: a: not a regular file\n"
+                               "C0644 5 na";
+    static const char rest[] = "me\n";
+    static const char fatal[] = "\x02scp: a: open failed\n";
+    int result = 0;
+    int ret;
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -4890;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -4891;
+    }
+    ssh->scpRecvMsg = (char*)WMALLOC(DEFAULT_SCP_MSG_SZ, ctx->heap,
+            DYNTYPE_STRING);
+    if (ssh->scpRecvMsg == NULL)
+        result = -4892;
+
+    /* warning and a whole header in one read, then the same with only part
+     * of the header, the rest arriving later */
+    for (i = 0; result == 0 && i < 2; i++) {
+        const char* in = (i == 0) ? full : part;
+
+        WMEMCPY(ssh->scpRecvMsg, in, WSTRLEN(in));
+        ssh->scpRecvMsgSz = (int)WSTRLEN(in);
+        ssh->scpFileSz = 0;
+        ssh->scpPeerWarned = 0;
+
+        ret = ReceiveScpMessage(ssh);
+        if (ret != WS_SUCCESS || ssh->scpMsgType != WOLFSSH_SCP_MSG_WARN ||
+                !ssh->scpPeerWarned) {
+            result = -4893;
+            break;
+        }
+        if (ssh->scpRecvMsgSz <= 0 || ssh->scpRecvMsg[0] != 'C') {
+            result = -4894;
+            break;
+        }
+        if (i == 1) {
+            WMEMCPY(ssh->scpRecvMsg + ssh->scpRecvMsgSz, rest,
+                    WSTRLEN(rest));
+            ssh->scpRecvMsgSz += (int)WSTRLEN(rest);
+        }
+
+        ret = ReceiveScpMessage(ssh);
+        if (ret != WS_SUCCESS || ssh->scpMsgType != WOLFSSH_SCP_MSG_FILE ||
+                ssh->scpFileSz != 5 || ssh->scpFileName == NULL ||
+                WSTRCMP(ssh->scpFileName, "name") != 0) {
+            result = -4895;
+            break;
+        }
+        if (ssh->scpRecvMsgSz != 0) {
+            result = -4896;
+            break;
+        }
+    }
+
+    if (result == 0) {
+        WMEMCPY(ssh->scpRecvMsg, fatal, WSTRLEN(fatal));
+        ssh->scpRecvMsgSz = (int)WSTRLEN(fatal);
+        if (ReceiveScpMessage(ssh) != WS_FATAL_ERROR)
+            result = -4897;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -29251,6 +29335,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
     testResult = testResult || (unitResult != 0);
 #endif
+    unitResult = test_ScpReceiveMessageAfterWarning();
+    printf("ScpReceiveMessageAfterWarning: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+
 #endif
 
     unitResult = test_MsgHighwater();
