@@ -12599,8 +12599,8 @@ static int DoGlobalRequestFwd(WOLFSSH* ssh,
                     WLOG(WS_LOG_WARN, "Forward cleanup after rejection failed, "
                             "ret = %d", cleanupRet);
                 }
-                ret = WS_RESOURCE_E;
             }
+            ret = WS_RESOURCE_E;
         }
     }
 
@@ -12894,6 +12894,14 @@ static int DoChannelOpen(WOLFSSH* ssh,
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&peerMaxPacketSz, buf, len, &begin);
+
+    if (ret == WS_SUCCESS && ssh->channelListSz >= WOLFSSH_MAX_CHANNELS) {
+        /* Per peer open, so DEBUG. */
+        WLOG(WS_LOG_DEBUG, "Rejecting channel open, %u channels open",
+                ssh->channelListSz);
+        ret = WS_RESOURCE_E;
+        fail_reason = OPEN_RESOURCE_SHORTAGE;
+    }
 
     if (ret == WS_SUCCESS) {
         WLOG(WS_LOG_INFO, "  type = %s", type);
