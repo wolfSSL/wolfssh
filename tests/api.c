@@ -7438,6 +7438,20 @@ static void scp_client_connect(WOLFSSH_CTX** ctx, WOLFSSH** ssh, int port,
     }
 }
 
+/* Returns 1 when the session's SCP transfer buffer holds no file data. */
+static int scpFileBufferWiped(const WOLFSSH* ssh)
+{
+    word32 i;
+
+    if (ssh->scpFileBuffer == NULL)
+        return 0;
+    for (i = 0; i < DEFAULT_SCP_BUFFER_SZ; i++) {
+        if (ssh->scpFileBuffer[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
 /* Drives an SCP transfer with a forced mid-transfer rekey.
  *
  * toServer == 0: client SINK (wolfSSH_SCP_from), exercises ScpStreamRead, the
@@ -7581,6 +7595,9 @@ static void scp_rekey_test(int nonBlock, int toServer)
      * exercising the ScpStreamSend/ScpStreamRead rekey paths it was written
      * for. */
     AssertIntGT(kexCount, 0);
+
+    /* sent or received file plaintext must not linger in the live session */
+    AssertIntEQ(scpFileBufferWiped(ssh), 1);
 
     /* best-effort shutdown; the completed transfer above is the real assertion */
     ret = wolfSSH_shutdown(ssh);

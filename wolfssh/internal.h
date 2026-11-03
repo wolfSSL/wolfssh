@@ -1301,8 +1301,10 @@ struct WOLFSSH {
     byte   scpTimestamp;          /* did peer request timestamp? {0:1} */
     word64 scpATime;              /* scp file access time, secs since epoch */
     word64 scpMTime;              /* scp file modification time, secs epoch */
-    byte*  scpFileBuffer;         /* transfer buffer, dynamic */
-    word32 scpFileBufferSz;       /* size of transfer buffer, octets */
+    byte*  scpFileBuffer;         /* transfer buffer, dynamic, always
+                                   * DEFAULT_SCP_BUFFER_SZ octets */
+    word32 scpFileBufferSz;       /* source: buffer capacity; sink: length of
+                                   * the received chunk, octets */
     word32 scpFileOffset;         /* current offset into file transfer */
     word32 scpBufferedSz;         /* bytes buffered to send to peer */
     byte   scpFileHeaderSent;     /* file header already sent for current file */
@@ -2189,6 +2191,8 @@ enum WS_MessageIdLimits {
             word32 bufSz, word32* inOutIdx);
     WOLFSSH_API int wolfSSH_TestScpGetFileName(WOLFSSH* ssh, byte* buf,
             word32 bufSz, word32* inOutIdx);
+    WOLFSSH_API int wolfSSH_TestDoScpSink(WOLFSSH* ssh);
+    WOLFSSH_API int wolfSSH_TestDoScpSource(WOLFSSH* ssh);
 #if !defined(WOLFSSH_SCP_USER_CALLBACKS) && !defined(NO_FILESYSTEM)
     WOLFSSH_API int wolfSSH_TestScpPushDir(const char* path);
 #endif
