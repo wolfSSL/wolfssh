@@ -97,6 +97,9 @@ enum WS_ScpFileStates {
 
     typedef struct ScpDir {
         WDIR dir;                            /* dir pointer, from opendir() */
+    #ifdef USE_WINDOWS_API
+        char firstEntry[MAX_PATH];           /* FindFirstFile name, unread */
+    #endif
         struct ScpDir* next;                 /* previous directory in stack */
     } ScpDir;
 #else
