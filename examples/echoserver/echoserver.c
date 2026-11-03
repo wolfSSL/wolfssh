@@ -85,8 +85,11 @@
         #include <termios.h>
     #endif
 #ifndef USE_WINDOWS_API
+    #include <grp.h>
     #include <pwd.h>
+    #include <sys/stat.h>
     #include <sys/wait.h>
+    #include <unistd.h>
 #endif
     #include <signal.h>
 #if defined(__QNX__) || defined(__QNXNTO__)
@@ -851,6 +854,27 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
                 system("env");
             #endif
 
+            /* Started as root, the shell runs as the user who logged in,
+             * or not at all. Otherwise the process has no root to give
+             * up. */
+            if (geteuid() == 0) {
+                /* Give the user its terminal, so it can reopen it by
+                 * name. */
+                if (fchown(STDIN_FILENO, p_passwd->pw_uid, (gid_t)-1) != 0
+                        || fchmod(STDIN_FILENO, 0620) != 0) {
+                    _exit(EXIT_FAILURE);
+                }
+                if (initgroups(p_passwd->pw_name, p_passwd->pw_gid) != 0
+                        || setgid(p_passwd->pw_gid) != 0
+                        || setuid(p_passwd->pw_uid) != 0) {
+                    _exit(EXIT_FAILURE);
+                }
+                if (p_passwd->pw_uid != 0
+                        && (setuid(0) == 0 || seteuid(0) == 0)) {
+                    _exit(EXIT_FAILURE);
+                }
+            }
+
             setenv("HOME", p_passwd->pw_dir, 1);
             setenv("LOGNAME", p_passwd->pw_name, 1);
             rc = chdir(p_passwd->pw_dir);
@@ -968,15 +992,14 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
     int rej = 1;
 
     if (vCtx && channel) {
-        const char* cmd = wolfSSH_ChannelGetSessionCommand(channel);
-
         if (SessionInUse((thread_ctx_t*)vCtx)) {
             return 1;
         }
 
 #ifdef WOLFSSH_SCP
-        /* The prefix ChannelCommandIsScp() matches, so both modes agree. */
-        if (cmd != NULL && WSTRNCMP(cmd, "scp", 3) == 0) {
+        /* The test wolfSSH_accept() diverts on, so a command granted here
+         * as a transfer is served as one. */
+        if (wolfSSH_ChannelCommandIsScp(channel) == 1) {
             /* An scp command the transfer cannot be run for is refused
              * rather than served as a session. */
             if (TransferChannel((thread_ctx_t*)vCtx, channel)) {
@@ -989,7 +1012,6 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         {
             rej = wsShellStartCb(channel, vCtx);
         }
-        (void)cmd;
     }
 
     return rej;
