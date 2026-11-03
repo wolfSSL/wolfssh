@@ -3178,6 +3178,145 @@ static void test_wolfSSH_SCP_SendRecursiveEntry(void)
 static void test_wolfSSH_SCP_SendRecursiveEntry(void) { ; }
 #endif
 
+#if defined(WOLFSSH_SCP) && !defined(WOLFSSH_SCP_USER_CALLBACKS) && \
+    !defined(NO_FILESYSTEM) && !defined(NO_WOLFSSH_DIR) && \
+    defined(WOLFSSH_TEST_INTERNAL) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSL_NUCLEUS)
+/* A recursive send skips a FIFO with a warning for the peer rather than
+ * reporting it as a file with whatever size the previous entry left behind. */
+static void test_wolfSSH_SCP_SendRecursiveSkipFifo(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpSendCtx   sendCtx;
+    char   fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    char   filePath[DEFAULT_SCP_FILE_NAME_SZ];
+    char   fifoPath[DEFAULT_SCP_FILE_NAME_SZ];
+    char   warning[DEFAULT_SCP_FILE_NAME_SZ + 32];
+    char   entryName[] = "b.txt";
+    char   dirPath[] = "./scp_recur_fifo";
+    byte   data[64];
+    byte   buf[256];
+    word64 mTime = 0;
+    word64 aTime = 0;
+    word32 totalSz = 0;
+    word32 i;
+    int    fileMode = 0;
+    int    ret;
+    int    warned = 0;
+    int    sent = 0;
+
+    for (i = 0; i < (word32)sizeof(data); i++)
+        data[i] = (byte)((i * 5 + 1) & 0xff);
+
+    WSNPRINTF(filePath, sizeof(filePath), "%s/%s", dirPath, entryName);
+    WSNPRINTF(fifoPath, sizeof(fifoPath), "%s/a_fifo", dirPath);
+    WSNPRINTF(warning, sizeof(warning), "scp: %s: not a regular file\n",
+            fifoPath);
+
+    WREMOVE(NULL, filePath);
+    WREMOVE(NULL, fifoPath);
+    WRMDIR(NULL, dirPath);
+
+    AssertIntEQ(WMKDIR(NULL, dirPath, 0700), 0);
+    AssertIntEQ(mkfifo(fifoPath, 0600), 0);
+    AssertIntEQ(scpStageRecurFile(filePath, data, sizeof(data)), 0);
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    WMEMSET(&sendCtx, 0, sizeof(sendCtx));
+    WMEMSET(fileName, 0, sizeof(fileName));
+
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_SCP_ENTER_DIR);
+
+    /* in whatever order the directory lists them, the FIFO is skipped with a
+     * warning and the regular file is handed back */
+    for (i = 0; i < 2; i++) {
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+                dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx);
+        if (ret == WS_SCP_CONTINUE) {
+            AssertNotNull(ssh->scpConfirmMsg);
+            AssertStrEQ(ssh->scpConfirmMsg + 1, warning);
+            warned++;
+        }
+        else {
+            AssertIntEQ(ret, (int)sizeof(data));
+            AssertStrEQ(fileName, entryName);
+            AssertIntEQ(totalSz, (word32)sizeof(data));
+            sent++;
+        }
+    }
+    AssertIntEQ(warned, 1);
+    AssertIntEQ(sent, 1);
+
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_RECURSIVE_REQUEST,
+            dirPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_SCP_EXIT_DIR_FINAL);
+    AssertNull(sendCtx.currentDir);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    WREMOVE(NULL, filePath);
+    WREMOVE(NULL, fifoPath);
+    WRMDIR(NULL, dirPath);
+}
+
+/* A file too large for the word32 size in the SCP header is refused rather
+ * than advertised with its size truncated. */
+static void test_wolfSSH_SCP_SendLargeFile(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpSendCtx   sendCtx;
+    WFILE*       fp = NULL;
+    char   fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    const char* bigPath = "./scp_big_sparse.bin";
+    byte   buf[256];
+    word64 mTime = 0;
+    word64 aTime = 0;
+    word32 totalSz = 0;
+    int    fileMode = 0;
+
+    /* needs a long that can hold an offset past 4 GiB */
+    if (sizeof(long) <= sizeof(word32))
+        return;
+
+    WREMOVE(NULL, bigPath);
+    AssertIntEQ(WFOPEN(NULL, &fp, bigPath, "wb"), 0);
+    AssertNotNull(fp);
+    /* sparse: one byte at offset 4 GiB, 4 GiB + 1 bytes long */
+    AssertIntEQ(WFSEEK(NULL, fp, (long)0xFFFFFFFFUL + 1, SEEK_SET), 0);
+    AssertIntEQ((int)WFWRITE(NULL, "x", 1, 1, fp), 1);
+    WFCLOSE(NULL, fp);
+    fp = NULL;
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    WMEMSET(&sendCtx, 0, sizeof(sendCtx));
+    WMEMSET(fileName, 0, sizeof(fileName));
+
+    AssertIntEQ(wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+            bigPath, fileName, (word32)sizeof(fileName), &mTime, &aTime,
+            &fileMode, 0, &totalSz, buf, (word32)sizeof(buf), &sendCtx),
+            WS_BAD_FILE_E);
+    AssertNull(sendCtx.fp);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    WREMOVE(NULL, bigPath);
+}
+#else
+static void test_wolfSSH_SCP_SendRecursiveSkipFifo(void) { ; }
+static void test_wolfSSH_SCP_SendLargeFile(void) { ; }
+#endif
+
 #ifdef WOLFSSH_AGENT
 /* Room for an add-identity message carrying a 3072-bit RSA key. */
 #define AGENT_TEST_BUF_SZ 2048
@@ -7674,9 +7813,10 @@ static int scpSendZeroFirst(WOLFSSH* ssh, int state, const char* peerRequest,
  * copy; this confirms that reset lets the second file get its own header
  * instead of it being duplicated or skipped.
  *
- * Not run on Windows: this is the only end-to-end exercise of a recursive
- * transfer anywhere in the suite (the example client cannot issue "scp -r -f",
- * so scripts/scp.test never reaches it), and the received file does not match
+ * Not run on Windows: this and RecursiveTwoFilesOk are the only end-to-end
+ * exercises of a recursive transfer anywhere in the suite (the example client
+ * cannot issue "scp -r -f", so scripts/scp.test never reaches them), and the
+ * received file does not match
  * there. That is a Windows-side recursive SCP problem of its own, unrelated to
  * the header fix, which reproduces on the default callbacks and needs its own
  * investigation. */
@@ -7700,6 +7840,7 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
     const char* dstDir = "./scp_recur_dst";
     const char* out1   = "./scp_recur_dst/a_short.txt";
     const char* out2   = "./scp_recur_dst/b_longer_name.txt";
+    const char* outFifo = "./scp_recur_dst/c_fifo";
     byte data1[300];
     byte data2[700];
     char cmd[300];
@@ -7708,11 +7849,8 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
      * WSNPRINTF calls under -Werror=format-truncation */
     char file1[300];
     char file2[300];
-    /* wolfSSH_SCP_from() mutates its src/dst buffers in place (e.g.
-     * ScpCheckForRename() writes a NUL into the path), so these cannot be
-     * string literals. */
+    char fifo[300];
     char srcBuf[256];
-    char dstBuf[32];
     THREAD_TYPE serThread;
 
     for (i = 0; i < sizeof(data1); i++)
@@ -7722,23 +7860,27 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
 
     AssertNotNull(WGETCWD(NULL, cwdBuf, sizeof(cwdBuf)));
     WSNPRINTF(srcBuf, sizeof(srcBuf), "%s/scp_recur_src", cwdBuf);
-    WSTRNCPY(dstBuf, dstDir, sizeof(dstBuf));
     WSNPRINTF(file1, sizeof(file1), "%s/a_short.txt", srcBuf);
     WSNPRINTF(file2, sizeof(file2), "%s/b_longer_name.txt", srcBuf);
+    WSNPRINTF(fifo, sizeof(fifo), "%s/c_fifo", srcBuf);
 
     /* full teardown first: a run that aborted mid-transfer leaves these
      * behind, and then WMKDIR below fails with EEXIST, masking the real
      * failure with a setup error */
     WREMOVE(NULL, file1);
     WREMOVE(NULL, file2);
+    WREMOVE(NULL, fifo);
     WRMDIR(NULL, srcBuf);
     WREMOVE(NULL, out1);
     WREMOVE(NULL, out2);
+    WREMOVE(NULL, outFifo);
     WRMDIR(NULL, dstDir);
 
     AssertIntEQ(WMKDIR(NULL, srcBuf, 0700), 0);
     AssertIntEQ(scpWriteTestFile(file1, data1, sizeof(data1)), 0);
     AssertIntEQ(scpWriteTestFile(file2, data2, sizeof(data2)), 0);
+    /* skipped with a warning record, which the sink reads past */
+    AssertIntEQ(mkfifo(fifo, 0600), 0);
 
     WMEMSET(&ser, 0, sizeof(func_args));
     argsCount = 0;
@@ -7770,8 +7912,11 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
             &rcvTimeout, sizeof(rcvTimeout));
 #endif
 
-    ret = wolfSSH_SCP_from(ssh, srcBuf, dstBuf);
-    AssertIntEQ(ret, WS_SUCCESS);
+    /* a string literal destination: wolfSSH_SCP_from() must not write
+     * through it. The skipped FIFO fails the transfer once both files are
+     * written. */
+    ret = wolfSSH_SCP_from(ssh, srcBuf, dstDir);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
 
     ret = wolfSSH_shutdown(ssh);
     (void)ret;
@@ -7786,6 +7931,108 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
      * stream; an exact match on both files proves each got its own header */
     AssertIntEQ(scpFilesMatch(out1, data1, sizeof(data1)), 0);
     AssertIntEQ(scpFilesMatch(out2, data2, sizeof(data2)), 0);
+    AssertIntNE(access(outFifo, F_OK), 0);
+
+    WREMOVE(NULL, file1);
+    WREMOVE(NULL, file2);
+    WREMOVE(NULL, fifo);
+    WRMDIR(NULL, srcBuf);
+    WREMOVE(NULL, out1);
+    WREMOVE(NULL, out2);
+    WRMDIR(NULL, dstDir);
+}
+#else
+static void test_wolfSSH_SCP_RecursiveTwoFiles(void) { ; }
+#endif /* USE_WINDOWS_API */
+
+/* The RecursiveTwoFiles fixture without the FIFO: a clean recursive send
+ * succeeds and delivers both files. Not run on Windows, as above. */
+#ifndef USE_WINDOWS_API
+static void test_wolfSSH_SCP_RecursiveTwoFilesOk(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    word32 i;
+    WS_SOCKET_T clientFd;
+    struct timeval rcvTimeout;
+    const char* args[6];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    const char* dstDir = "./scp_recur_dst";
+    const char* out1   = "./scp_recur_dst/a_short.txt";
+    const char* out2   = "./scp_recur_dst/b_longer_name.txt";
+    byte data1[300];
+    byte data2[700];
+    char cmd[300];
+    char cwdBuf[200];
+    char file1[300];
+    char file2[300];
+    char srcBuf[256];
+    char okDst[32];
+    THREAD_TYPE serThread;
+
+    for (i = 0; i < sizeof(data1); i++)
+        data1[i] = (byte)((i * 3 + 1) & 0xff);
+    for (i = 0; i < sizeof(data2); i++)
+        data2[i] = (byte)((i * 5 + 2) & 0xff);
+
+    AssertNotNull(WGETCWD(NULL, cwdBuf, sizeof(cwdBuf)));
+    WSNPRINTF(srcBuf, sizeof(srcBuf), "%s/scp_recur_src", cwdBuf);
+    WSNPRINTF(file1, sizeof(file1), "%s/a_short.txt", srcBuf);
+    WSNPRINTF(file2, sizeof(file2), "%s/b_longer_name.txt", srcBuf);
+    WSTRNCPY(okDst, dstDir, sizeof(okDst));
+
+    WREMOVE(NULL, file1);
+    WREMOVE(NULL, file2);
+    WRMDIR(NULL, srcBuf);
+    WREMOVE(NULL, out1);
+    WREMOVE(NULL, out2);
+    WRMDIR(NULL, dstDir);
+
+    AssertIntEQ(WMKDIR(NULL, srcBuf, 0700), 0);
+    AssertIntEQ(scpWriteTestFile(file1, data1, sizeof(data1)), 0);
+    AssertIntEQ(scpWriteTestFile(file2, data2, sizeof(data2)), 0);
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv     = (char**)args;
+    ser.argc     = argsCount;
+    ser.signal   = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    WSNPRINTF(cmd, sizeof(cmd), "scp -r -f %s", srcBuf);
+    scp_client_connect(&ctx, &ssh, ready.port, cmd);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+
+    ret = wolfSSH_SCP_from(ssh, srcBuf, okDst);
+    AssertIntEQ(ret, WS_SUCCESS);
+
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    WCLOSESOCKET(wolfSSH_get_fd(ssh));
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+
+    AssertIntEQ(scpFilesMatch(out1, data1, sizeof(data1)), 0);
+    AssertIntEQ(scpFilesMatch(out2, data2, sizeof(data2)), 0);
 
     WREMOVE(NULL, file1);
     WREMOVE(NULL, file2);
@@ -7795,7 +8042,7 @@ static void test_wolfSSH_SCP_RecursiveTwoFiles(void)
     WRMDIR(NULL, dstDir);
 }
 #else
-static void test_wolfSSH_SCP_RecursiveTwoFiles(void) { ; }
+static void test_wolfSSH_SCP_RecursiveTwoFilesOk(void) { ; }
 #endif /* USE_WINDOWS_API */
 
 static void test_wolfSSH_SCP_SendZeroFirst(void)
@@ -7865,6 +8112,8 @@ static void test_wolfSSH_SCP_SendZeroFirst(void)
 
     ret = wolfSSH_SCP_from(ssh, srcBuf, fromBuf);
     AssertIntEQ(ret, WS_SUCCESS);
+    /* the destination argument is const and is left as it was */
+    AssertStrEQ(fromBuf, fromName);
 
     ret = wolfSSH_shutdown(ssh);
     (void)ret;
@@ -7884,14 +8133,161 @@ static void test_wolfSSH_SCP_SendZeroFirst(void)
     WREMOVE(NULL, fromName);
 }
 
+#ifndef USE_WINDOWS_API
+/* A send callback that skips an entry with a warning before sending the
+ * file, or aborts with an error message instead. One transfer per run. */
+static int scpScriptAbort;
+static int scpScriptWarned;
+
+static int scpSendScripted(WOLFSSH* ssh, int state, const char* peerRequest,
+        char* fileName, word32 fileNameSz, word64* mTime, word64* aTime,
+        int* fileMode, word32 fileOffset, word32* totalFileSz,
+        byte* buf, word32 bufSz, void* ctx)
+{
+    (void)peerRequest;
+    (void)fileOffset;
+    (void)ctx;
+
+    switch (state) {
+        case WOLFSSH_SCP_NEW_REQUEST:
+            scpScriptWarned = 0;
+            return WS_SUCCESS;
+
+        case WOLFSSH_SCP_SINGLE_FILE_REQUEST:
+            if (scpScriptAbort) {
+                wolfSSH_SetScpErrorMsg(ssh, "scp: x: open failed");
+                return WS_SCP_ABORT;
+            }
+            if (!scpScriptWarned) {
+                scpScriptWarned = 1;
+                wolfSSH_SetScpErrorMsg(ssh, "scp: x: not a regular file");
+                return WS_SCP_CONTINUE;
+            }
+            if (bufSz < SCP_REKEY_FILE_SZ)
+                return WS_SCP_ABORT;
+            WSTRNCPY(fileName, "scp_script.txt", fileNameSz);
+            *totalFileSz = SCP_REKEY_FILE_SZ;
+            *mTime = 0;
+            *aTime = 0;
+            *fileMode = 0644;
+            WMEMCPY(buf, scpZeroFirstData, SCP_REKEY_FILE_SZ);
+            return SCP_REKEY_FILE_SZ;
+
+        default:
+            return WS_SCP_ABORT;
+    }
+}
+
+/* doAbort == 0: the source warns, then sends the file; the sink writes the
+ * file and fails the transfer. doAbort == 1: the source aborts with an error
+ * message; the sink fails the transfer with no file. */
+static void scp_script_test(int doAbort)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    word32 i;
+    WS_SOCKET_T clientFd;
+    struct timeval rcvTimeout;
+    const char* args[6];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    const char* srcName  = "./scp_script_src.txt";
+    const char* fromName = "./scp_script_from.txt";
+    char srcBuf[32];
+    char fromBuf[32];
+    char cmd[64];
+    THREAD_TYPE serThread;
+
+    WSTRNCPY(srcBuf, srcName, sizeof(srcBuf));
+    WSTRNCPY(fromBuf, fromName, sizeof(fromBuf));
+    WREMOVE(NULL, fromName);
+
+    for (i = 0; i < SCP_REKEY_FILE_SZ; i++)
+        scpZeroFirstData[i] = (byte)((i * 11 + 3) & 0xff);
+    /* only satisfies the server's base-path parsing */
+    AssertIntEQ(scpWriteTestFile(srcName, scpZeroFirstData, SCP_REKEY_FILE_SZ),
+            0);
+    scpScriptAbort = doAbort;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv     = (char**)args;
+    ser.argc     = argsCount;
+    ser.signal   = &ready;
+    ser.scp_send = scpSendScripted;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    WSNPRINTF(cmd, sizeof(cmd), "scp -f %s", srcName);
+    scp_client_connect(&ctx, &ssh, ready.port, cmd);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+
+    /* the record fails it, not the server dropping the connection after */
+    ret = wolfSSH_SCP_from(ssh, srcBuf, fromBuf);
+    AssertIntEQ(ret, WS_FATAL_ERROR);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_FATAL_ERROR);
+
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+
+    if (doAbort) {
+        AssertIntNE(access(fromName, F_OK), 0);
+    }
+    else {
+        AssertIntEQ(scpFilesMatch(fromName, scpZeroFirstData,
+                SCP_REKEY_FILE_SZ), 0);
+    }
+
+    WREMOVE(NULL, srcName);
+    WREMOVE(NULL, fromName);
+}
+
+static void test_wolfSSH_SCP_SourceWarning(void)
+{
+    scp_script_test(0);
+}
+
+static void test_wolfSSH_SCP_SourceAbort(void)
+{
+    scp_script_test(1);
+}
+#else
+static void test_wolfSSH_SCP_SourceWarning(void) { ; }
+static void test_wolfSSH_SCP_SourceAbort(void) { ; }
+#endif /* !USE_WINDOWS_API */
+
 #else /* WOLFSSH_SCP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED &&
        * !NO_FILESYSTEM && !WOLFSSH_SCP_USER_CALLBACKS && !WOLFSSH_ZEPHYR */
 static void test_wolfSSH_SCP_ReKey(void) { ; }
+static void test_wolfSSH_SCP_SourceWarning(void) { ; }
+static void test_wolfSSH_SCP_SourceAbort(void) { ; }
 static void test_wolfSSH_SCP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_SendZeroFirst(void) { ; }
 static void test_wolfSSH_SCP_RecursiveTwoFiles(void) { ; }
+static void test_wolfSSH_SCP_RecursiveTwoFilesOk(void) { ; }
 #endif
 
 
@@ -9421,12 +9817,17 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SCP_CB();
     test_wolfSSH_SCP_SendSymlinkReject();
     test_wolfSSH_SCP_SendRecursiveEntry();
+    test_wolfSSH_SCP_SendRecursiveSkipFifo();
+    test_wolfSSH_SCP_SendLargeFile();
     test_wolfSSH_SCP_ReKey();
     test_wolfSSH_SCP_ReKey_NonBlock();
     test_wolfSSH_SCP_ReKey_ToServer();
     test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
     test_wolfSSH_SCP_SendZeroFirst();
     test_wolfSSH_SCP_RecursiveTwoFiles();
+    test_wolfSSH_SCP_RecursiveTwoFilesOk();
+    test_wolfSSH_SCP_SourceWarning();
+    test_wolfSSH_SCP_SourceAbort();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();

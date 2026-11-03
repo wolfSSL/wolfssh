@@ -303,7 +303,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
             ret = wolfSSH_SCP_from(ssh, path1, path2);
         else if (dir == copyToSrv)
             ret = wolfSSH_SCP_to(ssh, path1, path2);
-        if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+        if (ret == WS_FATAL_ERROR) {
             ret = wolfSSH_get_error(ssh);
         }
     } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||

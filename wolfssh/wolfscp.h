@@ -133,7 +133,12 @@ typedef int (*WS_CallbackScpRecv)(WOLFSSH* ssh, int state,
  * second 0 in a row while "fileOffset" is still short of "totalFileSz" is
  * treated as a stalled callback and aborts the transfer, since there is no
  * "no data right now" status in this API. Callbacks that can block should do
- * so rather than returning 0. */
+ * so rather than returning 0.
+ *
+ * Returning WS_SCP_CONTINUE in place of an entry skips it: the message set
+ * with wolfSSH_SetScpErrorMsg() goes to the peer as a warning record and the
+ * callback is called again in the same state. Returning WS_SCP_ABORT ends the
+ * transfer and sends that message as an error record. */
 typedef int (*WS_CallbackScpSend)(WOLFSSH* ssh, int state,
                                   const char* peerRequest, char* fileName,
                                   word32 fileNameSz, word64* mTime,
@@ -154,8 +159,16 @@ WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh);
 WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message);
 
 WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd);
+/* Client side. The remote path, dst for _to and src for _from, goes to the
+ * server as given and, as with OpenSSH scp, the remote shell expands it;
+ * quote a path that must be taken literally. A control character in it
+ * returns WS_ERROR with WS_BAD_ARGUMENT as the session error. */
 WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH* ssh, const char* src,
         const char* dst);
+/* As the receiving side, here and in wolfSSH_SCP_accept(), a warning record
+ * from the peer does not stop the transfer: the entries after it are still
+ * written, then the transfer fails with WS_FATAL_ERROR, as OpenSSH scp exits
+ * non-zero. An error record fails it at once. */
 WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
         const char* dst);
 /* Server side. Drives an SCP transfer on a channel whose "exec scp ..."

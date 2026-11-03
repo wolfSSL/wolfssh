@@ -4157,6 +4157,26 @@ static int test_ScpGetFileMode(void)
         }
     }
 
+    /* a nonzero start index is bounded by what is left after it */
+    if (result == 0) {
+        idx = 2;
+        ret = wolfSSH_TestScpGetFileMode(ssh, (byte*)"xxC0644 0 f", 11, &idx);
+        if (ret != WS_SUCCESS || idx != 8 || ssh->scpFileMode != 0644)
+            result = -426;
+    }
+    if (result == 0) {
+        idx = 6;
+        ret = wolfSSH_TestScpGetFileMode(ssh, (byte*)"C0644 C", 7, &idx);
+        if (ret != WS_BAD_ARGUMENT)
+            result = -427;
+    }
+    if (result == 0) {
+        idx = 7;
+        ret = wolfSSH_TestScpGetFileMode(ssh, (byte*)"C0644 C", 7, &idx);
+        if (ret != WS_BAD_ARGUMENT)
+            result = -428;
+    }
+
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     return result;
@@ -4528,6 +4548,278 @@ static int test_ScpGetFileName(void)
     wolfSSH_CTX_free(ctx);
     return result;
 }
+
+#ifndef NO_WOLFSSH_SERVER
+/* Run ParseScpCommand on cmd as a fresh session's exec command. */
+static int ScpParseCommandCase(const char* cmd, int expRet, byte expDir,
+        const char* expBase, const char* expFile, byte expRecursive)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WOLFSSH_CHANNEL* channel = NULL;
+    word32 cmdSz = (word32)WSTRLEN(cmd);
+    int result = 0;
+    int ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -4870;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -4871;
+    }
+
+    channel = ChannelNew(ssh, ID_CHANTYPE_SESSION, 100, 100);
+    if (channel == NULL)
+        result = -4872;
+    if (result == 0) {
+        channel->command = (char*)WMALLOC(cmdSz + 1, ctx->heap,
+                DYNTYPE_STRING);
+        if (channel->command == NULL)
+            result = -4873;
+    }
+    if (result == 0) {
+        WMEMCPY(channel->command, cmd, cmdSz + 1);
+        channel->commandSz = cmdSz;
+        if (ChannelAppend(ssh, channel) != WS_SUCCESS)
+            result = -4874;
+        else
+            channel = NULL;
+    }
+
+    if (result == 0) {
+        ret = ParseScpCommand(ssh);
+        if (ret != expRet)
+            result = -4875;
+    }
+    if (result == 0 && expRet == WS_SUCCESS) {
+        if (ssh->scpDirection != expDir)
+            result = -4876;
+        else if (ssh->scpIsRecursive != expRecursive)
+            result = -4879;
+    #ifndef USE_WINDOWS_API
+        /* paths are POSIX-style */
+        else if (ssh->scpBasePath == NULL ||
+                WSTRCMP(ssh->scpBasePath, expBase) != 0)
+            result = -4877;
+        /* an empty expFile expects no rename */
+        else if (expFile != NULL && expFile[0] == '\0' &&
+                ssh->scpFileName != NULL && ssh->scpFileName[0] != '\0')
+            result = -4878;
+        else if (expFile != NULL && expFile[0] != '\0' &&
+                (ssh->scpFileName == NULL ||
+                 WSTRCMP(ssh->scpFileName, expFile) != 0))
+            result = -4878;
+    #else
+        (void)expBase;
+        (void)expFile;
+    #endif
+    }
+
+    if (channel != NULL)
+        ChannelDelete(channel, ctx->heap);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* Options end at the -t or -f that takes the path, or at a "--" before it.
+ * A target with no directory part names a file in the current directory. */
+static int test_ScpParseCommand(void)
+{
+    int result;
+
+    /* the path is not rescanned for options */
+    result = ScpParseCommandCase("scp -f ./a -t b", WS_SUCCESS,
+            WOLFSSH_SCP_FROM, "./a -t b", NULL, 0);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -f ./x -r", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "./x -r", NULL, 0);
+    /* "--" before a path starting with "-", as OpenSSH sends it */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -r -f -- -x", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "-x", NULL, 1);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t -- -file", WS_SUCCESS,
+                WOLFSSH_SCP_TO, ".", "-file", 0);
+    /* a bare target keeps its whole name */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t newname", WS_SUCCESS,
+                WOLFSSH_SCP_TO, ".", "newname", 0);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t ./newname", WS_SUCCESS,
+                WOLFSSH_SCP_TO, "./", "newname", 0);
+    /* no path at all */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t --", WS_SCP_CMD_E, 0, NULL,
+                NULL, 0);
+#ifndef NO_FILESYSTEM
+    /* an existing directory takes the files under their own names */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t .", WS_SUCCESS,
+                WOLFSSH_SCP_TO, ".", "", 0);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -t ..", WS_SUCCESS,
+                WOLFSSH_SCP_TO, "..", "", 0);
+    if (result == 0) {
+        WRMDIR(NULL, "scp_parse_dir");
+        if (WMKDIR(NULL, "scp_parse_dir", 0700) != 0)
+            result = -4883;
+        if (result == 0)
+            result = ScpParseCommandCase("scp -t scp_parse_dir", WS_SUCCESS,
+                    WOLFSSH_SCP_TO, "scp_parse_dir", "", 0);
+        if (result == 0)
+            result = ScpParseCommandCase("scp -t ./scp_parse_dir",
+                    WS_SUCCESS, WOLFSSH_SCP_TO, "./scp_parse_dir", "", 0);
+        if (result == 0)
+            result = ScpParseCommandCase("scp -r -t ./scp_parse_dir/",
+                    WS_SUCCESS, WOLFSSH_SCP_TO, "./scp_parse_dir", "", 1);
+        WRMDIR(NULL, "scp_parse_dir");
+    }
+#endif
+    /* the path is taken as given, spaces and quotes included */
+    if (result == 0)
+        result = ScpParseCommandCase("scp -f /tmp/a b", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "/tmp/a b", NULL, 0);
+    if (result == 0)
+        result = ScpParseCommandCase("scp -f '/tmp/a b'", WS_SUCCESS,
+                WOLFSSH_SCP_FROM, "'/tmp/a b'", NULL, 0);
+
+    return result;
+}
+#endif /* !NO_WOLFSSH_SERVER */
+
+/* A warning record carries no reply, so the record after it can arrive in
+ * the same read. ReceiveScpMessage takes one record per call and keeps the
+ * rest buffered, and notes the warning so the transfer fails at its end. An
+ * error record fails at once. The records are placed in the receive buffer
+ * directly, as a read would leave them. */
+static int test_ScpReceiveMessageAfterWarning(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    static const char full[] = "\x01scp: a: not a regular file\n"
+                               "C0644 5 name\n";
+    static const char part[] = "\x01scp: a: not a regular file\n"
+                               "C0644 5 na";
+    static const char rest[] = "me\n";
+    static const char fatal[] = "\x02scp: a: open failed\n";
+    int result = 0;
+    int ret;
+    int i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -4890;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -4891;
+    }
+    ssh->scpRecvMsg = (char*)WMALLOC(DEFAULT_SCP_MSG_SZ, ctx->heap,
+            DYNTYPE_STRING);
+    if (ssh->scpRecvMsg == NULL)
+        result = -4892;
+
+    /* warning and a whole header in one read, then the same with only part
+     * of the header, the rest arriving later */
+    for (i = 0; result == 0 && i < 2; i++) {
+        const char* in = (i == 0) ? full : part;
+
+        WMEMCPY(ssh->scpRecvMsg, in, WSTRLEN(in));
+        ssh->scpRecvMsgSz = (int)WSTRLEN(in);
+        ssh->scpFileSz = 0;
+        ssh->scpPeerWarned = 0;
+
+        ret = ReceiveScpMessage(ssh);
+        if (ret != WS_SUCCESS || ssh->scpMsgType != WOLFSSH_SCP_MSG_WARN ||
+                !ssh->scpPeerWarned) {
+            result = -4893;
+            break;
+        }
+        if (ssh->scpRecvMsgSz <= 0 || ssh->scpRecvMsg[0] != 'C') {
+            result = -4894;
+            break;
+        }
+        if (i == 1) {
+            WMEMCPY(ssh->scpRecvMsg + ssh->scpRecvMsgSz, rest,
+                    WSTRLEN(rest));
+            ssh->scpRecvMsgSz += (int)WSTRLEN(rest);
+        }
+
+        ret = ReceiveScpMessage(ssh);
+        if (ret != WS_SUCCESS || ssh->scpMsgType != WOLFSSH_SCP_MSG_FILE ||
+                ssh->scpFileSz != 5 || ssh->scpFileName == NULL ||
+                WSTRCMP(ssh->scpFileName, "name") != 0) {
+            result = -4895;
+            break;
+        }
+        if (ssh->scpRecvMsgSz != 0) {
+            result = -4896;
+            break;
+        }
+    }
+
+    if (result == 0) {
+        WMEMCPY(ssh->scpRecvMsg, fatal, WSTRLEN(fatal));
+        ssh->scpRecvMsgSz = (int)WSTRLEN(fatal);
+        if (ReceiveScpMessage(ssh) != WS_FATAL_ERROR)
+            result = -4897;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+#ifndef NO_WOLFSSH_CLIENT
+/* The client's exec command carries the remote path as given, the way
+ * OpenSSH scp sends it, and the built-in server reads back the same path. */
+static int test_ScpMakeCmd(void)
+{
+    static const struct {
+        const char* name;
+        const char* cmd;
+    } cases[] = {
+        { "/tmp/a.txt",       "scp -f /tmp/a.txt" },
+        { "/tmp/a b",         "scp -f /tmp/a b" },
+        { "/tmp/it's;$(x)",   "scp -f /tmp/it's;$(x)" },
+        { "-x",               "scp -f -- -x" },
+        { "-a b",             "scp -f -- -a b" }
+    };
+    static const char* bad[] = { "a\nb", "a\rb", "a\tb", "a\x7f" };
+    char* cmd = NULL;
+    int result = 0;
+    int ret;
+    word32 i;
+
+    for (i = 0; result == 0 && i < sizeof(cases) / sizeof(cases[0]); i++) {
+        cmd = NULL;
+        ret = wolfSSH_TestScpMakeCmd(cases[i].name, 'f', &cmd, NULL);
+        if (ret != WS_SUCCESS || cmd == NULL)
+            result = -4880;
+        else if (WSTRCMP(cmd, cases[i].cmd) != 0)
+            result = -4881;
+    #if !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API)
+        if (result == 0)
+            result = ScpParseCommandCase(cmd, WS_SUCCESS, WOLFSSH_SCP_FROM,
+                    cases[i].name, NULL, 0);
+    #endif
+        if (cmd != NULL)
+            WFREE(cmd, NULL, DYNTYPE_STRING);
+    }
+
+    for (i = 0; result == 0 && i < sizeof(bad) / sizeof(bad[0]); i++) {
+        cmd = NULL;
+        ret = wolfSSH_TestScpMakeCmd(bad[i], 't', &cmd, NULL);
+        if (ret != WS_BAD_ARGUMENT || cmd != NULL)
+            result = -4882;
+    }
+
+    return result;
+}
+#endif /* !NO_WOLFSSH_CLIENT */
 #endif /* WOLFSSH_TEST_INTERNAL && WOLFSSH_SCP */
 
 static int test_ChannelPutData(void)
@@ -26730,6 +27022,24 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_ScpGetFileName();
     printf("ScpGetFileName: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifndef NO_WOLFSSH_SERVER
+    unitResult = test_ScpParseCommand();
+    printf("ScpParseCommand: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif
+    unitResult = test_ScpReceiveMessageAfterWarning();
+    printf("ScpReceiveMessageAfterWarning: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+
+#ifndef NO_WOLFSSH_CLIENT
+    unitResult = test_ScpMakeCmd();
+    printf("ScpMakeCmd: %s (result=%d)\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"), unitResult);
+    testResult = testResult || (unitResult != 0);
+#endif
 #endif
 
     unitResult = test_MsgHighwater();
