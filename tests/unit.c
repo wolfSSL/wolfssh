@@ -20355,6 +20355,140 @@ out:
     return result;
 }
 
+
+/* Store a command line as the client's exec channel name and return the
+ * buffer holding it, or NULL. */
+static const byte* SetExecName(WOLFSSH* ssh, const char* command)
+{
+    if (wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC, (byte*)command,
+                (word32)WSTRLEN(command)) != WS_SUCCESS)
+        return NULL;
+    return ssh->channelName;
+}
+
+static int IsWiped(const byte* p, word32 sz)
+{
+    word32 i;
+
+    if (p == NULL || !IsRetained((void*)p))
+        return 0;
+    for (i = 0; i < sz; i++) {
+        if (p[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+/* Verify every release of the client's exec command line in
+ * ssh->channelName wipes it first: switching to shell or terminal,
+ * replacing it with another command, and wolfSSH_free(). The
+ * retain-on-free allocator is installed just around each release so the
+ * freed bytes can be read back. */
+static int test_ChannelName_zeroedOnFree(void)
+{
+    static const char command[] = "sh -c 'login --password hunter2'";
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    const byte* name;
+    word32 commandSz = (word32)WSTRLEN(command);
+    int result = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -740;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        result = -741;
+        goto out;
+    }
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+
+    /* exec to shell */
+    if ((name = SetExecName(ssh, command)) == NULL) {
+        result = -742;
+        goto out;
+    }
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -743;
+        goto out;
+    }
+    wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_SHELL, NULL, 0);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    if (!IsWiped(name, commandSz)) {
+        result = -744;
+        goto out;
+    }
+    DrainRetained();
+
+    /* exec replaced by another exec */
+    if ((name = SetExecName(ssh, command)) == NULL) {
+        result = -745;
+        goto out;
+    }
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -746;
+        goto out;
+    }
+    wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC, (byte*)"ls", 2);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    if (!IsWiped(name, commandSz)) {
+        result = -747;
+        goto out;
+    }
+    DrainRetained();
+
+#ifdef WOLFSSH_TERM
+    /* exec to terminal */
+    if ((name = SetExecName(ssh, command)) == NULL) {
+        result = -748;
+        goto out;
+    }
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -749;
+        goto out;
+    }
+    wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_TERMINAL, NULL, 0);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    if (!IsWiped(name, commandSz)) {
+        result = -750;
+        goto out;
+    }
+    DrainRetained();
+#endif
+
+    /* wolfSSH_free() */
+    if ((name = SetExecName(ssh, command)) == NULL) {
+        result = -751;
+        goto out;
+    }
+    if (wolfSSL_SetAllocators(RetainMalloc, RetainFree,
+                              RetainRealloc) != 0) {
+        result = -752;
+        goto out;
+    }
+    wolfSSH_free(ssh);
+    wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+    ssh = NULL;
+    if (!IsWiped(name, commandSz)) {
+        result = -753;
+        goto out;
+    }
+
+out:
+    DrainRetained();
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #ifdef WOLFSSH_TEST_INTERNAL
 
 /* [uint32 channelId][string "exec"][byte wantReply][string command] */
@@ -26942,6 +27076,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_ChannelDelete_zeroesCommand();
     printf("ChannelDelete_zeroesCommand: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ChannelName_zeroedOnFree();
+    printf("ChannelName_zeroedOnFree: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
