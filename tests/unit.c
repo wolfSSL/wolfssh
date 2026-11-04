@@ -21233,6 +21233,142 @@ out:
 }
 #endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
 
+#if defined(WOLFSSH_SMALL_STACK) && \
+    defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
+    ((!defined(WOLFSSH_NO_ECDH) && \
+      !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)) || \
+     !defined(WOLFSSH_NO_CURVE25519_SHA256))
+/* Fault-injecting allocator: the failAt'th allocation after install
+ * returns NULL, and every other one is filled with 0xCC so storage that
+ * was never initialized looks like garbage, not zeros. The other one of
+ * the first two allocations is never initialized; the free checks it is
+ * still all 0xCC, so a wolfCrypt free that touched it (the Curve25519
+ * free zeroes the key) is caught. */
+#define FAIL_NTH_PROBE_SZ 2
+static int failAllocAt = 0;
+static int failAllocCount = 0;
+static void* failNthPtr[FAIL_NTH_PROBE_SZ];
+static size_t failNthSz[FAIL_NTH_PROBE_SZ];
+static int failAllocTouched = 0;
+
+static void* FailNthMalloc(size_t size)
+{
+    void* p;
+
+    if (++failAllocCount == failAllocAt)
+        return NULL;
+    p = malloc(size);
+    if (p != NULL)
+        WMEMSET(p, 0xCC, size);
+    if (failAllocCount <= FAIL_NTH_PROBE_SZ) {
+        failNthPtr[failAllocCount - 1] = p;
+        failNthSz[failAllocCount - 1] = size;
+    }
+    return p;
+}
+
+static void FailNthFree(void* ptr)
+{
+    size_t i, j;
+
+    for (i = 0; ptr != NULL && i < FAIL_NTH_PROBE_SZ; i++) {
+        if (ptr == failNthPtr[i]) {
+            for (j = 0; j < failNthSz[i]; j++) {
+                if (((byte*)ptr)[j] != 0xCC) {
+                    failAllocTouched = 1;
+                    break;
+                }
+            }
+            failNthPtr[i] = NULL;
+        }
+    }
+    free(ptr);
+}
+
+static void* FailNthRealloc(void* ptr, size_t size)
+{
+    return realloc(ptr, size);
+}
+
+typedef int (*KeyAgreeServerFn)(WOLFSSH* ssh, byte hashId,
+        byte* f, word32* fSz);
+
+/* Verify the server ECDH and Curve25519 KeyAgree functions survive a
+ * failed allocation of either temporary key under WOLFSSH_SMALL_STACK.
+ * When one allocation fails, the other key was allocated but never
+ * initialized; it must not be handed to the wolfCrypt free, so it must
+ * reach WFREE still holding the allocator's fill. */
+static int test_KeyAgree_server_allocFailCleanup(void)
+{
+    static const struct {
+        byte kexId;
+        KeyAgreeServerFn fn;
+    } cases[] = {
+#if !defined(WOLFSSH_NO_ECDH) && !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)
+        { ID_ECDH_SHA2_NISTP256, wolfSSH_TestKeyAgreeEcdh_server },
+#endif
+#ifndef WOLFSSH_NO_CURVE25519_SHA256
+        { ID_CURVE25519_SHA256, wolfSSH_TestKeyAgreeCurve25519_server },
+#endif
+    };
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    byte f[MAX_KEX_KEY_SZ];
+    word32 fSz;
+    word32 i;
+    int failAt;
+    int ret;
+    int result = 0;
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -790;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL || ssh->handshake == NULL) {
+        result = -791;
+        goto out;
+    }
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    for (i = 0; i < (word32)(sizeof(cases) / sizeof(cases[0])); i++) {
+        /* The two temporary keys are the first two allocations. */
+        for (failAt = 1; failAt <= 2; failAt++) {
+            ssh->handshake->kexId = cases[i].kexId;
+            fSz = (word32)sizeof(f);
+            failAllocAt = failAt;
+            failAllocCount = 0;
+            failAllocTouched = 0;
+            WMEMSET(failNthPtr, 0, sizeof(failNthPtr));
+            if (wolfSSL_SetAllocators(FailNthMalloc, FailNthFree,
+                    FailNthRealloc) != 0) {
+                result = -792;
+                goto out;
+            }
+            ret = cases[i].fn(ssh, WC_HASH_TYPE_SHA256, f, &fSz);
+            wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+            if (ret != WS_MEMORY_E) {
+                result = -793;
+                goto out;
+            }
+            if (failAllocTouched) {
+                result = -794;
+                goto out;
+            }
+        }
+    }
+
+out:
+    if (ssh != NULL)
+        wolfSSH_free(ssh);
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_SMALL_STACK && WOLFSSH_TEST_CAPTURING_ALLOCATOR && ... */
+
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
     !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
@@ -27005,6 +27141,17 @@ int wolfSSH_UnitTest(int argc, char** argv)
             (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* !WOLFSSH_NO_ECDH && !WOLFSSH_NO_ECDH_SHA2_NISTP256 */
+
+#if defined(WOLFSSH_SMALL_STACK) && \
+    defined(WOLFSSH_TEST_CAPTURING_ALLOCATOR) && \
+    ((!defined(WOLFSSH_NO_ECDH) && \
+      !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256)) || \
+     !defined(WOLFSSH_NO_CURVE25519_SHA256))
+    unitResult = test_KeyAgree_server_allocFailCleanup();
+    printf("KeyAgree_server_allocFailCleanup: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
 
 #if !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
     !defined(WOLFSSH_NO_NISTP384_MLKEM1024_SHA384) || \
