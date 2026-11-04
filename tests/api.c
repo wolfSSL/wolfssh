@@ -2888,6 +2888,63 @@ static void test_wolfSSH_ReadKey_sshNoComment(void)
 }
 
 
+/* wolfSSH_ReadKey_file() must take every ML-DSA public key name as an SSH
+ * format public key, including the composite ones such as
+ * "ssh-mldsa44-es256@wolfssl.com", which have no '-' after "ssh-mldsa". */
+static void test_wolfSSH_ReadKey_file_mldsaPub(void)
+{
+#if !defined(NO_FILESYSTEM) && !defined(NO_WRITE_TEMP_FILES) && \
+    !defined(WOLFSSH_USER_FILESYSTEM)
+#ifdef WOLFSSH_ZEPHYR
+    static const char path[] =
+        CONFIG_WOLFSSH_SFTP_DEFAULT_DIR "/readkey-mldsa-test.pub";
+#else
+    static const char path[] = "./readkey-mldsa-test.pub";
+#endif
+    static const char* keys[] = {
+        "ssh-mldsa44-es256@wolfssl.com AAAAB3NzaC1yc2E= comment\n",
+        "ssh-mldsa65-ed25519@wolfssl.com AAAAB3NzaC1yc2E= comment\n",
+        "ssh-mldsa87-es384@wolfssl.com AAAAB3NzaC1yc2E= comment\n",
+        "ssh-mldsa44-ed25519@openssh.com AAAAB3NzaC1yc2E= comment\n",
+        "ssh-mldsa-44 AAAAB3NzaC1yc2E= comment\n"
+    };
+    WFILE* fp = NULL;
+    byte* out = NULL;
+    const byte* outType = NULL;
+    word32 outSz = 0;
+    word32 outTypeSz = 0;
+    word32 i;
+    word32 keySz;
+    byte isPrivate;
+
+    for (i = 0; i < (word32)(sizeof(keys) / sizeof(keys[0])); i++) {
+        keySz = (word32)WSTRLEN(keys[i]);
+        AssertIntEQ(WFOPEN(NULL, &fp, path, "wb"), 0);
+        AssertNotNull(fp);
+        AssertIntEQ((int)WFWRITE(NULL, keys[i], 1, keySz, fp), (int)keySz);
+        WFCLOSE(NULL, fp);
+
+        out = NULL;
+        outSz = 0;
+        isPrivate = 1;
+        AssertIntEQ(wolfSSH_ReadKey_file(path, &out, &outSz,
+                &outType, &outTypeSz, &isPrivate, NULL), WS_SUCCESS);
+        AssertIntEQ(isPrivate, 0);
+        AssertNotNull(out);
+        AssertIntGT(outSz, 0);
+        WFREE(out, NULL, DYNTYPE_PRIVKEY);
+
+        /* Zephyr's "w" open does not truncate, so start each key afresh. */
+#ifdef WOLFSSH_ZEPHYR
+        AssertIntEQ(0, fs_unlink(path));
+#else
+        AssertIntEQ(0, remove(path));
+#endif
+    }
+#endif
+}
+
+
 #ifdef WOLFSSH_SCP
 
 static int my_ScpRecv(WOLFSSH* ssh, int state, const char* basePath,
@@ -9377,6 +9434,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_ReadKey_shortBuffer();
     test_wolfSSH_ReadKey_noTrailingNewline();
     test_wolfSSH_ReadKey_sshNoComment();
+    test_wolfSSH_ReadKey_file_mldsaPub();
     test_wolfSSH_QueryAlgoList();
     test_wolfSSH_SetMaxAuthAttempts();
     test_wolfSSH_StrictKex();
