@@ -14926,7 +14926,8 @@ done:
 
 /* A signature is only valid in 0 <= s < n. The raw public operation reduces
  * mod n on its own, so s + n recovers the same block and would verify without
- * an explicit range check. Also covers the two key-size guards. */
+ * an explicit range check. Also covers a signature longer than the key and
+ * the two key-size guards. */
 static int test_RsaVerify_SigRange(void)
 {
     int result = 0;
@@ -15016,6 +15017,18 @@ static int test_RsaVerify_SigRange(void)
         printf("RsaVerify_SigRange: valid sig ret=%d expected %d\n",
                ret, WS_SUCCESS);
         result = -549;
+        goto done;
+    }
+
+    /* Nor does it with a byte appended. */
+    if (keySz + 1 > (word32)sizeof(sig)) { result = -555; goto done; }
+    sig[keySz] = 0x00;
+    ret = wolfSSH_TestRsaVerify(sig, keySz + 1, encDigest,
+            (word32)encDigestSz, &key, NULL);
+    if (ret != WS_RSA_E) {
+        printf("RsaVerify_SigRange: trailing byte ret=%d expected %d\n",
+               ret, WS_RSA_E);
+        result = -556;
         goto done;
     }
 

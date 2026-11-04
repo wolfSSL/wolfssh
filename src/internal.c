@@ -9213,24 +9213,73 @@ static int DoKexDhReply(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
                 if (sigKeyBlock_ptr->useRsa) {
 #ifndef WOLFSSH_NO_RSA
+                    enum wc_HashType rsaHashId =
+                            HashForId(ssh->handshake->pubKeyId);
+                    int encDigestSz = 0;
+                    int digestSz = wc_HashGetDigestSize(rsaHashId);
+#ifdef WOLFSSH_SMALL_STACK
+                    byte* digest = NULL;
+                    byte* encDigest = NULL;
+#else
+                    byte digest[WC_MAX_DIGEST_SIZE];
+                    byte encDigest[MAX_ENCODED_SIG_SZ];
+#endif
+
                     if (sigSz < MIN_RSA_SIG_SZ) {
                         WLOG(WS_LOG_DEBUG, "Provided signature is too small.");
                         ret = WS_RSA_E;
                     }
 
-                    if (ret == WS_SUCCESS) {
-                        ret = wc_SignatureVerify(
-                                HashForId(ssh->handshake->pubKeyId),
-                                WC_SIGNATURE_TYPE_RSA_W_ENC,
-                                ssh->h, ssh->hSz, sig, sigSz,
-                                &sigKeyBlock_ptr->sk, sigKeyBlock_ptr->keySz);
-                        if (ret != 0) {
-                            WLOG(WS_LOG_DEBUG,
-                                "DoKexDhReply: Signature Verify fail (%d)",
-                                ret);
-                            ret = WS_RSA_E;
-                        }
+                    if (ret == WS_SUCCESS && (digestSz <= 0
+                            || digestSz > WC_MAX_DIGEST_SIZE)) {
+                        ret = WS_INVALID_ALGO_ID;
                     }
+
+#ifdef WOLFSSH_SMALL_STACK
+                    if (ret == WS_SUCCESS) {
+                        digest = (byte*)WMALLOC(WC_MAX_DIGEST_SIZE,
+                                ssh->ctx->heap, DYNTYPE_BUFFER);
+                        encDigest = (byte*)WMALLOC(MAX_ENCODED_SIG_SZ,
+                                ssh->ctx->heap, DYNTYPE_BUFFER);
+                        if (digest == NULL || encDigest == NULL)
+                            ret = WS_MEMORY_E;
+                    }
+#endif
+
+                    if (ret == WS_SUCCESS) {
+                        ret = wc_Hash(rsaHashId, ssh->h, ssh->hSz,
+                                digest, (word32)digestSz);
+                        if (ret != 0)
+                            ret = WS_CRYPTO_FAILED;
+                    }
+
+                    if (ret == WS_SUCCESS) {
+                        encDigestSz = wc_EncodeSignature(encDigest, digest,
+                                (word32)digestSz, wc_HashGetOID(rsaHashId));
+                        if (encDigestSz <= 0)
+                            ret = WS_CRYPTO_FAILED;
+                    }
+
+                    if (ret == WS_SUCCESS) {
+                        ret = wolfSSH_RsaVerify(sig, sigSz, encDigest,
+                                (word32)encDigestSz,
+                                &sigKeyBlock_ptr->sk.rsa.key,
+                                ssh->ctx->heap, "DoKexDhReply");
+                    }
+
+#ifdef WOLFSSH_SMALL_STACK
+                    if (digest != NULL) {
+                        WS_FORCEZERO(digest, WC_MAX_DIGEST_SIZE);
+                        WFREE(digest, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    }
+                    if (encDigest != NULL) {
+                        WS_FORCEZERO(encDigest, MAX_ENCODED_SIG_SZ);
+                        WFREE(encDigest, ssh->ctx->heap, DYNTYPE_BUFFER);
+                    }
+#else
+                    WS_FORCEZERO(digest, sizeof(digest));
+                    WS_FORCEZERO(encDigest, sizeof(encDigest));
+#endif
 #endif
                 }
                 else if (sigKeyBlock_ptr->useEcc) {
@@ -17303,17 +17352,13 @@ int wolfSSH_RsaVerify(const byte *sig, word32 sigSz,
 
     /* Normalize the peer's signature. Some SSH implementations remove
      * leading zeros on the signatures they encode. We need to pad the
-     * front of the signature to the key size. */
+     * front of the signature to the key size. A longer one is refused. */
+    if (ret == WS_SUCCESS && sigSz > keySz) {
+        WLOG(WS_LOG_DEBUG, "%s: %s", loc, "RSA signature too long");
+        ret = WS_RSA_E;
+    }
     if (ret == WS_SUCCESS) {
-        word32 offset;
-
-        if (keySz > sigSz) {
-            offset = keySz - sigSz;
-        }
-        else {
-            sigSz = keySz;
-            offset = 0;
-        }
+        word32 offset = keySz - sigSz;
 
         WMEMSET(checkSig, 0, offset);
         WMEMCPY(checkSig + offset, sig, sigSz);
