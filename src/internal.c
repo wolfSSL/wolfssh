@@ -5910,7 +5910,14 @@ static int GetInputData(WOLFSSH* ssh, word32 size)
             return WS_FATAL_ERROR;
         }
 
-        if (in >= 0) {
+        /* A recv-style 0 is the peer closing the connection. */
+        if (in == 0) {
+            ssh->isClosed = 1;
+            ssh->error = WS_SOCKET_ERROR_E;
+            return WS_FATAL_ERROR;
+        }
+
+        if (in > 0) {
             ssh->inputBuffer.length += in;
             size -= in;
         }
