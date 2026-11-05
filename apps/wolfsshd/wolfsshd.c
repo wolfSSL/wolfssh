@@ -97,6 +97,9 @@
 #include "auth.h"
 
 #include <signal.h>
+#ifdef _WIN32
+    #include <userenv.h> /* CreateEnvironmentBlock */
+#endif
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -2169,6 +2172,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     size_t conCmdSz = 0;
     PROCESS_INFORMATION processInfo;
     int processCreated = 0;
+    LPVOID env = NULL;
     size_t sz = 0;
     WCHAR h[MAX_PATH];
     char* forcedCmd;
@@ -2326,9 +2330,19 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         si.dwFlags    = STARTF_USESTDHANDLES;
         si.lpDesktop  = NULL;
 
+        /* The user's own variables (USERPROFILE, APPDATA, user PATH), not the
+         * service account's. The profile is loaded by now, so they resolve. */
+        if (CreateEnvironmentBlock(&env, wolfSSHD_GetAuthToken(conn->auth),
+                FALSE) != TRUE) {
+            wolfSSH_Log(WS_LOG_ERROR,
+                "[SSHD] Issue building user environment, Windows error %d",
+                GetLastError());
+            env = NULL; /* fall back to the service's environment */
+        }
+
         if (CreateProcessAsUserW(wolfSSHD_GetAuthToken(conn->auth), NULL, conCmdPtr,
-            NULL, NULL, TRUE, DETACHED_PROCESS, NULL, h,
-            &si, &processInfo) != TRUE) {
+            NULL, NULL, TRUE, DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT,
+            env, h, &si, &processInfo) != TRUE) {
             wolfSSH_Log(WS_LOG_ERROR,
                 "[SSHD] Issue creating process, Windows error %d", GetLastError());
             ret = WS_FATAL_ERROR;
@@ -2636,6 +2650,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     }
 
 cleanup:
+    if (env != NULL) {
+        DestroyEnvironmentBlock(env);
+    }
     if (conCmdPtr != NULL) {
         WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
     }
