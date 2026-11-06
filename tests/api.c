@@ -8313,6 +8313,43 @@ static void test_wolfSSH_RealPath(void) { ; }
 #endif
 
 
+#if defined(WOLFSSH_TEST_ECHOSERVER) && !defined(NO_WOLFSSH_SERVER) && \
+    !defined(NO_FILESYSTEM)
+static int RunEchoserverToFailure(const char** args, int argc)
+{
+    func_args ser;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    ser.argv = (char**)args;
+    ser.argc = argc;
+    echoserver_test(&ser);
+
+    return ser.return_code;
+}
+
+/* Startup failures return from echoserver_test(); run under a leak checker,
+ * these catch state left behind at a usage error, a bad algorithm list and
+ * a key-load failure. The -P list is still unconsumed at the first two. */
+static void test_echoserver_StartupFailCleanup(void)
+{
+    const char* usageArgs[] = { ".", "-P", "jill:upthehill", "-?" };
+    const char* algoArgs[] = { ".", "-P", "jill:upthehill", "-x", "bogus" };
+#if !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSL_NUCLEUS)
+    /* echoserver.c sets NO_FILESYSTEM there, which drops -j */
+    const char* keyArgs[] = { ".", "-j", "./keys/no-such-key.pub" };
+#endif
+
+    AssertIntEQ(RunEchoserverToFailure(usageArgs, 4), MY_EX_USAGE);
+    AssertIntEQ(RunEchoserverToFailure(algoArgs, 5), EXIT_FAILURE);
+#if !defined(WOLFSSH_ZEPHYR) && !defined(WOLFSSL_NUCLEUS)
+    AssertIntEQ(RunEchoserverToFailure(keyArgs, 3), EXIT_FAILURE);
+#endif
+}
+#else
+static void test_echoserver_StartupFailCleanup(void) { ; }
+#endif
+
+
 /* Strict KEX CTX control and negotiated-state accessor. */
 static void test_wolfSSH_StrictKex(void)
 {
@@ -9530,6 +9567,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();
+    test_echoserver_StartupFailCleanup();
     AssertIntEQ(wolfSSH_Cleanup(), WS_SUCCESS);
 
     return 0;
