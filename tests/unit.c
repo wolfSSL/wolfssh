@@ -25384,6 +25384,436 @@ static int test_SftpGetCleanup(void)
     return 0;
 }
 
+
+/* Stage a HANDLE reply carrying the one byte handle "h". */
+static int SftpPutHandle(WOLFSSH* ssh, word32 id)
+{
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ + 1];
+    word32 sz;
+
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_HANDLE, id,
+            UINT32_SZ + 1);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, 1);
+    reply[WOLFSSH_SFTP_HEADER + UINT32_SZ] = 'h';
+    return wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
+}
+
+
+/* An interrupted GET holds its local file open. Freeing the session must
+ * close it. */
+static int test_SftpGetFreeClosesLocal(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    char path[] = "/tmp/wolfssh_getfreeXXXXXX";
+    char from[] = "get_source";
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 2];
+    word32 sz;
+    word32 id;
+    int fd;
+    int ret;
+    int result = 0;
+
+    fd = mkstemp(path);
+    if (fd < 0)
+        return -1250;
+    close(fd);
+    ret = SftpClientNewSession(&ctx, &ssh);
+    if (ret != 0) {
+        result = ret;
+        goto done;
+    }
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    id = ssh->reqId;
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_ATTRS, id,
+            UINT32_SZ * 2);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, WOLFSSH_FILEATRB_PERM);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER + UINT32_SZ,
+            FILEATRB_PER_FILE | 0600);
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != 0 ||
+            SftpPutHandle(ssh, id + 1) != 0) {
+        result = -1251;
+        goto done;
+    }
+    /* GET opens its local file on the lowest free descriptor, found here */
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        result = -1252;
+        goto done;
+    }
+    close(fd);
+    ret = wolfSSH_SFTP_Get(ssh, from, path, 0, NULL);
+    if (ret != WS_FATAL_ERROR || ssh->error != WS_WANT_READ ||
+            ssh->getState == NULL || fcntl(fd, F_GETFD) == -1) {
+        result = -1253;
+        goto done;
+    }
+    wolfSSH_free(ssh);
+    ssh = NULL;
+    if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
+        result = -1254;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    unlink(path);
+    return result;
+}
+
+
+/* STAT must fail on an ATTRS reply whose flags promise more than it holds. */
+static int test_SftpStatBadAttrs(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_SFTP_FILEATRB atr;
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ];
+    word32 sz;
+    int ret;
+    int result = 0;
+
+    ret = SftpClientNewSession(&ctx, &ssh);
+    if (ret != 0) {
+        result = ret;
+        goto done;
+    }
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    /* SIZE flagged, but the 64-bit size is missing */
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_ATTRS, ssh->reqId,
+            UINT32_SZ);
+    PutU32BE(reply + WOLFSSH_SFTP_HEADER, WOLFSSH_FILEATRB_SIZE);
+    if (wolfSSH_TestChannelPutData(ssh->channelList, reply, sz) != 0) {
+        result = -1255;
+        goto done;
+    }
+    WMEMSET(&atr, 0, sizeof(atr));
+    ret = wolfSSH_SFTP_STAT(ssh, (char*)"f", &atr);
+    if (ret != WS_FATAL_ERROR || wolfSSH_get_error(ssh) != WS_BUFFER_E ||
+            ssh->lstatState != NULL)
+        result = -1256;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* RMDIR maps a failure status to a WS_* code: WS_PERMISSIONS for a
+ * permission failure, otherwise WS_SFTP_STATUS_NOT_OK in the error. */
+static int SftpRmdirStatusCase(word32 status, int expRet, int expErr)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+
+    ret = SftpClientNewSession(&ctx, &ssh);
+    if (ret != 0) {
+        result = ret;
+        goto done;
+    }
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    if (SftpGetStatus(ssh, ssh->reqId, status) != 0) {
+        result = -1257;
+        goto done;
+    }
+    ret = wolfSSH_SFTP_RMDIR(ssh, (char*)"d");
+    if (ret != expRet || wolfSSH_get_error(ssh) != expErr ||
+            ssh->rmdirState != NULL)
+        result = -1258;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+static int test_SftpRmdirStatus(void)
+{
+    int ret;
+
+    ret = SftpRmdirStatusCase(WOLFSSH_FTP_OK, WS_SUCCESS, WS_SUCCESS);
+    if (ret == 0)
+        ret = SftpRmdirStatusCase(WOLFSSH_FTP_PERMISSION, WS_PERMISSIONS,
+                WS_PERMISSIONS);
+    if (ret == 0)
+        ret = SftpRmdirStatusCase(WOLFSSH_FTP_NOFILE, WS_FATAL_ERROR,
+                WS_SFTP_STATUS_NOT_OK);
+    if (ret == 0)
+        ret = SftpRmdirStatusCase(WOLFSSH_FTP_FAILURE, WS_FATAL_ERROR,
+                WS_SFTP_STATUS_NOT_OK);
+    return ret;
+}
+
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+/* Guard allocator. Each block carries its size in a header; a freed block is
+ * poisoned and held, so a later write to it is seen by GuardIntact(), and the
+ * count of live blocks shows a leak. */
+#define GUARD_HDR_SZ 16
+#define GUARD_POISON 0xDB
+
+typedef struct GuardFreed {
+    byte* raw;
+    struct GuardFreed* next;
+} GuardFreed;
+
+static GuardFreed* guardFreed = NULL;
+static long guardLive = 0;
+
+static void* GuardMalloc(size_t size)
+{
+    byte* raw = (byte*)malloc(size + GUARD_HDR_SZ);
+
+    if (raw == NULL)
+        return NULL;
+    WMEMCPY(raw, &size, sizeof(size));
+    guardLive++;
+    return raw + GUARD_HDR_SZ;
+}
+
+static void GuardFree(void* ptr)
+{
+    GuardFreed* node;
+    byte* raw;
+    size_t size;
+
+    if (ptr == NULL)
+        return;
+    raw = (byte*)ptr - GUARD_HDR_SZ;
+    WMEMCPY(&size, raw, sizeof(size));
+    WMEMSET(ptr, GUARD_POISON, size);
+    guardLive--;
+    node = (GuardFreed*)malloc(sizeof(*node));
+    if (node == NULL) {
+        free(raw);
+        return;
+    }
+    node->raw = raw;
+    node->next = guardFreed;
+    guardFreed = node;
+}
+
+static void* GuardRealloc(void* ptr, size_t size)
+{
+    void* p;
+    size_t oldSz;
+
+    if (ptr == NULL)
+        return GuardMalloc(size);
+    p = GuardMalloc(size);
+    if (p != NULL) {
+        WMEMCPY(&oldSz, (byte*)ptr - GUARD_HDR_SZ, sizeof(oldSz));
+        WMEMCPY(p, ptr, oldSz < size ? oldSz : size);
+        GuardFree(ptr);
+    }
+    return p;
+}
+
+/* Returns 1 if no freed block was written to. */
+static int GuardIntact(void)
+{
+    GuardFreed* f;
+    size_t size;
+    size_t i;
+
+    for (f = guardFreed; f != NULL; f = f->next) {
+        WMEMCPY(&size, f->raw, sizeof(size));
+        for (i = 0; i < size; i++) {
+            if (f->raw[GUARD_HDR_SZ + i] != GUARD_POISON)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+static void GuardDrain(void)
+{
+    GuardFreed* f = guardFreed;
+
+    while (f != NULL) {
+        GuardFreed* next = f->next;
+        free(f->raw);
+        free(f);
+        f = next;
+    }
+    guardFreed = NULL;
+}
+
+
+enum SftpNegFailOp {
+    NEG_FAIL_STAT,
+    NEG_FAIL_LS,
+    NEG_FAIL_CLOSE,
+    NEG_FAIL_RENAME,
+    NEG_FAIL_GET,
+    NEG_FAIL_OP_COUNT
+};
+
+/* A request that negotiates SFTP on its own, answered by a bad VERSION, must
+ * fail without touching its own freed state. */
+static int SftpNegFailCase(int op)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_SFTP_FILEATRB atr;
+    WS_SFTPNAME* name;
+    byte msg[WOLFSSH_SFTP_HEADER];
+    byte handle[1] = { 'h' };
+    word32 msgSz;
+    int ret;
+    int result;
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result != 0)
+        goto done;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    /* INIT echoed back where a VERSION reply is expected */
+    msgSz = SftpBuildVersion(msg, (word32)sizeof(msg), MSG_ID_SZ + UINT32_SZ,
+            WOLFSSH_FTP_INIT, (word32)WOLFSSH_SFTP_VERSION, 0);
+    if (msgSz == 0 || wolfSSH_TestChannelPutData(ssh->channelList, msg,
+                msgSz) != WS_SUCCESS) {
+        result = -1260;
+        goto done;
+    }
+
+    WMEMSET(&atr, 0, sizeof(atr));
+    switch (op) {
+        case NEG_FAIL_STAT:
+            ret = wolfSSH_SFTP_STAT(ssh, (char*)"f", &atr);
+            break;
+        case NEG_FAIL_LS:
+            name = wolfSSH_SFTP_LS(ssh, (char*)".");
+            ret = name == NULL ? WS_FATAL_ERROR : WS_SUCCESS;
+            wolfSSH_SFTPNAME_list_free(name);
+            break;
+        case NEG_FAIL_CLOSE:
+            ret = wolfSSH_SFTP_Close(ssh, handle, sizeof(handle));
+            break;
+        case NEG_FAIL_RENAME:
+            ret = wolfSSH_SFTP_Rename(ssh, "a", "b");
+            break;
+        default:
+            ret = wolfSSH_SFTP_Get(ssh, (char*)"f", (char*)"/nonexistent/f",
+                    0, NULL);
+            break;
+    }
+    if (ret == WS_SUCCESS || ssh->sftpState == SFTP_DONE)
+        result = -1261;
+    else if (!GuardIntact())
+        result = -1262;
+    else if (ssh->lstatState != NULL || ssh->lsState != NULL ||
+            ssh->closeState != NULL || ssh->renameState != NULL ||
+            ssh->getState != NULL || ssh->sendState != NULL ||
+            ssh->recvInitState != NULL)
+        result = -1263;
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Stage a NAME reply carrying one entry, "name", with no attributes. */
+static int SftpPutName(WOLFSSH* ssh, word32 id, const char* name)
+{
+    byte reply[WOLFSSH_SFTP_HEADER + UINT32_SZ * 4 + 16];
+    word32 nameSz = (word32)WSTRLEN(name);
+    word32 idx = WOLFSSH_SFTP_HEADER;
+    word32 sz;
+
+    sz = SftpBuildReply(reply, sizeof(reply), WOLFSSH_FTP_NAME, id,
+            UINT32_SZ * 4 + nameSz);
+    if (sz == 0)
+        return -1;
+    PutU32BE(reply + idx, 1);
+    idx += UINT32_SZ;
+    PutU32BE(reply + idx, nameSz);
+    idx += UINT32_SZ;
+    WMEMCPY(reply + idx, name, nameSz);
+    idx += nameSz;
+    PutU32BE(reply + idx, 0);
+    idx += UINT32_SZ;
+    PutU32BE(reply + idx, 0);
+    return wolfSSH_TestChannelPutData(ssh->channelList, reply, sz);
+}
+
+
+/* An interrupted LS holds the entries read so far. Freeing the session must
+ * free them. */
+static int SftpLsFreeCase(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    WS_SFTPNAME* name;
+    word32 id;
+    int result;
+
+    result = SftpClientNewSession(&ctx, &ssh);
+    if (result != 0)
+        goto done;
+    ssh->sftpState = SFTP_DONE;
+    ssh->channelList->peerWindowSz = 65536;
+    ssh->channelList->peerMaxPacketSz = 32768;
+    id = ssh->reqId;
+    /* REALPATH, OPENDIR and the first READDIR answered; the next READDIR
+     * waits */
+    if (SftpPutName(ssh, id, "/d") != 0 || SftpPutHandle(ssh, id + 1) != 0 ||
+            SftpPutName(ssh, id + 2, "entry") != 0) {
+        result = -1264;
+        goto done;
+    }
+    name = wolfSSH_SFTP_LS(ssh, (char*)"d");
+    if (name != NULL || ssh->error != WS_WANT_READ || ssh->lsState == NULL) {
+        wolfSSH_SFTPNAME_list_free(name);
+        result = -1265;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+static int test_SftpClientStateTeardown(void)
+{
+    wolfSSL_Malloc_cb prevMf = NULL;
+    wolfSSL_Free_cb prevFf = NULL;
+    wolfSSL_Realloc_cb prevRf = NULL;
+    int op;
+    int ret = 0;
+
+    wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf);
+    for (op = 0; op <= NEG_FAIL_OP_COUNT && ret == 0; op++) {
+        guardLive = 0;
+        if (wolfSSL_SetAllocators(GuardMalloc, GuardFree,
+                    GuardRealloc) != 0)
+            return -1266;
+        ret = op < NEG_FAIL_OP_COUNT ? SftpNegFailCase(op) : SftpLsFreeCase();
+        wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+        if (ret == 0 && !GuardIntact())
+            ret = -1267;
+        if (ret == 0 && guardLive != 0)
+            ret = -1268;
+        GuardDrain();
+        if (ret != 0)
+            printf("SFTP client state teardown case %d: %d\n", op, ret);
+    }
+    return ret;
+}
+#endif /* WOLFSSH_TEST_CAPTURING_ALLOCATOR */
+
 /* Inject a real fread error by replacing the input descriptor with a
  * write-only descriptor. No access to the private PUT state is needed. */
 typedef struct SftpPutReadIo {
@@ -27985,6 +28415,26 @@ int wolfSSH_UnitTest(int argc, char** argv)
     unitResult = test_SftpGetCleanup();
     printf("SftpGetCleanup: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
     testResult = testResult || unitResult;
+
+    unitResult = test_SftpGetFreeClosesLocal();
+    printf("SftpGetFreeClosesLocal: %s\n",
+            unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpStatBadAttrs();
+    printf("SftpStatBadAttrs: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+
+    unitResult = test_SftpRmdirStatus();
+    printf("SftpRmdirStatus: %s\n", unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_TEST_CAPTURING_ALLOCATOR
+    unitResult = test_SftpClientStateTeardown();
+    printf("SftpClientStateTeardown: %s\n",
+            unitResult == 0 ? "SUCCESS" : "FAILED");
+    testResult = testResult || unitResult;
+#endif
 
     unitResult = test_SftpClientPutWriteStatusFail();
     printf("SftpClientPutWriteStatusFail: %s\n",

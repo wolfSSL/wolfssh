@@ -877,6 +877,13 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_GET) {
             if (ssh->getState) {
+                if (ssh->getState->localOpened) {
+                #ifndef USE_WINDOWS_API
+                    WFCLOSE(ssh->fs, ssh->getState->fl);
+                #else
+                    CloseHandle(ssh->getState->fileHandle);
+                #endif
+                }
                 WS_FORCEZERO(ssh->getState, sizeof(WS_SFTP_GET_STATE));
                 WFREE(ssh->getState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->getState = NULL;
@@ -941,6 +948,7 @@ static void wolfSSH_SFTP_ClearState(WOLFSSH* ssh, enum WS_SFTP_STATE_ID state)
 
         if (state & STATE_ID_LS) {
             if (ssh->lsState) {
+                wolfSSH_SFTPNAME_list_free(ssh->lsState->name);
                 WFREE(ssh->lsState, ssh->ctx->heap, DYNTYPE_SFTP_STATE);
                 ssh->lsState = NULL;
             }
@@ -6786,7 +6794,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
             if (SFTP_GetSz(state->buffer.data, &sz,
                         MSG_ID_SZ + UINT32_SZ,
                         WOLFSSH_MAX_SFTP_RECV) != WS_SUCCESS) {
-                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV_INIT);
                 return WS_BUFFER_E;
             }
 
@@ -6794,7 +6802,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
             id = state->buffer.data[LENGTH_SZ];
             if (id != WOLFSSH_FTP_VERSION) {
                 WLOG(WS_LOG_SFTP, "Unexpected SFTP type received");
-                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV_INIT);
                 return WS_BUFFER_E;
             }
 
@@ -6803,7 +6811,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
              * version below v3 has SSH_FXP_STATUS incompatibilities, bail. */
             if (version < WOLFSSH_SFTP_VERSION) {
                 WLOG(WS_LOG_SFTP, "Unsupported SFTP version from server");
-                wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV_INIT);
                 return WS_VERSION_E;
             }
 
@@ -6916,7 +6924,7 @@ int wolfSSH_SFTP_connect(WOLFSSH* ssh)
                 /* keep the buffered partial VERSION message when the read can
                  * be retried, free it otherwise */
                 if (!NoticeError(ssh)) {
-                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
+                    wolfSSH_SFTP_ClearState(ssh, STATE_ID_RECV_INIT);
                 }
                 return WS_FATAL_ERROR;
             }
@@ -7948,6 +7956,7 @@ WS_SFTPNAME* wolfSSH_SFTP_LS(WOLFSSH* ssh, char* dir)
 
     /* on success free'ing state->name is up to caller */
     name = state->name;
+    state->name = NULL;
     wolfSSH_SFTP_ClearState(ssh, STATE_ID_LS);
     return name;
 }
@@ -8127,13 +8136,11 @@ static int SFTP_STAT(WOLFSSH* ssh, char* dir, WS_SFTP_FILEATRB* atr, byte type)
                             &localIdx,
                             wolfSSH_SFTP_buffer_size(&state->buffer));
                     if (ret != WS_SUCCESS) {
-                        if (ssh->error == WS_WANT_READ ||
-                                ssh->error == WS_WANT_WRITE)
-                            return WS_FATAL_ERROR;
-                        else {
-                            state->state = STATE_LSTAT_CLEANUP;
-                            continue;
-                        }
+                        WLOG(WS_LOG_SFTP, "Unable to parse SFTP ATTRS reply");
+                        ssh->error = WS_BUFFER_E;
+                        ret_fatal = 1;
+                        state->state = STATE_LSTAT_CLEANUP;
+                        continue;
                     }
                 }
                 else if (state->type == WOLFSSH_FTP_STATUS) {
@@ -9955,11 +9962,12 @@ int wolfSSH_SFTP_RMDIR(WOLFSSH* ssh, char* dir)
             if (ret == WOLFSSH_FTP_OK) {
                 return WS_SUCCESS;
             }
-            else {
-                /* @TODO can return better error value i.e. permissions */
-                ssh->error = ret;
-                return WS_FATAL_ERROR;
+            if (ret == WOLFSSH_FTP_PERMISSION) {
+                ssh->error = WS_PERMISSIONS;
+                return WS_PERMISSIONS;
             }
+            ssh->error = ret < 0 ? ret : WS_SFTP_STATUS_NOT_OK;
+            return WS_FATAL_ERROR;
 
         default:
             wolfSSH_SFTP_ClearState(ssh, STATE_ID_RMDIR);
