@@ -50,6 +50,7 @@
     #include <config.h>
 #endif
 
+#include <stdint.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
@@ -2155,7 +2156,8 @@ int wolfSSH_SetUsernameRaw(WOLFSSH* ssh,
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
-    if (username == NULL || usernameSz == 0)
+    /* usernameSz + 1 below must not wrap. */
+    if (username == NULL || usernameSz == 0 || usernameSz == UINT32_MAX)
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
@@ -2252,6 +2254,10 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
 
        allocate a copy to tokenize, add a null terminator.
     */
+    /* inSz + 1 must not wrap. */
+    if (inSz == UINT32_MAX)
+        return WS_BAD_ARGUMENT;
+
     c = (char*)WMALLOC(inSz + 1, heap, DYNTYPE_STRING);
     if (c != NULL) {
         WMEMCPY(c, in, inSz);
