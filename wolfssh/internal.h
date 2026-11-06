@@ -873,6 +873,12 @@ WOLFSSH_LOCAL int CheckAlgoList(const char* list, byte type);
  * a tunable, so deliberately not overridable. */
 #define MAX_CHANNEL_PACKET_SZ (MAX_PACKET_SZ - CHANNEL_PACKET_OVERHEAD_SZ)
 
+/* Largest SSH_MSG_IGNORE data that a peer's MAX_PACKET_SZ check accepts:
+ * the same framing, worst-case padding and MAC, with a string header. */
+#define MAX_IGNORE_DATA_SZ \
+        (MAX_PACKET_SZ - (LENGTH_SZ + PAD_LENGTH_SZ + MSG_ID_SZ + LENGTH_SZ \
+         + (AES_BLOCK_SIZE + MIN_PAD_LENGTH - 1) + MAX_HMAC_SZ))
+
 /* Both sizes are overridable, and CtxInit() takes DEFAULT_MAX_PACKET_SZ
  * unchecked, so assert the default frames too. */
 #if DEFAULT_MAX_PACKET_SZ > (MAX_PACKET_SZ - CHANNEL_PACKET_OVERHEAD_MAX)
@@ -1100,11 +1106,6 @@ typedef struct HandshakeInfo {
 #endif
     } privKey;
 } HandshakeInfo;
-
-#if defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)
-WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
-    word32 inSz, char* out, word32* outSz);
-#endif
 
 #ifdef WOLFSSH_SFTP
 #define WOLFSSH_MAX_SFTPOFST 3

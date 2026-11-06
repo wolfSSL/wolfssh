@@ -46,6 +46,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/log.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 #ifdef WOLFSSH_SCP
     #include <wolfssh/wolfscp.h>
 #endif
@@ -2528,6 +2529,261 @@ static void test_wolfSSH_ReadPublicKey_pem(void)
     }
 #endif /* WOLFSSH_TEST_INTERNAL */
 #endif /* WOLFSSH_NO_RSA */
+}
+
+
+#if !defined(WOLFSSH_NO_ED25519) && defined(HAVE_ED25519_KEY_IMPORT) && \
+    defined(HAVE_ED25519_KEY_EXPORT)
+    #define API_READKEY_ED25519_PUB
+#endif
+#if !defined(WOLFSSH_NO_MLDSA) && !defined(WOLFSSH_NO_MLDSA44) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    defined(WOLFSSL_MLDSA_PUBLIC_KEY) && defined(WC_ENABLE_ASYM_KEY_EXPORT)
+    #define API_READKEY_MLDSA_PUB
+#endif
+
+#if (!defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_TEST_INTERNAL)) || \
+    (!defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)) || \
+    defined(API_READKEY_ED25519_PUB) || defined(API_READKEY_MLDSA_PUB)
+/* Reads the public DER key twice, into a new allocation and into a caller
+ * buffer, and expects the same blob in the caller's buffer. */
+static void ReadKeyAsn1PubCallerBuf(const byte* der, word32 derSz)
+{
+    byte buf[2048];
+    byte* alloc = NULL;
+    word32 allocSz = 0;
+    byte* key;
+    word32 keySz;
+    const byte* keyType = NULL;
+    word32 keyTypeSz = 0;
+
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &alloc, &allocSz, &keyType, &keyTypeSz, 0, NULL), WS_SUCCESS);
+    AssertNotNull(alloc);
+    AssertIntGT(allocSz, 0);
+    AssertIntLE(allocSz, (word32)sizeof(buf));
+
+    key = buf;
+    keySz = (word32)sizeof(buf);
+    WMEMSET(buf, 0, sizeof(buf));
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, 0, NULL), WS_SUCCESS);
+    AssertTrue(key == buf);
+    AssertIntEQ(keySz, allocSz);
+    AssertIntEQ(WMEMCMP(buf, alloc, allocSz), 0);
+
+    /* One byte short is refused, and the caller's buffer stays put. */
+    key = buf;
+    keySz = allocSz - 1;
+    AssertIntEQ(wolfSSH_ReadKey_buffer_ex(der, derSz, WOLFSSH_FORMAT_ASN1,
+            &key, &keySz, &keyType, &keyTypeSz, 0, NULL), WS_BUFFER_E);
+    AssertTrue(key == buf);
+    AssertIntEQ(keySz, allocSz - 1);
+
+    WFREE(alloc, NULL, DYNTYPE_PRIVKEY);
+}
+#endif
+
+
+/* An ASN.1 public key read fills a caller-supplied output buffer instead of
+ * replacing it with a new allocation. */
+static void test_wolfSSH_ReadKey_asn1PubCallerBuf(void)
+{
+#if !defined(WOLFSSH_NO_RSA) && defined(WOLFSSH_TEST_INTERNAL)
+    {
+        byte* der = NULL;
+        word32 derSz = 0;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyRsaPubDer, &der, &derSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        ReadKeyAsn1PubCallerBuf(der, derSz);
+        WFREE(der, NULL, 0);
+    }
+#endif
+#if !defined(WOLFSSH_NO_ECDSA) && defined(HAVE_ECC_KEY_EXPORT)
+    {
+        ecc_key ecc;
+        byte* privDer = NULL;
+        word32 privDerSz = 0;
+        byte pubDer[256];
+        word32 idx = 0;
+        int pubDerSz;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyEccDer, &privDer, &privDerSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        AssertIntEQ(wc_ecc_init(&ecc), 0);
+        AssertIntEQ(wc_EccPrivateKeyDecode(privDer, &idx, &ecc, privDerSz),
+                0);
+        pubDerSz = wc_EccPublicKeyToDer(&ecc, pubDer, sizeof(pubDer), 1);
+        wc_ecc_free(&ecc);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(privDer, NULL, 0);
+    }
+#endif
+#ifdef API_READKEY_ED25519_PUB
+    {
+        ed25519_key ed;
+        byte* privDer = NULL;
+        word32 privDerSz = 0;
+        byte pubDer[128];
+        word32 idx = 0;
+        int pubDerSz;
+
+        AssertIntEQ(ConvertHexToBin(serverKeyEd25519Der, &privDer, &privDerSz,
+                    NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, NULL), 0);
+        AssertIntEQ(wc_ed25519_init(&ed), 0);
+        AssertIntEQ(wc_Ed25519PrivateKeyDecode(privDer, &idx, &ed, privDerSz),
+                0);
+        pubDerSz = wc_Ed25519PublicKeyToDer(&ed, pubDer, sizeof(pubDer), 1);
+        wc_ed25519_free(&ed);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(privDer, NULL, 0);
+    }
+#endif
+#ifdef API_READKEY_MLDSA_PUB
+    {
+        MlDsaKey mlKey;
+        WC_RNG rng;
+        byte* pubDer;
+        int pubDerSz;
+
+        AssertIntEQ(wc_MlDsaKey_Init(&mlKey, NULL, INVALID_DEVID), 0);
+        AssertIntEQ(wc_MlDsaKey_SetParams(&mlKey, WC_ML_DSA_44), 0);
+        AssertIntEQ(wc_InitRng(&rng), 0);
+        AssertIntEQ(wc_MlDsaKey_MakeKey(&mlKey, &rng), 0);
+        wc_FreeRng(&rng);
+        pubDer = (byte*)WMALLOC(WC_MLDSA_44_PUB_KEY_DER_SIZE, NULL, 0);
+        AssertNotNull(pubDer);
+        pubDerSz = wc_MlDsaKey_PublicKeyToDer(&mlKey, pubDer,
+                WC_MLDSA_44_PUB_KEY_DER_SIZE, 1);
+        wc_MlDsaKey_Free(&mlKey);
+        AssertIntGT(pubDerSz, 0);
+        ReadKeyAsn1PubCallerBuf(pubDer, (word32)pubDerSz);
+        WFREE(pubDer, NULL, 0);
+    }
+#endif
+}
+
+
+#ifdef WOLFSSH_TERM
+static int TermResizeNopCb(WOLFSSH* ssh, word32 columns, word32 rows,
+        word32 widthPixels, word32 heightPixels, void* ctx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(columns);
+    WOLFSSH_UNUSED(rows);
+    WOLFSSH_UNUSED(widthPixels);
+    WOLFSSH_UNUSED(heightPixels);
+    WOLFSSH_UNUSED(ctx);
+    return WS_SUCCESS;
+}
+#endif
+
+/* The terminal resize setters treat a NULL session as a no-op. */
+static void test_wolfSSH_SetTerminalResize(void)
+{
+#ifdef WOLFSSH_TERM
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int marker = 0;
+
+    wolfSSH_SetTerminalResizeCb(NULL, TermResizeNopCb);
+    wolfSSH_SetTerminalResizeCtx(NULL, &marker);
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    wolfSSH_SetTerminalResizeCb(ssh, TermResizeNopCb);
+    wolfSSH_SetTerminalResizeCtx(ssh, &marker);
+    AssertTrue(ssh->termResizeCb == TermResizeNopCb);
+    AssertTrue(ssh->termCtx == (void*)&marker);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+#endif
+}
+
+
+/* wolfSSH_GetText() always terminates its output and returns the full text
+ * length, so a return of strSz or more flags truncation on every build. */
+static void test_wolfSSH_GetText(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    char str[80];
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_GetText(NULL, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 0);
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, NULL,
+            sizeof(str)), 0);
+    str[0] = 'X';
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 0), 0);
+    AssertIntEQ(str[0], 'X');
+
+    /* Nothing negotiated yet, and an unknown id: an empty string. */
+    ssh->kexId = ID_NONE;
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 0);
+    AssertIntEQ(str[0], '\0');
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, (WS_Text)0x7F, str, sizeof(str)), 0);
+    AssertIntEQ(str[0], '\0');
+
+    /* Fits, fits exactly, and truncated. */
+    ssh->kexId = ID_ECDH_SHA2_NISTP256;
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+            sizeof(str)), 4);
+    AssertStrEQ(str, "ECDH");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 5), 4);
+    AssertStrEQ(str, "ECDH");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 3), 4);
+    AssertStrEQ(str, "EC");
+    WMEMSET(str, 'X', sizeof(str));
+    AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 1), 4);
+    AssertIntEQ(str[0], '\0');
+
+#ifndef WOLFSSH_NO_DH
+    {
+        static const char gexText[] =
+            "2048-bit Diffie-Hellman with server-supplied group";
+        static const char g14Text[] =
+            "2048-bit Diffie-Hellman with standard group 14";
+
+        ssh->primeGroupSz = 256;
+        ssh->kexId = ID_DH_GEX_SHA256;
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+                sizeof(str)), WSTRLEN(gexText));
+        AssertStrEQ(str, gexText);
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str, 9),
+                WSTRLEN(gexText));
+        AssertStrEQ(str, "2048-bit");
+
+        ssh->kexId = ID_DH_GROUP14_SHA256;
+        WMEMSET(str, 'X', sizeof(str));
+        AssertIntEQ(wolfSSH_GetText(ssh, WOLFSSH_TEXT_KEX_ALGO, str,
+                sizeof(str)), WSTRLEN(g14Text));
+        AssertStrEQ(str, g14Text);
+    }
+#endif
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
 }
 
 
@@ -7258,8 +7514,94 @@ static void test_wolfSSH_SFTP_GetResume(void)
 }
 
 
+/* MKDIR sends the caller's attributes: the in-process echoserver creates the
+ * directory with the requested permissions. */
+static void test_wolfSSH_SFTP_MKDIR_attrs(void)
+{
+#if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_FATFS) && \
+    !defined(WOLFSSH_ZEPHYR)
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    WS_SOCKET_T clientFd;
+
+    const char* args[10];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+
+    THREAD_TYPE serThread;
+
+    WS_SFTP_FILEATRB atr;
+    char dirName[48];
+
+    /* pid-stamped so concurrent runs in one tree don't share it */
+    WSNPRINTF(dirName, sizeof(dirName), "wolfssh_14634_mkdir_%d.tmp",
+            (int)getpid());
+    WMEMSET(&ser, 0, sizeof(func_args));
+
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    sftp_client_connect(&ctx, &ssh, ready.port);
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    (void)wolfSSH_SFTP_RMDIR(ssh, dirName); /* normally absent */
+
+    /* A private directory, which the fixed 0777 request never produced. */
+    WMEMSET(&atr, 0, sizeof(atr));
+    atr.flags = WOLFSSH_FILEATRB_PERM;
+    atr.per = 0700;
+    AssertIntEQ(wolfSSH_SFTP_MKDIR(ssh, dirName, &atr), WS_SUCCESS);
+    WMEMSET(&atr, 0, sizeof(atr));
+    AssertIntEQ(wolfSSH_SFTP_STAT(ssh, dirName, &atr), WS_SUCCESS);
+    AssertTrue((atr.flags & WOLFSSH_FILEATRB_PERM) != 0);
+    AssertIntEQ(atr.per & 0777, 0700);
+    AssertIntEQ(wolfSSH_SFTP_RMDIR(ssh, dirName), WS_SUCCESS);
+
+    /* A NULL atr still makes a directory the owner can use. */
+    AssertIntEQ(wolfSSH_SFTP_MKDIR(ssh, dirName, NULL), WS_SUCCESS);
+    WMEMSET(&atr, 0, sizeof(atr));
+    AssertIntEQ(wolfSSH_SFTP_STAT(ssh, dirName, &atr), WS_SUCCESS);
+    AssertIntEQ(atr.per & 0700, 0700);
+    AssertIntEQ(wolfSSH_SFTP_RMDIR(ssh, dirName), WS_SUCCESS);
+
+    /* take care of re-keying state before shutdown call */
+    while (wolfSSH_get_error(ssh) == WS_REKEYING) {
+        wolfSSH_worker(ssh, NULL);
+    }
+
+    argsCount = AbsorbBenignReset(ssh, wolfSSH_shutdown(ssh));
+#if DEFAULT_HIGHWATER_MARK < 8000
+    if (argsCount == WS_REKEYING) {
+        argsCount = WS_SUCCESS;
+    }
+#endif
+    AssertIntEQ(argsCount, WS_SUCCESS);
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+#endif /* !USE_WINDOWS_API && !WOLFSSH_FATFS && !WOLFSSH_ZEPHYR */
+}
+
+
 #else /* WOLFSSH_SFTP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED */
 static void test_wolfSSH_SFTP_SendReadPacket(void) { ; }
+static void test_wolfSSH_SFTP_MKDIR_attrs(void) { ; }
 static void test_wolfSSH_SFTP_PartialSend(void) { ; }
 static void test_wolfSSH_SFTP_ReKey(void) { ; }
 static void test_wolfSSH_SFTP_ReKey_NonBlock(void) { ; }
@@ -9365,6 +9707,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CertMan();
     test_wolfSSH_ReadKey();
     test_wolfSSH_ReadPublicKey_pem();
+    test_wolfSSH_ReadKey_asn1PubCallerBuf();
+    test_wolfSSH_SetTerminalResize();
+    test_wolfSSH_GetText();
     test_wolfSSH_ReadKey_badPad();
 #if defined(WOLFSSH_TPM) && !defined(NO_FILESYSTEM) && \
     !defined(NO_WRITE_TEMP_FILES) && !defined(WOLFSSH_USER_FILESYSTEM)
@@ -9464,6 +9809,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SFTP_SendPacketType_negotiation_non_block();
     test_wolfSSH_SFTP_PutResume();
     test_wolfSSH_SFTP_GetResume();
+    test_wolfSSH_SFTP_MKDIR_attrs();
 
     /* Either SCP or SFTP */
     test_wolfSSH_RealPath();

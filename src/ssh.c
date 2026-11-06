@@ -1836,10 +1836,7 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
     byte scratch[128];
     byte keyed;
 
-    WOLFSSH_UNUSED(buf);
-    WOLFSSH_UNUSED(bufSz);
-
-    if (ssh == NULL)
+    if (ssh == NULL || (buf == NULL && bufSz > 0))
         return WS_BAD_ARGUMENT;
 
     if (SendAfterDisconnect(ssh))
@@ -1852,6 +1849,9 @@ int wolfSSH_SendIgnore(WOLFSSH* ssh, const byte* buf, word32 bufSz)
             (ssh->connectState >= CONNECT_KEYED);
     if (ssh->sendStrictKex && !keyed)
         return WS_INVALID_STATE_E;
+
+    if (buf != NULL)
+        return SendIgnore(ssh, buf, bufSz);
 
     WMEMSET(scratch, 0, sizeof(scratch));
 
@@ -1992,13 +1992,15 @@ int wolfSSH_ChangeTerminalSize(WOLFSSH* ssh, word32 columns, word32 rows,
 
 void wolfSSH_SetTerminalResizeCb(WOLFSSH* ssh, WS_CallbackTerminalSize cb)
 {
-    ssh->termResizeCb = cb;
+    if (ssh != NULL)
+        ssh->termResizeCb = cb;
 }
 
 
 void wolfSSH_SetTerminalResizeCtx(WOLFSSH* ssh, void* usrCtx)
 {
-    ssh->termCtx = usrCtx;
+    if (ssh != NULL)
+        ssh->termCtx = usrCtx;
 }
 #endif
 
@@ -2316,12 +2318,40 @@ static int DoSshPubKey(const byte* in, word32 inSz, byte** out,
 }
 
 
+/* Points *newKey at the caller's *out when it holds keySz bytes, or at a new
+ * allocation when *out is NULL. */
+static int GetPubKeyOut(byte** out, word32 outSz, word32 keySz,
+        byte** newKey, void* heap)
+{
+    int ret = WS_SUCCESS;
+
+    WOLFSSH_UNUSED(heap);
+
+    if (*out == NULL) {
+        *newKey = (byte*)WMALLOC(keySz, heap, DYNTYPE_PRIVKEY);
+        if (*newKey == NULL) {
+            ret = WS_MEMORY_E;
+        }
+    }
+    else if (outSz < keySz) {
+        WLOG(WS_LOG_DEBUG, "DER public key output size too small");
+        ret = WS_BUFFER_E;
+    }
+    else {
+        *newKey = *out;
+    }
+
+    return ret;
+}
+
+
 static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
         word32* outSz, const byte** outType, word32* outTypeSz,
         int isPrivate, void* heap)
 {
     int ret = WS_SUCCESS;
     byte* newKey = NULL;
+    word32 newKeySz = 0;
     WS_KeySignature* key = NULL;
 
     WOLFSSH_UNUSED(heap);
@@ -2364,12 +2394,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    *outSz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
-                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                    if (newKey == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-                    else {
+                    newKeySz = LENGTH_SZ + nameLen + LENGTH_SZ + rawPubSz;
+                    ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                    if (ret == WS_SUCCESS) {
                         c32toa(nameLen, &newKey[localIdx]);
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], name, nameLen);
@@ -2378,7 +2405,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], rawPub, rawPubSz);
                         *out = newKey;
-                        ret = WS_SUCCESS;
+                        *outSz = newKeySz;
                     }
                 }
                 WFREE(rawPub, heap, DYNTYPE_PUBKEY);
@@ -2426,13 +2453,10 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     ret = WS_CRYPTO_FAILED;
                 }
                 else {
-                    *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + curveNameSz +
-                        LENGTH_SZ + qSz;
-                    newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                    if (newKey == NULL) {
-                        ret = WS_MEMORY_E;
-                    }
-                    else {
+                    newKeySz = LENGTH_SZ + *outTypeSz + LENGTH_SZ +
+                        curveNameSz + LENGTH_SZ + qSz;
+                    ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                    if (ret == WS_SUCCESS) {
                         c32toa(*outTypeSz, &newKey[localIdx]);
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
@@ -2445,7 +2469,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                         localIdx += LENGTH_SZ;
                         WMEMCPY(&newKey[localIdx], q, qSz);
                         *out = newKey;
-                        ret = WS_SUCCESS;
+                        *outSz = newKeySz;
                     }
                 }
                 WFREE(q, heap, DYNTYPE_PUBKEY);
@@ -2465,12 +2489,9 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 ret = WS_CRYPTO_FAILED;
             }
             else {
-                *outSz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + qSz;
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                if (newKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
-                else {
+                newKeySz = LENGTH_SZ + *outTypeSz + LENGTH_SZ + qSz;
+                ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
+                if (ret == WS_SUCCESS) {
                     c32toa(*outTypeSz, &newKey[localIdx]);
                     localIdx += LENGTH_SZ;
                     WMEMCPY(&newKey[localIdx], *outType, *outTypeSz);
@@ -2479,7 +2500,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     localIdx += LENGTH_SZ;
                     WMEMCPY(&newKey[localIdx], q, qSz);
                     *out = newKey;
-                    ret = WS_SUCCESS;
+                    *outSz = newKeySz;
                 }
             }
         }
@@ -2508,14 +2529,11 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                     /* if MSB is set need leading zero */
                     nMsb = 1;
                 }
-                *outSz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
+                newKeySz = LENGTH_SZ + (word32)WSTRLEN(keyFormat) +
                     LENGTH_SZ + eSz +
                     LENGTH_SZ + nSz + nMsb;
 
-                newKey = (byte*)WMALLOC(*outSz, heap, DYNTYPE_PRIVKEY);
-                if (newKey == NULL) {
-                    ret = WS_MEMORY_E;
-                }
+                ret = GetPubKeyOut(out, *outSz, newKeySz, &newKey, heap);
             }
             if (ret == WS_SUCCESS) {
                 /* encode the key format string */
@@ -2539,6 +2557,7 @@ static int DoAsn1Key(const byte* in, word32 inSz, byte** out,
                 WMEMCPY(&newKey[idx], n, nSz);
 
                 *out = newKey;
+                *outSz = newKeySz;
             }
         }
         else
@@ -5675,9 +5694,12 @@ static const char* MacNameForId(byte macid, byte cipherid)
 
 size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 {
-    int ret = 0;
-
+    const char* text = "";
+    size_t textSz;
 #ifndef WOLFSSH_NO_DH
+    /* Big enough for the longest DH text with any int bit count. */
+    char dhText[80];
+    int dhGroup = 0;
     static const char standard_dh_format[] =
         "%d-bit Diffie-Hellman with standard group %d";
 #endif
@@ -5687,30 +5709,27 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
 
     switch (id) {
         case WOLFSSH_TEXT_KEX_HASH:
-            ret = WSNPRINTF(str, strSz, "%s", HashNameForId(ssh->kexId));
+            text = HashNameForId(ssh->kexId);
             break;
 
         case WOLFSSH_TEXT_KEX_CURVE:
-            ret = WSNPRINTF(str, strSz, "%s", CurveNameForId(ssh->kexId));
+            text = CurveNameForId(ssh->kexId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_IN_CIPHER:
-            ret = WSNPRINTF(str, strSz, "%s",
-                CipherNameForId(ssh->peerEncryptId));
+            text = CipherNameForId(ssh->peerEncryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_OUT_CIPHER:
-            ret = WSNPRINTF(str, strSz, "%s", CipherNameForId(ssh->encryptId));
+            text = CipherNameForId(ssh->encryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_IN_MAC:
-            ret = WSNPRINTF(str, strSz, "%s", MacNameForId(ssh->peerMacId,
-                ssh->peerEncryptId));
+            text = MacNameForId(ssh->peerMacId, ssh->peerEncryptId);
             break;
 
         case WOLFSSH_TEXT_CRYPTO_OUT_MAC:
-            ret = WSNPRINTF(str, strSz, "%s", MacNameForId(ssh->macId,
-                ssh->encryptId));
+            text = MacNameForId(ssh->macId, ssh->encryptId);
             break;
 
         case WOLFSSH_TEXT_KEX_ALGO:
@@ -5722,75 +5741,79 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                 case ID_CURVE25519_SHA256:
                 case ID_CURVE25519_SHA256_LIBSSH:
             #endif
-                    ret = WSNPRINTF(str, strSz, "%s", "ECDH");
+                    text = "ECDH";
                     break;
 
             #ifndef WOLFSSH_NO_NISTP256_MLKEM768_SHA256
                 case ID_NISTP256_MLKEM768_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-NISTP256-MLKEM768");
+                    text = "ECDH-NISTP256-MLKEM768";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_NISTP384_MLKEM1024_SHA384
                 case ID_NISTP384_MLKEM1024_SHA384:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-NISTP384-MLKEM1024");
+                    text = "ECDH-NISTP384-MLKEM1024";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_CURVE25519_MLKEM768_SHA256
                 case ID_CURVE25519_MLKEM768_SHA256:
-                    ret = WSNPRINTF(str, strSz, "%s",
-                            "ECDH-CURVE25519-MLKEM768");
+                    text = "ECDH-CURVE25519-MLKEM768";
                     break;
             #endif
 
             #ifndef WOLFSSH_NO_DH
                 case ID_DH_GROUP1_SHA1:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 1);
+                    dhGroup = 1;
                     break;
 
                 case ID_DH_GROUP14_SHA1:
                 case ID_DH_GROUP14_SHA256:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 14);
+                    dhGroup = 14;
                     break;
 
                 case ID_DH_GROUP16_SHA512:
-                    ret = WSNPRINTF(str, strSz, standard_dh_format,
-                        ssh->primeGroupSz*8, 16);
+                    dhGroup = 16;
                     break;
 
                 case ID_DH_GEX_SHA256:
-                    ret = WSNPRINTF(str, strSz,
-                        "%d-bit Diffie-Hellman with server-supplied group",
-                        ssh->primeGroupSz*8);
+                    if (WSNPRINTF(dhText, sizeof(dhText),
+                            "%d-bit Diffie-Hellman with server-supplied group",
+                            ssh->primeGroupSz*8) > 0) {
+                        text = dhText;
+                    }
                     break;
             #endif /* !WOLFSSH_NO_DH */
 
                 case ID_EXT_INFO_S:
-                   #if defined(__CCRX__)
-                    ret = WSNPRINTF0(str, strSz, "Server extensions KEX");
-                   #else
-                    ret = WSNPRINTF(str, strSz, "Server extensions KEX");
-                   #endif
+                    text = "Server extensions KEX";
                     break;
 
                 case ID_EXT_INFO_C:
-                   #if defined(__CCRX__)
-                    ret = WSNPRINTF0(str, strSz, "Client extensions KEX");
-                   #else
-                    ret = WSNPRINTF(str, strSz, "Client extensions KEX");
-                   #endif
+                    text = "Client extensions KEX";
                     break;
-
             }
+        #ifndef WOLFSSH_NO_DH
+            if (dhGroup != 0 && WSNPRINTF(dhText, sizeof(dhText),
+                    standard_dh_format, ssh->primeGroupSz*8, dhGroup) > 0) {
+                text = dhText;
+            }
+        #endif
             break;
     }
 
-    return ret < 0 ? 0 : (size_t)ret;
+    /* Format locally and copy, so truncation reads the same whichever
+     * function WSNPRINTF maps to. */
+    textSz = WSTRLEN(text);
+    if (textSz < strSz) {
+        WMEMCPY(str, text, textSz + 1);
+    }
+    else {
+        WMEMCPY(str, text, strSz - 1);
+        str[strSz - 1] = '\0';
+    }
+
+    return textSz;
 }
 
 void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX* ctx, WS_CallbackKeyingCompletion cb)
