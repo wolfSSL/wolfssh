@@ -2133,6 +2133,80 @@ static SHELL_SEND_STATE SHELL_BacklogState(WOLFSSH* ssh, int sendRet,
 
 #ifdef WIN32
 
+/* The PATH entry ("Path=...") of an environment block, or NULL */
+static const WCHAR* EnvBlockPath(const WCHAR* blk)
+{
+    const WCHAR* p;
+
+    for (p = blk; *p != L'\0'; p += wcslen(p) + 1) {
+        if (_wcsnicmp(p, L"PATH=", 5) == 0) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+
+/* The session's environment, as Win32-OpenSSH builds it: the user's block
+ * on top of the service's, so variables such as ProgramFiles are set when
+ * registry values that refer to them (PSModulePath) are expanded. PATH alone
+ * comes from the user-only block, so the service account's own user PATH
+ * stays out. Returns a block to WFREE, or NULL to inherit the service's. */
+static WCHAR* SHELL_UserEnvironment(HANDLE token)
+{
+    LPVOID full = NULL;
+    LPVOID user = NULL;
+    const WCHAR* fullPath;
+    const WCHAR* userPath = NULL;
+    const WCHAR* p;
+    WCHAR* env;
+    WCHAR* out;
+    size_t sz = 2; /* the terminators of an empty block */
+
+    if (CreateEnvironmentBlock(&full, token, TRUE) != TRUE) {
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Issue building user environment, Windows error %d",
+            GetLastError());
+        return NULL;
+    }
+    if (CreateEnvironmentBlock(&user, token, FALSE) == TRUE) {
+        userPath = EnvBlockPath((const WCHAR*)user);
+    }
+    else {
+        user = NULL;
+        wolfSSH_Log(WS_LOG_ERROR,
+            "[SSHD] Issue building user PATH, Windows error %d",
+            GetLastError());
+    }
+    fullPath = EnvBlockPath((const WCHAR*)full);
+
+    for (p = (const WCHAR*)full; *p != L'\0'; p += wcslen(p) + 1) {
+        sz += wcslen((p == fullPath && userPath != NULL) ? userPath : p) + 1;
+    }
+
+    env = (WCHAR*)WMALLOC(sizeof(WCHAR) * sz, NULL, DYNTYPE_SSHD);
+    if (env != NULL) {
+        out = env;
+        for (p = (const WCHAR*)full; *p != L'\0'; p += wcslen(p) + 1) {
+            const WCHAR* src = (p == fullPath && userPath != NULL) ?
+                userPath : p;
+            size_t len = wcslen(src) + 1;
+
+            WMEMCPY(out, src, sizeof(WCHAR) * len);
+            out += len;
+        }
+        out[0] = L'\0';
+        out[1] = L'\0';
+    }
+
+    if (user != NULL) {
+        DestroyEnvironmentBlock(user);
+    }
+    DestroyEnvironmentBlock(full);
+    return env;
+}
+
+
 /* handles creating a new shell env. and maintains SSH connection for incoming
  * user input as well as output of the shell.
  * return WS_SUCCESS on success */
@@ -2172,7 +2246,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     size_t conCmdSz = 0;
     PROCESS_INFORMATION processInfo;
     int processCreated = 0;
-    LPVOID env = NULL;
+    WCHAR* env = NULL;
     size_t sz = 0;
     WCHAR h[MAX_PATH];
     char* forcedCmd;
@@ -2331,14 +2405,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         si.lpDesktop  = NULL;
 
         /* The user's own variables (USERPROFILE, APPDATA, user PATH), not the
-         * service account's. The profile is loaded by now, so they resolve. */
-        if (CreateEnvironmentBlock(&env, wolfSSHD_GetAuthToken(conn->auth),
-                FALSE) != TRUE) {
-            wolfSSH_Log(WS_LOG_ERROR,
-                "[SSHD] Issue building user environment, Windows error %d",
-                GetLastError());
-            env = NULL; /* fall back to the service's environment */
-        }
+         * service account's. The profile is loaded by now, so they resolve.
+         * NULL falls back to the service's environment. */
+        env = SHELL_UserEnvironment(wolfSSHD_GetAuthToken(conn->auth));
 
         if (CreateProcessAsUserW(wolfSSHD_GetAuthToken(conn->auth), NULL, conCmdPtr,
             NULL, NULL, TRUE, DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT,
@@ -2651,7 +2720,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
 
 cleanup:
     if (env != NULL) {
-        DestroyEnvironmentBlock(env);
+        WFREE(env, NULL, DYNTYPE_SSHD);
     }
     if (conCmdPtr != NULL) {
         WFREE(conCmdPtr, NULL, DYNTYPE_SSHD);
