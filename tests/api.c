@@ -8970,6 +8970,425 @@ static void test_wolfSSH_FwdRemote_badArgs(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
+#if defined(WOLFSSH_TEST_THREADING) && defined(WOLFSSH_TEST_ECHOSERVER) && \
+    defined(WOLFSSH_TEST_INTERNAL) && !defined(NO_WOLFSSH_CLIENT) && \
+    !defined(NO_WOLFSSH_SERVER) && !defined(USE_WINDOWS_API) && \
+    !defined(WOLFSSH_ZEPHYR)
+
+/* What the echoserver's answers to the forwarding test have said so far. */
+typedef struct FwdSlotTest {
+    int replies;        /* request success or failure seen */
+    int lastOk;         /* the latest reply was a success */
+    word32 boundPort;   /* port a port-0 success reported */
+    int opens;          /* our open confirmed or failed */
+    int lastOpenOk;     /* the latest of those was confirmed */
+    WOLFSSH_CHANNEL* fwdChannel; /* forwarded-tcpip channel the peer opened */
+} FwdSlotTest;
+
+static FwdSlotTest fwdSlot;
+
+static int fwdSlotReqSuccess(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    const byte* p = (const byte*)buf;
+
+    (void)ssh;
+    (void)ctx;
+    if (p != NULL && sz >= 4)
+        fwdSlot.boundPort = ((word32)p[0] << 24) | ((word32)p[1] << 16)
+                | ((word32)p[2] << 8) | (word32)p[3];
+    fwdSlot.lastOk = 1;
+    fwdSlot.replies++;
+    return WS_SUCCESS;
+}
+
+static int fwdSlotReqFailure(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
+{
+    (void)ssh;
+    (void)buf;
+    (void)sz;
+    (void)ctx;
+    fwdSlot.lastOk = 0;
+    fwdSlot.replies++;
+    return WS_SUCCESS;
+}
+
+static int fwdSlotOpenConf(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+    fwdSlot.lastOpenOk = 1;
+    fwdSlot.opens++;
+    return WS_SUCCESS;
+}
+
+static int fwdSlotOpenFail(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)channel;
+    (void)ctx;
+    fwdSlot.lastOpenOk = 0;
+    fwdSlot.opens++;
+    return WS_SUCCESS;
+}
+
+static int fwdSlotChannelOpen(WOLFSSH_CHANNEL* channel, void* ctx)
+{
+    (void)ctx;
+    fwdSlot.fwdChannel = channel;
+    return WS_SUCCESS;
+}
+
+/* The client accepts the forwarded-tcpip open and does nothing with it. */
+static int fwdSlotFwdCb(WS_FwdCbAction action, void* ctx, const char* name,
+        word32 port)
+{
+    (void)action;
+    (void)ctx;
+    (void)name;
+    (void)port;
+    return WS_SUCCESS;
+}
+
+static int fwdSlotUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static const char password[] = "upthehill";
+
+    (void)ctx;
+    if (authType != WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_FAILURE;
+    authData->sf.password.password = (const byte*)password;
+    authData->sf.password.passwordSz = (word32)WSTRLEN(password);
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static int fwdSlotHostKey(const byte* pubKey, word32 pubKeySz, void* ctx)
+{
+    (void)pubKey;
+    (void)pubKeySz;
+    (void)ctx;
+    return 0;
+}
+
+/* Runs the session until *count passes mark; the server answers each request
+ * in order, so this never waits on anything that is not coming. */
+static void fwdSlotPump(WOLFSSH* ssh, const int* count, int mark)
+{
+    int tries;
+
+    for (tries = 0; *count < mark && tries < 20; tries++)
+        (void)wolfSSH_worker(ssh, NULL);
+    AssertIntEQ(*count, mark);
+}
+
+/* Sends tcpip-forward and returns whether the echoserver granted it. */
+static int fwdSlotRemote(WOLFSSH* ssh, const char* bindAddr, word32 port)
+{
+    int mark = fwdSlot.replies + 1;
+
+    fwdSlot.boundPort = 0;
+    AssertIntEQ(wolfSSH_FwdRemoteSetup(ssh, bindAddr, port, 1), WS_SUCCESS);
+    fwdSlotPump(ssh, &fwdSlot.replies, mark);
+    return fwdSlot.lastOk;
+}
+
+/* Opens a direct-tcpip channel and returns whether the echoserver took it. */
+static int fwdSlotDirect(WOLFSSH* ssh, word32 port)
+{
+    int mark = fwdSlot.opens + 1;
+
+    AssertNotNull(wolfSSH_ChannelFwdNewLocal(ssh, "127.0.0.1", port,
+            "127.0.0.1", 40000));
+    fwdSlotPump(ssh, &fwdSlot.opens, mark);
+    return fwdSlot.lastOpenOk;
+}
+
+/* Connects to a remote forward. The echoserver binds those on IPv4 whatever
+ * family the SSH session uses. */
+static WS_SOCKET_T fwdSlotConnect(word32 port)
+{
+    struct sockaddr_in addr;
+    WS_SOCKET_T fd = WOLFSSH_SOCKET_INVALID;
+
+    WMEMSET(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((word16)port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    tcp_socket(&fd, AF_INET);
+    AssertIntEQ(connect(fd, (const struct sockaddr*)&addr, sizeof(addr)), 0);
+    return fd;
+}
+
+/* Waits for the session to deliver a forwarded-tcpip open. */
+static void fwdSlotWaitChannel(WOLFSSH* ssh)
+{
+    int tries;
+
+    for (tries = 0; fwdSlot.fwdChannel == NULL && tries < 20; tries++)
+        (void)wolfSSH_worker(ssh, NULL);
+    AssertNotNull(fwdSlot.fwdChannel);
+}
+
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY) && \
+    !defined(WOLFSSL_DEBUG_MEMORY)
+#define FWDSLOT_FAIL_ALLOC
+
+/* Installed while the echoserver thread runs. While armed, fails every
+ * allocation of a channel's window buffer, which makes the echoserver's
+ * wolfSSH_ChannelFwdNewRemote() return NULL. fwdSlotFailLock guards the
+ * flag and the count. */
+static wolfSSL_Mutex fwdSlotFailLock;
+static int fwdSlotFailArmed = 0;
+static int fwdSlotFailHits = 0;
+static wolfSSL_Malloc_cb fwdSlotPrevMf;
+static wolfSSL_Free_cb fwdSlotPrevFf;
+static wolfSSL_Realloc_cb fwdSlotPrevRf;
+
+static void* fwdSlotMalloc(size_t size)
+{
+    int fail = 0;
+
+    if (size == DEFAULT_WINDOW_SZ) {
+        AssertIntEQ(wc_LockMutex(&fwdSlotFailLock), 0);
+        if (fwdSlotFailArmed) {
+            fwdSlotFailHits++;
+            fail = 1;
+        }
+        wc_UnLockMutex(&fwdSlotFailLock);
+    }
+    return fail ? NULL : malloc(size);
+}
+
+static void fwdSlotFree(void* p)
+{
+    free(p);
+}
+
+static void* fwdSlotRealloc(void* p, size_t size)
+{
+    return realloc(p, size);
+}
+
+static void fwdSlotSleepMs(int ms)
+{
+    struct timeval tv;
+
+    tv.tv_sec = 0;
+    tv.tv_usec = ms * 1000;
+    (void)select(0, NULL, NULL, NULL, &tv);
+}
+
+static void fwdSlotFailArm(int armed)
+{
+    AssertIntEQ(wc_LockMutex(&fwdSlotFailLock), 0);
+    fwdSlotFailArmed = armed;
+    if (armed)
+        fwdSlotFailHits = 0;
+    wc_UnLockMutex(&fwdSlotFailLock);
+}
+
+static int fwdSlotFailHitCount(void)
+{
+    int hits;
+
+    AssertIntEQ(wc_LockMutex(&fwdSlotFailLock), 0);
+    hits = fwdSlotFailHits;
+    wc_UnLockMutex(&fwdSlotFailLock);
+    return hits;
+}
+
+/* Call before the echoserver thread starts. */
+static void fwdSlotFailInstall(void)
+{
+    AssertIntEQ(wc_InitMutex(&fwdSlotFailLock), 0);
+    fwdSlotFailArmed = 0;
+    fwdSlotFailHits = 0;
+    AssertIntEQ(wolfSSL_GetAllocators(&fwdSlotPrevMf, &fwdSlotPrevFf,
+            &fwdSlotPrevRf), 0);
+    AssertIntEQ(wolfSSL_SetAllocators(fwdSlotMalloc, fwdSlotFree,
+            fwdSlotRealloc), 0);
+}
+
+/* Call after the echoserver thread is joined. */
+static void fwdSlotFailRemove(void)
+{
+    AssertIntEQ(wolfSSL_SetAllocators(fwdSlotPrevMf, fwdSlotPrevFf,
+            fwdSlotPrevRf), 0);
+    AssertIntEQ(wc_FreeMutex(&fwdSlotFailLock), 0);
+}
+
+/* A connection accepted while its channel cannot be opened belongs to no
+ * channel yet. A late close of the channel that held the slot before must
+ * leave it alone, so the open retries and carries it. */
+static void fwdSlotLateClose(WOLFSSH* ssh, word32 fwdPort)
+{
+    WS_SOCKET_T aFd;
+    WS_SOCKET_T bFd;
+    word32 oldId = 0;
+    int tries;
+
+    fwdSlot.fwdChannel = NULL;
+    aFd = fwdSlotConnect(fwdPort);
+    fwdSlotWaitChannel(ssh);
+    AssertIntEQ(wolfSSH_ChannelGetId(fwdSlot.fwdChannel, &oldId,
+            WS_CHANNEL_ID_PEER), WS_SUCCESS);
+    /* The echoserver drops the connection and keeps the channel id. */
+    WCLOSESOCKET(aFd);
+
+    fwdSlotFailArm(1);
+    fwdSlot.fwdChannel = NULL;
+    bFd = fwdSlotConnect(fwdPort);
+    for (tries = 0; fwdSlotFailHitCount() == 0 && tries < 500; tries++)
+        fwdSlotSleepMs(10);
+    fwdSlotFailArm(0);
+    AssertTrue(fwdSlotFailHitCount() > 0);
+
+    /* The echoserver retries the open only on a pass that does not end at
+     * the close, so follow the close with a request it answers. */
+    AssertIntEQ(SendChannelClose(ssh, oldId), WS_SUCCESS);
+    AssertIntEQ(fwdSlotRemote(ssh, "127.0.0.1", 0), 0);
+    fwdSlotWaitChannel(ssh);
+    WCLOSESOCKET(bFd);
+}
+#endif /* FWDSLOT_FAIL_ALLOC */
+
+/* The echoserver's forwarding callback serves one forward at a time, refuses
+ * ports that do not fit 16 bits, and frees its slot when a forward is
+ * cancelled while a forwarded connection is still open. */
+static void test_wolfSSH_FwdEchoserverSlot(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    THREAD_TYPE serThread;
+    const char* args[7];
+    int argsCount;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    WS_SOCKET_T sshFd = WOLFSSH_SOCKET_INVALID;
+    WS_SOCKET_T extFd = WOLFSSH_SOCKET_INVALID;
+    SOCKADDR_IN_T addr;
+    socklen_t addrSz = sizeof(addr);
+    struct timeval rcvTimeout;
+    WOLFSSH_FWD_PENDING pend;
+    word32 peerId = 0;
+    word32 fwdPort;
+    int mark;
+
+    WMEMSET(&fwdSlot, 0, sizeof(fwdSlot));
+    WMEMSET(&ser, 0, sizeof(ser));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-f";
+    args[argsCount++] = "-F";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv = (char**)args;
+    ser.argc = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+#ifdef FWDSLOT_FAIL_ALLOC
+    fwdSlotFailInstall();
+#endif
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL));
+    wolfSSH_CTX_SetPublicKeyCheck(ctx, fwdSlotHostKey);
+    wolfSSH_SetUserAuth(ctx, fwdSlotUserAuth);
+    wolfSSH_SetReqSuccess(ctx, fwdSlotReqSuccess);
+    wolfSSH_SetReqFailure(ctx, fwdSlotReqFailure);
+    wolfSSH_CTX_SetChannelOpenRespCb(ctx, fwdSlotOpenConf, fwdSlotOpenFail);
+    wolfSSH_CTX_SetChannelOpenCb(ctx, fwdSlotChannelOpen);
+    wolfSSH_CTX_SetFwdCb(ctx, fwdSlotFwdCb, NULL);
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntEQ(wolfSSH_SetUsername(ssh, "jill"), WS_SUCCESS);
+
+    build_addr(&addr, (char*)wolfSshIp, ready.port);
+    tcp_socket(&sshFd, ((struct sockaddr_in*)&addr)->sin_family);
+    AssertIntEQ(connect(sshFd, (const struct sockaddr*)&addr, addrSz), 0);
+    /* Bound every read, so a missing answer fails an assert, not CI. */
+    rcvTimeout.tv_sec = 5;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(sshFd, SOL_SOCKET, SO_RCVTIMEO, &rcvTimeout,
+            sizeof(rcvTimeout));
+    AssertIntEQ(wolfSSH_set_fd(ssh, (int)sshFd), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_connect(ssh), WS_SUCCESS);
+
+    /* Out of range, refused rather than narrowed. wolfSSH_FwdRemoteSetup()
+     * will not send it, so frame the request directly. */
+    AssertIntEQ(fwdSlotDirect(ssh, 65536), 0);
+    mark = fwdSlot.replies + 1;
+    AssertIntEQ(FwdReplyPrepare(ssh, &pend), WS_SUCCESS);
+    AssertIntEQ(SendGlobalRequestFwd(ssh, "127.0.0.1", 65536, 0, 1, &pend),
+            WS_SUCCESS);
+    fwdSlotPump(ssh, &fwdSlot.replies, mark);
+    AssertIntEQ(fwdSlot.lastOk, 0);
+
+    /* One remote forward; a second setup of either kind is refused. */
+    AssertIntEQ(fwdSlotRemote(ssh, "127.0.0.1", 0), 1);
+    fwdPort = fwdSlot.boundPort;
+    AssertTrue(fwdPort != 0);
+    AssertIntEQ(fwdSlotRemote(ssh, "127.0.0.1", 0), 0);
+    AssertIntEQ(fwdSlotDirect(ssh, 65535), 0);
+
+    /* A connection to the forward arrives as a forwarded-tcpip channel. */
+    extFd = fwdSlotConnect(fwdPort);
+    fwdSlotWaitChannel(ssh);
+    AssertIntEQ(wolfSSH_ChannelGetId(fwdSlot.fwdChannel, &peerId,
+            WS_CHANNEL_ID_PEER), WS_SUCCESS);
+
+    /* Cancel the forward with the connection still open, then close its
+     * channel. The slot must come free. */
+    mark = fwdSlot.replies + 1;
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "127.0.0.1", fwdPort, 1),
+            WS_SUCCESS);
+    fwdSlotPump(ssh, &fwdSlot.replies, mark);
+    AssertIntEQ(fwdSlot.lastOk, 1);
+    AssertIntEQ(SendChannelClose(ssh, peerId), WS_SUCCESS);
+
+    AssertIntEQ(fwdSlotRemote(ssh, "127.0.0.1", 0), 1);
+    fwdPort = fwdSlot.boundPort;
+#ifdef FWDSLOT_FAIL_ALLOC
+    fwdSlotLateClose(ssh, fwdPort);
+#endif
+    mark = fwdSlot.replies + 1;
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "127.0.0.1", fwdPort, 1),
+            WS_SUCCESS);
+    fwdSlotPump(ssh, &fwdSlot.replies, mark);
+    AssertIntEQ(fwdSlot.lastOk, 1);
+    WCLOSESOCKET(extFd);
+
+    /* The top of the range is a port. Nothing need listen there: the
+     * echoserver confirms the open before it connects. */
+    AssertIntEQ(fwdSlotDirect(ssh, 65535), 1);
+
+    /* That connect keeps failing, so the direct forward holds the slot with
+     * no socket. A cancel must not free it: it is refused, and so is the
+     * next forward, which the stale direct forward would otherwise connect
+     * to before the session drops. */
+    mark = fwdSlot.replies + 1;
+    AssertIntEQ(wolfSSH_FwdRemoteCancel(ssh, "127.0.0.1", 1234, 1),
+            WS_SUCCESS);
+    fwdSlotPump(ssh, &fwdSlot.replies, mark);
+    AssertIntEQ(fwdSlot.lastOk, 0);
+    AssertIntEQ(fwdSlotRemote(ssh, "127.0.0.1", 0), 0);
+
+    (void)wolfSSH_shutdown(ssh);
+    WCLOSESOCKET(sshFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+#ifdef FWDSLOT_FAIL_ALLOC
+    fwdSlotFailRemove();
+#endif
+    FreeTcpReady(&ready);
+}
+
+#else
+static void test_wolfSSH_FwdEchoserverSlot(void) { ; }
+#endif
+
 #endif /* WOLFSSH_FWD */
 
 static void test_wolfSSH_QueryAlgoList(void)
@@ -9449,6 +9868,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_CheckAlgoList();
 #ifdef WOLFSSH_FWD
     test_wolfSSH_FwdRemote_badArgs();
+    test_wolfSSH_FwdEchoserverSlot();
 #endif
 #ifdef WOLFSSH_AGENT
     test_wolfSSH_agent_signrequest_short_write();
