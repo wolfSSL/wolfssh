@@ -376,6 +376,8 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
         WOLFSSH_API const byte* wolfSSH_SFTP_TestRecvReply(WOLFSSH* ssh,
                 word32* sz);
         WOLFSSH_API void wolfSSH_SFTP_TestRecvStateFree(WOLFSSH* ssh);
+        WOLFSSH_API int wolfSSH_SFTP_TestRecvRealPath(WOLFSSH* ssh,
+                int reqId, const byte* data, word32 sz);
         WOLFSSH_API int wolfSSH_SFTP_TestFileHandleCount(WOLFSSH* ssh);
         #ifndef NO_WOLFSSH_DIR
             WOLFSSH_API int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh);

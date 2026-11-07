@@ -413,6 +413,25 @@ static int SFTP_ParseAttributes_buffer(WOLFSSH* ssh,  WS_SFTP_FILEATRB* atr,
 static WS_SFTPNAME* wolfSSH_SFTPNAME_new(void* heap);
 
 #ifndef NO_WOLFSSH_SERVER
+/* Parse a request's attributes. Flag bits outside the v3 set are a protocol
+ * error (filexfer-02 5). Replies are parsed leniently, ignoring them. */
+static int SFTP_ParseRequestAttributes(WOLFSSH* ssh, WS_SFTP_FILEATRB* atr,
+        byte* buf, word32* idx, word32 maxIdx)
+{
+    int ret;
+
+    ret = SFTP_ParseAttributes_buffer(ssh, atr, buf, idx, maxIdx);
+    if (ret == WS_SUCCESS
+            && (atr->flags & ~(word32)(WOLFSSH_FILEATRB_SIZE
+                | WOLFSSH_FILEATRB_UIDGID | WOLFSSH_FILEATRB_PERM
+                | WOLFSSH_FILEATRB_TIME | WOLFSSH_FILEATRB_EXT)) != 0) {
+        WLOG(WS_LOG_SFTP, "Unsupported attribute flags 0x%08X", atr->flags);
+        ret = WS_BUFFER_E;
+    }
+
+    return ret;
+}
+
 static int SFTP_AddFileHandle(WOLFSSH* ssh,
 #ifdef USE_WINDOWS_API
     HANDLE fd,
@@ -422,6 +441,9 @@ static int SFTP_AddFileHandle(WOLFSSH* ssh,
     const char* fileName, word32 id[2], int isAppend);
 static int SFTP_RemoveFileHandle(WOLFSSH* ssh, word32 id[2]);
 static int SFTP_FileHandleCapped(WOLFSSH* ssh);
+static int SFTP_SendStatus(WOLFSSH* ssh, byte type, int reqId,
+        const char* msg);
+static int SFTP_SendBadMessage(WOLFSSH* ssh, int reqId);
 #endif /* !NO_WOLFSSH_SERVER */
 
 /* Returns WS_SUCCESS if a server-side inbound SFTP message body of the given
@@ -1576,9 +1598,14 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         return WS_BAD_ARGUMENT;
     }
 
-    if (GetStringRef(&rSz, &str, data, (word32)maxSz, &lidx) != WS_SUCCESS
-            || rSz >= WOLFSSH_MAX_FILENAME) {
-        return WS_BUFFER_E;
+    if (GetStringRef(&rSz, &str, data, (word32)maxSz, &lidx) != WS_SUCCESS) {
+        return SFTP_SendBadMessage(ssh, reqId);
+    }
+    if (rSz >= WOLFSSH_MAX_FILENAME) {
+        WLOG(WS_LOG_SFTP, "Real Path Request too long");
+        ret = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Real Path Error");
+        return (ret == WS_SUCCESS) ? WS_BUFFER_E : ret;
     }
     WMEMCPY(r, str, rSz);
     r[rSz] = '\0';
@@ -1638,7 +1665,12 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
 
     ret = wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sizeof s);
     if (ret != WS_SUCCESS) {
-        return ret;
+        int rc;
+
+        WLOG(WS_LOG_SFTP, "Unable to resolve Real Path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Real Path Error");
+        return (rc == WS_SUCCESS) ? ret : rc;
     }
     sSz = (word32)WSTRLEN(s);
 
@@ -2147,6 +2179,17 @@ static int SFTP_SendStatus(WOLFSSH* ssh, byte type, int reqId, const char* msg)
 }
 
 
+/* Answers a request too short to parse with BAD_MESSAGE.
+ * Returns WS_BUFFER_E once queued, else the send error. */
+static int SFTP_SendBadMessage(WOLFSSH* ssh, int reqId)
+{
+    int ret;
+
+    ret = SFTP_SendStatus(ssh, WOLFSSH_FTP_BADMSG, reqId, "Malformed Request");
+    return (ret == WS_SUCCESS) ? WS_BUFFER_E : ret;
+}
+
+
 /* Status code for a file system call that just failed, from errno where the
  * file system sets it: NO_SUCH_FILE for a missing path, PERMISSION_DENIED for
  * a refused one, FAILURE otherwise. Without errno it is fallback. Call it
@@ -2200,10 +2243,15 @@ int wolfSSH_SFTP_RecvRMDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_RMDIR");
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
+    if (ret != WS_SUCCESS && ret != WS_PERMISSIONS) {
+        WLOG(WS_LOG_SFTP, "Unable to resolve directory path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, err);
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
+    }
 
     if (ret == 0) {
     #ifndef USE_WINDOWS_API
@@ -2258,6 +2306,7 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char err[] = "Create Directory Error";
     char suc[] = "Created Directory";
     char per[] = "Permission denied";
+    char bad[] = "Bad Attributes";
     char* res  = NULL;
 
     if (ssh == NULL) {
@@ -2267,18 +2316,21 @@ int wolfSSH_SFTP_RecvMKDIR(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_MKDIR");
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
     if (ret != WS_SUCCESS && ret != WS_PERMISSIONS) {
-        return ret;
+        WLOG(WS_LOG_SFTP, "Unable to resolve directory path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, err);
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
     if (ret == WS_SUCCESS) {
-        if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+        if (SFTP_ParseRequestAttributes(ssh, &atr, data, &idx, maxSz)
                 != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_BADMSG, reqId, bad);
+            return (rc == WS_SUCCESS) ? WS_BUFFER_E : rc;
         }
 #ifndef USE_WINDOWS_API
 #ifndef WOLFSSH_FATFS
@@ -2508,6 +2560,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     char  naf[] = "Not A File";
     char  per[] = "Permission denied";
     char  tmf[] = "Too Many Open File Handles";
+    char  bad[] = "Bad Attributes";
     byte  type = WOLFSSH_FTP_FAILURE;
     int handleStored = 0;
 
@@ -2529,7 +2582,7 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        ret = WS_BUFFER_E;
+        ret = SFTP_SendBadMessage(ssh, reqId);
         goto cleanup;
     }
 
@@ -2542,7 +2595,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
     else if (ret != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
-        ret = WS_FATAL_ERROR;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, oer);
+        ret = (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
         goto cleanup;
     }
 
@@ -2558,14 +2612,15 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get reason for opening file */
     if (GetUint32(&reason, data, maxSz, &idx) != WS_SUCCESS) {
-        ret = WS_BUFFER_E;
+        ret = SFTP_SendBadMessage(ssh, reqId);
         goto cleanup;
     }
 
     /* @TODO handle attributes */
-    if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+    if (SFTP_ParseRequestAttributes(ssh, &atr, data, &idx, maxSz)
             != WS_SUCCESS) {
-        ret = WS_BAD_FILE_E;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_BADMSG, reqId, bad);
+        ret = (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
         goto cleanup;
     }
 
@@ -2760,7 +2815,7 @@ cleanup:
     }
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        ret = WS_BUFFER_E;
+        ret = SFTP_SendBadMessage(ssh, reqId);
         goto cleanup;
     }
 
@@ -2773,7 +2828,8 @@ cleanup:
     }
     else if (ret != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Creating path for file to open failed");
-        ret = WS_FATAL_ERROR;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId, oer);
+        ret = (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
         goto cleanup;
     }
 
@@ -2789,13 +2845,13 @@ cleanup:
 
     /* get reason for opening file */
     if (GetUint32(&reason, data, maxSz, &idx) != WS_SUCCESS) {
-        ret = WS_BUFFER_E;
+        ret = SFTP_SendBadMessage(ssh, reqId);
         goto cleanup;
     }
 
 #if 0
     /* @TODO handle attributes */
-    if (SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz)
+    if (SFTP_ParseRequestAttributes(ssh, &atr, data, &idx, maxSz)
             != WS_SUCCESS) {
         ret  = WS_BAD_FILE_E;
         goto cleanup;
@@ -2980,7 +3036,7 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get directory name */
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, dir, sizeof(dir));
@@ -2989,7 +3045,10 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
     else if (ret != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        WLOG(WS_LOG_SFTP, "Unable to resolve directory path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Unable To Open Directory");
+        return (rc == WS_SUCCESS) ? WS_BUFFER_E : rc;
     }
 
     /* check the cap before opening, so there is nothing to unwind */
@@ -3077,14 +3136,14 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     if (maxSz < UINT32_SZ) {
         /* not enough for an ato32 call */
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     /* get directory name */
     ato32(data + idx, &sz);
     idx += UINT32_SZ;
     if (sz > maxSz - idx) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     /* Resolve and confine the peer supplied path the same way the POSIX branch
@@ -3098,7 +3157,10 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
     else if (ret != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        WLOG(WS_LOG_SFTP, "Unable to resolve directory path");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Unable To Open Directory");
+        return (rc == WS_SUCCESS) ? WS_BUFFER_E : rc;
     }
 
     /* check the cap before allocating, so there is nothing to unwind */
@@ -4019,18 +4081,19 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     #endif
 
     /* get directory handle */
-    if (GetSize(&sz, data, maxSz, &idx) != WS_SUCCESS
-            || sz > WOLFSSH_MAX_HANDLE) {
-        return WS_BUFFER_E;
+    if (GetSize(&sz, data, maxSz, &idx) != WS_SUCCESS) {
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     if (sz != (WOLFSSH_HANDLE_ID_SZ)) {
         WLOG(WS_LOG_SFTP, "Unexpected handle size");
-        return WS_FATAL_ERROR;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Unknown Handle");
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
     if (GetUint32(&handle[0], data, maxSz, &idx) != WS_SUCCESS
             || GetUint32(&handle[1], data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     /* find DIR given handle */
@@ -4045,7 +4108,9 @@ int wolfSSH_SFTP_RecvReadDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (cur == NULL) {
         /* unable to find handle */
         WLOG(WS_LOG_SFTP, "Unable to find handle");
-        return WS_FATAL_ERROR;
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Unknown Handle");
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
     /* Read up to WOLFSSH_MAX_SFTP_READDIR entries. The handle keeps its
@@ -4372,7 +4437,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Error parsing file handle");
         res  = err;
-        type = WOLFSSH_FTP_FAILURE;
+        type = WOLFSSH_FTP_BADMSG;
         ret  = WS_BUFFER_E;
     }
 
@@ -4408,12 +4473,12 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* get offset into file */
         if (GetUint32(&ofst[1], data, maxSz, &idx) != WS_SUCCESS
                 || GetUint32(&ofst[0], data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
 
         /* get length to be written */
         if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
 
         {
@@ -4508,7 +4573,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
         WLOG(WS_LOG_SFTP, "Error parsing file handle");
         res  = err;
-        type = WOLFSSH_FTP_FAILURE;
+        type = WOLFSSH_FTP_BADMSG;
         ret  = WS_BUFFER_E;
     }
 
@@ -4544,11 +4609,11 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* get offset into file */
         WMEMSET(&offset, 0, sizeof(OVERLAPPED));
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
         offset.OffsetHigh = (DWORD)strSz;
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
         offset.Offset = (DWORD)strSz;
 
@@ -4570,7 +4635,7 @@ int wolfSSH_SFTP_RecvWrite(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (ret == WS_SUCCESS) {
         /* get length to be written */
         if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
 
         /* A short write is a failure too, as on the POSIX side. */
@@ -4629,7 +4694,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     if (strSz != WOLFSSH_HANDLE_ID_SZ) {
@@ -4662,16 +4727,17 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* get offset into file */
         if (GetUint32(&ofst[1], data, maxSz, &idx) != WS_SUCCESS
                 || GetUint32(&ofst[0], data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
 
         /* get length to be read */
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
-        /* Bound strSz to the maximum SFTP read/write payload size. */
+        /* Clamp to the maximum payload; a short read is a valid reply,
+         * and filexfer-02 section 3 only promises reads of 32768 bytes. */
         if (strSz > WOLFSSH_MAX_SFTP_RW) {
-            return WS_BUFFER_E;
+            strSz = WOLFSSH_MAX_SFTP_RW;
         }
 
         /* read from handle and send data back to client */
@@ -4757,7 +4823,7 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     if (strSz != WOLFSSH_HANDLE_ID_SZ) {
@@ -4791,21 +4857,22 @@ int wolfSSH_SFTP_RecvRead(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
         /* get offset into file */
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
         offset.OffsetHigh = (DWORD)strSz;
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
         offset.Offset = (DWORD)strSz;
 
         /* get length to be read */
         if (GetUint32(&strSz, data, maxSz, &idx) != WS_SUCCESS) {
-            return WS_BUFFER_E;
+            return SFTP_SendBadMessage(ssh, reqId);
         }
-        /* Bound strSz to the maximum SFTP read/write payload size. */
+        /* Clamp to the maximum payload; a short read is a valid reply,
+         * and filexfer-02 section 3 only promises reads of 32768 bytes. */
         if (strSz > WOLFSSH_MAX_SFTP_RW) {
-            return WS_BUFFER_E;
+            strSz = WOLFSSH_MAX_SFTP_RW;
         }
 
         /* read from handle and send data back to client */
@@ -4899,15 +4966,9 @@ int wolfSSH_SFTP_RecvClose(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_CLOSE");
 
-    if (maxSz < UINT32_SZ) {
-        /* not enough for an ato32 call */
-        return WS_BUFFER_E;
-    }
-
     /* get file handle */
-    ato32(data + idx, &sz); idx += UINT32_SZ;
-    if (sz + idx > maxSz || sz > WOLFSSH_MAX_HANDLE) {
-        return WS_BUFFER_E;
+    if (GetSize(&sz, data, maxSz, &idx) != WS_SUCCESS) {
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     /* Validate file handle size - must be 8 bytes for tracked handles */
@@ -5009,9 +5070,8 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_REMOVE");
 
     /* get file name */
-    if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS
-            || strSz > WOLFSSH_MAX_FILENAME) {
-        return WS_BUFFER_E;
+    if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz,
@@ -5031,7 +5091,7 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         /* unlink() refuses a directory swapped in after the check */
         else if (WUNLINK(ssh->fs, name) < 0)
     #else
-        else if (WREMOVE(ssh->fs, name) < 0)
+        else if ((rc = WREMOVE(ssh->fs, name)) < 0)
     #endif
     #else /* USE_WINDOWS_API */
         if (WS_DeleteFileA(name, ssh->ctx->heap) == 0)
@@ -5040,13 +5100,13 @@ int wolfSSH_SFTP_RecvRemove(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
             type = SFTP_FailStatus(WOLFSSH_FTP_FAILURE);
             WLOG(WS_LOG_SFTP, "Error removing file");
         #if defined(WOLFSSL_NUCLEUS) && defined(DEBUG_WOLFSSH)
-            if (ret == NUF_ACCES)
+            if (rc == NUF_ACCES)
                 WLOG(WS_LOG_SFTP, "access error");
-            if (ret == NUF_BAD_USER)
+            if (rc == NUF_BAD_USER)
                 WLOG(WS_LOG_SFTP, "bad user");
-            if (ret == NUF_IO_ERROR)
+            if (rc == NUF_IO_ERROR)
                 WLOG(WS_LOG_SFTP, "io error");
-            if (ret == NUF_NOFILE)
+            if (rc == NUF_NOFILE)
                 WLOG(WS_LOG_SFTP, "%s file not found", name);
         #endif
             ret = WS_BAD_FILE_E;
@@ -5167,6 +5227,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get old file name */
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
+        type = WOLFSSH_FTP_BADMSG;
         ret = WS_BUFFER_E;
     }
     if (ret == WS_SUCCESS) {
@@ -5176,6 +5237,7 @@ int wolfSSH_SFTP_RecvRename(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     if (ret == WS_SUCCESS) {
         /* get new file name */
         if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
+            type = WOLFSSH_FTP_BADMSG;
             ret = WS_BUFFER_E;
         }
     }
@@ -6023,7 +6085,9 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     const byte* handle;
     word32 idx = 0;
     int ret = WS_SUCCESS;
+    int rc;
     char* name = NULL;
+    WS_FILE_LIST* cur = NULL;
 #ifdef USE_WINDOWS_API
     HANDLE fd = NULL;
 #else
@@ -6040,27 +6104,23 @@ int wolfSSH_SFTP_RecvFSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_FSTAT");
 
     if (GetStringRef(&handleSz, &handle, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
-    if (handleSz != WOLFSSH_HANDLE_ID_SZ) {
-        WLOG(WS_LOG_SFTP, "Unexpected handle size for stored handles");
-        return WS_BAD_FILE_E;
-    }
-    else {
-        WS_FILE_LIST* cur;
+    if (handleSz == WOLFSSH_HANDLE_ID_SZ) {
         word32 handleId[2] = {0, 0};
 
         SFTP_HandleIdDecode(handle, handleId);
-
         cur = SFTP_FindFileHandle(ssh, handleId);
-        if (cur == NULL) {
-            WLOG(WS_LOG_SFTP, "Unknown handle");
-            return WS_BAD_FILE_E;
-        }
-        name = cur->fileName;
-        fd   = cur->fd;
     }
+    if (cur == NULL) {
+        WLOG(WS_LOG_SFTP, "Unknown handle");
+        rc = SFTP_SendStatus(ssh, WOLFSSH_FTP_FAILURE, reqId,
+                "Unknown Handle");
+        return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
+    }
+    name = cur->fileName;
+    fd   = cur->fd;
 
     /* try to get file attributes and send back to client */
     WMEMSET((byte*)&atr, 0, sizeof(WS_SFTP_FILEATRB));
@@ -6133,7 +6193,7 @@ int wolfSSH_SFTP_RecvSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_STAT");
 
     if (GetStringRef(&sz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     /* try to get file attributes and send back to client */
@@ -6226,7 +6286,7 @@ int wolfSSH_SFTP_RecvLSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_LSTAT");
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, name, sizeof(name));
@@ -6483,7 +6543,7 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     WLOG(WS_LOG_SFTP, "Receiving WOLFSSH_FTP_SETSTAT");
 
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     ret = GetAndCleanPath(ssh, str, strSz, name, sizeof(name));
@@ -6500,8 +6560,8 @@ int wolfSSH_SFTP_RecvSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (ret == WS_SUCCESS &&
-            SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
-        type = WOLFSSH_FTP_FAILURE;
+            SFTP_ParseRequestAttributes(ssh, &atr, data, &idx, maxSz) != 0) {
+        type = WOLFSSH_FTP_BADMSG;
         res  = per;
         ret  = WS_BAD_FILE_E;
     }
@@ -6566,7 +6626,7 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
 
     /* get file handle */
     if (GetStringRef(&strSz, &str, data, maxSz, &idx) != WS_SUCCESS) {
-        return WS_BUFFER_E;
+        return SFTP_SendBadMessage(ssh, reqId);
     }
 
     if (strSz != WOLFSSH_HANDLE_ID_SZ) {
@@ -6596,8 +6656,8 @@ int wolfSSH_SFTP_RecvFSetSTAT(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
     }
 
     if (ret == WS_SUCCESS &&
-            SFTP_ParseAttributes_buffer(ssh, &atr, data, &idx, maxSz) != 0) {
-        type = WOLFSSH_FTP_FAILURE;
+            SFTP_ParseRequestAttributes(ssh, &atr, data, &idx, maxSz) != 0) {
+        type = WOLFSSH_FTP_BADMSG;
         res  = per;
         ret  = WS_BAD_FILE_E;
     }
@@ -6678,6 +6738,34 @@ void wolfSSH_SFTP_TestRecvStateFree(WOLFSSH* ssh)
     if (ssh != NULL) {
         wolfSSH_SFTP_ClearState(ssh, STATE_ID_ALL);
     }
+}
+
+/* Run the REALPATH handler on a copy of data held in the receive buffer, where
+ * wolfSSH_SFTP_read leaves the request and the handler may build its reply. */
+int wolfSSH_SFTP_TestRecvRealPath(WOLFSSH* ssh, int reqId, const byte* data,
+        word32 sz)
+{
+    WS_SFTP_RECV_STATE* state;
+    byte* buf;
+
+    if (ssh == NULL || ssh->recvState == NULL || data == NULL || sz == 0) {
+        return WS_BAD_ARGUMENT;
+    }
+    state = ssh->recvState;
+
+    buf = (byte*)WMALLOC(sz, ssh->ctx->heap, DYNTYPE_BUFFER);
+    if (buf == NULL) {
+        return WS_MEMORY_E;
+    }
+    WMEMCPY(buf, data, sz);
+    if (state->buffer.data != NULL) {
+        WFREE(state->buffer.data, ssh->ctx->heap, DYNTYPE_BUFFER);
+    }
+    state->buffer.data = buf;
+    state->buffer.sz = sz;
+    state->buffer.idx = 0;
+
+    return wolfSSH_SFTP_RecvRealPath(ssh, reqId, buf, (int)sz);
 }
 
 /* Return the number of open file handles tracked for the session. Lets the
