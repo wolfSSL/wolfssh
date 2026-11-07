@@ -9463,6 +9463,9 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         ssh->peerMacSz = ssh->handshake->peerMacSz;
         ssh->peerAeadMode = ssh->handshake->peerAeadMode;
         WMEMCPY(&ssh->peerKeys, &ssh->handshake->peerKeys, sizeof(Keys));
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        ssh->noneCipherIn = (ssh->peerEncryptId == ID_NONE);
+#endif
 
         ret = CipherSetKey(&ssh->decryptCipher,
                 ssh->peerEncryptId, 0, ssh->peerKeys.iv,
@@ -10250,6 +10253,15 @@ static int DoUserAuthRequestNone(WOLFSSH* ssh, WS_UserAuthData* authData,
 #endif
 
 
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+/* Either direction negotiated the "none" cipher, so a secret sent now is in
+ * the clear. */
+static int IsTransportCleartext(const WOLFSSH* ssh)
+{
+    return ssh->noneCipherIn || ssh->noneCipherOut;
+}
+#endif
+
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
 static int DoUserAuthInfoResponse(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
@@ -10281,6 +10293,19 @@ static int DoUserAuthInfoResponse(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "DoUserAuthInfoResponse on non-keyboard auth");
         ret = WS_FATAL_ERROR;
     }
+
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    if ((ret == WS_SUCCESS) && IsTransportCleartext(ssh)) {
+        /* A rekey to the none cipher came with a prompt outstanding. Refused
+         * before the callback sees a cleartext answer, and the exchange is
+         * over, so a later INFO_RESPONSE is fatal. */
+        WLOG(WS_LOG_DEBUG, "DUARKB: response refused over the none cipher");
+        ssh->authId = ID_NONE;
+        ssh->kbSetupPending = 0;
+        authFailure = 1;
+        ret = WS_USER_AUTH_E;
+    }
+#endif
 
     if (ret == WS_SUCCESS) {
         /* Response arrived; the exchange is answered. */
@@ -12263,6 +12288,19 @@ static int DoUserAuthRequest(WOLFSSH* ssh,
              * disconnect is already sent; don't dispatch this request. */
             begin = len;
         }
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        else if ((authNameId == ID_USERAUTH_PASSWORD
+                    || authNameId == ID_USERAUTH_KEYBOARD)
+                && IsTransportCleartext(ssh)) {
+            /* Refused before the callback sees a cleartext secret. */
+            WLOG(WS_LOG_DEBUG, "DUAR: %s refused over the none cipher",
+                 IdToName(authNameId));
+            /* No exchange started; a later INFO_RESPONSE must not run. */
+            ssh->authId = ID_NONE;
+            ret = SendUserAuthFailureCount(ssh, 0, 1);
+            begin = len;
+        }
+#endif
         else if (authNameId == ID_USERAUTH_PASSWORD)
             ret = DoUserAuthRequestPassword(ssh, &authData, buf, len, &begin);
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
@@ -15654,7 +15692,15 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
     return ret;
 }
 
-static int BundlePacket(WOLFSSH* ssh)
+/* Packets carrying a userauth secret pad up to a multiple of this, so their
+ * length hides the secret's length. OpenSSH uses 64. */
+#ifndef WOLFSSH_USERAUTH_PAD_BUCKET
+    #define WOLFSSH_USERAUTH_PAD_BUCKET 64
+#endif
+
+/* padBucket: 0 for minimum padding, else pad the packet up to a multiple of
+ * it. PreparePacket() must have reserved padBucket extra bytes. */
+static int BundlePacketPad(WOLFSSH* ssh, word32 padBucket)
 {
     byte* output = NULL;
     word32 idx = 0;
@@ -15681,6 +15727,19 @@ static int BundlePacket(WOLFSSH* ssh)
                      PAD_LENGTH_SZ + payloadSz) % ssh->blockSz;
         if (paddingSz < MIN_PAD_LENGTH)
             paddingSz += ssh->blockSz;
+
+        if (padBucket > 0) {
+            word32 alignSz, extraSz;
+
+            /* Whole blocks, so the extra keeps the block alignment. */
+            padBucket = ((padBucket + ssh->blockSz - 1) / ssh->blockSz)
+                    * ssh->blockSz;
+            alignSz = (ssh->aeadMode ? 0 : LENGTH_SZ) + PAD_LENGTH_SZ
+                    + payloadSz + paddingSz;
+            extraSz = (padBucket - (alignSz % padBucket)) % padBucket;
+            if (paddingSz + extraSz <= 0xFF)
+                paddingSz += (byte)extraSz;
+        }
 
         packetSz = PAD_LENGTH_SZ + payloadSz + paddingSz;
 
@@ -15766,6 +15825,11 @@ static int BundlePacket(WOLFSSH* ssh)
     }
 
     return ret;
+}
+
+static int BundlePacket(WOLFSSH* ssh)
+{
+    return BundlePacketPad(ssh, 0);
 }
 
 
@@ -19512,6 +19576,9 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->macId = ssh->handshake->macId;
         ssh->aeadMode = ssh->handshake->aeadMode;
         WMEMCPY(&ssh->keys, &ssh->handshake->keys, sizeof(Keys));
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+        ssh->noneCipherOut = (ssh->encryptId == ID_NONE);
+#endif
 
         ret = CipherSetKey(&ssh->encryptCipher,
                 ssh->encryptId, 1, ssh->keys.iv,
@@ -23040,7 +23107,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
         ret = PrepareUserAuthResponseKeyboard(ssh, &payloadSz, &authData);
     }
     if (ret == WS_SUCCESS) {
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23053,7 +23120,7 @@ int SendUserAuthKeyboardResponse(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS) {
         ssh->outputBuffer.length = idx;
-        ret = BundlePacket(ssh);
+        ret = BundlePacketPad(ssh, WOLFSSH_USERAUTH_PAD_BUCKET);
     }
 
     if (ret == WS_SUCCESS) {
@@ -23085,6 +23152,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     WS_KeySignature *keySig_ptr = NULL;
     byte authId = ID_NONE;
     int delivered = 0;
+    word32 padBucket = 0;
 
     WOLFSSH_UNUSED(addSig);
 
@@ -23191,8 +23259,10 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         payloadSz = MSG_ID_SZ + (LENGTH_SZ * 3) +
                     ssh->userNameSz + serviceNameSz + authNameSz;
-        if (authId == ID_USERAUTH_PASSWORD)
+        if (authId == ID_USERAUTH_PASSWORD) {
+            padBucket = WOLFSSH_USERAUTH_PAD_BUCKET;
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
+        }
         else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {
             authData.sf.publicKey.hasSignature = 1;
             ssh->userAuthPkDone = 1;
@@ -23208,7 +23278,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
     }
 
     if (ret == WS_SUCCESS)
-        ret = PreparePacket(ssh, payloadSz);
+        ret = PreparePacket(ssh, payloadSz + padBucket);
 
     if (ret == WS_SUCCESS) {
         byte* sigStart;
@@ -23259,7 +23329,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
 
         if (ret == WS_SUCCESS) {
             ssh->outputBuffer.length = idx;
-            ret = BundlePacket(ssh);
+            ret = BundlePacketPad(ssh, padBucket);
         }
     }
 
@@ -23319,6 +23389,11 @@ static int GetAllowedAuth(WOLFSSH* ssh, char* authStr)
     if (ssh->ctx && ssh->ctx->userAuthTypesCb) {
         typeAllowed = ssh->ctx->userAuthTypesCb(ssh, ssh->userAuthCtx);
     }
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    if (IsTransportCleartext(ssh)) {
+        typeAllowed &= ~(WOLFSSH_USERAUTH_PASSWORD | WOLFSSH_USERAUTH_KEYBOARD);
+    }
+#endif
     if (typeAllowed & WOLFSSH_USERAUTH_PUBLICKEY) {
         WSTRNCAT(authStr, "publickey,", MAX_AUTH_STRING-1);
     }

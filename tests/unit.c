@@ -13284,6 +13284,267 @@ static int test_UserAuthRejectedSendsFailure(void)
 }
 
 
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+static int s_noneCipherAuthCalls = 0;
+
+/* Counts the calls a cleartext secret would reach, and fails them. */
+static int UnitAuthCountFail(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)authType;
+    (void)authData;
+    (void)ctx;
+    s_noneCipherAuthCalls++;
+    return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+}
+
+/* Returns 1 when the captured USERAUTH_FAILURE name-list holds name. */
+static int CaptureFailureListHas(const char* name)
+{
+    word32 off = LENGTH_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+    word32 listSz, nameSz, i, start;
+
+    if (s_authSvcCaptureSz < off + LENGTH_SZ)
+        return 0;
+    listSz = ((word32)s_authSvcCapture[off] << 24) |
+             ((word32)s_authSvcCapture[off + 1] << 16) |
+             ((word32)s_authSvcCapture[off + 2] << 8) |
+             ((word32)s_authSvcCapture[off + 3]);
+    off += LENGTH_SZ;
+    if (s_authSvcCaptureSz < off + listSz)
+        return 0;
+
+    nameSz = (word32)WSTRLEN(name);
+    start = 0;
+    for (i = 0; i <= listSz; i++) {
+        if (i == listSz || s_authSvcCapture[off + i] == ',') {
+            if (i - start == nameSz &&
+                    WMEMCMP(s_authSvcCapture + off + start, name, nameSz) == 0)
+                return 1;
+            start = i + 1;
+        }
+    }
+    return 0;
+}
+
+/* Over the "none" cipher, in either direction, the server refuses password
+ * and keyboard-interactive before the callback sees a secret, and leaves
+ * both out of the method list it sends back. */
+static int test_UserAuthNoneCipherRefusesSecrets(void)
+{
+    byte request[128];
+    word32 requestSz, idx;
+    word32 i, m;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int ret;
+    int result = 0;
+
+    /* i: 0 inbound only, 1 outbound only, 2 both */
+    for (i = 0; i < 3 && result == 0; i++) {
+        for (m = 0; m < 2 && result == 0; m++) {
+            if (m == 0) {
+                requestSz = BuildAuthPwRequest(request,
+                        (word32)sizeof(request));
+            }
+            else {
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+                requestSz = BuildAuthMethodRequest(request,
+                        (word32)sizeof(request), "ssh-connection",
+                        "keyboard-interactive");
+#else
+                continue;
+#endif
+            }
+            if (requestSz == 0)
+                return -1500;
+
+            ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+            if (ctx == NULL)
+                return -1501;
+            wolfSSH_SetUserAuth(ctx, UnitAuthCountFail);
+            wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+            ssh = wolfSSH_new(ctx);
+            if (ssh == NULL) {
+                wolfSSH_CTX_free(ctx);
+                return -1502;
+            }
+
+            /* As DoNewKeys() and SendNewKeys() leave them. */
+            ssh->noneCipherIn = (i != 1);
+            ssh->noneCipherOut = (i != 0);
+            s_noneCipherAuthCalls = 0;
+            s_authSvcCaptureSz = 0;
+            s_authSvcSendCount = 0;
+            idx = 0;
+
+            ret = wolfSSH_TestDoUserAuthRequest(ssh, request, requestSz,
+                    &idx);
+            if (ret != WS_SUCCESS) {
+                printf("NoneCipherRefusesSecrets[%u,%u]: ret=%d\n",
+                        i, m, ret);
+                result = -1503;
+            }
+            else if (s_noneCipherAuthCalls != 0) {
+                printf("NoneCipherRefusesSecrets[%u,%u]: callback ran\n",
+                        i, m);
+                result = -1504;
+            }
+            else if (s_authSvcSendCount != 1 ||
+                    CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz)
+                        != MSGID_USERAUTH_FAILURE) {
+                printf("NoneCipherRefusesSecrets[%u,%u]: no FAILURE sent\n",
+                        i, m);
+                result = -1505;
+            }
+            else if (CaptureFailureListHas("password") ||
+                    CaptureFailureListHas("keyboard-interactive")) {
+                printf("NoneCipherRefusesSecrets[%u,%u]: list offers a"
+                        " secret method\n", i, m);
+                result = -1506;
+            }
+            else if (idx != requestSz) {
+                result = -1507;
+            }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+            else if (m == 1) {
+                /* A zero-answer INFO_RESPONSE matches the never-set prompt
+                 * count; the refused request must not leave it a live
+                 * exchange that reaches the callback. */
+                byte infoRsp[UINT32_SZ];
+
+                PutU32BE(infoRsp, 0);
+                idx = 0;
+                ret = wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp,
+                        (word32)sizeof(infoRsp), &idx);
+                if (ret == WS_SUCCESS || s_noneCipherAuthCalls != 0) {
+                    printf("NoneCipherRefusesSecrets[%u,%u]: INFO_RESPONSE"
+                            " after refusal ret=%d, callback calls=%d\n",
+                            i, m, ret, s_noneCipherAuthCalls);
+                    result = -1508;
+                }
+            }
+#endif
+
+            wolfSSH_free(ssh);
+            wolfSSH_CTX_free(ctx);
+        }
+    }
+
+    return result;
+}
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+static word32 s_noneKbPromptLen = 9;
+static byte s_noneKbPromptEcho = 0;
+static byte* s_noneKbPrompts[1] = { (byte*)"Password:" };
+
+/* Sets up one prompt, and counts and fails each answer to it. */
+static int UnitAuthKbCountFail(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    (void)ctx;
+    if (authType == WOLFSSH_USERAUTH_KEYBOARD_SETUP) {
+        authData->sf.keyboard.promptCount = 1;
+        authData->sf.keyboard.promptLengths = &s_noneKbPromptLen;
+        authData->sf.keyboard.prompts = s_noneKbPrompts;
+        authData->sf.keyboard.promptEcho = &s_noneKbPromptEcho;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    s_noneCipherAuthCalls++;
+    return WOLFSSH_USERAUTH_INVALID_PASSWORD;
+}
+
+/* A keyboard-interactive request starts under encryption, then a rekey
+ * installs the "none" cipher with the prompt outstanding. The cleartext
+ * answer is refused before the callback, and a second one is fatal. */
+static int test_UserAuthNoneCipherRekeyMidKb(void)
+{
+    byte request[128];
+    byte infoRsp[UINT32_SZ * 2 + 1];
+    word32 requestSz, idx;
+    word32 i;
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int ret;
+    int result = 0;
+
+    requestSz = BuildAuthMethodRequest(request, (word32)sizeof(request),
+            "ssh-connection", "keyboard-interactive");
+    if (requestSz == 0)
+        return -1510;
+    PutU32BE(infoRsp, 1);
+    PutU32BE(infoRsp + UINT32_SZ, 1);
+    infoRsp[UINT32_SZ * 2] = 'x';
+
+    /* i: 0 inbound only, 1 outbound only, 2 both */
+    for (i = 0; i < 3 && result == 0; i++) {
+        ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+        if (ctx == NULL)
+            return -1511;
+        wolfSSH_SetUserAuth(ctx, UnitAuthKbCountFail);
+        wolfSSH_SetIOSend(ctx, CaptureIoSendAuthSvc);
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            wolfSSH_CTX_free(ctx);
+            return -1512;
+        }
+        s_noneCipherAuthCalls = 0;
+
+        idx = 0;
+        ret = wolfSSH_TestDoUserAuthRequest(ssh, request, requestSz, &idx);
+        if (ret != WS_SUCCESS || ssh->authId != ID_USERAUTH_KEYBOARD) {
+            printf("NoneCipherRekeyMidKb[%u]: request ret=%d\n", i, ret);
+            result = -1513;
+        }
+
+        if (result == 0) {
+            /* As DoNewKeys() and SendNewKeys() leave them after a rekey. */
+            ssh->noneCipherIn = (i != 1);
+            ssh->noneCipherOut = (i != 0);
+            s_authSvcCaptureSz = 0;
+            s_authSvcSendCount = 0;
+
+            idx = 0;
+            ret = wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp,
+                    (word32)sizeof(infoRsp), &idx);
+            if (ret != WS_SUCCESS || s_noneCipherAuthCalls != 0) {
+                printf("NoneCipherRekeyMidKb[%u]: response ret=%d, callback"
+                        " calls=%d\n", i, ret, s_noneCipherAuthCalls);
+                result = -1514;
+            }
+            else if (s_authSvcSendCount != 1 ||
+                    CaptureMsgId(s_authSvcCapture, s_authSvcCaptureSz)
+                        != MSGID_USERAUTH_FAILURE ||
+                    CaptureFailureListHas("password") ||
+                    CaptureFailureListHas("keyboard-interactive")) {
+                printf("NoneCipherRekeyMidKb[%u]: no FAILURE without the"
+                        " secret methods\n", i);
+                result = -1515;
+            }
+        }
+
+        if (result == 0) {
+            idx = 0;
+            ret = wolfSSH_TestDoUserAuthInfoResponse(ssh, infoRsp,
+                    (word32)sizeof(infoRsp), &idx);
+            if (ret != WS_FATAL_ERROR || s_noneCipherAuthCalls != 0) {
+                printf("NoneCipherRekeyMidKb[%u]: second response ret=%d\n",
+                        i, ret);
+                result = -1516;
+            }
+        }
+
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+    }
+
+    return result;
+}
+#endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
+#endif /* WOLFSSH_ALLOW_NONE_CIPHER */
+
+
 /* Verify DoUserAuthRequest rejects non-"ssh-connection" service names per
  * RFC 4252 Section 5.  For each case we assert:
  *   1. ret == WS_SUCCESS (connection stays open for retry)
@@ -28162,6 +28423,19 @@ int wolfSSH_UnitTest(int argc, char** argv)
     printf("UserAuthRejectedSendsFailure: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
+
+#ifdef WOLFSSH_ALLOW_NONE_CIPHER
+    unitResult = test_UserAuthNoneCipherRefusesSecrets();
+    printf("UserAuthNoneCipherRefusesSecrets: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    unitResult = test_UserAuthNoneCipherRekeyMidKb();
+    printf("UserAuthNoneCipherRekeyMidKb: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+#endif
 
 #if !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
     !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP384)
