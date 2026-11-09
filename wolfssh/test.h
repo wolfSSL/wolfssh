@@ -842,16 +842,17 @@ static INLINE int tcp_select_write(SOCKET_T socketfd, int to_sec)
 }
 
 
-/* Push out what a short send left queued, half close the socket, then read
- * until the peer hangs up. The library reads nothing once the session is
- * over, so the drain reads the socket directly and discards what it gets,
- * any protocol message still in flight included: collect the exit status
- * and the like before calling. Flush and drain together give up ten
- * seconds after the call, plus the one-second select() wait in progress.
- * Caller still owns and closes the socket. Returns WS_SUCCESS once the
- * peer has hung up, WS_WANT_READ if it never did, or WS_WANT_WRITE if the
- * queued output never went out. */
-static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+/* The worker codes a session that is still up reports. */
+static INLINE int DrainStatusLive(int ret)
+{
+    return ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
+            ret == WS_CHAN_RXD || ret == WS_EXTDATA || ret == WS_EOF ||
+            ret == WS_REKEYING || ret == WS_CHANNEL_CLOSED;
+}
+
+
+/* over set means the session is done, so a rekey is not waited on. */
+static INLINE int DrainSession(WOLFSSH* ssh, SOCKET_T fd, int over)
 {
     time_t deadline = WTIME(NULL) + 10;
     int ret;
@@ -865,14 +866,19 @@ static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
 
     /* The worker flushes after its receive pass, and any of its normal
      * events is a pass that made progress: wolfSSH_OutputPending() says
-     * when the flush is done. A session that is over or a socket that is
-     * gone ends the flush, and the drain still runs: either way the peer's
-     * hang up is what is left to see. */
-    while (wolfSSH_OutputPending(ssh)) {
+     * when the flush is done. A rekey holds the teardown messages, so the
+     * worker runs, reading, until the rekey ends; a session that is over
+     * never sends them, so it does not wait. A session that is over or a
+     * socket that is gone ends the flush, and the drain still runs: either
+     * way the peer's hang up is what is left to see. */
+    while (wolfSSH_OutputPending(ssh) ||
+            (wolfSSH_RekeyPending(ssh) && !over)) {
+        int pending = wolfSSH_OutputPending(ssh);
+
         if (WTIME(NULL) >= deadline)
             return WS_WANT_WRITE;
-        sel = tcp_select_write(fd, 1);
-        if (sel == WS_SELECT_SEND_READY) {
+        sel = pending ? tcp_select_write(fd, 1) : tcp_select(fd, 1);
+        if (sel == (pending ? WS_SELECT_SEND_READY : WS_SELECT_RECV_READY)) {
             ret = wolfSSH_worker(ssh, NULL);
             if (ret == WS_FATAL_ERROR)
                 ret = wolfSSH_get_error(ssh);
@@ -882,15 +888,13 @@ static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
                  * the one thing still owed, and this flush-only path sends
                  * it; it refuses after the peer's disconnect, and then the
                  * queued output is moot. */
+                over = 1;
                 ret = wolfSSH_SendDisconnect(ssh,
                         WOLFSSH_DISCONNECT_BY_APPLICATION);
                 if (ret == WS_FATAL_ERROR)
                     break;
             }
-            if (ret != WS_SUCCESS && ret != WS_WANT_READ &&
-                    ret != WS_WANT_WRITE && ret != WS_CHAN_RXD &&
-                    ret != WS_EXTDATA && ret != WS_EOF &&
-                    ret != WS_REKEYING && ret != WS_CHANNEL_CLOSED)
+            if (!DrainStatusLive(ret))
                 break;
         }
         else if (sel == WS_SELECT_FAIL) {
@@ -946,6 +950,21 @@ static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
     (void)fd;
     return WS_SUCCESS;
 #endif
+}
+
+
+/* Push out what a short send left queued, half close the socket, then read
+ * until the peer hangs up. The library reads nothing once the session is
+ * over, so the drain reads the socket directly and discards what it gets,
+ * any protocol message still in flight included: collect the exit status
+ * and the like before calling. Flush and drain together give up ten
+ * seconds after the call, plus the one-second select() wait in progress.
+ * Caller still owns and closes the socket. Returns WS_SUCCESS once the
+ * peer has hung up, WS_WANT_READ if it never did, or WS_WANT_WRITE if the
+ * queued output never went out. */
+static INLINE int HalfCloseAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    return DrainSession(ssh, fd, !DrainStatusLive(wolfSSH_get_error(ssh)));
 }
 
 
@@ -1060,7 +1079,8 @@ static INLINE int SendDisconnectAndDrain(WOLFSSH* ssh, SOCKET_T fd)
     if (ret != WS_SUCCESS)
         return ret;
 
-    return HalfCloseAndDrain(ssh, fd);
+    /* Our disconnect ends the session, so no rekey is waited on. */
+    return DrainSession(ssh, fd, 1);
 }
 
 #elif defined(WOLFSSH_TEST_SERVER) || defined(WOLFSSH_TEST_CLIENT)

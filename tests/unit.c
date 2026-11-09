@@ -54,6 +54,7 @@
  * says the platform has the rest of the sockets API they use, too. */
 #ifdef HAVE_SOCKETPAIR
     #define WOLFSSH_TEST_CLIENT
+    #include <sys/wait.h>
 #endif
 #include <wolfssh/test.h>
 #include "unit.h"
@@ -10116,6 +10117,81 @@ static int test_DrainFlushesQueuedDisconnect(void)
 static int test_DrainPeerGone(void)
 {
     return RunDrainCase(DRAIN_PEER_GONE, WS_SUCCESS, -2150);
+}
+
+/* A rekey in flight when the session ends never finishes, so the drain must
+ * not wait on it. The peer stays quiet until it reads our half close, then
+ * hangs up: a drain that waited would sit out its deadline. */
+static int RunDrainMidRekey(int sendDisconnect, int base)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    SOCKET_T     sv[2] = { -1, -1 };
+    pid_t        pid;
+    time_t       start;
+    int          status;
+    int          result = 0;
+    int          ret;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        return base;
+
+    pid = fork();
+    if (pid < 0) {
+        close(sv[0]);
+        close(sv[1]);
+        return base - 1;
+    }
+    if (pid == 0) {
+        char buf[256];
+
+        close(sv[0]);
+        while (read(sv[1], buf, sizeof(buf)) > 0)
+            ;
+        _exit(0);
+    }
+    close(sv[1]);
+    sv[1] = -1;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL) { result = base - 2; goto done; }
+    wolfSSH_SetIOSend(ctx, DrainSocketIoSend);
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = base - 3; goto done; }
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+    wolfSSH_SetIOWriteCtx(ssh, &sv[0]);
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+
+    start = WTIME(NULL);
+    if (sendDisconnect) {
+        ret = SendDisconnectAndDrain(ssh, sv[0]);
+    }
+    else {
+        ssh->error = WS_PARSE_E;  /* the key exchange failed */
+        ret = HalfCloseAndDrain(ssh, sv[0]);
+    }
+    if (ret != WS_SUCCESS) { result = base - 4; goto done; }
+    if (WTIME(NULL) - start > 2) { result = base - 5; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    close(sv[0]);
+    if (waitpid(pid, &status, 0) != pid && result == 0)
+        result = base - 6;
+    return result;
+}
+
+/* A key exchange that failed leaves the rekey pending for good. */
+static int test_DrainFailedRekey(void)
+{
+    return RunDrainMidRekey(0, -2180);
+}
+
+/* Our own disconnect mid-rekey ends the session too. */
+static int test_DrainDisconnectMidRekey(void)
+{
+    return RunDrainMidRekey(1, -2190);
 }
 
 /* A session an error already ended has no close coming, so the wait reports
@@ -28572,6 +28648,14 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
     unitResult = test_DrainPeerGone();
     printf("DrainPeerGone: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainFailedRekey();
+    printf("DrainFailedRekey: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+    unitResult = test_DrainDisconnectMidRekey();
+    printf("DrainDisconnectMidRekey: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
     unitResult = test_WaitForChannelCloseSessionOver();
