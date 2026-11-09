@@ -1302,6 +1302,17 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
     }
 
 
+    /* Our rekey holds the teardown until our NEWKEYS, so run the exchange
+     * until it goes out. A want or an error ends the run with its status
+     * for the caller; the retry picks the run back up. RFC 4253 7.1. */
+    while (ret == WS_SUCCESS && ssh->keyingHold.length > 0 &&
+            !ssh->disconnected) {
+        ret = wolfSSH_worker(ssh, NULL);
+        if (ret == WS_REKEYING || ret == WS_CHAN_RXD || ret == WS_EXTDATA ||
+                ret == WS_EOF || ret == WS_CHANNEL_CLOSED)
+            ret = WS_SUCCESS;
+    }
+
     /* if the channel was not yet removed then read to get
      * response to SendChannelClose. Not while the flush left output queued:
      * the peer cannot answer a close it has not finished receiving, and the

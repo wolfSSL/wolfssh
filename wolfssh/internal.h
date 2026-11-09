@@ -703,6 +703,10 @@ enum NameIdType {
     /* This is from RFC 4253 section 6.1. */
     #define DEFAULT_MAX_PACKET_SZ 32768
 #endif
+#ifndef DEFAULT_KEYING_HOLD_SZ
+    /* Bytes keyingHold may hold: each payload plus its 4-byte length. */
+    #define DEFAULT_KEYING_HOLD_SZ DEFAULT_MAX_PACKET_SZ
+#endif
 #ifndef DEFAULT_NEXT_CHANNEL
     #define DEFAULT_NEXT_CHANNEL 0
 #endif
@@ -1389,6 +1393,8 @@ struct WOLFSSH {
 
     WOLFSSH_BUFFER inputBuffer;
     WOLFSSH_BUFFER outputBuffer;
+    WOLFSSH_BUFFER keyingHold; /* Length-prefixed payloads held until
+                                * our NEWKEYS */
     WC_RNG* rng;
 
     byte h[WC_MAX_DIGEST_SIZE];

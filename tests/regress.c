@@ -3402,6 +3402,372 @@ static void TestTriggerAfterNewKeysSendsNoKexInit(void)
     AssertTriggerAfterNewKeysSendsNoKexInit(0);
 }
 
+/* GitHub issue 1381: the rekeying side holds its own request and its reply
+ * to the peer's in-flight one until NEWKEYS. The peer refuses either inside
+ * the rekey, so a clean finish shows the order. */
+static void AssertRekeyHoldsNonTransport(byte serverTriggers)
+{
+    static const byte req[] = "keepalive@openssh.com";
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    WOLFSSH* peer;
+    word32 step, msgCount, held, maxHeld = 0;
+    int clientErr, serverErr;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = serverTriggers ? harness.server : harness.client;
+    peer = serverTriggers ? harness.client : harness.server;
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    AssertTrue((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) != 0);
+
+    msgCount = ssh->txMsgCount;
+    AssertIntEQ(wolfSSH_global_request(ssh, req, (word32)sizeof(req) - 1, 0),
+            WS_SUCCESS);
+    AssertIntEQ(ssh->txMsgCount, msgCount);
+    held = ssh->keyingHold.length;
+    AssertTrue(held > 0);
+
+    AssertIntEQ(peer->isKeying, 0);
+    AssertIntEQ(wolfSSH_global_request(peer, req, (word32)sizeof(req) - 1, 1),
+            WS_SUCCESS);
+
+    clientErr = serverErr = WS_SUCCESS;
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        WOLFSSH* next = (step & 1) ? peer : ssh;
+        int ret;
+
+        ret = wolfSSH_worker(next, NULL);
+        if (ret < WS_SUCCESS) {
+            int err = wolfSSH_get_error(next);
+
+            if (!IsPumpRetryable(err)) {
+                if (next == harness.client)
+                    clientErr = err;
+                else
+                    serverErr = err;
+                break;
+            }
+        }
+        if (ssh->keyingHold.length > maxHeld)
+            maxHeld = ssh->keyingHold.length;
+
+        if (harness.clientIo.inbound.len == 0 &&
+                harness.serverIo.inbound.len == 0 &&
+                harness.client->isKeying == 0 &&
+                harness.server->isKeying == 0) {
+            break;
+        }
+    }
+
+    AssertIntEQ(clientErr, WS_SUCCESS);
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    /* The reply joined the request in the hold. */
+    AssertTrue(maxHeld > held);
+    AssertIntEQ(ssh->keyingHold.length, 0);
+    /* NEWKEYS, then both held packets. */
+    AssertIntEQ(peer->rxMsgCount, 3);
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+    AssertIntEQ(harness.client->disconnected, 0);
+    AssertIntEQ(harness.server->disconnected, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestRekeyHoldsNonTransport(void)
+{
+    AssertRekeyHoldsNonTransport(1);
+    AssertRekeyHoldsNonTransport(0);
+}
+
+/* Overflowing the hold drops the packet and sends a DISCONNECT. The hold
+ * grows by doubling. */
+static void TestRekeyHoldCapped(void)
+{
+    static const byte req[] = "keepalive@openssh.com";
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    word32 msgCount, step, grows = 0;
+    byte* holdBuf;
+    int ret = WS_SUCCESS;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = harness.server;
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    msgCount = ssh->txMsgCount;
+
+    holdBuf = ssh->keyingHold.buffer;
+    while (ret == WS_SUCCESS &&
+            ssh->keyingHold.length <= DEFAULT_KEYING_HOLD_SZ) {
+        ret = wolfSSH_global_request(ssh, req, (word32)sizeof(req) - 1, 0);
+        if (ssh->keyingHold.buffer != holdBuf) {
+            holdBuf = ssh->keyingHold.buffer;
+            grows++;
+        }
+    }
+    AssertIntEQ(ret, WS_BUFFER_E);
+    AssertIntEQ(wolfSSH_get_error(ssh), WS_BUFFER_E);
+    AssertTrue(ssh->keyingHold.length <= DEFAULT_KEYING_HOLD_SZ);
+    AssertTrue(ssh->keyingHold.bufferSz <= DEFAULT_KEYING_HOLD_SZ);
+    /* About 11; exact-size growth takes over a thousand. */
+    AssertTrue(grows > 0);
+    AssertTrue(grows <= 16);
+    /* Only the DISCONNECT went out. */
+    AssertIntEQ(ssh->txMsgCount, msgCount + 1);
+    AssertTrue(ssh->disconnected);
+
+    /* The client reads the server's KEXINIT, then the DISCONNECT. */
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        (void)wolfSSH_worker(harness.client, NULL);
+        if (wolfSSH_get_error(harness.client) == WS_DISCONNECT)
+            break;
+    }
+    AssertIntEQ(wolfSSH_get_error(harness.client), WS_DISCONNECT);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* A failed release ends the session: the packets framed before the failure
+ * go out, then a DISCONNECT. */
+static void TestRekeyReleaseFailDisconnects(void)
+{
+    static const byte req[] = "keepalive@openssh.com";
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    word32 step, firstSz;
+    int clientErr = WS_SUCCESS;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = harness.server;
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_global_request(ssh, req, (word32)sizeof(req) - 1, 0),
+            WS_SUCCESS);
+    firstSz = ssh->keyingHold.length;
+    AssertIntEQ(wolfSSH_global_request(ssh, req, (word32)sizeof(req) - 1, 0),
+            WS_SUCCESS);
+    AssertTrue(ssh->keyingHold.length > firstSz + LENGTH_SZ);
+    /* A length past the end of the hold makes the second release fail. */
+    WMEMSET(ssh->keyingHold.buffer + firstSz, 0xFF, LENGTH_SZ);
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        (void)wolfSSH_worker((step & 1) ? harness.client : harness.server,
+                NULL);
+        clientErr = wolfSSH_get_error(harness.client);
+        if (clientErr == WS_DISCONNECT)
+            break;
+    }
+
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(ssh->keyingHold.length, 0);
+    AssertIntEQ(clientErr, WS_DISCONNECT);
+    /* NEWKEYS, the first request, then the DISCONNECT. */
+    AssertIntEQ(harness.client->rxMsgCount, 3);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* wolfSSH_shutdown() during our rekey runs the exchange until the held
+ * teardown goes out, so freeing the session after it loses nothing. With
+ * peerEof the peer's EOF arrives inside the rekey, which once let shutdown
+ * report success with the teardown still held. */
+static void AssertShutdownDeliversHeldTeardown(byte peerEof)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    word32 step;
+    int ret = WS_SUCCESS;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    channel = harness.client->channelList;
+    AssertNotNull(channel);
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(harness.server), WS_SUCCESS);
+    if (peerEof) {
+        AssertIntEQ(SendChannelEof(harness.client, channel->peerChannel),
+                WS_SUCCESS);
+    }
+
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        int err;
+
+        ret = wolfSSH_shutdown(harness.server);
+        if (ret == WS_SUCCESS || ret == WS_CHANNEL_CLOSED)
+            break;
+        err = wolfSSH_get_error(harness.server);
+        AssertTrue(err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                err == WS_REKEYING);
+        (void)wolfSSH_worker(harness.client, NULL);
+    }
+    AssertTrue(ret == WS_SUCCESS || ret == WS_CHANNEL_CLOSED);
+    AssertIntEQ(harness.server->keyingHold.length, 0);
+
+    /* The application frees the session here. */
+    wolfSSH_free(harness.server);
+    harness.server = NULL;
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS &&
+            harness.clientIo.inbound.len > 0; step++) {
+        (void)wolfSSH_worker(harness.client, NULL);
+    }
+    channel = harness.client->channelList;
+    AssertTrue(channel == NULL || channel->closeRxd);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestShutdownDeliversHeldTeardown(void)
+{
+    AssertShutdownDeliversHeldTeardown(0);
+    AssertShutdownDeliversHeldTeardown(1);
+}
+
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+/* Counts the allocations big enough to be the output queue. */
+#define REKEY_BIG_ALLOC_SZ 4096
+static int rekeyBigAllocs = 0;
+
+static void* RekeyCountMalloc(size_t size)
+{
+    if (size >= REKEY_BIG_ALLOC_SZ)
+        rekeyBigAllocs++;
+    return malloc(size);
+}
+
+static void RekeyCountFree(void* p)
+{
+    free(p);
+}
+
+static void* RekeyCountRealloc(void* p, size_t size)
+{
+    if (size >= REKEY_BIG_ALLOC_SZ)
+        rekeyBigAllocs++;
+    return realloc(p, size);
+}
+
+/* Releasing many held packets reserves the output queue once instead of
+ * regrowing it, and copying it, for each packet. */
+static void TestRekeyReleaseReservesOnce(void)
+{
+    static const byte req[] = "keepalive@openssh.com";
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    wolfSSL_Malloc_cb prevMf;
+    wolfSSL_Free_cb prevFf;
+    wolfSSL_Realloc_cb prevRf;
+    WOLFSSH* ssh;
+    word32 step, held = 0;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    /* The release outruns a small build-time DEFAULT_HIGHWATER_MARK, and the
+     * rekey that fires resets the count checked below. */
+    AssertIntEQ(wolfSSH_SetHighwater(harness.client, 0), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetHighwater(harness.server, 0), WS_SUCCESS);
+
+    ssh = harness.server;
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(ssh), WS_SUCCESS);
+    /* Framed, this stays inside the duplex queue. */
+    while (ssh->keyingHold.length < DEFAULT_KEYING_HOLD_SZ / 4) {
+        AssertIntEQ(wolfSSH_global_request(ssh, req,
+                (word32)sizeof(req) - 1, 0), WS_SUCCESS);
+        held++;
+    }
+
+    rekeyBigAllocs = 0;
+    AssertIntEQ(wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf), 0);
+    AssertIntEQ(wolfSSL_SetAllocators(RekeyCountMalloc, RekeyCountFree,
+            RekeyCountRealloc), 0);
+    for (step = 0; step < REGRESS_MAX_HANDSHAKE_STEPS; step++) {
+        (void)wolfSSH_worker((step & 1) ? harness.client : harness.server,
+                NULL);
+        if (harness.clientIo.inbound.len == 0 &&
+                harness.serverIo.inbound.len == 0 &&
+                harness.client->isKeying == 0 &&
+                harness.server->isKeying == 0) {
+            break;
+        }
+    }
+    AssertIntEQ(wolfSSL_SetAllocators(prevMf, prevFf, prevRf), 0);
+
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+    AssertIntEQ(ssh->keyingHold.length, 0);
+    /* NEWKEYS, then every held request. */
+    AssertIntEQ(harness.client->rxMsgCount, held + 1);
+    AssertIntEQ(harness.client->disconnected, 0);
+    /* Growing per packet takes one per packet past the threshold. */
+    AssertTrue(rekeyBigAllocs <= 8);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* !WOLFSSL_STATIC_MEMORY && !WOLFSSL_DEBUG_MEMORY */
+
+#ifdef WOLFSSH_FWD
+/* T105: a forwarding open during our rekey is held, reports success, and
+ * reaches the peer after NEWKEYS. */
+static void TestRekeyHoldsChannelOpen(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH_CHANNEL* channel;
+    word32 msgCount;
+    int clientErr, serverErr;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    AssertIntEQ(wolfSSH_TriggerKeyExchange(harness.client), WS_SUCCESS);
+    msgCount = harness.client->txMsgCount;
+
+    channel = wolfSSH_ChannelFwdNewLocal(harness.client, "127.0.0.1", 8080,
+            "127.0.0.1", 2222);
+    AssertNotNull(channel);
+    AssertIntEQ(harness.client->txMsgCount, msgCount);
+    AssertTrue(harness.client->keyingHold.length > 0);
+
+    PumpDuplexPairNoAssert(&harness, &clientErr, &serverErr);
+
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    AssertIntEQ(harness.client->keyingHold.length, 0);
+    AssertIntEQ(harness.client->disconnected, 0);
+    AssertIntEQ(harness.server->disconnected, 0);
+    /* NEWKEYS, then the open. */
+    AssertIntEQ(harness.server->rxMsgCount, 2);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* WOLFSSH_FWD */
+
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
 /* Shared with the client-side forwarding tests below. */
@@ -4071,6 +4437,35 @@ static void TestChannelBlockedEveryPreAuthState(WOLFSSH* ssh)
             }
         }
     }
+}
+
+
+/* RFC 4253 section 7.1: refused from a keying server, taken otherwise. */
+static void TestClientPeerKeyingBlocksNonTransport(WOLFSSH* ssh)
+{
+    static const byte msgs[] = {
+        MSGID_GLOBAL_REQUEST, MSGID_REQUEST_FAILURE, MSGID_CHANNEL_OPEN_CONF,
+        MSGID_CHANNEL_DATA, MSGID_CHANNEL_REQUEST, MSGID_CHANNEL_SUCCESS
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(msgs) / sizeof(msgs[0])); i++) {
+        ResetSession(ssh);
+        ssh->connectState = CONNECT_SERVER_CHANNEL_REQUEST_DONE;
+
+        ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+        AssertFalse(wolfSSH_TestIsMessageAllowed(ssh, msgs[i], WS_MSG_RECV));
+        AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+        ssh->error = 0;
+        ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, msgs[i], WS_MSG_RECV));
+        ssh->isKeying = 0;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, msgs[i], WS_MSG_RECV));
+        AssertIntEQ(ssh->error, 0);
+    }
+
+    ResetSession(ssh);
 }
 
 
@@ -6107,6 +6502,111 @@ static void TestServerServiceRequestRejectedDuringKeying(void)
     ssh->isKeying = 0;
     AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_SERVICE_REQUEST,
             WS_MSG_RECV));
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* RFC 4253 section 7.1: refused from a keying client, taken otherwise. The
+ * send direction is unaffected. */
+static void TestServerPeerKeyingBlocksNonTransport(void)
+{
+    static const byte connMsgs[] = {
+        MSGID_GLOBAL_REQUEST, MSGID_CHANNEL_OPEN, MSGID_CHANNEL_DATA,
+        MSGID_CHANNEL_EOF, MSGID_CHANNEL_REQUEST, MSGIDLIMIT_CONN_MAX
+    };
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    word32 i;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    for (i = 0; i < (word32)(sizeof(connMsgs) / sizeof(connMsgs[0])); i++) {
+        ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
+
+        ssh->error = 0;
+        ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+        AssertFalse(wolfSSH_TestIsMessageAllowed(ssh, connMsgs[i],
+                WS_MSG_RECV));
+        AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+        ssh->error = 0;
+        ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, connMsgs[i],
+                WS_MSG_RECV));
+        ssh->isKeying = 0;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, connMsgs[i],
+                WS_MSG_RECV));
+        AssertIntEQ(ssh->error, 0);
+    }
+
+    /* The user auth request, between the service accept and the reply. */
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
+    ssh->error = 0;
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    AssertFalse(wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV));
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    ssh->error = 0;
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING;
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_USERAUTH_REQUEST,
+            WS_MSG_RECV));
+
+    ssh->acceptState = ACCEPT_CLIENT_SESSION_ESTABLISHED;
+    ssh->error = 0;
+    ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_CHANNEL_EOF,
+            WS_MSG_SEND));
+    AssertIntEQ(ssh->error, 0);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+
+/* GitHub issue 1381, sequence 2: a USERAUTH_REQUEST mid-rekey disconnects. */
+static void TestServerUserAuthRequestRejectedDuringKeying(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte payload[128];
+    byte pkt[192];
+    byte out[128];
+    word32 pktSz;
+    word32 idx = 0;
+
+    idx = AppendString(payload, sizeof(payload), idx, "jill");
+    idx = AppendString(payload, sizeof(payload), idx, "ssh-connection");
+    idx = AppendString(payload, sizeof(payload), idx, "none");
+    pktSz = WrapPacket(MSGID_USERAUTH_REQUEST, payload, idx, pkt, sizeof(pkt));
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    wolfSSH_SetIORecv(ctx, MemRecv);
+    wolfSSH_SetIOSend(ctx, MemSend);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    MemIoInit(&io, pkt, pktSz, out, sizeof(out));
+    wolfSSH_SetIOReadCtx(ssh, &io);
+    wolfSSH_SetIOWriteCtx(ssh, &io);
+
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_ACCEPT_SENT;
+    ssh->isKeying = WOLFSSH_SELF_IS_KEYING | WOLFSSH_PEER_IS_KEYING;
+
+    AssertIntEQ(wolfSSH_TestDoReceive(ssh), WS_FATAL_ERROR);
+    AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+    AssertIntEQ(ssh->clientState, CLIENT_BEGIN);
+    AssertTrue(io.outSz > 0);
+    AssertIntEQ(ParseMsgId(io.out, io.outSz), MSGID_DISCONNECT);
+    AssertTrue(ssh->disconnected);
+    AssertIntEQ(ssh->keyingHold.length, 0);
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
@@ -22293,6 +22793,7 @@ int main(int argc, char** argv)
     TestChannelBlockedBeforeAuth(ssh);
     TestChannelBlockedEveryPreAuthState(ssh);
     TestChannelAllowedAfterAuth(ssh);
+    TestClientPeerKeyingBlocksNonTransport(ssh);
     TestClientOnlyKexMsgsBlocked(ssh);
     TestClientServiceAcceptBlockedDuringKeying(ssh);
     TestClientUserauthReplyBeforeRequest(ssh);
@@ -22360,6 +22861,8 @@ int main(int argc, char** argv)
     TestServerOnlyKexMsgsBlocked(serverSsh);
     TestServerServiceRequestStateGated(serverSsh);
     TestServerServiceRequestRejectedDuringKeying();
+    TestServerPeerKeyingBlocksNonTransport();
+    TestServerUserAuthRequestRejectedDuringKeying();
     TestFailedSendDiscardsQueuedPacket();
     TestChannelOpenCallbackRejectSendsOpenFail();
     TestChannelReqCallbackSeesRequestAndRefuses();
@@ -22762,6 +23265,16 @@ int main(int argc, char** argv)
     TestSecondTriggerSendsNoKexInit();
     TestSecondHighwaterSendsNoKexInit();
     TestTriggerAfterNewKeysSendsNoKexInit();
+    TestRekeyHoldsNonTransport();
+    TestRekeyHoldCapped();
+    TestRekeyReleaseFailDisconnects();
+    TestShutdownDeliversHeldTeardown();
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+    TestRekeyReleaseReservesOnce();
+#endif
+    #ifdef WOLFSSH_FWD
+    TestRekeyHoldsChannelOpen();
+    #endif
     #ifndef WOLFSSH_NO_AES_GCM
     TestTerrapinInjectionAcceptedWithoutStrictKex();
     #endif

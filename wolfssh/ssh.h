@@ -117,7 +117,11 @@ WOLFSSH_API void wolfSSH_free(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_worker(WOLFSSH* ssh, word32* channelId);
 WOLFSSH_API int wolfSSH_GetLastRxId(WOLFSSH* ssh, word32* channelId);
 
-/* Returns nonzero if a write is still owed. Session state */
+/* Returns nonzero if a write is still owed. Session state. Output this side
+ * holds back while it is keying does not count: it goes out with this
+ * side's NEWKEYS. wolfSSH_shutdown() runs the exchange to deliver it; any
+ * other teardown keeps calling wolfSSH_worker() while
+ * wolfSSH_RekeyPending() is set. */
 WOLFSSH_API int wolfSSH_OutputPending(const WOLFSSH* ssh);
 
 /* Returns nonzero during a key exchange, the first one included, and 0
@@ -941,8 +945,11 @@ WOLFSSH_API int wolfSSH_connect(WOLFSSH* ssh);
  * rather than to the teardown sends; either way the caller retries.
  * The read for the peer's close reply can leave output queued behind it,
  * which reports WS_WANT_WRITE as well; a send that failed outright there
- * takes the return on the next call. Once the peer has disconnected, only
- * our own queued disconnect still goes out, per the comment below. */
+ * takes the return on the next call. During this side's rekey the teardown
+ * is held until this side's NEWKEYS, so it runs the exchange until then;
+ * a want from there is retried the same way. Once the peer has
+ * disconnected, only our own queued disconnect still goes out, per the
+ * comment below. */
 WOLFSSH_API int wolfSSH_shutdown(WOLFSSH* ssh);
 /* A disconnect, sent or received, ends the session. Nothing more goes out:
  * wolfSSH_shutdown() above this comment, and every send call below it,

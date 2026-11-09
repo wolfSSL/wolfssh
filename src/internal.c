@@ -1071,6 +1071,16 @@ INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
         }
     }
 
+    /* RFC 4253 section 7.1: a keying peer sends only transport messages.
+     * Our flag proves nothing; its messages may predate our KEXINIT. */
+    if (state == WS_MSG_RECV && (ssh->isKeying & WOLFSSH_PEER_IS_KEYING) &&
+            msg > MSGIDLIMIT_TRANS_MAX) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed while the peer is keying",
+                msg);
+        ssh->error = WS_MSGID_NOT_ALLOWED_E;
+        return 0;
+    }
+
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
         return IsMessageAllowedServer(ssh, msg);
@@ -1931,7 +1941,8 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->keyingCompletionCtx = (void*)ssh;
 
     if (BufferInit(&ssh->inputBuffer, 0, ctx->heap) != WS_SUCCESS  ||
-        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS) {
+        BufferInit(&ssh->outputBuffer, 0, ctx->heap) != WS_SUCCESS ||
+        BufferInit(&ssh->keyingHold, 0, ctx->heap) != WS_SUCCESS) {
 
         wolfSSH_free(ssh);
         ssh = NULL;
@@ -1950,6 +1961,7 @@ void SshResourceFree(WOLFSSH* ssh, void* heap)
 
     ShrinkBuffer(&ssh->inputBuffer, 1);
     ShrinkBuffer(&ssh->outputBuffer, 1);
+    ShrinkBuffer(&ssh->keyingHold, 1);
     /* Use the sizeof k, as kSz can change. */
     WS_FORCEZERO(ssh->k, sizeof(ssh->k));
     ssh->kSz = 0;
@@ -5605,7 +5617,8 @@ int GrowBuffer(WOLFSSH_BUFFER* buf, word32 sz)
             buf->idx = 0;
         }
         else {
-            if (buf->length > 0) {
+            /* At idx 0 there is nothing to compact. */
+            if (buf->length > 0 && buf->idx > 0) {
                 word32 usedSz = buf->length - buf->idx;
 
                 WMEMMOVE(buf->buffer, buf->buffer + buf->idx, usedSz);
@@ -15742,6 +15755,70 @@ static int PreparePacket(WOLFSSH* ssh, word32 payloadSz)
     return ret;
 }
 
+/* What RFC 4253 section 7.1 bars us from sending while keying. */
+static int IsHeldWhileKeying(byte msg)
+{
+    return msg == MSGID_SERVICE_REQUEST || msg == MSGID_SERVICE_ACCEPT ||
+            msg > MSGIDLIMIT_TRANS_MAX;
+}
+
+
+/* Move the framed payload to keyingHold. Overflow ends the session. */
+static int HoldPacket(WOLFSSH* ssh)
+{
+    WOLFSSH_BUFFER* hold = &ssh->keyingHold;
+    word32 payloadIdx = ssh->packetStartIdx + LENGTH_SZ + PAD_LENGTH_SZ;
+    word32 payloadSz = ssh->outputBuffer.length - payloadIdx;
+    word32 needSz = 0;
+    int overflow = 0;
+    int ret = WS_SUCCESS;
+
+    if (hold->length > DEFAULT_KEYING_HOLD_SZ ||
+            payloadSz > DEFAULT_KEYING_HOLD_SZ - hold->length ||
+            LENGTH_SZ > DEFAULT_KEYING_HOLD_SZ - hold->length - payloadSz) {
+        WLOG(WS_LOG_ERROR, "Too much output held back during the rekey");
+        overflow = 1;
+        ret = WS_BUFFER_E;
+    }
+    else {
+        needSz = LENGTH_SZ + payloadSz;
+    }
+
+    /* Double, up to the cap. GrowBuffer() copies even when it has room. */
+    if (ret == WS_SUCCESS && hold->bufferSz - hold->length < needSz) {
+        word32 growSz = needSz;
+
+        if (growSz < hold->length)
+            growSz = hold->length;
+        if (growSz > DEFAULT_KEYING_HOLD_SZ - hold->length)
+            growSz = DEFAULT_KEYING_HOLD_SZ - hold->length;
+        ret = GrowBuffer(hold, growSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        c32toa(payloadSz, hold->buffer + hold->length);
+        hold->length += LENGTH_SZ;
+        WMEMCPY(hold->buffer + hold->length,
+                ssh->outputBuffer.buffer + payloadIdx, payloadSz);
+        hold->length += payloadSz;
+        WLOG(WS_LOG_DEBUG, "Holding message ID %u until our NEWKEYS",
+                ssh->outputBuffer.buffer[payloadIdx]);
+    }
+
+    WS_FORCEZERO(ssh->outputBuffer.buffer + ssh->packetStartIdx,
+            ssh->outputBuffer.length - ssh->packetStartIdx);
+    ssh->outputBuffer.length = ssh->packetStartIdx;
+
+    /* DISCONNECT is not held. The send can overwrite the error. */
+    if (overflow && !ssh->disconnected) {
+        (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        ssh->error = WS_BUFFER_E;
+    }
+
+    return ret;
+}
+
+
 static int BundlePacket(WOLFSSH* ssh)
 {
     byte* output = NULL;
@@ -15751,6 +15828,15 @@ static int BundlePacket(WOLFSSH* ssh)
 
     if (ssh == NULL)
         ret = WS_BAD_ARGUMENT;
+
+    /* A held packet counts as bundled. */
+    if (ret == WS_SUCCESS && (ssh->isKeying & WOLFSSH_SELF_IS_KEYING) &&
+            ssh->outputBuffer.length >
+                ssh->packetStartIdx + LENGTH_SZ + PAD_LENGTH_SZ &&
+            IsHeldWhileKeying(ssh->outputBuffer.buffer[ssh->packetStartIdx +
+                LENGTH_SZ + PAD_LENGTH_SZ])) {
+        return HoldPacket(ssh);
+    }
 
     if (ret == WS_SUCCESS) {
         word32 payloadSz, packetSz;
@@ -15851,6 +15937,64 @@ static int BundlePacket(WOLFSSH* ssh)
                     ssh->outputBuffer.bufferSz - ssh->packetStartIdx);
             ssh->outputBuffer.length = ssh->packetStartIdx;
         }
+    }
+
+    return ret;
+}
+
+
+/* Frame the held payloads in order. Call with the self keying flag clear. */
+static int ReleaseHeldPackets(WOLFSSH* ssh)
+{
+    WOLFSSH_BUFFER* hold = &ssh->keyingHold;
+    word32 idx = 0;
+    word32 reserveSz = 0;
+    int ret = WS_SUCCESS;
+
+    /* PreparePacket() grows to the exact size, so reserve for the batch
+     * once rather than copying the queue for every packet. */
+    while (hold->length - idx >= LENGTH_SZ) {
+        word32 payloadSz;
+
+        ato32(hold->buffer + idx, &payloadSz);
+        idx += LENGTH_SZ;
+        if (payloadSz > hold->length - idx)
+            break;
+        reserveSz += LENGTH_SZ + PAD_LENGTH_SZ + payloadSz +
+                (byte)(ssh->blockSz * 2) + ssh->macSz;
+        idx += payloadSz;
+    }
+    ret = GrowBuffer(&ssh->outputBuffer, reserveSz);
+    idx = 0;
+
+    while (ret == WS_SUCCESS && hold->length - idx >= LENGTH_SZ) {
+        word32 payloadSz;
+
+        ato32(hold->buffer + idx, &payloadSz);
+        idx += LENGTH_SZ;
+        if (payloadSz > hold->length - idx) {
+            ret = WS_BUFFER_E;
+            break;
+        }
+
+        ret = PreparePacket(ssh, payloadSz);
+        if (ret == WS_SUCCESS) {
+            WMEMCPY(ssh->outputBuffer.buffer + ssh->outputBuffer.length,
+                    hold->buffer + idx, payloadSz);
+            ssh->outputBuffer.length += payloadSz;
+            ret = BundlePacket(ssh);
+        }
+        idx += payloadSz;
+    }
+
+    /* A failure drops the rest and, as an overflow does, ends the session.
+     * Packets already framed go out ahead of the DISCONNECT. */
+    ShrinkBuffer(hold, 1);
+    if (ret != WS_SUCCESS) {
+        WLOG(WS_LOG_ERROR, "Failed to release output held during the rekey");
+        if (!ssh->disconnected)
+            (void)SendDisconnect(ssh, WOLFSSH_DISCONNECT_PROTOCOL_ERROR);
+        ssh->error = ret;
     }
 
     return ret;
@@ -19649,17 +19793,25 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->txCount = 0;
         ssh->txMsgCount = 0;
 
-        ret = wolfSSH_SendPacket(ssh);
-
         /* Clear self is keying flag */
         ssh->isKeying &= ~WOLFSSH_SELF_IS_KEYING;
+
+        /* Held packets follow the NEWKEYS in one flush. The peer is still
+         * keying, so the flush's highwater check cannot rekey. */
+        if (ssh->keyingHold.length > 0)
+            ret = ReleaseHeldPackets(ssh);
+
+        if (ret == WS_SUCCESS)
+            ret = wolfSSH_SendPacket(ssh);
 
         /* If this was the last keying flag to clear, flush any window credit
          * that was deferred during the rekey (RFC 4253 section 7.1). Don't let
          * it mask a send failure from above. */
-        adjustResult = SendPendingChannelWindowAdjust(ssh);
-        if (ret == WS_SUCCESS)
-            ret = adjustResult;
+        if (!ssh->disconnected) {
+            adjustResult = SendPendingChannelWindowAdjust(ssh);
+            if (ret == WS_SUCCESS)
+                ret = adjustResult;
+        }
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendNewKeys(), ret = %d", ret);
