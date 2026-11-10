@@ -31,6 +31,10 @@ extern "C" {
 #undef  WOLFSSL_WOLFSSH
 #define WOLFSSL_WOLFSSH
 
+/* qemu_x86 has no entropy device; allow the sys_rand_get() seed. */
+#undef  WOLFSSL_ACCEPT_WEAK_ENTROPY
+#define WOLFSSL_ACCEPT_WEAK_ENTROPY
+
 #undef  TFM_TIMING_RESISTANT
 #define TFM_TIMING_RESISTANT
 
