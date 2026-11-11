@@ -64,6 +64,7 @@ typedef struct WS_OsshCert {
     /* Extracted by OsshCertCheckOptions(); NULL when the option is absent. */
     const byte* forceCommand;  word32 forceCommandSz;
     const byte* sourceAddress; word32 sourceAddressSz;
+    byte        permits;     /* WOLFSSH_OSSH_PERMIT_* bits */
 } WS_OsshCert;
 
 /* ID_OSSH_CERT_* to its base key algorithm ID; ID_UNKNOWN if not a cert ID. */
@@ -84,8 +85,8 @@ WOLFSSH_LOCAL int OsshCertVerifySignature(const WS_OsshCert* cert, void* heap);
  * cert-algorithm consistency is checked in OsshCertParse(). */
 WOLFSSH_LOCAL int OsshCertCheckType(const WS_OsshCert* cert);
 
-/* Validate options/extensions; extract force-command and source-address.
- * Unknown critical options are rejected; permit-* is parsed, not enforced. */
+/* Validate options/extensions; extract force-command, source-address and
+ * permit-* bits. Unknown critical options are rejected. */
 WOLFSSH_LOCAL int OsshCertCheckOptions(WS_OsshCert* cert);
 
 #ifdef __cplusplus

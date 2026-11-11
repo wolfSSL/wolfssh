@@ -4740,6 +4740,11 @@ static void test_wolfSSH_OsshCert_valid(void)
         AssertIntEQ(OsshCertVerifySignature(&cert, NULL), WS_SUCCESS);
         AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
         AssertNotNull(cert.forceCommand);
+        /* ssh-keygen's default extensions: all five permit-* names. */
+        AssertIntEQ(cert.permits,
+            WOLFSSH_OSSH_PERMIT_X11_FWD | WOLFSSH_OSSH_PERMIT_AGENT_FWD |
+            WOLFSSH_OSSH_PERMIT_PORT_FWD | WOLFSSH_OSSH_PERMIT_PTY |
+            WOLFSSH_OSSH_PERMIT_USER_RC);
 
         AssertIntLE((int)sizes[v], (int)sizeof(tampered));
         WMEMCPY(tampered, blobs[v], sizes[v]);
@@ -4941,12 +4946,40 @@ static void test_wolfSSH_OsshCert_options(void)
         0,0,0,0x0A, 'p','e','r','m','i','t','-','p','t','y',
         0,0,0,0x00
     };
+    /* all five permit-* plus no-touch-required. */
+    static const byte extAll[] = {
+        0,0,0,0x11, 'n','o','-','t','o','u','c','h','-',
+                    'r','e','q','u','i','r','e','d',
+        0,0,0,0x00,
+        0,0,0,0x15, 'p','e','r','m','i','t','-','X','1','1','-',
+                    'f','o','r','w','a','r','d','i','n','g',
+        0,0,0,0x00,
+        0,0,0,0x17, 'p','e','r','m','i','t','-','a','g','e','n','t','-',
+                    'f','o','r','w','a','r','d','i','n','g',
+        0,0,0,0x00,
+        0,0,0,0x16, 'p','e','r','m','i','t','-','p','o','r','t','-',
+                    'f','o','r','w','a','r','d','i','n','g',
+        0,0,0,0x00,
+        0,0,0,0x0A, 'p','e','r','m','i','t','-','p','t','y',
+        0,0,0,0x00,
+        0,0,0,0x0E, 'p','e','r','m','i','t','-','u','s','e','r','-','r','c',
+        0,0,0,0x00
+    };
+    /* near misses: wrong case, extra character. */
+    static const byte extNearMiss[] = {
+        0,0,0,0x0A, 'P','E','R','M','I','T','-','P','T','Y',
+        0,0,0,0x00,
+        0,0,0,0x0B, 'p','e','r','m','i','t','-','p','t','y','s',
+        0,0,0,0x00
+    };
 
-    /* no options: valid, nothing extracted. */
+    /* no options: valid, nothing extracted, stale permits cleared. */
     WMEMSET(&cert, 0, sizeof(cert));
+    cert.permits = 0xFF;
     AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
     AssertNull(cert.forceCommand);
     AssertNull(cert.sourceAddress);
+    AssertIntEQ(cert.permits, 0);
 
     /* happy path: both options extracted. */
     WMEMSET(&cert, 0, sizeof(cert));
@@ -5002,18 +5035,38 @@ static void test_wolfSSH_OsshCert_options(void)
     cert.extensions = extUnknown;
     cert.extensionsSz = (word32)sizeof(extUnknown);
     AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
+    AssertIntEQ(cert.permits, 0);
 
-    /* out-of-order extensions are tolerated. */
+    /* out-of-order extensions are tolerated and recorded. */
     WMEMSET(&cert, 0, sizeof(cert));
     cert.extensions = extOutOfOrder;
     cert.extensionsSz = (word32)sizeof(extOutOfOrder);
     AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
+    AssertIntEQ(cert.permits,
+        WOLFSSH_OSSH_PERMIT_PTY | WOLFSSH_OSSH_PERMIT_AGENT_FWD);
 
     /* duplicate extensions are tolerated. */
     WMEMSET(&cert, 0, sizeof(cert));
     cert.extensions = extDup;
     cert.extensionsSz = (word32)sizeof(extDup);
     AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
+    AssertIntEQ(cert.permits, WOLFSSH_OSSH_PERMIT_PTY);
+
+    /* each permit-* sets its own bit. */
+    WMEMSET(&cert, 0, sizeof(cert));
+    cert.extensions = extAll;
+    cert.extensionsSz = (word32)sizeof(extAll);
+    AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
+    AssertIntEQ(cert.permits,
+        WOLFSSH_OSSH_PERMIT_X11_FWD | WOLFSSH_OSSH_PERMIT_AGENT_FWD |
+        WOLFSSH_OSSH_PERMIT_PORT_FWD | WOLFSSH_OSSH_PERMIT_PTY |
+        WOLFSSH_OSSH_PERMIT_USER_RC);
+
+    WMEMSET(&cert, 0, sizeof(cert));
+    cert.extensions = extNearMiss;
+    cert.extensionsSz = (word32)sizeof(extNearMiss);
+    AssertIntEQ(OsshCertCheckOptions(&cert), WS_SUCCESS);
+    AssertIntEQ(cert.permits, 0);
 }
 
 

@@ -711,6 +711,15 @@ typedef struct WS_UserAuthData_Keyboard {
 } WS_UserAuthData_Keyboard;
 #endif
 
+#ifdef WOLFSSH_OSSH_CERTS
+/* OpenSSH certificate permit-* extensions, as bits of permits below. */
+#define WOLFSSH_OSSH_PERMIT_X11_FWD   0x01 /* permit-X11-forwarding */
+#define WOLFSSH_OSSH_PERMIT_AGENT_FWD 0x02 /* permit-agent-forwarding */
+#define WOLFSSH_OSSH_PERMIT_PORT_FWD  0x04 /* permit-port-forwarding */
+#define WOLFSSH_OSSH_PERMIT_PTY       0x08 /* permit-pty */
+#define WOLFSSH_OSSH_PERMIT_USER_RC   0x10 /* permit-user-rc */
+#endif
+
 typedef struct WS_UserAuthData_PublicKey {
     const byte* dataToSign;
     const byte* publicKeyType;
@@ -739,6 +748,9 @@ typedef struct WS_UserAuthData_PublicKey {
     word32 forceCommandSz;
     const byte* sourceAddress;
     word32 sourceAddressSz;
+    /* WOLFSSH_OSSH_PERMIT_* bits; an absent extension denies its feature.
+     * The library does not enforce them; the application must. */
+    byte permits;
 #endif /* WOLFSSH_OSSH_CERTS */
 } WS_UserAuthData_PublicKey;
 
