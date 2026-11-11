@@ -90,7 +90,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
-#define NUMARGS 5
+#define NUMARGS 6
 #define ARGLEN 64
 
 static void wolfSSH_EchoTest(void)
@@ -104,7 +104,7 @@ static void wolfSSH_EchoTest(void)
         { sA[0], sA[1], sA[2], sA[3], sA[4] };
     char cA[NUMARGS][ARGLEN];
     char *clientArgv[NUMARGS] =
-        { cA[0], cA[1], cA[2], cA[3], cA[4] };
+        { cA[0], cA[1], cA[2], cA[3], cA[4], cA[5] };
     int serverArgc = 0;
     int clientArgc = 0;
 
@@ -128,6 +128,7 @@ static void wolfSSH_EchoTest(void)
     WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-Y", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "jill", ARGLEN);
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
@@ -191,6 +192,7 @@ static void wolfSSH_EchoTest_MultiPubKey(void)
     WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-Y", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "hansel", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-j", ARGLEN);

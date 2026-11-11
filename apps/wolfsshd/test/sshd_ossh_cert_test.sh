@@ -280,7 +280,7 @@ timed_out() { # label  rc
 
 # Connect with the wolfSSH example client: -i private key, -j certificate.
 connect_client() { # user-key  cert  remote-command
-    $TIMEOUT "$CLIENT" -u "$LOGINUSER" -i "$1" -j "$2" \
+    $TIMEOUT "$CLIENT" -Y -u "$LOGINUSER" -i "$1" -j "$2" \
         -h 127.0.0.1 -p $PORT -c "$3" >/dev/null 2>&1
 }
 
@@ -370,7 +370,7 @@ echo "scp payload" > "$SCPSRC"
 # command so a granted session exits cleanly with no transfer). The clients
 # report a non-zero exit code when the subsystem request is denied.
 sftp_client() { # user-key  cert
-    echo "exit" | $TIMEOUT "$SFTP" -u "$LOGINUSER" -i "$1" -j "$2" \
+    echo "exit" | $TIMEOUT "$SFTP" -Y -u "$LOGINUSER" -i "$1" -j "$2" \
         -h 127.0.0.1 -p $PORT >/dev/null 2>&1
 }
 sftp_ssh() { # user-key  cert
@@ -420,7 +420,7 @@ scp_check() { # label  user-key  cert  expect(0=allowed,1=denied)
     [ -x "$SCP" ] || { echo "  ($1: wolfscp unavailable, skipping)"; return; }
     start_daemon || { printf "  %-20s %s\n" "$1" "*** FAIL (no running daemon)"
         FAIL=1; return; }
-    $TIMEOUT "$SCP" -u "$LOGINUSER" -i "$2" -j "$3" \
+    $TIMEOUT "$SCP" -Y -u "$LOGINUSER" -i "$2" -j "$3" \
         -S"$SCPSRC:$SCPDST" -H 127.0.0.1 -p $PORT >/dev/null 2>&1
     if ! daemon_alive "$DPID"; then
         printf "  %-20s %s\n" "$1" "*** FAIL (wolfsshd exited while serving)"

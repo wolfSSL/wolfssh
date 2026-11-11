@@ -42,7 +42,7 @@ TEST_CLIENT="./examples/client/client"
 PRIVATE_KEY="./keys/hansel-key-ecc.der"
 PUBLIC_KEY="./keys/hansel-key-ecc.pub"
 
-RESULT=`$TEST_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT -c 'sleep 6 && echo still connected && exit'`
+RESULT=`$TEST_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT -c 'sleep 6 && echo still connected && exit'`
 echo "$RESULT" | grep "still connected"
 RESULT=$?
 if [ "$RESULT" != 0 ]; then

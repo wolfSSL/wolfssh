@@ -198,5 +198,10 @@ int main(void)
     printf("TEST_BLOCK\n");
 #endif
 
+    /* The examples default to ::1, not 127.0.0.1. */
+#ifdef TEST_IPV6
+    printf("TEST_IPV6\n");
+#endif
+
     return 0;
 }

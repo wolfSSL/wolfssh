@@ -612,6 +612,14 @@ ssh-keygen -q -t rsa -b 3072 -N '' -f "$work_dir/hostkey-rsa" < /dev/null \
 ssh-keygen -q -t ed25519 -N '' -f "$work_dir/hostkey-ed25519" < /dev/null \
     || fail "couldn't make an Ed25519 host key for sshd"
 
+# The client's HOME is the work dir; trust sshd's host keys there.
+mkdir -p "$work_dir/.ssh" || fail "couldn't make the client's ~/.ssh"
+for hostkey in hostkey hostkey-rsa hostkey-ed25519; do
+    printf '127.0.0.1 '
+    cut -d' ' -f1,2 "$work_dir/$hostkey.pub"
+done > "$work_dir/.ssh/known_hosts" \
+    || fail "couldn't write the client's known_hosts"
+
 # sshd takes a fixed port, so try a few. -f /dev/null keeps the machine's
 # own sshd_config out of it, and -ddd both raises the log level and keeps
 # sshd in the foreground for one connection. ForceCommand stands in for the

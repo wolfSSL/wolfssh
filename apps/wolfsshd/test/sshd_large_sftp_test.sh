@@ -55,8 +55,8 @@ trap 'rm -f "$LOCAL_FILE" "$REMOTE_FILE"' EXIT
 head -c 4400000010 < /dev/random > "$LOCAL_FILE"
 
 set -e
-echo "$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l $LOCAL_FILE -r $REMOTE_FILE -h \"$1\" -p \"$2\""
-$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l "$LOCAL_FILE" -r "$REMOTE_FILE" -h "$1" -p "$2"
+echo "$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l $LOCAL_FILE -r $REMOTE_FILE -h \"$1\" -p \"$2\""
+$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l "$LOCAL_FILE" -r "$REMOTE_FILE" -h "$1" -p "$2"
 
 cmp "$LOCAL_FILE" "$REMOTE_FILE"
 RESULT=$?

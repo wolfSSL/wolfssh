@@ -124,8 +124,11 @@ static void ShowUsage(void)
     printf("               Certificate example : client -u orange \\\n");
     printf("               -J orange-cert.der -i orange-key.der\n");
     printf(" -A <filename> filename for DER CA certificate to verify host\n");
-    printf(" -X            Ignore IP checks on peer vs peer certificate\n");
+    printf(" -X            accept a host certificate for another host\n");
 #endif
+    printf(" -Y            accept any host key, insecure; otherwise it must "
+           "be in\n"
+           "               ~/.ssh/known_hosts\n");
     printf(" -E            List all possible algos\n");
     printf(" -k            set the list of key algos\n");
     printf(" -C            set the list of encrypt algos\n");
@@ -883,7 +886,8 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 
     (void)keepOpen;
 
-    while ((ch = mygetopt(argc, argv, "?ac:C:h:i:j:p:tu:xzNP:RJ:A:XeEk:qK:")) != -1) {
+    ClientAcceptAnyHostKey(0);
+    while ((ch = mygetopt(argc, argv, "?ac:C:h:i:j:p:tu:xzNP:RJ:A:XYeEk:qK:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -938,12 +942,14 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
                 caCert = myoptarg;
                 break;
 
-            #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
             case 'X':
                 ClientIPOverride(1);
                 break;
-            #endif
         #endif
+
+            case 'Y':
+                ClientAcceptAnyHostKey(1);
+                break;
 
             case 'E':
                 listAlgos = 1;

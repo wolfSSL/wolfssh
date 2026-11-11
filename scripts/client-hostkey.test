@@ -1,0 +1,138 @@
+#!/bin/sh
+
+# Example client host key check test
+#
+# HOME is a scratch dir. An unknown or changed host key must be refused
+# unless -Y.
+
+no_pid=-1
+server_pid=$no_pid
+work_dir="`pwd`/client_hostkey_test$$"
+ready_file="$work_dir/ready"
+known_hosts="$work_dir/.ssh/known_hosts"
+client_out="$work_dir/client.out"
+port=0
+
+[ ! -x ./examples/client/client ] \
+    && echo "example client doesn't exist, skipping" && exit 77
+[ ! -x ./examples/echoserver/echoserver ] \
+    && echo "echoserver doesn't exist, skipping" && exit 77
+
+WOLFSSH_OPTIONS=`./apps/wolfssh-options` || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK" \
+    && echo "WOLFSSH_TEST_BLOCK build, skipping" && exit 77
+
+# The address the examples connect to by default.
+host="127.0.0.1"
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_IPV6" && host="::1"
+
+do_cleanup() {
+    if [ $server_pid != $no_pid ]; then
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+    rm -rf "$work_dir"
+}
+
+do_trap() {
+    do_cleanup
+    exit 1
+}
+
+trap do_trap INT TERM
+
+fail() {
+    echo "FAIL: $1"
+    [ -f "$client_out" ] && cat "$client_out"
+    do_cleanup
+    exit 1
+}
+
+start_server() {
+    rm -f "$ready_file"
+    ./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+        > "$work_dir/server.log" 2>&1 &
+    server_pid=$!
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+    [ -s "$ready_file" ] || fail "echoserver never started"
+    port=`cat "$ready_file"`
+}
+
+# $@ - extra client arguments
+run_client() {
+    start_server
+    HOME="$work_dir" ./examples/client/client -u jill -P upthehill \
+        -p $port "$@" < /dev/null > "$client_out" 2>&1
+    status=$?
+    kill -9 $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    server_pid=$no_pid
+    return $status
+}
+
+mkdir -p "$work_dir/.ssh" || fail "couldn't make the work dir"
+
+echo "Test an unknown host key is refused"
+run_client && fail "the client accepted an unknown host key"
+if grep -q "No known_hosts support" "$client_out"; then
+    echo "client built without known_hosts support, skipping"
+    do_cleanup
+    exit 77
+fi
+grep -qF "host key for $host is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+grep -q "Server said" "$client_out" \
+    && fail "the client talked to an unknown server"
+
+# The refusal prints the line that trusts the key.
+entry=`awk -v h="$host" '$1 == h' "$client_out"`
+[ -n "$entry" ] || fail "the client didn't print a known_hosts line"
+
+echo "Test -Y accepts an unknown host key with a warning"
+run_client -Y || fail "the client refused the host key with -Y"
+grep -q "Warning: accepting the" "$client_out" \
+    || fail "the client didn't warn about -Y"
+grep -q "Server said" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+echo "Test a known host key is accepted"
+echo "$entry" > "$known_hosts"
+run_client || fail "the client refused a known host key"
+grep -q "Server said" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+if [ "`id -u`" != 0 ]; then
+    echo "Test an unreadable known_hosts is refused"
+    chmod 000 "$known_hosts"
+    run_client && fail "the client accepted a host it couldn't look up"
+    chmod 600 "$known_hosts"
+fi
+
+echo "Test a stale entry ahead of the right one"
+set -- $entry
+printf '%s %s AAAA%s\n%s\n' "$1" "$2" "$3" "$entry" > "$known_hosts"
+run_client || fail "a stale entry hid the host key"
+
+echo "Test a changed host key is refused"
+printf '%s %s AAAA%s\n' "$1" "$2" "$3" > "$known_hosts"
+run_client && fail "the client accepted a changed host key"
+grep -qF "host key for $host has changed" "$client_out" \
+    || fail "the client didn't report the changed host key"
+
+echo "Test a key known only for another host is refused"
+echo "example.invalid $2 $3" > "$known_hosts"
+run_client && fail "the client accepted another host's key"
+grep -q "is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+
+do_cleanup
+echo "All tests passed"
+exit 0

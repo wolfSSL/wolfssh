@@ -76,7 +76,7 @@ try_login() {
         echo "FAIL: daemon did not start with $1"
         exit 1
     fi
-    RESULT=$( timeout 10 $TEST_CLIENT -c 'echo chroot""_none_ran' \
+    RESULT=$( timeout 10 $TEST_CLIENT -Y -c 'echo chroot""_none_ran' \
         -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT \
         2>&1 )
     echo "$RESULT"
