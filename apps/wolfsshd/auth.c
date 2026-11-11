@@ -746,12 +746,15 @@ void wolfSSHD_AuthInit(void)
 #ifndef _WIN32
 
 #ifdef WOLFSSH_USE_PAM
-static int CheckPasswordPAM(const char* usr, const byte* pw, word32 pwSz)
+/* Stub: PAM is not implemented, so every password is refused. */
+static int CheckPasswordPAM(const char* usr, const byte* pw, word32 pwSz,
+    WOLFSSHD_AUTH* authCtx)
 {
     (void)usr;
     (void)pw;
     (void)pwSz;
-    return 0;
+    (void)authCtx;
+    return WSSHD_AUTH_FAILURE;
 }
 #else
 
