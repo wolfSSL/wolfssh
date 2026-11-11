@@ -207,6 +207,8 @@ The portfwd tool accepts the following command line options:
     -f <num>       host port to forward from (REQUIRED)
     -T <host>      host to forward to, default to host
     -t <num>       port to forward to (REQUIRED)
+    -Y             accept any host key, insecure; otherwise it must be in
+                   ~/.ssh/known_hosts
 
 
 scpclient

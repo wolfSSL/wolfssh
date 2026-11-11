@@ -4,7 +4,9 @@
 if BUILD_FWD
 noinst_PROGRAMS += examples/portfwd/portfwd
 examples_portfwd_portfwd_SOURCES = examples/portfwd/portfwd.c \
-                                   examples/portfwd/wolfssh_portfwd.h
+                                   examples/portfwd/wolfssh_portfwd.h \
+                                   examples/client/common.c \
+                                   examples/client/common.h
 examples_portfwd_portfwd_LDADD = src/libwolfssh.la
 examples_portfwd_portfwd_DEPENDENCIES = src/libwolfssh.la
 endif
