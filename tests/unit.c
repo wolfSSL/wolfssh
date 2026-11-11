@@ -10318,10 +10318,22 @@ static int RunDrainMidRekey(int sendDisconnect, int base)
     }
     if (pid == 0) {
         char buf[256];
+        struct timeval to = { 0, 100000 };
+        ssize_t got;
 
         close(sv[0]);
-        while (read(sv[1], buf, sizeof(buf)) > 0)
-            ;
+        /* macOS can miss waking a read() that blocks just as the peer
+         * half closes, so time the read out and retry. */
+        (void)setsockopt(sv[1], SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+        for (;;) {
+            got = read(sv[1], buf, sizeof(buf));
+            if (got > 0)
+                continue;
+            if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+                    errno == EINTR))
+                continue;
+            break;
+        }
         _exit(0);
     }
     close(sv[1]);
