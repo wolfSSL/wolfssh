@@ -245,7 +245,9 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* buf, word32 bufSz);
  * confinement rejects ALL symbolic links below the root - including ones
  * pointing back inside it (e.g. "current -> releases/v3"). Serve trees without
  * symlinks, or build with WOLFSSH_NO_SYMLINK_CHECK to drop the check, and the
- * escape protection with it.
+ * escape protection with it. REALPATH answers are confined the same way. A
+ * start path outside the root, or through a link below it, is replaced by the
+ * root.
  *
  * The root itself is trusted and never checked, so a root reached through a
  * symbolic link is as wide as that link's target. Give a root the server
