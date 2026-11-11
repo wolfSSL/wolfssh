@@ -100,7 +100,7 @@ static void wolfSSH_CursorMove(WOLFSSH_HANDLE h, word32 x, word32 y, byte stomp)
 }
 
 
-/* clear screen (put ' ' chars) from (x1,y1) to (x2,y2) */
+/* clear screen (put ' ' chars) from (x1,y1) up to, not including, (x2,y2) */
 static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, word32 x2, word32 y2)
 {
         CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
@@ -110,7 +110,7 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
         word32 maxX = 0;
 
         GetConsoleScreenBufferInfo(handle, &info);
-        maxX = info.dwMaximumWindowSize.X;
+        maxX = info.dwSize.X; /* fills wrap at the buffer width */
         start.X = x1;
         start.Y = y1;
 
@@ -127,6 +127,24 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
         }
 
         FillConsoleOutputCharacterA(handle, ' ', fill, start, &w);
+}
+
+
+/* Top row of the display: the window, moved to hold the cursor. */
+static word32 wolfSSH_DisplayTop(const CONSOLE_SCREEN_BUFFER_INFO* info)
+{
+    word32 y = (word32)info->dwCursorPosition.Y;
+    word32 top = (word32)info->srWindow.Top;
+    word32 bottom = (word32)info->srWindow.Bottom;
+
+    if (y > bottom) {
+        top = y - (bottom - top);
+    }
+    else if (y < top) {
+        top = y;
+    }
+
+    return top;
 }
 
 
@@ -533,78 +551,72 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             wolfSSH_CursorMove(handle, args[0], 0, 0);
             break;
 
-        case 'J': /* erase display */
-            if (numArgs == 0) {
-                WLOG(WS_LOG_DEBUG, "CSI 'J' expects an argument");
-                args[0] = 2; /* default to erase screen */
-            }
+        case 'J': /* erase display; an omitted mode is 0 */
+        {
+            CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
+            word32 x, y, top, end;
+
+            GetConsoleScreenBufferInfo(handle, &info);
+            x = (word32)info.dwCursorPosition.X;
+            y = (word32)info.dwCursorPosition.Y;
+            /* Modes 0-2 spare the scrollback above the display. They clear
+             * to the buffer end, as CSI H addresses buffer rows. */
+            top = wolfSSH_DisplayTop(&info);
+            end = (word32)info.dwSize.Y;
 
             switch (args[0]) {
-                case 1: /* erase from start to cursor */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                            info.dwCursorPosition.X, info.dwCursorPosition.Y);
-                }
+                case 0: /* erase from cursor to end of buffer */
+                    wolfSSH_ClearScreen(handle, x, y, 0, end);
                     break;
 
-                case 2: /* erase whole display */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, 0, info.dwSize.X, info.dwSize.Y);
-                }
+                case 1: /* erase from start of display through cursor */
+                    wolfSSH_ClearScreen(handle, 0, top, x + 1, y);
+                    break;
+
+                case 2: /* erase display through end of buffer */
+                    wolfSSH_ClearScreen(handle, 0, top, 0, end);
                     break;
 
                 case 3: /* erase whole display + */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, 0, info.dwMaximumWindowSize.X,
+                    wolfSSH_ClearScreen(handle, 0, 0,
+                            info.dwMaximumWindowSize.X,
                             info.dwMaximumWindowSize.Y);
                     wolfSSH_CursorMove(handle, 0, 0, 1);
-                }
                     break;
 
                 default:
                     WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
             break;
+        }
 
-        case 'K':
-            if (numArgs == 0) { /* erase start of cursor to end of line */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, info.dwCursorPosition.X,
-                            info.dwCursorPosition.Y, info.dwMaximumWindowSize.X,
-                            info.dwCursorPosition.Y);
-                }
-                break;
-            }
-            else {
-                switch (args[0]) {
-                    case 1: /* erase start of line to cursor */
-                    {
-                        CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                        GetConsoleScreenBufferInfo(handle, &info);
-                        wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                              info.dwCursorPosition.X, info.dwCursorPosition.Y);
-                    }
+        case 'K': /* erase line; an omitted mode is 0 */
+        {
+            CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
+            word32 x, y;
+
+            GetConsoleScreenBufferInfo(handle, &info);
+            x = (word32)info.dwCursorPosition.X;
+            y = (word32)info.dwCursorPosition.Y;
+
+            switch (args[0]) {
+                case 0: /* erase from cursor to end of line */
+                    wolfSSH_ClearScreen(handle, x, y, info.dwSize.X, y);
                     break;
 
-                    case 2: /* erase whole line */
-                    {
-                        CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                        GetConsoleScreenBufferInfo(handle, &info);
-                        wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                           info.dwMaximumWindowSize.X, info.dwCursorPosition.Y);
-                    }
+                case 1: /* erase from start of line through cursor */
+                    wolfSSH_ClearScreen(handle, 0, y, x + 1, y);
                     break;
-                }
+
+                case 2: /* erase whole line */
+                    wolfSSH_ClearScreen(handle, 0, y, info.dwSize.X, y);
+                    break;
+
+                default:
+                    WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
             break;
+        }
 
         case 'm':
             /* set display attributes */
