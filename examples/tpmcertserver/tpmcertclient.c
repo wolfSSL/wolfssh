@@ -26,6 +26,7 @@
 
 #include <wolfssh/ssh.h>
 #include <wolfssh/test.h>
+#include "examples/client/common.h"
 
 #if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
         !defined(WOLFSSH_USER_FILESYSTEM)
@@ -54,18 +55,11 @@ static int TpmCcUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
-/* Host key acceptance callback. wolfSSH verifies the server's X.509 certificate
- * chain against the root CA loaded with wolfSSH_CTX_AddRootCert_file() later,
- * during the key exchange, when it extracts the public key from the certificate.
- * Because the client only accepts x509v3 host key algorithms, that CA
- * verification is always performed. This callback just accepts the presented
- * host key blob. */
+/* ctx is the host. wolfSSH verifies the chain to the root CA; this checks
+ * the certificate names the host. */
 static int TpmCcHostKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    WOLFSSH_UNUSED(pubKey);
-    WOLFSSH_UNUSED(pubKeySz);
-    WOLFSSH_UNUSED(ctx);
-    return 0;
+    return ClientPublicKeyCheck(pubKey, pubKeySz, ctx);
 }
 
 
@@ -134,6 +128,8 @@ int main(int argc, char* argv[])
         ssh = wolfSSH_new(ctx);
         if (ssh == NULL)
             ret = -1;
+        else
+            wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
     }
 
     if (ret == 0)
