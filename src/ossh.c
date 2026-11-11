@@ -1041,6 +1041,7 @@ int OsshCertCheckOptions(WS_OsshCert* cert)
     cert->forceCommandSz = 0;
     cert->sourceAddress = NULL;
     cert->sourceAddressSz = 0;
+    cert->permits = 0;
 
     /* Critical options: ascending order, no duplicates, all recognized. */
     idx = 0;
@@ -1094,8 +1095,7 @@ int OsshCertCheckOptions(WS_OsshCert* cert)
     }
 
     /* Extensions: unknown ones are ignored; any order and duplicates are
-     * tolerated. The permit-* names are recognized but not enforced; wolfSSH
-     * does not gate pty or forwarding on them. */
+     * tolerated. */
     idx = 0;
     while (ret == WS_SUCCESS && idx < cert->extensionsSz) {
         ret = GetStringRef(&nameSz, &name, cert->extensions,
@@ -1105,12 +1105,17 @@ int OsshCertCheckOptions(WS_OsshCert* cert)
                     cert->extensionsSz, &idx);
         }
         if (ret == WS_SUCCESS) {
-            if (!OsshNameEq(name, nameSz, "permit-X11-forwarding")
-                    && !OsshNameEq(name, nameSz, "permit-agent-forwarding")
-                    && !OsshNameEq(name, nameSz, "permit-port-forwarding")
-                    && !OsshNameEq(name, nameSz, "permit-pty")
-                    && !OsshNameEq(name, nameSz, "permit-user-rc")
-                    && !OsshNameEq(name, nameSz, "no-touch-required")) {
+            if (OsshNameEq(name, nameSz, "permit-X11-forwarding"))
+                cert->permits |= WOLFSSH_OSSH_PERMIT_X11_FWD;
+            else if (OsshNameEq(name, nameSz, "permit-agent-forwarding"))
+                cert->permits |= WOLFSSH_OSSH_PERMIT_AGENT_FWD;
+            else if (OsshNameEq(name, nameSz, "permit-port-forwarding"))
+                cert->permits |= WOLFSSH_OSSH_PERMIT_PORT_FWD;
+            else if (OsshNameEq(name, nameSz, "permit-pty"))
+                cert->permits |= WOLFSSH_OSSH_PERMIT_PTY;
+            else if (OsshNameEq(name, nameSz, "permit-user-rc"))
+                cert->permits |= WOLFSSH_OSSH_PERMIT_USER_RC;
+            else if (!OsshNameEq(name, nameSz, "no-touch-required")) {
                 WLOG(WS_LOG_DEBUG,
                     "OSSH: ignoring unrecognized certificate extension");
             }
