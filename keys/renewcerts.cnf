@@ -52,6 +52,11 @@ subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid:always,issuer:always
 subjectAltName = DNS:example, IP:127.0.0.1
 
+[ v3_server_email ]
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always,issuer:always
+subjectAltName = email:server@example.com
+
 
 [ req_distinguished_name ]
 
