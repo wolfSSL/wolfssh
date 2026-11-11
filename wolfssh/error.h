@@ -33,7 +33,7 @@
 extern "C" {
 #endif
 
-/* add new error strings to error.c */
+/* add new error strings to GetErrorString() in src/internal.c */
 
 
 /* main public return values */
@@ -113,7 +113,7 @@ enum WS_ErrorCodes {
     WS_CHANGE_AUTH_E        = -1072, /* Changing auth type attempt */
     WS_WINDOW_FULL          = -1073,
     WS_MISSING_CALLBACK     = -1074, /* Callback is missing */
-    WS_DH_SIZE_E            = -1075, /* DH prime larger than expected */
+    WS_DH_SIZE_E            = -1075, /* DH prime size outside the window */
     WS_PUBKEY_SIG_MIN_E     = -1076, /* Signature too small */
     WS_AGENT_NULL_E         = -1077, /* AGENT was null */
     WS_AGENT_NO_KEY_E       = -1078, /* AGENT doesn't have requested key */
@@ -138,7 +138,7 @@ enum WS_ErrorCodes {
     WS_ED25519_E            = -1095, /* Ed25519 failure */
     WS_AUTH_PENDING         = -1096, /* User authentication still pending */
     WS_KDF_E                = -1097, /* KDF error*/
-    WS_DISCONNECT           = -1098, /* peer sent disconnect */
+    WS_DISCONNECT           = -1098, /* disconnect sent or received */
     WS_MLDSA_E              = -1099, /* MLDSA failure */
     WS_ED448_E              = -1100, /* Ed448 failure */
     WS_CERT_KEY_USAGE_E     = -1101, /* Cert (ext)KeyUsage not for SSH */

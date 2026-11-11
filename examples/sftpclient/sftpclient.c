@@ -81,7 +81,7 @@ static char* workingDir;
 
      /* This static buffer is tuned for building with SFTP only. The static
       * buffer size is calculated by multiplying the pairs of sizeList items
-      * and distList items and summing (32*50 + 128*100 + ...) and adding
+      * and distList items and summing (64*60 + 128*100 + ...) and adding
       * the sum of the distList values times the sizeof wc_Memory (rounded up
       * to a word, 24). This total was 268kb plus change, rounded up to 269. */
     #ifndef SFTPC_STATIC_SIZES
@@ -438,7 +438,7 @@ static void ShowUsage(void)
 }
 
 
-/* returns 0 on success */
+/* returns nonnegative on success, negative on failure */
 static INLINE int SFTP_FPUTS(func_args* args, const char* msg)
 {
     int ret;

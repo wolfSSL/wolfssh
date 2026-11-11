@@ -8729,7 +8729,8 @@ static int KeyAgreeEcdhMlKem_client(WOLFSSH* ssh, byte hashId,
     }
 #endif
 
-    /* This is a hybrid of ECC Curve25519 and a post-quantum KEM.
+    /* This is a hybrid of ECC (P-256, P-384 or Curve25519, per kexId) and a
+     * post-quantum KEM.
      * In this case, it needs to generate the ECC shared secret and
      * decapsulate the ciphertext of the post-quantum KEM. */
 
@@ -10622,7 +10623,7 @@ static int DoUserAuthRequestPassword(WOLFSSH* ssh, WS_UserAuthData* authData,
 
 #ifndef WOLFSSH_NO_RSA
 /* Utility for DoUserAuthRequestPublicKey() */
-/* returns negative for error, positive is size of digest. */
+/* returns WS_SUCCESS if the signature verifies, negative on error */
 static int DoUserAuthRequestRsa(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 enum wc_HashType hashId, byte* digest,
                                 word32 digestSz)
@@ -10977,7 +10978,7 @@ static int DoUserAuthRequestRsaCert(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
 
 
 /* Utility for DoUserAuthRequestPublicKey() */
-/* returns negative for error, positive is size of digest. */
+/* returns WS_SUCCESS if the signature verifies, negative on error */
 static int DoUserAuthRequestEcc(WOLFSSH* ssh, WS_UserAuthData_PublicKey* pk,
                                 enum wc_HashType hashId, byte* digest,
                                 word32 digestSz)
@@ -12405,8 +12406,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
                              byte* buf, word32 len, word32* idx)
 {
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-    byte authList[4]; /* Should only ever be password, publickey, hostname,
-                         keyboard */
+    byte authList[4]; /* password, publickey, keyboard, leading unknown */
     word32 authListSz = 4;
 #else
     byte authList[3];
@@ -17699,8 +17699,8 @@ int wolfSSH_CalcRsaDX(RsaKey* key)
 
 /* KeyAgreeDh_server
  * hashId - wolfCrypt hash type ID used
- * f - peer public key
- * fSz - peer public key size
+ * f - out: our KEX value f to send to the peer
+ * fSz - in: size of f, out: bytes written to f
  */
 static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 #ifndef WOLFSSH_NO_DH
@@ -17800,8 +17800,8 @@ static int KeyAgreeDh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 
 /* KeyAgreeEcdh_server
  * hashId - wolfCrypt hash type ID used
- * f - peer public key
- * fSz - peer public key size
+ * f - out: our KEX value f to send to the peer
+ * fSz - in: size of f, out: bytes written to f
  */
 static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 #ifndef WOLFSSH_NO_ECDH
@@ -17892,8 +17892,8 @@ static int KeyAgreeEcdh_server(WOLFSSH* ssh, byte hashId, byte* f, word32* fSz)
 
 /* KeyAgreeCurve25519_server
  * hashId - wolfCrypt hash type ID used
- * f - peer public key
- * fSz - peer public key size
+ * f - out: our KEX value f to send to the peer
+ * fSz - in: size of f, out: bytes written to f
  */
 static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
         byte* f, word32* fSz)
@@ -17979,8 +17979,8 @@ static int KeyAgreeCurve25519_server(WOLFSSH* ssh, byte hashId,
 
 /* KeyAgreeEcdhMlKem_server
  * hashId - wolfCrypt hash type ID used
- * f - peer public key
- * fSz - peer public key size
+ * f - out: our KEX value f to send to the peer
+ * fSz - in: size of f, out: bytes written to f
  *
  * This is a hybrid KEM. In this case, I need to generate my ECC
  * keypair, send the public one, use the private one to generate

@@ -484,12 +484,12 @@ WOLFSSH_API int wolfSSH_ChannelGetSessionGranted(
 
 /* Channel callbacks */
 typedef int (*WS_CallbackChannelOpen)(WOLFSSH_CHANNEL* channel, void* ctx);
-/* Policy callback for peer channel open requests. NOTE: when no callback
- * is registered every channel open from the peer is ACCEPTED by default
- * (except forwarding channel types, which fail closed without a forward
- * callback); register one to enforce a channel policy. Opens sent in the
- * wrong direction are refused before any callback runs: session and
- * direct-tcpip on a client, forwarded-tcpip and auth-agent on a server. */
+/* Policy callback for peer channel open requests. NOTE: with no callback,
+ * a peer open that passes the built-in checks is ACCEPTED (forwarding types
+ * fail closed without a forward callback). Built-in checks run before any
+ * callback; among them, unknown types, a session open while a channel
+ * exists, and wrong-direction opens (session and direct-tcpip on a client,
+ * forwarded-tcpip and auth-agent on a server) are refused. */
 WOLFSSH_API int wolfSSH_CTX_SetChannelOpenCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelOpen cb);
 /* confCb and failCb run when the peer answers an open of ours. An answer for

@@ -770,7 +770,7 @@ static INLINE void tcp_set_nonblocking(WS_SOCKET_T* sockfd)
     #define WFD_ISSET FD_ISSET
 #endif
 
-/* returns 1 or greater when something is ready to be read */
+/* returns 1 or greater when a descriptor in any of the sets is ready */
 static INLINE int wSelect(int nfds, WFD_SET_TYPE* recvfds,
         WFD_SET_TYPE *writefds, WFD_SET_TYPE *errfds,  struct timeval* timeout)
 {
