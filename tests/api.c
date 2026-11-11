@@ -6297,6 +6297,18 @@ static void test_wolfSSH_SFTP_Confinement(void)
     wolfSSH_SFTPNAME_list_free(ls);
     ls = NULL;
 
+    /* REALPATH refuses an escape but still names the root */
+    ls = wolfSSH_SFTP_RealPath(ssh, escFile);
+    AssertNull(ls);
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    ls = wolfSSH_SFTP_RealPath(ssh, escRel);
+    AssertNull(ls);
+#endif
+    ls = wolfSSH_SFTP_RealPath(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
 #if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API) && \
         defined(WOLFSSH_HAVE_SYMLINK)
     /* Symlink escape: an in-jail symlink to the out-of-jail tree resolves to
@@ -6317,6 +6329,14 @@ static void test_wolfSSH_SFTP_Confinement(void)
     ret = wolfSSH_SFTP_Open(ssh, escSymThru, WOLFSSH_FXF_READ, NULL,
             handle, &handleSz);
     AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* nor is a path through the link named by REALPATH */
+    ls = wolfSSH_SFTP_RealPath(ssh, escSymThru);
+    AssertNull(ls);
     ls = wolfSSH_SFTP_LS(ssh, curDir);
     AssertNotNull(ls);
     wolfSSH_SFTPNAME_list_free(ls);
