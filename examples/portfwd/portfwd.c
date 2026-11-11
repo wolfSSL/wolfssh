@@ -505,6 +505,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int appFdSet = 0;
     int appFdHalfClosed = 0;
     int appEof = 0;
+    int sessionLost = 0;
     int reverse = 0;
     int fwdFromPortSet = 0;
     PortfwdState fwdState;
@@ -852,6 +853,24 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 break;
             }
 
+            /* Past an idle WANT_READ/WRITE or a refused open, any other
+             * return means the session is gone; a dead peer keeps sshFd
+             * readable, so looping would spin. */
+            if (ret == WS_FATAL_ERROR) {
+                int err = wolfSSH_get_error(ssh);
+                if (err == WS_WANT_READ || err == WS_WANT_WRITE ||
+                        err == WS_CHANOPEN_FAILED)
+                    ret = err;
+            }
+            if (ret != WS_SUCCESS && ret != WS_CHAN_RXD &&
+                    ret != WS_EXTDATA && ret != WS_WANT_READ &&
+                    ret != WS_WANT_WRITE && ret != WS_WINDOW_FULL &&
+                    ret != WS_REKEYING && ret != WS_EOF &&
+                    ret != WS_CHANOPEN_FAILED) {
+                sessionLost = 1;
+                break;
+            }
+
             /* A refused open frees the channel and reports a fatal
              * error, not a close, so the guard above does not run.
              * Re-resolve by id rather than trust the pointer. */
@@ -958,29 +977,39 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             break;
     }
 
-    if (reverse) {
-        /* Best effort: the session is going away regardless, but a failure
-         * here means the peer's listener may outlive us. */
-        ret = wolfSSH_FwdRemoteCancel(ssh, fwdFromHost, fwdFromPort, 0);
-        if (ret != WS_SUCCESS)
-            printf("Couldn't cancel the remote port forward, ret = %d\n", ret);
+    if (sessionLost) {
+        /* No peer to say goodbye to; just free. */
+        printf("Lost the SSH session, ret = %d, error = %d\n",
+                ret, wolfSSH_get_error(ssh));
+        ((func_args*)args)->return_code = 1;
     }
-
-    ret = wolfSSH_shutdown(ssh);
-    /* A queued write and a retired channel are both done as far as this
-     * teardown is concerned: the disconnect carries the write out. */
-    if (ret != WS_SUCCESS && ret != WS_WANT_WRITE && ret != WS_CHANNEL_CLOSED)
-        err_sys("Closing port forward stream failed.");
-
-    /* peer already hung up, just close */
-    if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
-        ret = SendDisconnectAndDrain(ssh, sshFd);
-        if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
-            printf("Gave up on a graceful shutdown, closing the socket\n");
-            ret = WS_SUCCESS;
+    else {
+        if (reverse) {
+            /* Best effort: the session is going away regardless, but a failure
+             * here means the peer's listener may outlive us. */
+            ret = wolfSSH_FwdRemoteCancel(ssh, fwdFromHost, fwdFromPort, 0);
+            if (ret != WS_SUCCESS)
+                printf("Couldn't cancel the remote port forward, "
+                        "ret = %d\n", ret);
         }
-        else if (ret != WS_SUCCESS)
-            err_sys("Sending the disconnect failed.");
+
+        ret = wolfSSH_shutdown(ssh);
+        /* A queued write and a retired channel are both done as far as this
+         * teardown is concerned: the disconnect carries the write out. */
+        if (ret != WS_SUCCESS && ret != WS_WANT_WRITE &&
+                ret != WS_CHANNEL_CLOSED)
+            err_sys("Closing port forward stream failed.");
+
+        /* peer already hung up, just close */
+        if (wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E) {
+            ret = SendDisconnectAndDrain(ssh, sshFd);
+            if (ret == WS_WANT_READ || ret == WS_WANT_WRITE) {
+                printf("Gave up on a graceful shutdown, closing the socket\n");
+                ret = WS_SUCCESS;
+            }
+            else if (ret != WS_SUCCESS)
+                err_sys("Sending the disconnect failed.");
+        }
     }
 
     WCLOSESOCKET(sshFd);
