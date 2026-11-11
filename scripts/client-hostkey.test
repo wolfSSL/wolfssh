@@ -133,6 +133,26 @@ run_client && fail "the client accepted another host's key"
 grep -q "is unknown" "$client_out" \
     || fail "the client didn't report the unknown host key"
 
+if [ -x ./examples/portfwd/portfwd ] \
+    && ! ./examples/portfwd/portfwd '-?' 2>&1 | grep -q "does not exist"
+then
+    echo "Test portfwd refuses an unknown host key"
+    rm -f "$known_hosts"
+    start_server
+    HOME="$work_dir" ./examples/portfwd/portfwd -u jill -P upthehill \
+        -p $port -f 0 -r -t 1 < /dev/null > "$client_out" 2>&1 &
+    fwd_pid=$!
+    counter=0
+    while kill -0 $fwd_pid 2>/dev/null && [ "$counter" -lt 100 ]; do
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+    kill -9 $fwd_pid 2>/dev/null && fail "portfwd kept an unknown host"
+    wait $fwd_pid && fail "portfwd accepted an unknown host key"
+    grep -qF "host key for $host is unknown" "$client_out" \
+        || fail "portfwd didn't report the unknown host key"
+fi
+
 do_cleanup
 echo "All tests passed"
 exit 0

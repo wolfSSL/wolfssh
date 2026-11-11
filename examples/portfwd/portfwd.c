@@ -48,6 +48,7 @@
 
 #ifndef NO_WOLFSSH_CLIENT
 #include "examples/portfwd/wolfssh_portfwd.h"
+#include "examples/client/common.h"
 
 
 /* The portfwd tool will be a client or server in the port forwarding
@@ -112,7 +113,10 @@ static void ShowUsage(void)
            " -t <num>      port to forward to (REQUIRED)\n"
            " -r            remote (reverse) forward: ask the SSH server to\n"
            "               listen on -F/-f and tunnel connections back to\n"
-           "               the local -T/-t target\n",
+           "               the local -T/-t target\n"
+           " -Y            accept any host key, insecure; otherwise it must "
+           "be in\n"
+           "               ~/.ssh/known_hosts\n",
            LIBWOLFSSH_VERSION_STRING,
            LIBWOLFSSL_VERSION_STRING,
            wolfSshIp, wolfSshPort, defaultFwdFromHost);
@@ -228,13 +232,10 @@ static int wsUserAuth(byte authType,
 }
 
 
+/* ctx is the host connected to, checked against known_hosts. */
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    printf("Sample public key check callback\n"
-           "  public key = %p\n"
-           "  public key size = %u\n"
-           "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
-    return 0;
+    return ClientPublicKeyCheck(pubKey, pubKeySz, ctx);
 }
 
 
@@ -498,7 +499,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     memset(&fwdState, 0, sizeof(fwdState));
     fwdState.appFd = (SOCKET_T)-1;
 
-    while ((ch = mygetopt(argc, argv, "?rf:h:p:t:u:F:P:R:T:")) != -1) {
+    ClientAcceptAnyHostKey(0);
+    while ((ch = mygetopt(argc, argv, "?rf:h:p:t:u:F:P:R:T:Y")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -549,6 +551,10 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
             case 'r':
                 reverse = 1;
+                break;
+
+            case 'Y':
+                ClientAcceptAnyHostKey(1);
                 break;
 
             case '?':
@@ -619,7 +625,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)"You've been sampled.");
+    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
     wolfSSH_CTX_SetChannelOpenRespCb(ctx,
             wsChannelOpenConfCb, wsChannelOpenFailCb);
     wolfSSH_SetChannelOpenCtx(ssh, (void*)"port forward");
