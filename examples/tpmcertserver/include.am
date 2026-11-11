@@ -13,7 +13,9 @@ endif
 if BUILD_EXAMPLE_CLIENTS
 noinst_PROGRAMS += examples/tpmcertserver/tpmcertclient
 examples_tpmcertserver_tpmcertclient_SOURCES      = \
-                                    examples/tpmcertserver/tpmcertclient.c
+                                    examples/tpmcertserver/tpmcertclient.c \
+                                    examples/client/common.c \
+                                    examples/client/common.h
 examples_tpmcertserver_tpmcertclient_LDADD        = src/libwolfssh.la
 examples_tpmcertserver_tpmcertclient_DEPENDENCIES = src/libwolfssh.la
 endif
