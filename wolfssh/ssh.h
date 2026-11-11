@@ -783,6 +783,12 @@ typedef struct WS_UserAuthData {
  * unchecked key authorizes an attacker-supplied key. The library verifies
  * the signature, not the key's authorization.
  *
+ * On a client it supplies credentials. Of the server's methods, the key is
+ * tried once, then keyboard-interactive and password up to three times
+ * each; a decline moves on, and authData->type holds the methods left.
+ * Keyboard-interactive is requested without asking the callback, and
+ * declining its prompts ends authentication.
+ *
  * Compare secrets with wolfSSH_ConstantCompare(), not memcmp(). */
 typedef int (*WS_CallbackUserAuth)(byte authType, WS_UserAuthData* authData,
         void* ctx);

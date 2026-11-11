@@ -16889,18 +16889,18 @@ static void TestUserAuthPkWithoutServerSigAlgs(void)
             algName, sizeof(algName)), WS_SUCCESS);
     AssertStrEQ(algName, "rsa-sha2-256");
 
-    /* Listed but nothing usable is still a mismatch. */
+    /* Listed but nothing usable: the key is skipped, nothing is left. */
     AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "bogus",
-            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+            algName, sizeof(algName)), WS_USER_AUTH_E);
     AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "",
-            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+            algName, sizeof(algName)), WS_USER_AUTH_E);
 
     /* Nor when it replaces a usable one, RFC 8308 section 2.4. */
     pkCasePriorSigAlgs = "rsa-sha2-256";
     AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "bogus",
-            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+            algName, sizeof(algName)), WS_USER_AUTH_E);
     AssertIntEQ(RunUserAuthPkSigAlgsCase("server-sig-algs", "",
-            algName, sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+            algName, sizeof(algName)), WS_USER_AUTH_E);
     pkCasePriorSigAlgs = NULL;
 
     #if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_SSH_RSA_SHA1) \
@@ -16908,7 +16908,7 @@ static void TestUserAuthPkWithoutServerSigAlgs(void)
     /* Our own choice skips soft-disabled SHA-1. */
     pkCaseKeyType = "x509v3-ssh-rsa";
     AssertIntEQ(RunUserAuthPkSigAlgsCase(NULL, NULL, algName,
-            sizeof(algName)), WS_MATCH_KEY_ALGO_E);
+            sizeof(algName)), WS_USER_AUTH_E);
     pkCaseKeyType = NULL;
     #endif
 
@@ -17422,6 +17422,309 @@ static void TestUserAuthOsshRsaCertClientFollowsSigAlgs(void)
 }
 #endif /* PK_ACCEPTED_TEST_OSSH_RSA */
 #endif /* PK_ACCEPTED_TEST */
+#endif
+
+#if !defined(NO_WOLFSSH_CLIENT) && !defined(WOLFSSH_NO_PUBKEY_AUTH) \
+    && ((!defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)) \
+        || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
+/* Each callback's authType and the authData->type it saw. */
+static byte authOrderCalls[8];
+static byte authOrderTypes[8];
+static word32 authOrderCount;
+
+/* Like the client apps: key from ClientUserAuth(), password refused
+ * while the key is still on offer. */
+static int AuthOrderUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static byte secret[] = "secret";
+
+    if (authOrderCount < (word32)sizeof(authOrderCalls)) {
+        authOrderCalls[authOrderCount] = authType;
+        authOrderTypes[authOrderCount] = authData->type;
+    }
+    authOrderCount++;
+
+    if (authType == WOLFSSH_USERAUTH_PUBLICKEY)
+        return ClientUserAuth(authType, authData, ctx);
+    if (authType == WOLFSSH_USERAUTH_PASSWORD) {
+        if (authData->type & WOLFSSH_USERAUTH_PUBLICKEY)
+            return WOLFSSH_USERAUTH_FAILURE;
+        authData->sf.password.password = secret;
+        authData->sf.password.passwordSz = (word32)sizeof(secret) - 1;
+        return WOLFSSH_USERAUTH_SUCCESS;
+    }
+    return WOLFSSH_USERAUTH_FAILURE;
+}
+
+typedef struct AuthOrderHarness {
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    MemIo io;
+    byte in[128];
+    byte out[2048];
+} AuthOrderHarness;
+
+/* A client past its "none" probe with the gretel key loaded. */
+static void InitAuthOrderHarness(AuthOrderHarness* h)
+{
+    WMEMSET(h, 0, sizeof(*h));
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-ecc.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-ecc.pem"), 0);
+#else
+    AssertIntEQ(ClientUsePubKey("keys/gretel-key-rsa.pub"), 0);
+    AssertIntEQ(ClientSetPrivateKey("keys/gretel-key-rsa.pem"), 0);
+#endif
+
+    h->ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(h->ctx);
+    wolfSSH_SetIORecv(h->ctx, MemRecv);
+    wolfSSH_SetIOSend(h->ctx, MemSend);
+    wolfSSH_SetUserAuth(h->ctx, AuthOrderUserAuth);
+    h->ssh = wolfSSH_new(h->ctx);
+    AssertNotNull(h->ssh);
+    AssertIntEQ(wolfSSH_SetUsername(h->ssh, "gretel"), WS_SUCCESS);
+
+    MemIoInit(&h->io, NULL, 0, h->out, (word32)sizeof(h->out));
+    wolfSSH_SetIOReadCtx(h->ssh, &h->io);
+    wolfSSH_SetIOWriteCtx(h->ssh, &h->io);
+    AssertIntEQ(wolfSSH_SetHighwater(h->ssh, 0), WS_SUCCESS);
+    h->ssh->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(h->ssh->sessionId, 0x33, h->ssh->sessionIdSz);
+    h->ssh->connectState = CONNECT_CLIENT_USERAUTH_SENT;
+    h->ssh->serverState = SERVER_USERAUTH_REQUEST_DONE;
+
+    WMEMSET(authOrderCalls, 0, sizeof(authOrderCalls));
+    WMEMSET(authOrderTypes, 0, sizeof(authOrderTypes));
+    authOrderCount = 0;
+}
+
+static void FreeAuthOrderHarness(AuthOrderHarness* h)
+{
+    wolfSSH_free(h->ssh);
+    wolfSSH_CTX_free(h->ctx);
+    ClientFreeBuffers();
+}
+
+/* Feed a USERAUTH_FAILURE listing methods; returns DoReceive(). */
+static int AuthOrderFail(AuthOrderHarness* h, const char* methods)
+{
+    byte payload[96];
+    word32 payloadSz;
+    word32 inSz;
+
+    payloadSz = AppendString(payload, sizeof(payload), 0, methods);
+    payloadSz = AppendByte(payload, sizeof(payload), payloadSz, 0);
+    inSz = WrapPacket(MSGID_USERAUTH_FAILURE, payload, payloadSz,
+            h->in, sizeof(h->in));
+
+    h->io.in = h->in;
+    h->io.inSz = inSz;
+    h->io.inOff = 0;
+    h->io.outSz = 0;
+    authOrderCount = 0;
+    return DoReceive(h->ssh);
+}
+
+/* 1 if the one USERAUTH_REQUEST the client sent names method. */
+static int AuthOrderSent(AuthOrderHarness* h, const char* method)
+{
+    const byte* payload;
+    const byte* field = NULL;
+    word32 payloadSz;
+    word32 fieldSz = 0;
+    word32 idx = 0;
+    int i;
+
+    AssertTrue(h->io.outSz > 0);
+    AssertIntEQ(ParseMsgId(h->io.out, h->io.outSz), MSGID_USERAUTH_REQUEST);
+    AssertIntEQ(NextPacketOffset(h->io.out, h->io.outSz), h->io.outSz);
+    payloadSz = ParsePayloadLen(h->io.out, h->io.outSz) - MSG_ID_SZ;
+    payload = h->io.out + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ;
+
+    /* user name, service name, method name */
+    for (i = 0; i < 3; i++) {
+        AssertIntEQ(GetStringRef(&fieldSz, &field, payload, payloadSz,
+                &idx), WS_SUCCESS);
+    }
+    return fieldSz == (word32)WSTRLEN(method)
+        && WMEMCMP(field, method, fieldSz) == 0;
+}
+
+/* Key first even when the server lists password first. */
+static void TestClientAuthTriesKeyFirst(void)
+{
+    AuthOrderHarness h;
+
+    InitAuthOrderHarness(&h);
+
+    AssertIntEQ(AuthOrderFail(&h, "password,publickey"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PUBLICKEY);
+    AssertIntEQ(authOrderTypes[0],
+            WOLFSSH_USERAUTH_PUBLICKEY | WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "publickey"));
+
+    FreeAuthOrderHarness(&h);
+}
+
+/* Password-only server, key-loaded client. */
+static void TestClientAuthPasswordOnlyServer(void)
+{
+    AuthOrderHarness h;
+
+    InitAuthOrderHarness(&h);
+
+    AssertIntEQ(AuthOrderFail(&h, "password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertIntEQ(authOrderTypes[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    FreeAuthOrderHarness(&h);
+}
+
+/* A callback answering every type alike gives no key: password next. */
+static int AuthOrderAnyTypeUserAuth(byte authType, WS_UserAuthData* authData,
+        void* ctx)
+{
+    static byte secret[] = "secret";
+
+    (void)ctx;
+    if (authOrderCount < (word32)sizeof(authOrderCalls))
+        authOrderCalls[authOrderCount] = authType;
+    authOrderCount++;
+    authData->sf.password.password = secret;
+    authData->sf.password.passwordSz = (word32)sizeof(secret) - 1;
+    return WOLFSSH_USERAUTH_SUCCESS;
+}
+
+static void TestClientAuthKeylessCallback(void)
+{
+    AuthOrderHarness h;
+
+    InitAuthOrderHarness(&h);
+    wolfSSH_SetUserAuth(h.ctx, AuthOrderAnyTypeUserAuth);
+
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 2);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PUBLICKEY);
+    AssertIntEQ(authOrderCalls[1], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    /* The decline was the key try: not asked for again. */
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    FreeAuthOrderHarness(&h);
+}
+
+/* A refused key falls back to password; tries are bounded. */
+static void TestClientAuthFallbackAndBound(void)
+{
+    AuthOrderHarness h;
+    int i;
+
+    InitAuthOrderHarness(&h);
+
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertTrue(AuthOrderSent(&h, "publickey"));
+
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertIntEQ(authOrderTypes[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    /* Three passwords in all, then nothing is left. */
+    for (i = 0; i < 2; i++) {
+        AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+        AssertTrue(AuthOrderSent(&h, "password"));
+    }
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_FATAL_ERROR);
+    AssertIntEQ(h.ssh->error, WS_USER_AUTH_E);
+    AssertIntEQ(authOrderCount, 0);
+    AssertIntEQ(h.io.outSz, 0);
+
+    FreeAuthOrderHarness(&h);
+
+    /* Publickey-only: a refused key fails, no unsigned retry. */
+    InitAuthOrderHarness(&h);
+    AssertIntEQ(AuthOrderFail(&h, "publickey"), WS_SUCCESS);
+    AssertTrue(AuthOrderSent(&h, "publickey"));
+    AssertIntEQ(AuthOrderFail(&h, "publickey"), WS_FATAL_ERROR);
+    AssertIntEQ(h.ssh->error, WS_USER_AUTH_E);
+    AssertIntEQ(authOrderCount, 0);
+    AssertIntEQ(h.io.outSz, 0);
+    FreeAuthOrderHarness(&h);
+}
+
+/* A key with no usable signature algorithm is skipped. */
+static void TestClientAuthKeyNoSigAlgo(void)
+{
+    AuthOrderHarness h;
+
+    InitAuthOrderHarness(&h);
+    /* server-sig-algs naming only an algorithm the key cannot use */
+    h.ssh->peerSigId = (byte*)WMALLOC(1, h.ssh->ctx->heap, DYNTYPE_ID);
+    AssertNotNull(h.ssh->peerSigId);
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+    h.ssh->peerSigId[0] = ID_ECDSA_SHA2_NISTP384;
+#else
+    h.ssh->peerSigId[0] = ID_ECDSA_SHA2_NISTP256;
+#endif
+    h.ssh->peerSigIdSz = 1;
+    h.ssh->peerSigAlgsSeen = 1;
+
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 2);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PUBLICKEY);
+    AssertIntEQ(authOrderCalls[1], WOLFSSH_USERAUTH_PASSWORD);
+    AssertIntEQ(authOrderTypes[1], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    /* Not asked for again. */
+    AssertIntEQ(AuthOrderFail(&h, "publickey,password"), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    FreeAuthOrderHarness(&h);
+}
+
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+/* All three: key, keyboard-interactive three times, then password. */
+static void TestClientAuthThreeMethodOrder(void)
+{
+    const char* all = "password,keyboard-interactive,publickey";
+    AuthOrderHarness h;
+    int i;
+
+    InitAuthOrderHarness(&h);
+
+    AssertIntEQ(AuthOrderFail(&h, all), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PUBLICKEY);
+    AssertTrue(AuthOrderSent(&h, "publickey"));
+
+    for (i = 0; i < 3; i++) {
+        AssertIntEQ(AuthOrderFail(&h, all), WS_SUCCESS);
+        AssertIntEQ(authOrderCount, 0);
+        AssertTrue(AuthOrderSent(&h, "keyboard-interactive"));
+    }
+
+    AssertIntEQ(AuthOrderFail(&h, all), WS_SUCCESS);
+    AssertIntEQ(authOrderCount, 1);
+    AssertIntEQ(authOrderCalls[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertIntEQ(authOrderTypes[0], WOLFSSH_USERAUTH_PASSWORD);
+    AssertTrue(AuthOrderSent(&h, "password"));
+
+    FreeAuthOrderHarness(&h);
+}
+#endif
 #endif
 
 /* Windows has no /dev/null; the null device there is "NUL". Keyed on
@@ -23854,6 +24157,14 @@ int main(int argc, char** argv)
     && ((!defined(WOLFSSH_NO_RSA) && !defined(WOLFSSH_NO_RSA_SHA2_256)) \
         || !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256))
     TestUserAuthPkWithoutServerSigAlgs();
+    TestClientAuthTriesKeyFirst();
+    TestClientAuthPasswordOnlyServer();
+    TestClientAuthKeylessCallback();
+    TestClientAuthFallbackAndBound();
+    TestClientAuthKeyNoSigAlgo();
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+    TestClientAuthThreeMethodOrder();
+#endif
 #ifdef PK_ACCEPTED_TEST
     TestUserAuthPkHonorsAcceptedList();
 #endif
