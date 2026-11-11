@@ -1539,6 +1539,8 @@ struct WOLFSSH {
 #ifdef WOLFSSH_TEST_INTERNAL
     word32 testSftpSendCap;      /* test hook: cap per-call SFTP buffer send */
     word32 testSftpStallPending; /* test hook: force N flush-only resumes */
+    void (*testSftpPreOpen)(void* ctx); /* test hook: before the open walk */
+    void* testSftpPreOpenCtx;
 #endif
     byte userAuthSeen; /* a userauth request has bound the username */
     word32 maxAuthAttempts; /* server cap on failed userauth attempts */
