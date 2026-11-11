@@ -260,6 +260,7 @@ static int wolfSSH_KexTest_Connect(const char* kex)
     WaitTcpReady(&ready);
 
     ADD_ARG(clientArgv, clientArgc, "client");
+    ADD_ARG(clientArgv, clientArgc, "-Y");
     ADD_ARG(clientArgv, clientArgc, "-u");
     ADD_ARG(clientArgv, clientArgc, "jill");
     ADD_ARG(clientArgv, clientArgc, "-C");
@@ -347,6 +348,7 @@ static int wolfSSH_KexTest_Ed25519HostKey(void)
     WaitTcpReady(&ready);
 
     ADD_ARG(clientArgv, clientArgc, "client");
+    ADD_ARG(clientArgv, clientArgc, "-Y");
     ADD_ARG(clientArgv, clientArgc, "-u");
     ADD_ARG(clientArgv, clientArgc, "jill");
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
@@ -423,6 +425,7 @@ static int wolfSSH_KexTest_MlDsaHostKey(const char* keyName)
     WaitTcpReady(&ready);
 
     ADD_ARG(clientArgv, clientArgc, "client");
+    ADD_ARG(clientArgv, clientArgc, "-Y");
     ADD_ARG(clientArgv, clientArgc, "-u");
     ADD_ARG(clientArgv, clientArgc, "jill");
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)

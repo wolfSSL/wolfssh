@@ -113,4 +113,4 @@ jobs:
         run: |
           mkdir -p /tmp/empty
           ${{ github.workspace }}/build-dir/sbin/sshd -p 22222 -o KbdInteractiveAuthentication=no -o PasswordAuthentication=no -o KexAlgorithms=mlkem768x25519-sha256
-          ./examples/client/client -u $USER -i $HOME/.ssh/id_ed25519 -j $HOME/.ssh/id_ed25519.pub -c "ls /"
+          ./examples/client/client -Y -u $USER -i $HOME/.ssh/id_ed25519 -j $HOME/.ssh/id_ed25519.pub -c "ls /"

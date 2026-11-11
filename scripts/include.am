@@ -16,6 +16,9 @@ if BUILD_SCP
 dist_noinst_SCRIPTS+= scripts/scp.test
 endif
 
+# Skips itself when the example client wasn't built.
+dist_noinst_SCRIPTS+= scripts/client-hostkey.test
+
 # Not gated on BUILD_SSHCLIENT. The script skips itself when the client
 # app wasn't built.
 dist_noinst_SCRIPTS+= scripts/sshclient.test

@@ -516,6 +516,7 @@ int wolfSSH_SftpTest(int flag)
 
     argsCount = 0;
     argsClient[argsCount++] = ".";
+    argsClient[argsCount++] = "-Y";
     argsClient[argsCount++] = "-u";
     argsClient[argsCount++] = "jill";
     argsClient[argsCount++] = "-P";

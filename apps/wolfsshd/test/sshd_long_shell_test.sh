@@ -91,7 +91,7 @@ fi
 
 # -q keeps a debug build's log, which echoes the command text, out of RESULT.
 # The expected line only exists once the shell has expanded $0.
-RESULT=$(timeout 10 $TEST_CLIENT -q -c 'echo LONG SHELL RAN as $0' \
+RESULT=$(timeout 10 $TEST_CLIENT -Y -q -c 'echo LONG SHELL RAN as $0' \
     -u "$LONG_USER" -i $PRIVATE_KEY -j $PUBLIC_KEY \
     -h "$TEST_HOST" -p "$TEST_PORT" 2>&1)
 CLIENT_RESULT=$?

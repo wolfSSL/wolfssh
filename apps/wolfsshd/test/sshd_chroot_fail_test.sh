@@ -193,7 +193,7 @@ run_case() {
     # the far side, and what matters is what the daemon did, not how the client
     # reported it. The output is kept, because a client that dies before opening
     # a socket leaves the daemon-side counts flat and looks like a daemon fault.
-    $TIMEOUT "$TEST_CLIENT" -c "echo $TOKEN" -u "$USER" -i "$PRIVATE_KEY" \
+    $TIMEOUT "$TEST_CLIENT" -Y -c "echo $TOKEN" -u "$USER" -i "$PRIVATE_KEY" \
         -j "$PUBLIC_KEY" -h "$TEST_HOST" -p "$TEST_PORT" \
         > "$CLIENT_LOG" 2>&1
 

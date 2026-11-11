@@ -50,7 +50,7 @@ fi
 TEST_CLIENT="../../../examples/client/client"
 
 # Send an empty password
-timeout 10 $TEST_CLIENT -u "$USER" -P "" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -P "" -c 'true' \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 
 # Let wolfsshd flush the log before we stop it.

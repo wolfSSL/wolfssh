@@ -48,8 +48,8 @@ if ! dd if=/dev/urandom of="$OUTDIR/$NAME" bs=1024 count=64 2>/dev/null; then
     exit 1
 fi
 
-echo "$TEST_SCP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -L$OUTDIR/$NAME:. -H $1 -p $2"
-$TEST_SCP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -L"$OUTDIR/$NAME":. \
+echo "$TEST_SCP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -L$OUTDIR/$NAME:. -H $1 -p $2"
+$TEST_SCP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -L"$OUTDIR/$NAME":. \
     -H $1 -p $2
 if [ "$?" != "0" ]; then
     echo "Expecting to pass transfer"

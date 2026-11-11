@@ -106,7 +106,7 @@ jobs:
         run: |
           mkdir /tmp/wolfssh
           echo "test file" > /tmp/wolfssh/test.txt
-          ./examples/scpclient/wolfscp -p 22 -u jak -P password -H 127.0.0.1  -L /tmp/wolfssh/test.txt:/tmp/non_existent_folder/ || true
+          ./examples/scpclient/wolfscp -Y -p 22 -u jak -P password -H 127.0.0.1  -L /tmp/wolfssh/test.txt:/tmp/non_existent_folder/ || true
           # check that the directory and file do not exist
           [ ! -d /tmp/non_existent_folder ]
           [ ! -f /tmp/non_existent_folder/test.txt ]

@@ -227,7 +227,7 @@ jobs:
         ./examples/echoserver/echoserver -1 -s key.ssh &
         echo "Echoserver (authorized TPM client key) PID: $!"
         sleep 2
-        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth
 
     # The same TPM key offered as an OpenSSH user certificate. The certificate
@@ -244,7 +244,7 @@ jobs:
         SERVER_PID=$!
         echo "Echoserver (TPM key behind an OpenSSH certificate) PID: $SERVER_PID"
         sleep 2
-        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth -j tpmkey-cert.pub -p 22225 -x \
             < /dev/null > ossh_cert_client.txt 2>&1 || {
             cat ossh_cert_client.txt
@@ -271,7 +271,7 @@ jobs:
         SERVER_PID=$!
         echo "Echoserver (another key's certificate) PID: $SERVER_PID"
         sleep 2
-        if timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        if timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth -j other-cert.pub -p 22226 -x \
             < /dev/null > ossh_cert_client_neg.txt 2>&1; then
             echo "ERROR: a certificate for another key authenticated"
@@ -309,7 +309,7 @@ jobs:
         # $1 blob, $2 expected client output, $3 optional key auth.
         reject() {
             echo "----- $1 -----"
-            if timeout 20 ./examples/client/client -i "$1" -u hansel \
+            if timeout 20 ./examples/client/client -Y -i "$1" -u hansel \
                 -K "${3:-ThisIsMyKeyAuth}" < /dev/null > reject.txt 2>&1; then
                 echo "ERROR: the client accepted $1"
                 cat reject.txt

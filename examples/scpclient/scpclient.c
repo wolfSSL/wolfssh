@@ -81,8 +81,11 @@ static void ShowUsage(void)
     printf(" -%c %-" USAGE_WIDE "s %s\n", 'A', "<filename>",
             "filename for DER CA certificate to verify host");
     printf(" -%c %-" USAGE_WIDE "s %s\n", 'X', "",
-            "Ignore IP checks on peer vs peer certificate");
+            "accept a host certificate for another host");
 #endif
+    printf(" -%c %-" USAGE_WIDE "s %s\n", 'Y', "",
+            "accept any host key, insecure; otherwise it must be in");
+    printf("     %-" USAGE_WIDE "s %s\n", "", "~/.ssh/known_hosts");
 }
 
 
@@ -120,7 +123,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "H:L:NP:S:hp:u:XJ:A:i:j:")) != -1) {
+    ClientAcceptAnyHostKey(0);
+    while ((ch = mygetopt(argc, argv, "H:L:NP:S:hp:u:XYJ:A:i:j:")) != -1) {
         switch (ch) {
             case 'H':
                 host = myoptarg;
@@ -177,12 +181,14 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
                 caCert = myoptarg;
                 break;
 
-            #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
             case 'X':
                 ClientIPOverride(1);
                 break;
-            #endif
         #endif
+
+            case 'Y':
+                ClientAcceptAnyHostKey(1);
+                break;
 
             default:
                 ShowUsage();
