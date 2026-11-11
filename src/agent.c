@@ -2109,7 +2109,8 @@ int wolfSSH_AGENT_Relay(WOLFSSH* ssh,
 
 
 /* Sends what is left of the agent's reply, tracking it in rxBuf->idx.
- * Returns WS_WANT_WRITE while any of the reply is still owed. */
+ * Returns WS_SUCCESS when done, else WS_WANT_WRITE, WS_WINDOW_FULL or
+ * WS_REKEYING. */
 static int AgentRelaySendReply(WOLFSSH* ssh, word32 channelId)
 {
     WOLFSSH_BUFFER* rsp;

@@ -8518,7 +8518,7 @@ int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
  *
  * handle   file handle given by sftp server
  * handleSz size of handle
- * ofst     offset to start reading at. 2 word32 array with value at ofst[0]
+ * ofst     offset to start writing at. 2 word32 array with value at ofst[0]
  *          being the lower and ofst[1] being the upper.
  * in       data to be written
  * inSz     amount of data to be written from "in" buffer
@@ -8582,7 +8582,7 @@ int wolfSSH_SFTP_SendWritePacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                 wolfSSH_SFTP_buffer_seek(&state->buffer,
                     wolfSSH_SFTP_buffer_idx(&state->buffer), handleSz);
 
-                /* offset to start reading from */
+                /* offset to start writing at */
                 wolfSSH_SFTP_buffer_c32toa(&state->buffer, ofst[1]);
                 wolfSSH_SFTP_buffer_c32toa(&state->buffer, ofst[0]);
 

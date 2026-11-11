@@ -1282,7 +1282,7 @@ static int GetScpFileSize(WOLFSSH* ssh, byte* buf, word32 bufSz,
  *
  * buf      - buffer containing size string
  * bufSz    - size of buffer
- * inOutIdx - [IN/OUT] index into buffer, increments index upon return
+ * inOutIdx - [IN/OUT] index of the file name in buffer, left unchanged
  *
  * returns WS_SUCCESS on success, negative upon error
  */
@@ -1749,9 +1749,8 @@ int ParseScpCommand(WOLFSSH* ssh)
 
 /* Reads and parses SCP protocol control messages
  *
- * Reads up to DEFAULT_SCP_MSG_SZ characters and null-terminates the string.
- * If string is greater than DEFAULT_SCP_MSG_SZ, then only
- * DEFAULT_SCP_MSG_SZ-1 characters are read and string is NULL-terminated.
+ * Reads one newline-terminated message and null-terminates it. Returns
+ * WS_BUFFER_E if the message does not fit in DEFAULT_SCP_MSG_SZ.
  *
  * returns WS_SUCCESS on success, negative upon error
  */
@@ -2663,12 +2662,12 @@ static int ScpRecvFileOpen(WOLFSSH* ssh, const char* name, WFILE** fp)
  * when to step into and out of a directory.
  *
  * When a new file copy "to" request is received, this callback is called in
- * the WOLFSSH_SCP_NEW_FILE state, where the base directory is placed in
- * 'basePath'. If the peer sends a recursive directory copy, wolfSSH calls
- * this callback in the WOLFSSH_SCP_NEW_DIR state, with a directory name in
- * 'fileName', when a directory should be created and entered.  Directory
- * mode is located in 'fileMode'. When a directory should be exited, the
- * callback is called in the WOLFSSH_SCP_END_DIR state.
+ * the WOLFSSH_SCP_NEW_REQUEST state, where the base directory is placed in
+ * 'basePath' and 'fileName' is NULL. If the peer sends a recursive directory
+ * copy, wolfSSH calls this callback in the WOLFSSH_SCP_NEW_DIR state, with a
+ * directory name in 'fileName', when a directory should be created and
+ * entered.  Directory mode is located in 'fileMode'. When a directory should
+ * be exited, the callback is called in the WOLFSSH_SCP_END_DIR state.
  *
  * When an file transfer is incoming, the callback will first be called in
  * the WOLFSSH_SCP_NEW_FILE, with the file name in 'fileName', file mode
@@ -2685,6 +2684,8 @@ static int ScpRecvFileOpen(WOLFSSH* ssh, const char* name, WFILE** fp)
  *
  * ssh   - pointer to active WOLFSSH session
  * state - current state of operation, can be one of:
+ *         WOLFSSH_SCP_NEW_REQUEST - new incoming request, base directory in
+ *                                 basePath, no file yet
  *         WOLFSSH_SCP_NEW_FILE  - new incoming file, no data yet, but size
  *                                 and name
  *         WOLFSSH_SCP_FILE_PART - new file data, or continuation of
@@ -3147,7 +3148,7 @@ static ScpDir* ScpNewDir(void *fs, const char* path, void* heap)
     }
 #else
     #ifdef WOLFSSH_HAVE_SYMLINK
-    /* refuse a symlinked directory leaf atomically (closes the descend race) */
+    /* refuse a symlinked leaf; atomic only with O_NOFOLLOW and O_DIRECTORY */
     if (wOpendirNoFollow(fs, &entry->dir, path) != 0) {
     #else
     if (WOPENDIR(fs, heap, &entry->dir, path) != 0
@@ -3633,7 +3634,8 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
  * for the directory open) and fall back to a wIsSymlink check-then-open on
  * Windows or where O_NOFOLLOW is absent.  The root also gets an explicit
  * wIsSymlink pre-check because a trailing separator (open("link/", O_NOFOLLOW))
- * can still follow the link; symlinks below the root are rejected as
+ * can still follow the link, so such a root is check-then-open even on POSIX;
+ * symlinks below the root are rejected as
  * ScpProcessEntry traverses them.  No "stays under a trusted base" containment
  * is attempted: SCP has no library-level base path (wolfsshd relies on OS
  * chroot) and wolfSSH_RealPath does not resolve links.  GetFileStats uses WLSTAT

@@ -2840,11 +2840,9 @@ static int PasswordHasNul(const byte* pw, word32 pwSz)
  * CA-only branch below fails closed when a Match block sets a CA file that
  * differs from the global one.
  *
- * Note: the comparison is against the *resolved* per-user value. A Match node
- * snapshots the global config as it stood when the Match line was parsed, so a
- * user whose own Match never set TrustedUserCAKeys keeps the global value and
- * is not rejected. A Match parsed before the global directive snapshots no CA
- * file and still fails closed.
+ * Note: the comparison is against the *resolved* per-user value (global
+ * config plus what matching Match blocks set), so a user whose blocks never
+ * set TrustedUserCAKeys gets the global value and is not rejected.
  */
 static int RequestAuthentication(WS_UserAuthData* authData,
                                  WOLFSSHD_AUTH* authCtx)

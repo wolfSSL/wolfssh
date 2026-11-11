@@ -772,7 +772,7 @@ extern "C" {
 
     #ifndef SIZEOF_OFF_T
         /* if not using autoconf then make a guess on off_t size based on sizeof
-         * long long */
+         * long */
         #if defined(SIZEOF_LONG) && SIZEOF_LONG == 8
             #define SIZEOF_OFF_T 8
         #else

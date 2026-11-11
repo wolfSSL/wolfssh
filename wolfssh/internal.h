@@ -761,7 +761,7 @@ enum NameIdType {
         #define KEX_F_SIZE 1700
     #elif !defined(WOLFSSH_NO_NISTP256_MLKEM768_SHA256) || \
           !defined(WOLFSSH_NO_CURVE25519_MLKEM768_SHA256)
-        /* Size of ML-KEM-768 public key (1184) plus ECC/X25519 component. */
+        /* Size of ML-KEM-768 ciphertext (1088) plus ECC/X25519 component. */
         #define KEX_F_SIZE 1300
     #elif !defined(WOLFSSH_NO_DH_GROUP16_SHA512)
         #define KEX_F_SIZE (512 + 1)
@@ -1129,7 +1129,7 @@ WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
  * the file list and the directory list, so the worst case for one session is
  * twice this value. Bounds memory use and keeps the linear handle lookup from
  * becoming a CPU DoS vector. Must be at least 1; there is no "unlimited"
- * setting, and 0 yields a cap of one handle per list. */
+ * setting, and the #error below rejects a smaller value. */
 #ifndef WOLFSSH_MAX_SFTP_HANDLES
     #define WOLFSSH_MAX_SFTP_HANDLES 64
 #endif
@@ -1309,7 +1309,8 @@ struct WOLFSSH {
     word32 scpConfirmMsgSz;       /* length of confirmMsg, not including \0 */
     char*  scpRecvMsg;            /* reading up to newline delimiter */
     int    scpRecvMsgSz;          /* current size of scp recv message */
-    const char* scpBasePath;      /* base path, ptr into channelList->command */
+    const char* scpBasePath;      /* scpBasePathDynamic on a server,
+                                   * caller's src/dst on a client */
     /* alter base path instead of using chdir */
     char* scpBasePathDynamic;     /* dynamic base path */
     word32 scpBasePathSz;
@@ -1335,7 +1336,7 @@ struct WOLFSSH {
                                    * with file data still outstanding */
     word32 scpDirDepth;           /* SCP nested NEW_DIR depth below base path */
 #ifdef WOLFSSL_NUCLEUS
-    int    scpFd;            /* SCP receive callback context handle */
+    int    scpFd;            /* Nucleus fd for the default SCP receive cb */
 #endif
     void*  scpRecvCtx;            /* SCP receive callback context handle */
     void*  scpSendCtx;            /* SCP send callback context handle */

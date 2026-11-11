@@ -381,7 +381,8 @@ enum {
     WOLFSSHD_LOAD_SECRET = 2
 };
 
-/* set bufSz to size wanted if too small and buf is null */
+/* returns a NUL-terminated buffer for freeBufferFromFile(), or NULL;
+ * sets bufSz, if non-NULL, to the bytes read */
 static byte* getBufferFromFile(const char* fileName, word32* bufSz, void* heap,
         int loadClass)
 {

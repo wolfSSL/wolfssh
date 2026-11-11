@@ -75,7 +75,7 @@ void wolfSSH_SetIOReadCtx(WOLFSSH* ssh, void *ctx)
 }
 
 
-/* install I/O read context */
+/* install I/O write context */
 void wolfSSH_SetIOWriteCtx(WOLFSSH* ssh, void *ctx)
 {
     if (ssh)

@@ -1490,7 +1490,8 @@ static void _BufferTake(WOLFSSH_BUFFER* buffer, byte* out, word32 sz)
  * WS_WANT_READ / WS_WANT_WRITE for a fail case, and for a success the status
  * of a window adjust that could not be sent.
  *
- * Returns the number of bytes read on success, negative values on fail
+ * Returns the number of bytes read on success, WS_EXTDATA when stderr waits
+ * for wolfSSH_extended_data_read(), other negative values on fail
  */
 int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
