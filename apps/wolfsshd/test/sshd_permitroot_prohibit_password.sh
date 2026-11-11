@@ -53,7 +53,7 @@ fi
 TEST_CLIENT="../../../examples/client/client"
 
 # Attempt password login as root, which should be rejected
-timeout 10 $TEST_CLIENT -u "$USER" -P "somepassword" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -P "somepassword" -c 'true' \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 PASS_RESULT=$?
 
@@ -64,7 +64,7 @@ fi
 
 # Attempt public-key login as root, which should still be permitted under
 # prohibit-password (only password auth is restricted for root).
-timeout 10 $TEST_CLIENT -u "$USER" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -c 'true' \
     -i $PWD/../../../keys/hansel-key-ecc.der -j $PWD/../../../keys/hansel-key-ecc.pub \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 PUBKEY_RESULT=$?

@@ -34,21 +34,21 @@ skip() { echo "$1"; cd $PWD0; exit 77; }
 
 # -E lists the compiled-in algorithms before connecting, so point it at a closed
 # port to keep the probe from opening a session.
-ALGOS=`$TEST_CLIENT -E -u $USER -h 127.0.0.1 -p 1 2>/dev/null`
+ALGOS=`$TEST_CLIENT -Y -E -u $USER -h 127.0.0.1 -p 1 2>/dev/null`
 echo "$ALGOS" | grep -q "$ALGO" || skip "no $ALGO support in this build, skipping"
 
 # Positive: with only the composite offered, a successful login means it is what
 # was negotiated.
 set -e
-echo "$TEST_CLIENT -k $ALGO -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
-$TEST_CLIENT -k "$ALGO" -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h "$1" -p "$2"
+echo "$TEST_CLIENT -Y -k $ALGO -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+$TEST_CLIENT -Y -k "$ALGO" -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h "$1" -p "$2"
 set +e
 
 # Negative control: offering only ECDSA must fail, proving the pass above was
 # not some other host key the daemon happened to have loaded.
 if echo "$ALGOS" | grep -q "$OTHER_ALGO"; then
-    echo "$TEST_CLIENT -k $OTHER_ALGO -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
-    $TEST_CLIENT -k "$OTHER_ALGO" -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY \
+    echo "$TEST_CLIENT -Y -k $OTHER_ALGO -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+    $TEST_CLIENT -Y -k "$OTHER_ALGO" -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY \
         -h "$1" -p "$2"
     if [ $? -eq 0 ]; then
         echo "expected $OTHER_ALGO to fail against the composite host key"

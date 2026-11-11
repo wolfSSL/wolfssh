@@ -27,8 +27,8 @@ fi
 mkdir test-$$
 mkdir test-$$/subfolder
 
-echo "$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h \"$1\" -p \"$2\""
-"$TEST_SFTP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h $1 -p $2"
+echo "$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h \"$1\" -p \"$2\""
+"$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h $1 -p $2"
 
 RESULT=$?
 if [ "$RESULT" = "0" ]; then

@@ -91,7 +91,7 @@ echo "This is some sample test to make a file to copy back and forth." > sample1
 echo "This is a different set of sample text to copy back and forth." > sample2.txt
 
 # Get test.
-if ! ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$PORT" \
+if ! ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$PORT" \
     -G -l sample1-copy.txt -r sample1.txt
 then
     echo "Unable to get file."
@@ -101,7 +101,7 @@ fi
 
 # Test fail on file that does not exist
 rm -rf sample1-does-not-exist
-if ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$PORT" \
+if ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$PORT" \
     -G -l sample1-copy.txt -r sample1-does-not-exist
 then
     echo "Success when expecting fail to get file."
@@ -110,7 +110,7 @@ then
 fi
 
 # Put test.
-if ! ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$PORT" \
+if ! ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$PORT" \
     -g -l sample2.txt -r sample2-copy.txt
 then
     echo "Unable to put file."
@@ -135,7 +135,7 @@ fi
 # using full path test.
 rm -rf sample2-copy.txt
 PWD=`pwd`
-if ! ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$PORT" \
+if ! ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$PORT" \
     -g -l sample2.txt -r $PWD/sample2-copy.txt
 then
     echo "Unable to put file using full path."

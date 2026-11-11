@@ -519,7 +519,7 @@ run_strictmodes_authkeys_negative_test() {
     # non-zero exit below can be attributed to the permission change rather than
     # an unrelated client/connection failure.
     chmod 0644 authorized_keys_test
-    ( cd ../../.. && $tmo ./examples/client/client -c 'exit' -u "$USER" \
+    ( cd ../../.. && $tmo ./examples/client/client -Y -c 'exit' -u "$USER" \
         -i ./keys/hansel-key-ecc.der -j ./keys/hansel-key-ecc.pub \
         -h "$TEST_HOST" -p "$TEST_PORT" ) > /dev/null 2>&1
     if [ "$?" != 0 ]; then
@@ -539,7 +539,7 @@ run_strictmodes_authkeys_negative_test() {
     before=$(grep -c "failed StrictModes check" log.txt 2>/dev/null)
     before=${before:-0}
     chmod 0666 authorized_keys_test
-    ( cd ../../.. && $tmo ./examples/client/client -c 'exit' -u "$USER" \
+    ( cd ../../.. && $tmo ./examples/client/client -Y -c 'exit' -u "$USER" \
         -i ./keys/hansel-key-ecc.der -j ./keys/hansel-key-ecc.pub \
         -h "$TEST_HOST" -p "$TEST_PORT" ) > /dev/null 2>&1
     local result=$?

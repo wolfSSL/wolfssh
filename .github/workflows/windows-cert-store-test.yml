@@ -975,7 +975,7 @@ jobs:
         quit
         "@ | Out-File -FilePath sftp_echo_commands.txt -Encoding ASCII
 
-        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        $sftpArgs = @("-Y", "-u", "testuser", "-h", "localhost", "-p", "$testPort")
         $caCertDer = (Resolve-Path "keys\ca-cert-ecc.der").Path
         if ("${{ matrix.client_key_source }}" -eq "store") {
             $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
@@ -1035,7 +1035,7 @@ jobs:
         quit
         "@ | Out-File -FilePath sftp_x509_commands.txt -Encoding ASCII
 
-        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        $sftpArgs = @("-Y", "-u", "testuser", "-h", "localhost", "-p", "$testPort")
         if ("${{ matrix.client_key_source }}" -eq "store") {
             $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
         } else {
@@ -1439,7 +1439,7 @@ jobs:
         quit
         "@ | Out-File -FilePath sftp_commands.txt -Encoding ASCII
 
-        $sftpArgs = @("-u", "testuser", "-h", "localhost", "-p", "$testPort")
+        $sftpArgs = @("-Y", "-u", "testuser", "-h", "localhost", "-p", "$testPort")
         $caCertDer = (Resolve-Path "keys\ca-cert-ecc.der").Path
         if ("${{ matrix.client_key_source }}" -eq "store") {
             $sftpArgs += "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER"
@@ -1538,7 +1538,7 @@ jobs:
         # Control connection: the exact-case user against the reconfigured
         # service must still succeed, so a later failure is attributable to
         # the case-differing name rather than to service state.
-        $args0 = @("-u", "testuser", "-h", "localhost", "-p", "$testPort",
+        $args0 = @("-Y", "-u", "testuser", "-h", "localhost", "-p", "$testPort",
                    "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path,
                    "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path,
                    "-A", $caCertDer, "-X")
@@ -1550,7 +1550,7 @@ jobs:
         $controlExit = $p.ExitCode
 
         # CN=wronguser presented for -u testuser must fail
-        $args1 = @("-u", "testuser", "-h", "localhost", "-p", "$testPort",
+        $args1 = @("-Y", "-u", "testuser", "-h", "localhost", "-p", "$testPort",
                    "-J", (Resolve-Path "keys\wronguser-cert.der").Path,
                    "-i", (Resolve-Path "keys\wronguser-key.der").Path,
                    "-A", $caCertDer, "-X")
@@ -1563,7 +1563,7 @@ jobs:
 
         # CN=testuser presented for -u TESTUSER must succeed: Windows account
         # names are case-insensitive and the CN match follows suit
-        $args2 = @("-u", "TESTUSER", "-h", "localhost", "-p", "$testPort",
+        $args2 = @("-Y", "-u", "TESTUSER", "-h", "localhost", "-p", "$testPort",
                    "-J", (Resolve-Path $env:CLIENT_CERT_FILE).Path,
                    "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path,
                    "-A", $caCertDer, "-X")
@@ -1636,7 +1636,7 @@ jobs:
       run: |
         $PSNativeCommandUseErrorActionPreference = $false
         "quit" | Out-File -FilePath sftp_wconflict_cmd.txt -Encoding ASCII
-        $conflictArgs = @("-u", "testuser", "-h", "localhost",
+        $conflictArgs = @("-Y", "-u", "testuser", "-h", "localhost",
                   "-p", "${{env.TEST_PORT}}",
                   "-W", "My:$($env:CLIENT_CERT_SUBJECT):CURRENT_USER",
                   "-i", (Resolve-Path $env:CLIENT_KEY_FILE).Path)

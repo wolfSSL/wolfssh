@@ -31,7 +31,7 @@ new_wolfsshd_pid() {
     return 1
 }
 
-timeout 3 $TEST_CLIENT -p $2 -i $PRIVATE_KEY -j $PUBLIC_KEY -h $1 -c '/bin/sleep 10' -u $3 &
+timeout 3 $TEST_CLIENT -Y -p $2 -i $PRIVATE_KEY -j $PUBLIC_KEY -h $1 -c '/bin/sleep 10' -u $3 &
 CLIENT_PID=$!
 
 # Poll for the child rather than sampling a fixed second in. NewConnection()

@@ -77,7 +77,7 @@ new_wolfsshd_pid() {
 mkfifo "$FIFO" || exit 1
 sleep $((SAMPLE_SECONDS + 30)) > "$FIFO" &
 HOLDER=$!
-"$TEST_SFTP_CLIENT" -u "$3" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
+"$TEST_SFTP_CLIENT" -Y -u "$3" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
     -h "$1" -p "$2" < "$FIFO" > /dev/null 2>&1 &
 CLIENT=$!
 

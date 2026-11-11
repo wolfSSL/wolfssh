@@ -19,8 +19,8 @@ if [ -z "$1" ] || [ -z "$2" ]; then
 fi
 
 set -e
-echo "$TEST_CLIENT -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
-$TEST_CLIENT -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h "$1" -p "$2"
+echo "$TEST_CLIENT -Y -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+$TEST_CLIENT -Y -c 'ls' -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h "$1" -p "$2"
 
 set +e
 
