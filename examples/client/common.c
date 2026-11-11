@@ -533,9 +533,7 @@ int ClientUserAuth(byte authType,
         WS_UserAuthData_PublicKey* pk = &authData->sf.publicKey;
 
         if (userPublicKeyType == NULL || userPublicKeySz == 0) {
-            /* Nothing to sign with. SendUserAuthRequest() turns this
-             * into WS_FATAL_ERROR rather than putting an untyped
-             * publickey request on the wire. */
+            /* Nothing to sign with; the library tries another method. */
             return WOLFSSH_USERAUTH_FAILURE;
         }
 
