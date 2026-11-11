@@ -163,133 +163,126 @@ static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* arg
         numArgs = 1;
     }
 
+    /* attributes accumulate across the arguments */
     for (i = 0; i < numArgs; i++) {
         switch (args[i]) {
             case 0: /* reset all to defaults */
-                SetConsoleTextAttribute(handle, ssh->defaultAttr);
+                atr = ssh->defaultAttr;
                 break;
 
             case 1: /* set bold */
-                SetConsoleTextAttribute(handle, (atr | FOREGROUND_INTENSITY));
+                atr |= FOREGROUND_INTENSITY;
                 break;
 
             case 2: /* set half-bright */
                 break;
 
             case 4: /* set undersocre */
-                SetConsoleTextAttribute(handle, atr | BACKGROUND_INTENSITY);
+                atr |= BACKGROUND_INTENSITY;
                 break;
 
             case 10: /* reset mapping and display control flag */
                 break;
 
             case 24: /* turn off underline */
-                SetConsoleTextAttribute(handle, atr & ~BACKGROUND_INTENSITY);
+                atr &= ~BACKGROUND_INTENSITY;
                 break;
 
             case 21:
             case 22: /* normal intensity */
                 atr &= ~BACKGROUND_INTENSITY;
                 atr &= ~FOREGROUND_INTENSITY;
-                SetConsoleTextAttribute(handle, atr);
                 break;
 
-            case 25: /* blink off */
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_INTENSITY));
+            case 25: /* blink off, blink is not supported */
                 break;
 
             case 30: /* set black foreground */
-                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGFG)));
+                atr &= ~WS_MASK_RBGFG;
                 break;
 
             case 31: /* red foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_RED);
+                atr |= FOREGROUND_RED;
                 break;
 
             case 32: /* green foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_GREEN);
+                atr |= FOREGROUND_GREEN;
                 break;
 
             case 33: /* brown foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_GREEN |
-                        FOREGROUND_RED);
+                atr |= FOREGROUND_GREEN | FOREGROUND_RED;
                 break;
 
             case 34: /* blue foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_BLUE);
+                atr |= FOREGROUND_BLUE;
                 break;
 
             case 35: /* magenta foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, (atr | FOREGROUND_RED |
-                            FOREGROUND_BLUE));
+                atr |= FOREGROUND_RED | FOREGROUND_BLUE;
                 break;
 
             case 36: /* cyan foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_BLUE |
-                        FOREGROUND_GREEN);
+                atr |= FOREGROUND_BLUE | FOREGROUND_GREEN;
                 break;
 
             case 37: /* white foreground */
-                SetConsoleTextAttribute(handle, (atr | WS_MASK_RBGFG));
+                atr |= WS_MASK_RBGFG;
                 break;
 
             case 40: /* black background */
-                SetConsoleTextAttribute(handle, atr &= ~WS_MASK_RBGBG);
+                atr &= ~WS_MASK_RBGBG;
                 break;
 
             case 41: /* red background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED));
+                atr |= BACKGROUND_RED;
                 break;
 
             case 42: /* green background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_GREEN));
+                atr |= BACKGROUND_GREEN;
                 break;
 
             case 43: /* brown background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED |
-                            BACKGROUND_GREEN));
+                atr |= BACKGROUND_RED | BACKGROUND_GREEN;
                 break;
 
             case 44: /* blue background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_BLUE));
+                atr |= BACKGROUND_BLUE;
                 break;
 
             case 45: /* magenta background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED |
-                            BACKGROUND_BLUE));
+                atr |= BACKGROUND_RED | BACKGROUND_BLUE;
                 break;
 
             case 46: /* cyan background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_BLUE |
-                            BACKGROUND_GREEN));
+                atr |= BACKGROUND_BLUE | BACKGROUND_GREEN;
                 break;
 
             case 47: /* white background */
-                SetConsoleTextAttribute(handle, (atr | WS_MASK_RBGBG));
+                atr |= WS_MASK_RBGBG;
                 break;
 
             case 49: /* default background */
                 atr &= ~WS_MASK_BG;
                 atr |= (ssh->defaultAttr & WS_MASK_BG);
-                SetConsoleTextAttribute(handle, atr);
                 break;
 
             default:
                WLOG(WS_LOG_DEBUG, "Unknown display attribute %d", args[i]);
         }
     }
+    SetConsoleTextAttribute(handle, (WORD)atr);
 }
 
 
