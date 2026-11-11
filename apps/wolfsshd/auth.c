@@ -238,6 +238,8 @@ struct WOLFSSHD_AUTH {
      * writes are compiled out on Windows); see HandleConnection. */
     char peerIp[WOLFSSHD_PEER_IP_SZ]; /* connection peer IP, for source-address */
     char* certForcedCmd;  /* force-command from an authenticated OpenSSH cert */
+    byte certAuth;        /* the user authenticated with an OpenSSH cert */
+    byte certPermits;     /* its WOLFSSH_OSSH_PERMIT_* bits */
 #endif
 };
 
@@ -3515,6 +3517,36 @@ int wolfSSHD_AuthSetCertForcedCmd(WOLFSSHD_AUTH* auth, const byte* cmd,
     auth->certForcedCmd = copy;
 
     return WS_SUCCESS;
+}
+
+
+int wolfSSHD_AuthSetCert(WOLFSSHD_AUTH* auth, byte permits, const byte* cmd,
+        word32 cmdSz)
+{
+    int ret = WS_SUCCESS;
+
+    if (auth == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    if (cmd != NULL && cmdSz > 0) {
+        ret = wolfSSHD_AuthSetCertForcedCmd(auth, cmd, cmdSz);
+    }
+    if (ret == WS_SUCCESS) {
+        auth->certAuth = 1;
+        auth->certPermits = permits;
+    }
+
+    return ret;
+}
+
+
+int wolfSSHD_AuthCertPermits(const WOLFSSHD_AUTH* auth, byte permit)
+{
+    if (auth == NULL) {
+        return 0;
+    }
+    return !auth->certAuth || (auth->certPermits & permit) == permit;
 }
 #endif /* WOLFSSH_OSSH_CERTS */
 

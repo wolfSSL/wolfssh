@@ -7863,6 +7863,89 @@ static int test_OsshCertForcedCmd(void)
     return ret;
 }
 
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+static void* FailMalloc(size_t size)
+{
+    (void)size;
+    return NULL;
+}
+#endif
+
+/* Cert permits: unset permits all; a failed AuthSetCert records nothing. */
+static int test_OsshCertPermits(void)
+{
+    int ret = WS_SUCCESS;
+    WOLFSSHD_AUTH* auth;
+    static const byte cmd[] = { 'e','c','h','o' };
+    struct passwd* (*savedGetpwnam)(const char*);
+
+    InstallGetpwnamStub(&savedGetpwnam);
+
+    auth = wolfSSHD_AuthCreateUser(NULL, NULL);
+    if (auth == NULL) {
+        Log("    wolfSSHD_AuthCreateUser failed.\n");
+        wsshd_getpwnam_cb = savedGetpwnam;
+        return WS_FATAL_ERROR;
+    }
+
+    Log("    Testing AuthCertPermits: no certificate permits all.");
+    if (!wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_PTY) ||
+            !wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_AGENT_FWD) ||
+            wolfSSHD_AuthCertPermits(NULL, WOLFSSH_OSSH_PERMIT_PTY) ||
+            wolfSSHD_AuthSetCert(NULL, 0, NULL, 0) != WS_BAD_ARGUMENT) {
+        Log(" FAILED.\n");
+        ret = WS_FATAL_ERROR;
+    }
+    else {
+        Log(" PASSED.\n");
+    }
+
+#if !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_DEBUG_MEMORY)
+    if (ret == WS_SUCCESS) {
+        wolfSSL_Malloc_cb prevMf;
+        wolfSSL_Free_cb prevFf;
+        wolfSSL_Realloc_cb prevRf;
+        int setRet = WS_FATAL_ERROR;
+
+        Log("    Testing AuthSetCert: failed copy records nothing.");
+        if (wolfSSL_GetAllocators(&prevMf, &prevFf, &prevRf) == 0 &&
+                wolfSSL_SetAllocators(FailMalloc, prevFf, prevRf) == 0) {
+            setRet = wolfSSHD_AuthSetCert(auth, 0, cmd, (word32)sizeof(cmd));
+            (void)wolfSSL_SetAllocators(prevMf, prevFf, prevRf);
+        }
+        if (setRet != WS_MEMORY_E ||
+                !wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_PTY) ||
+                wolfSSHD_AuthGetForcedCmd(auth) != NULL) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+#endif
+
+    if (ret == WS_SUCCESS) {
+        Log("    Testing AuthSetCert: only the recorded bits permit.");
+        if (wolfSSHD_AuthSetCert(auth, WOLFSSH_OSSH_PERMIT_PTY, NULL, 0)
+                != WS_SUCCESS ||
+                !wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_PTY) ||
+                wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_AGENT_FWD) ||
+                wolfSSHD_AuthCertPermits(auth, WOLFSSH_OSSH_PERMIT_X11_FWD) ||
+                wolfSSHD_AuthGetForcedCmd(auth) != NULL) {
+            Log(" FAILED.\n");
+            ret = WS_FATAL_ERROR;
+        }
+        else {
+            Log(" PASSED.\n");
+        }
+    }
+
+    wolfSSHD_AuthFreeUser(auth);
+    wsshd_getpwnam_cb = savedGetpwnam;
+    return ret;
+}
+
 #ifdef WOLFSSL_BASE64_ENCODE
 /* Run CheckPublicKeyUnix for one scenario and check acceptance vs rejection. */
 static int pkExpect(const char* desc, const char* user,
@@ -8613,6 +8696,7 @@ const TEST_CASE testCases[] = {
     TEST_DECL(test_OsshCertCheckPrincipal),
     TEST_DECL(test_OsshCertCheckValidity),
     TEST_DECL(test_OsshCertForcedCmd),
+    TEST_DECL(test_OsshCertPermits),
 #ifdef WOLFSSL_BASE64_ENCODE
     TEST_DECL(test_CheckPublicKeyUnixOrdering),
 #endif
