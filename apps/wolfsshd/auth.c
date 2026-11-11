@@ -2472,6 +2472,10 @@ static int SetupUserTokenWin(const char* usr,
         WFREE(authInfo, NULL, DYNTYPE_SSHD);
     }
 
+    if (usrW != NULL) {
+        WFREE(usrW, NULL, DYNTYPE_SSHD);
+    }
+
     if (lsaHandle != NULL) {
         LsaDeregisterLogonProcess(lsaHandle);
     }
