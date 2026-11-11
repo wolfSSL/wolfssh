@@ -72,6 +72,14 @@
 #define INVALID_FWD_PORT 0
 /* wolfSSH_worker() calls to wait for a want-reply tcpip-forward answer. */
 #define MAX_REPLY_TRIES 100
+
+#ifndef USE_WINDOWS_API
+    #define SOCKET_ERRNO errno
+    #define SOCKET_EINTR EINTR
+#else
+    #define SOCKET_ERRNO WSAGetLastError()
+    #define SOCKET_EINTR WSAEINTR
+#endif
 static const char defaultFwdFromHost[] = "0.0.0.0";
 
 
@@ -256,6 +264,30 @@ typedef struct PortfwdState {
     int wantPortZero;       /* the request asked the peer to pick the port */
     word16 boundPort;       /* port the peer reported binding */
 } PortfwdState;
+
+
+/* Send all of buf, retrying on EINTR. Returns bufSz or -1. */
+static int app_write_all(SOCKET_T fd, const byte* buf, word32 bufSz)
+{
+    word32 off = 0;
+    int cnt;
+
+    while (off < bufSz) {
+        cnt = (int)send(fd, (const char*)buf + off, (int)(bufSz - off), 0);
+
+        if (cnt > 0) {
+            off += (word32)cnt;
+        }
+        else if (cnt < 0 && SOCKET_ERRNO == SOCKET_EINTR) {
+            continue;
+        }
+        else {
+            return -1;
+        }
+    }
+
+    return (int)bufSz;
+}
 
 
 /* Open a TCP connection to the pre-resolved forward target. Returns -1 on
@@ -848,7 +880,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                     drained = wolfSSH_ChannelRead(fwdChannel, sshBuffer,
                             sshBufferSz);
                     if (drained > 0) {
-                        if ((int)send(appFd, sshBuffer, drained, 0) != drained)
+                        if (app_write_all(appFd, sshBuffer,
+                                    (word32)drained) < 0)
                             break;
                     }
                 } while (drained > 0);
@@ -881,8 +914,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 if (ret > 0) {
                     sshBufferUsed = (word32)ret;
                     if (appFd != -1) {
-                        ret = (int)send(appFd, sshBuffer, sshBufferUsed, 0);
-                        if (ret != (int)sshBufferUsed)
+                        ret = app_write_all(appFd, sshBuffer, sshBufferUsed);
+                        if (ret < 0)
                             break;
                     }
                 }
