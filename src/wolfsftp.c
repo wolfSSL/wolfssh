@@ -19,6 +19,13 @@
  */
 
 
+#ifdef __linux__
+    /* for O_PATH */
+    #ifndef _GNU_SOURCE
+        #define _GNU_SOURCE
+    #endif
+#endif
+
 #ifdef HAVE_CONFIG_H
     #include <config.h>
 #endif
@@ -1555,6 +1562,115 @@ static byte* wolfSSH_SFTP_RecvGetData(WOLFSSH* ssh)
 }
 
 
+/* Root length without trailing separators, "/" kept; over 1 is confined. */
+static word32 SFTP_ConfineLen(const char* root)
+{
+    word32 len = 0;
+
+    if (root != NULL) {
+        len = (word32)WSTRLEN(root);
+        while (len > 1 && WOLFSSH_SFTP_IS_DELIM(root[len - 1])) {
+            len--;
+        }
+    }
+    return len;
+}
+
+
+/* Returns WS_PERMISSIONS if canonical path s is outside the confine root. */
+static int SFTP_CheckConfined(WOLFSSH* ssh, char* s)
+{
+    int    ret = WS_SUCCESS;
+    const char* confinePath = ssh->sftpConfinePath;
+    word32 cpLen = SFTP_ConfineLen(confinePath);
+    word32 sLen = (word32)WSTRLEN(s);
+
+    if (confinePath == NULL) {
+        return WS_SUCCESS;
+    }
+
+    if (cpLen > 1) {
+        /* Constant time over the whole root. Windows folds ASCII case, as the
+         * root keeps GetCurrentDirectoryA()'s case. */
+        if (sLen < cpLen) {
+            ret = WS_PERMISSIONS;
+        }
+        else {
+            int diff;
+#ifdef USE_WINDOWS_API
+            word32 i;
+            byte   a, b;
+
+            diff = 0;
+            for (i = 0; i < cpLen; i++) {
+                a = (byte)s[i];
+                b = (byte)confinePath[i];
+                a = (byte)(a | (((byte)(a - 'A') < 26) << 5));
+                b = (byte)(b | (((byte)(b - 'A') < 26) << 5));
+                diff |= a ^ b;
+            }
+#else
+            diff = wolfSSH_ConstantCompare((const byte*)s,
+                    (const byte*)confinePath, cpLen);
+#endif
+            diff |= (s[cpLen] != '\0' && !WOLFSSH_SFTP_IS_DELIM(s[cpLen]));
+            if (diff != 0) {
+                ret = WS_PERMISSIONS;
+            }
+        }
+    }
+    else {
+        /* root is "/", the whole filesystem: unconfined, but still only
+         * absolute paths are accepted */
+        if (s[0] == '\0' || !WOLFSSH_SFTP_IS_DELIM(s[0])) {
+            ret = WS_PERMISSIONS;
+        }
+    }
+
+#ifdef WOLFSSH_HAVE_SYMLINK
+    if (ret == WS_SUCCESS && cpLen > 1) {
+        /* RealPath does not resolve links, so reject any link below the
+         * root. A missing leaf is allowed so creates work. */
+        word32 i;
+        char   saved;
+
+        for (i = cpLen + 1; i <= sLen && ret == WS_SUCCESS; i++) {
+            if (i != sLen && !WOLFSSH_SFTP_IS_DELIM(s[i])) {
+                continue;
+            }
+            saved = s[i];
+            s[i] = '\0';
+            if (wIsSymlink(s)) {
+                ret = WS_PERMISSIONS;
+            }
+            s[i] = saved;
+        }
+    }
+#endif /* WOLFSSH_HAVE_SYMLINK */
+
+    return ret;
+}
+
+
+/* What relative requests resolve against: the start path, or the root when
+ * a confined start path is outside it or goes through a link. */
+static const char* SFTP_StartPath(WOLFSSH* ssh)
+{
+    const char* start = ssh->sftpDefaultPath;
+    char s[WOLFSSH_MAX_FILENAME];
+
+    if (start != NULL && SFTP_ConfineLen(ssh->sftpConfinePath) > 1) {
+        WSTRNCPY(s, start, sizeof(s) - 1);
+        s[sizeof(s) - 1] = '\0';
+        if (SFTP_CheckConfined(ssh, s) != WS_SUCCESS) {
+            start = ssh->sftpConfinePath;
+        }
+    }
+
+    return start;
+}
+
+
 /* returns WS_SUCCESS on success */
 static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         int maxSz)
@@ -1636,13 +1752,36 @@ static int wolfSSH_SFTP_RecvRealPath(WOLFSSH* ssh, int reqId, byte* data,
         return ret;
     }
 
-    ret = wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sizeof s);
+    ret = wolfSSH_RealPath(SFTP_StartPath(ssh), r, s, sizeof s);
     if (ret != WS_SUCCESS) {
         return ret;
     }
     sSz = (word32)WSTRLEN(s);
 
     WLOG(WS_LOG_SFTP, "Real Path Directory = %s", s);
+
+    /* name only what the other requests would accept */
+    if (SFTP_CheckConfined(ssh, s) != WS_SUCCESS) {
+        WLOG(WS_LOG_SFTP, "Real Path outside the confinement root");
+        outSz = 0;
+        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId,
+                "Permission denied", "English", NULL, &outSz)
+                != WS_SIZE_ONLY) {
+            return WS_FATAL_ERROR;
+        }
+        out = (byte*)WMALLOC(outSz, ssh->ctx->heap, DYNTYPE_BUFFER);
+        if (out == NULL) {
+            return WS_MEMORY_E;
+        }
+        if (wolfSSH_SFTP_CreateStatus(ssh, WOLFSSH_FTP_PERMISSION, reqId,
+                "Permission denied", "English", out, &outSz)
+                != WS_SUCCESS) {
+            WFREE(out, ssh->ctx->heap, DYNTYPE_BUFFER);
+            return WS_FATAL_ERROR;
+        }
+        wolfSSH_SFTP_RecvSetSend(ssh, out, outSz);
+        return WS_BAD_FILE_E;
+    }
 
     /* send response */
     outSz = WOLFSSH_SFTP_HEADER + (UINT32_SZ * 3) + (sSz * 2);
@@ -2043,8 +2182,6 @@ static int GetAndCleanPath(WOLFSSH* ssh,
         const byte* data, word32 sz, char* s, word32 sSz)
 {
     int    ret;
-    word32 cpLen = 0;
-    const char* confinePath = ssh->sftpConfinePath;
     char   r[WOLFSSH_MAX_FILENAME];
 
     if (sz >= sizeof r)
@@ -2052,71 +2189,113 @@ static int GetAndCleanPath(WOLFSSH* ssh,
     WMEMCPY(r, data, sz);
     r[sz] = '\0';
 
-    ret = wolfSSH_RealPath(ssh->sftpDefaultPath, r, s, sSz);
-    if (ret == WS_SUCCESS && confinePath != NULL) {
-        /* both sides are canonical - the root by SetConfinePath, the request
-         * by the RealPath call above - so a prefix compare confines it */
-        cpLen = (word32)WSTRLEN(confinePath);
-        /* strip trailing separator(s), but keep a lone "/" as-is */
-        while (cpLen > 1 && WOLFSSH_SFTP_IS_DELIM(confinePath[cpLen - 1])) {
-            cpLen--;
-        }
-        if (cpLen > 1) {
-            /* the resolved path must be the root itself or sit under it.
-             * Windows paths are case-insensitive and the root keeps
-             * GetCurrentDirectoryA()'s case, so compare without case there
-             * rather than reject in-jail requests over case alone. */
-#ifdef USE_WINDOWS_API
-            if (WSTRNCASECMP(s, confinePath, cpLen) != 0 ||
-#else
-            if (WSTRNCMP(s, confinePath, cpLen) != 0 ||
-#endif
-                    (s[cpLen] != '\0' && !WOLFSSH_SFTP_IS_DELIM(s[cpLen]))) {
-                ret = WS_PERMISSIONS;
-            }
-        }
-        else {
-            /* root is "/", the whole filesystem: unconfined, but still only
-             * absolute paths are accepted */
-            if (s[0] == '\0' || !WOLFSSH_SFTP_IS_DELIM(s[0])) {
-                ret = WS_PERMISSIONS;
-            }
-        }
+    ret = wolfSSH_RealPath(SFTP_StartPath(ssh), r, s, sSz);
+    if (ret == WS_SUCCESS) {
+        ret = SFTP_CheckConfined(ssh, s);
     }
-
-#ifdef WOLFSSH_HAVE_SYMLINK
-    if (ret == WS_SUCCESS && confinePath != NULL && cpLen > 1) {
-        /* Defense in depth: the prefix check only proves the path string
-         * stays under the jail, and wolfSSH_RealPath does not resolve
-         * symlinks, so an in-jail link pointing out would pass it and then be
-         * followed.  Reject any existing component below the root that is a
-         * link, in-jail targets included; a not-yet-created leaf is left to
-         * the operation so creates still work. */
-        word32 i;
-        word32 sLen = (word32)WSTRLEN(s);
-        char   saved;
-
-        for (i = cpLen; i <= sLen && ret == WS_SUCCESS; i++) {
-            /* act only at a component boundary (a separator) or the leaf */
-            if (i != sLen && !WOLFSSH_SFTP_IS_DELIM(s[i])) {
-                continue;
-            }
-            /* the jail root itself is trusted; only inspect inside the jail */
-            if (i <= cpLen) {
-                continue;
-            }
-            saved = s[i];
-            s[i] = '\0';
-            if (wIsSymlink(s)) {
-                ret = WS_PERMISSIONS;
-            }
-            s[i] = saved;
-        }
-    }
-#endif /* WOLFSSH_HAVE_SYMLINK */
 
     return ret;
 }
+
+
+/* Needs a search-only open: O_RDONLY would demand read permission on each
+ * directory. */
+#if defined(WOLFSSH_HAVE_DIRFD) && defined(WOLFSSH_HAVE_SYMLINK) && \
+    defined(O_NOFOLLOW) && (defined(O_SEARCH) || defined(O_PATH))
+#define WOLFSSH_SFTP_OPEN_BENEATH
+
+/* Opens path walking from the confine root with O_NOFOLLOW, refusing a link
+ * swapped in after the check. Returns -1 with errno set on failure. */
+static WFD SFTP_OpenBeneath(WOLFSSH* ssh, const char* path, int flags,
+        int mode)
+{
+    char   comp[WOLFSSH_MAX_FILENAME];
+    const char* p;
+    const char* end;
+    word32 cpLen = SFTP_ConfineLen(ssh->sftpConfinePath);
+    WFD    dfd;
+    WFD    nfd;
+    WFD    fd = -1;
+    int    err;
+
+    if (cpLen <= 1) {
+        return WOPEN(ssh->fs, path, flags, mode);
+    }
+#ifdef WOLFSSH_TEST_INTERNAL
+    if (ssh->testSftpPreOpen != NULL) {
+        ssh->testSftpPreOpen(ssh->testSftpPreOpenCtx);
+    }
+#endif
+
+    /* the root is trusted, as in SFTP_CheckConfined */
+    dfd = WOPEN(ssh->fs, ssh->sftpConfinePath,
+            WOLFSSH_O_SEARCH | WOLFSSH_O_DIRECTORY, 0);
+    p = path + cpLen;
+    while (dfd >= 0) {
+        while (WOLFSSH_SFTP_IS_DELIM(*p)) {
+            p++;
+        }
+        end = p;
+        while (*end != '\0' && !WOLFSSH_SFTP_IS_DELIM(*end)) {
+            end++;
+        }
+        if (end == p) {
+            /* path is the root itself */
+            fd = WOPENAT(ssh->fs, dfd, ".", flags | WOLFSSH_O_NOFOLLOW, mode);
+            break;
+        }
+        WMEMCPY(comp, p, (word32)(end - p));
+        comp[end - p] = '\0';
+        p = end;
+        while (WOLFSSH_SFTP_IS_DELIM(*p)) {
+            p++;
+        }
+        if (*p == '\0') {
+            fd = WOPENAT(ssh->fs, dfd, comp, flags | WOLFSSH_O_NOFOLLOW, mode);
+            break;
+        }
+        nfd = WOPENAT(ssh->fs, dfd, comp, WOLFSSH_O_SEARCH |
+                WOLFSSH_O_DIRECTORY | WOLFSSH_O_NOFOLLOW, 0);
+        err = errno;
+        WCLOSE(ssh->fs, dfd);
+        errno = err;
+        dfd = nfd;
+    }
+    if (dfd >= 0) {
+        err = errno;
+        WCLOSE(ssh->fs, dfd);
+        errno = err;
+    }
+
+    return fd;
+}
+
+#ifndef NO_WOLFSSH_DIR
+/* SFTP_OpenBeneath for WOPENDIR; returns 0 on success. */
+static int SFTP_OpenDirBeneath(WOLFSSH* ssh, WDIR* dir, const char* path)
+{
+    WFD fd;
+    int err;
+
+    if (SFTP_ConfineLen(ssh->sftpConfinePath) <= 1) {
+        return WOPENDIR(ssh->fs, ssh->ctx->heap, dir, path);
+    }
+
+    fd = SFTP_OpenBeneath(ssh, path, WOLFSSH_O_RDONLY | WOLFSSH_O_DIRECTORY,
+            0);
+    if (fd < 0) {
+        return 1;
+    }
+    if (WFDOPENDIR(ssh->fs, dir, fd) != 0) {
+        err = errno;
+        WCLOSE(ssh->fs, fd);
+        errno = err;
+        return 1;
+    }
+    return 0;
+}
+#endif /* !NO_WOLFSSH_DIR */
+#endif /* WOLFSSH_SFTP_OPEN_BENEATH */
 
 
 /* Builds a status packet and queues it for send.
@@ -2634,6 +2813,8 @@ int wolfSSH_SFTP_RecvOpen(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
                 fd = -1;
             }
         }
+    #elif defined(WOLFSSH_SFTP_OPEN_BENEATH)
+        fd = SFTP_OpenBeneath(ssh, dir, m, WOLFSSH_SFTP_SAFE_MODE(atr.per));
     #else
         fd = WOPEN(ssh->fs, dir, m, WOLFSSH_SFTP_SAFE_MODE(atr.per));
     #endif
@@ -2999,7 +3180,11 @@ int wolfSSH_SFTP_RecvOpenDir(WOLFSSH* ssh, int reqId, byte* data, word32 maxSz)
         return (rc == WS_SUCCESS) ? WS_BAD_FILE_E : rc;
     }
 
+#ifdef WOLFSSH_SFTP_OPEN_BENEATH
+    if (SFTP_OpenDirBeneath(ssh, &ctx, dir) != 0) {
+#else
     if (WOPENDIR(ssh->fs, ssh->ctx->heap, &ctx, dir) != 0) {
+#endif
         byte type = SFTP_FailStatus(WOLFSSH_FTP_NOFILE);
 
         WLOG(WS_LOG_SFTP, "Error with opening directory: %s", dir);
@@ -6714,6 +6899,25 @@ int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh)
 }
 #endif /* NO_WOLFSSH_DIR */
 
+/* Test hook run between the confinement check and the open walk. Returns
+ * WS_NOT_COMPILED on builds without the walk. */
+int wolfSSH_SFTP_TestSetPreOpen(WOLFSSH* ssh, void (*cb)(void* ctx),
+        void* ctx)
+{
+    if (ssh == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+#ifdef WOLFSSH_SFTP_OPEN_BENEATH
+    ssh->testSftpPreOpen = cb;
+    ssh->testSftpPreOpenCtx = ctx;
+    return WS_SUCCESS;
+#else
+    (void)cb;
+    (void)ctx;
+    return WS_NOT_COMPILED;
+#endif
+}
+
 #ifndef USE_WINDOWS_API
 /* Close the underlying descriptor of the head tracked file handle out of band,
  * leaving the node in the list with a now-stale fd. The next RecvClose on that
@@ -9460,6 +9664,14 @@ int wolfSSH_SFTP_SetConfinePath(WOLFSSH* ssh, const char* path)
     if (ret == WS_SUCCESS) {
         ret = StorePath(ssh, &ssh->sftpConfinePath, canon);
     }
+#ifdef WOLFSSH_NO_SFTP_CONFINE
+    /* "/" confines nothing, so it is allowed. Any other root is still stored,
+     * so a caller ignoring the error keeps the lexical jail. */
+    if (ret == WS_SUCCESS && WSTRSPN(canon, "/\\") != WSTRLEN(canon)) {
+        WLOG(WS_LOG_SFTP, "SFTP confinement unsupported, links not refused");
+        ret = WS_NOT_COMPILED;
+    }
+#endif
 
     return ret;
 }

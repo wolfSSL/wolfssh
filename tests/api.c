@@ -6058,6 +6058,7 @@ static void test_wolfSSH_SFTP_ReKey_NonBlock(void)
     sftp_rekey_test(1);
 }
 
+#ifndef WOLFSSH_NO_SFTP_CONFINE
 static void test_wolfSSH_SFTP_Confinement(void)
 {
     func_args        ser;
@@ -6354,6 +6355,18 @@ static void test_wolfSSH_SFTP_Confinement(void)
     wolfSSH_SFTPNAME_list_free(ls);
     ls = NULL;
 
+    /* REALPATH refuses an escape but still names the root */
+    ls = wolfSSH_SFTP_RealPath(ssh, escFile);
+    AssertNull(ls);
+#if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API)
+    ls = wolfSSH_SFTP_RealPath(ssh, escRel);
+    AssertNull(ls);
+#endif
+    ls = wolfSSH_SFTP_RealPath(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
 #if !defined(WOLFSSH_ZEPHYR) && !defined(USE_WINDOWS_API) && \
         defined(WOLFSSH_HAVE_SYMLINK)
     /* Symlink escape: an in-jail symlink to the out-of-jail tree resolves to
@@ -6374,6 +6387,14 @@ static void test_wolfSSH_SFTP_Confinement(void)
     ret = wolfSSH_SFTP_Open(ssh, escSymThru, WOLFSSH_FXF_READ, NULL,
             handle, &handleSz);
     AssertIntNE(ret, WS_SUCCESS);
+    ls = wolfSSH_SFTP_LS(ssh, curDir);
+    AssertNotNull(ls);
+    wolfSSH_SFTPNAME_list_free(ls);
+    ls = NULL;
+
+    /* nor is a path through the link named by REALPATH */
+    ls = wolfSSH_SFTP_RealPath(ssh, escSymThru);
+    AssertNull(ls);
     ls = wolfSSH_SFTP_LS(ssh, curDir);
     AssertNotNull(ls);
     wolfSSH_SFTPNAME_list_free(ls);
@@ -6436,6 +6457,10 @@ static void test_wolfSSH_SFTP_Confinement(void)
     }
 #endif
 }
+#else
+/* the echoserver's -D is refused on this build */
+static void test_wolfSSH_SFTP_Confinement(void) { ; }
+#endif /* !WOLFSSH_NO_SFTP_CONFINE */
 
 
 /* A session given only a start path is NOT confined to it: the wolfsshd
@@ -6578,6 +6603,15 @@ static void test_wolfSSH_SFTP_SetConfinePath(void)
     AssertStrEQ(ssh->sftpDefaultPath, "/tmp/start");
     AssertNull(ssh->sftpConfinePath);
 
+#ifdef WOLFSSH_NO_SFTP_CONFINE
+    /* refused on this build, except "/", but still stored */
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/tmp/./jail"),
+            WS_NOT_COMPILED);
+    AssertStrEQ(ssh->sftpConfinePath, "/tmp/jail");
+    AssertStrEQ(ssh->sftpDefaultPath, "/tmp/start");
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/"), WS_SUCCESS);
+    AssertStrEQ(ssh->sftpConfinePath, "/");
+#else
     /* a confinement root on its own does not move the start path */
     AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/tmp/./jail"), WS_SUCCESS);
     AssertStrEQ(ssh->sftpConfinePath, "/tmp/jail");
@@ -6591,6 +6625,7 @@ static void test_wolfSSH_SFTP_SetConfinePath(void)
     AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, "/var/jail2"), WS_SUCCESS);
     AssertStrEQ(ssh->sftpConfinePath, "/var/jail2");
     AssertStrEQ(ssh->sftpDefaultPath, "/tmp/jail/sub");
+#endif
 
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);

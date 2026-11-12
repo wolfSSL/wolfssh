@@ -1778,6 +1778,15 @@ extern "C" {
     #define WOLFSSH_O_NOFOLLOW 0
 #endif
 
+/* Builds where SFTP cannot refuse a link below a confine root; see
+ * wolfsftp.h. */
+#if !defined(WOLFSSH_NO_SFTP_CONFINE) && \
+    (defined(WOLFSSH_NO_SYMLINK_CHECK) || defined(WOLFSSH_USER_FILESYSTEM) || \
+     (defined(WOLFSSH_HAVE_SYMLINK) && !defined(USE_WINDOWS_API) && \
+      !defined(O_NOFOLLOW)))
+    #define WOLFSSH_NO_SFTP_CONFINE
+#endif
+
 /* Catch-all so callers can test a seek result unconditionally.  Ports whose
  * seek returns the new file position rather than a 0/-1 status define their
  * own WFSEEK_SUCCESS() in the port block above; see Nucleus and MPLAB

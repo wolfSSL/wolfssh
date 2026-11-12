@@ -17953,6 +17953,15 @@ static void TestSftpBufferSendPendingOutput(void)
 }
 
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_FILESYSTEM)
+/* Confines a fixture to root; lexical only where links are not refused. */
+#ifdef WOLFSSH_NO_SFTP_CONFINE
+    #define AssertSftpConfine(ssh, root) \
+        AssertIntEQ(wolfSSH_SFTP_SetConfinePath((ssh), (root)), WS_NOT_COMPILED)
+#else
+    #define AssertSftpConfine(ssh, root) \
+        AssertIntEQ(wolfSSH_SFTP_SetConfinePath((ssh), (root)), WS_SUCCESS)
+#endif
+
 /* Write a big-endian uint32 (the SFTP wire encoding). */
 static void SftpPutU32(word32 val, byte* out)
 {
@@ -18415,7 +18424,7 @@ static void TestSftpForgedHandleRejected(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     /* ---- positive control: legitimately open a file over SFTP ----
      * RecvOpen assigns the first handle the per-session id {0,0}. */
@@ -18601,7 +18610,7 @@ static void TestSftpHandleNamespaceIsolation(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     /* open a directory -> first id from the shared counter */
     idx = 0;
@@ -18734,7 +18743,7 @@ static void TestSftpHandleLimit(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     /* open the cap's worth of handles against one file; all must succeed */
     for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
@@ -18868,7 +18877,7 @@ static void TestSftpDirHandleLimit(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     /* open the cap's worth of handles on "."; all must succeed */
     for (i = 0; i < WOLFSSH_MAX_SFTP_HANDLES; i++) {
@@ -19121,7 +19130,7 @@ static void TestSftpReadDirBounded(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
     SftpMakeDirFixture(dir, sizeof(dir), FILES);
     WMEMSET(seen, 0, sizeof(seen));
 
@@ -19176,7 +19185,7 @@ static void TestSftpReadDirLongName(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
     SftpMakeDirFixture(dir, sizeof(dir), FILES);
     WSNPRINTF(longName, sizeof(longName), "f%0*d", LONG_SZ - 1, FILES);
     WSNPRINTF(path, sizeof(path), "%s/%s", dir, longName);
@@ -19301,7 +19310,7 @@ static void TestSftpReadDirAllocFailure(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
     SftpMakeDirFixture(dir, sizeof(dir), FILES);
 
     /* count the allocations of a clean READDIR */
@@ -19360,7 +19369,7 @@ static void TestSftpOpenDirAllocFailure(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     SftpPutU32(1, pkt + idx); idx += UINT32_SZ;
     pkt[idx++] = '.';
@@ -19428,7 +19437,7 @@ static void TestSftpMissingFileStatus(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     WSNPRINTF(dir, sizeof(dir), "wolfssh_nofile_%d", (int)getpid());
     WSNPRINTF(missing, sizeof(missing), "%s/missing", dir);
@@ -19530,7 +19539,7 @@ static void TestSftpCloseFailureRemovesHandle(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     idx = 0;
     SftpPutU32((word32)WSTRLEN(path), pkt + idx); idx += UINT32_SZ;
@@ -19667,7 +19676,7 @@ static void TestSftpSetStatAttributes(void)
     WMEMSET(cwd, 0, sizeof(cwd));
     AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
     AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
-    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
 
     /* fixture: a file of known length owned by this process */
     fd = WOPEN(ssh->fs, path,
@@ -19838,6 +19847,7 @@ static void TestSftpSetStatAttributes(void)
     wolfSSH_CTX_free(ctx);
 }
 
+#ifndef WOLFSSH_NO_SFTP_CONFINE
 /* Sends an FXP_STAT for path and returns the handler's return code. */
 static int SftpStatPath(WOLFSSH* ssh, int reqId, const char* path)
 {
@@ -19972,6 +19982,325 @@ static void TestSftpStartPathInsideConfineRoot(void)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
 }
+
+/* A start path outside the root is replaced by the root, so relative
+ * requests resolve there instead of failing. */
+static void TestSftpStartPathOutsideConfineRoot(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 550;
+    char cwd[WOLFSSH_MAX_FILENAME - 64];
+    char root[WOLFSSH_MAX_FILENAME];
+    char start[WOLFSSH_MAX_FILENAME];
+    char rootFile[WOLFSSH_MAX_FILENAME];
+    char startFile[WOLFSSH_MAX_FILENAME];
+    WFILE* fp = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    if (WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1) == NULL) {
+        wolfSSH_SFTP_TestRecvStateFree(ssh);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        return;
+    }
+
+    #define CONFINE_OUT "%s/wolfssh_confout_%d"
+    WSNPRINTF(root, sizeof(root), CONFINE_OUT "_root", cwd, (int)getpid());
+    WSNPRINTF(start, sizeof(start), CONFINE_OUT "_start", cwd, (int)getpid());
+    WSNPRINTF(rootFile, sizeof(rootFile), CONFINE_OUT "_root/f",
+            cwd, (int)getpid());
+    WSNPRINTF(startFile, sizeof(startFile), CONFINE_OUT "_start/f",
+            cwd, (int)getpid());
+    #undef CONFINE_OUT
+
+    AssertIntEQ(WMKDIR(ssh->fs, root, 0755), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, start, 0755), 0);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, rootFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(ssh->fs, fp);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, startFile, "wb"), 0);
+    AssertNotNull(fp);
+    WFCLOSE(ssh->fs, fp);
+
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, start), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_SetConfinePath(ssh, root), WS_SUCCESS);
+
+    /* relative names resolve under the root */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "."), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+    AssertIntEQ(SftpStatPath(ssh, ++rid, "f"), WS_SUCCESS);
+    AssertSftpAttrsReply(ssh, rid);
+
+    /* the start directory itself stays out of bounds */
+    AssertIntEQ(SftpStatPath(ssh, ++rid, startFile), WS_BAD_FILE_E);
+    AssertSftpStatusReply(ssh, rid, WOLFSSH_FTP_PERMISSION);
+
+    (void)WREMOVE(ssh->fs, rootFile);
+    (void)WREMOVE(ssh->fs, startFile);
+    (void)WRMDIR(ssh->fs, root);
+    (void)WRMDIR(ssh->fs, start);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* A confined session can create and read through mode 0300 directories.
+ * Skipped as root, which passes every permission check. */
+static void TestSftpOpenThroughSearchOnlyDir(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    int rid = 600;
+    int created;
+    int createdDeep;
+    int reread;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    char cwd[WOLFSSH_MAX_FILENAME];
+    char dir[64];
+    char sub[96];
+    char file[96];
+    char deep[128];
+
+    if (geteuid() == 0) {
+        return;
+    }
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    AssertNotNull(WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1));
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, cwd), WS_SUCCESS);
+    AssertSftpConfine(ssh, cwd);
+
+    WSNPRINTF(dir, sizeof(dir), "wolfssh_search_%d", (int)getpid());
+    WSNPRINTF(sub, sizeof(sub), "%s/sub", dir);
+    WSNPRINTF(file, sizeof(file), "%s/up", dir);
+    WSNPRINTF(deep, sizeof(deep), "%s/sub/up", dir);
+    AssertIntEQ(mkdir(dir, 0700), 0);
+    AssertIntEQ(mkdir(sub, 0300), 0);
+    AssertIntEQ(chmod(dir, 0300), 0);
+
+    /* assert after restoring the modes so cleanup can run */
+    created = SftpOpenPath(ssh, ++rid, file,
+            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT, handle);
+    if (created == WS_SUCCESS) {
+        (void)SftpCloseHandle(ssh, ++rid, handle);
+    }
+    createdDeep = SftpOpenPath(ssh, ++rid, deep,
+            WOLFSSH_FXF_WRITE | WOLFSSH_FXF_CREAT, handle);
+    if (createdDeep == WS_SUCCESS) {
+        (void)SftpCloseHandle(ssh, ++rid, handle);
+    }
+    reread = SftpOpenPath(ssh, ++rid, deep, WOLFSSH_FXF_READ, handle);
+    if (reread == WS_SUCCESS) {
+        (void)SftpCloseHandle(ssh, ++rid, handle);
+    }
+
+    (void)chmod(dir, 0700);
+    (void)chmod(sub, 0700);
+    (void)remove(deep);
+    (void)remove(file);
+    (void)rmdir(sub);
+    (void)rmdir(dir);
+    AssertIntEQ(created, WS_SUCCESS);
+    AssertIntEQ(createdDeep, WS_SUCCESS);
+    AssertIntEQ(reread, WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SFTP_TestFileHandleCount(ssh), 0);
+
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+/* Swaps victim for a link to target between the check and the open. */
+typedef struct SftpLinkSwap {
+    const char* victim;
+    const char* aside;
+    const char* target;
+    int swapped;
+} SftpLinkSwap;
+
+static void SftpLinkSwapCb(void* ctx)
+{
+    SftpLinkSwap* s = (SftpLinkSwap*)ctx;
+
+    if (s->victim != NULL && rename(s->victim, s->aside) == 0) {
+        if (symlink(s->target, s->victim) == 0) {
+            s->swapped = 1;
+        }
+        else {
+            (void)rename(s->aside, s->victim);
+        }
+    }
+}
+
+static void SftpLinkSwapUndo(SftpLinkSwap* s)
+{
+    if (s->swapped) {
+        (void)unlink(s->victim);
+        (void)rename(s->aside, s->victim);
+        s->swapped = 0;
+    }
+}
+
+/* Returns the lowest free descriptor, for spotting an fd leak. */
+static int SftpLowestFreeFd(void)
+{
+    int fd = dup(0);
+
+    if (fd >= 0) {
+        close(fd);
+    }
+    return fd;
+}
+
+/* OPEN and OPENDIR refuse a component swapped for a link after the check,
+ * at the leaf and partway down. */
+static void TestSftpOpenRefusesSwappedLink(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    SftpLinkSwap swap;
+    int rid = 700;
+    int ret;
+    int refused[3] = { 0, 1, 0 }; /* the OPENDIR case may be compiled out */
+    int handles;
+    int freeFd;
+    int leakedFd;
+    byte handle[WOLFSSH_HANDLE_ID_SZ];
+    /* leaves room for the fixture suffixes */
+    char cwd[WOLFSSH_MAX_FILENAME - 64];
+    char base[WOLFSSH_MAX_FILENAME];
+    char root[WOLFSSH_MAX_FILENAME];
+    char out[WOLFSSH_MAX_FILENAME];
+    char outFile[WOLFSSH_MAX_FILENAME];
+    char dir[WOLFSSH_MAX_FILENAME];
+    char dirAside[WOLFSSH_MAX_FILENAME];
+    char dirFile[WOLFSSH_MAX_FILENAME];
+    char leaf[WOLFSSH_MAX_FILENAME];
+    char leafAside[WOLFSSH_MAX_FILENAME];
+    WFILE* fp = NULL;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SFTP_TestRecvStateInit(ssh), WS_SUCCESS);
+    WMEMSET(&swap, 0, sizeof(swap));
+
+    WMEMSET(cwd, 0, sizeof(cwd));
+    if (wolfSSH_SFTP_TestSetPreOpen(ssh, SftpLinkSwapCb, &swap)
+                != WS_SUCCESS ||
+            WGETCWD(ssh->fs, cwd, sizeof(cwd) - 1) == NULL) {
+        /* no walk on this build, or too deep a directory for the fixture */
+        wolfSSH_SFTP_TestRecvStateFree(ssh);
+        wolfSSH_free(ssh);
+        wolfSSH_CTX_free(ctx);
+        return;
+    }
+
+    #define SWAP_BASE "%s/wolfssh_swap_%d"
+    WSNPRINTF(base, sizeof(base), SWAP_BASE, cwd, (int)getpid());
+    WSNPRINTF(root, sizeof(root), SWAP_BASE "/jail", cwd, (int)getpid());
+    WSNPRINTF(out, sizeof(out), SWAP_BASE "/out", cwd, (int)getpid());
+    WSNPRINTF(outFile, sizeof(outFile), SWAP_BASE "/out/f",
+            cwd, (int)getpid());
+    WSNPRINTF(dir, sizeof(dir), SWAP_BASE "/jail/d", cwd, (int)getpid());
+    WSNPRINTF(dirAside, sizeof(dirAside), SWAP_BASE "/jail/d.real",
+            cwd, (int)getpid());
+    WSNPRINTF(dirFile, sizeof(dirFile), SWAP_BASE "/jail/d/f",
+            cwd, (int)getpid());
+    WSNPRINTF(leaf, sizeof(leaf), SWAP_BASE "/jail/g", cwd, (int)getpid());
+    WSNPRINTF(leafAside, sizeof(leafAside), SWAP_BASE "/jail/g.real",
+            cwd, (int)getpid());
+    #undef SWAP_BASE
+
+    AssertIntEQ(WMKDIR(ssh->fs, base, 0700), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, root, 0700), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, out, 0700), 0);
+    AssertIntEQ(WMKDIR(ssh->fs, dir, 0700), 0);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, outFile, "wb"), 0);
+    WFCLOSE(ssh->fs, fp);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, dirFile, "wb"), 0);
+    WFCLOSE(ssh->fs, fp);
+    AssertIntEQ(WFOPEN(ssh->fs, &fp, leaf, "wb"), 0);
+    WFCLOSE(ssh->fs, fp);
+
+    AssertIntEQ(wolfSSH_SFTP_SetDefaultPath(ssh, root), WS_SUCCESS);
+    AssertSftpConfine(ssh, root);
+    freeFd = SftpLowestFreeFd();
+
+    /* positive control: no swap */
+    AssertIntEQ(SftpOpenPath(ssh, ++rid, "d/f", WOLFSSH_FXF_READ, handle),
+            WS_SUCCESS);
+    AssertIntEQ(SftpCloseHandle(ssh, ++rid, handle), WS_SUCCESS);
+    AssertIntEQ(SftpOpenPath(ssh, ++rid, "g", WOLFSSH_FXF_READ, handle),
+            WS_SUCCESS);
+    AssertIntEQ(SftpCloseHandle(ssh, ++rid, handle), WS_SUCCESS);
+#ifndef NO_WOLFSSH_DIR
+    SftpOpenDirPath(ssh, ++rid, "d", handle);
+    AssertIntEQ(SftpCloseHandle(ssh, ++rid, handle), WS_SUCCESS);
+#endif
+
+    /* asserts wait until the fixture is removed */
+    /* a directory partway down swapped for a link to out/ */
+    swap.victim = dir;
+    swap.aside = dirAside;
+    swap.target = out;
+    ret = SftpOpenPath(ssh, ++rid, "d/f", WOLFSSH_FXF_READ, handle);
+    refused[0] = swap.swapped && ret != WS_SUCCESS;
+    SftpLinkSwapUndo(&swap);
+
+#ifndef NO_WOLFSSH_DIR
+    /* the directory listed swapped for a link to out/ */
+    ret = SftpPathRequest(ssh, WOLFSSH_FTP_OPENDIR, ++rid, "d");
+    refused[1] = swap.swapped && ret != WS_SUCCESS;
+    SftpLinkSwapUndo(&swap);
+#endif
+
+    /* the file opened swapped for a link to out/f */
+    swap.victim = leaf;
+    swap.aside = leafAside;
+    swap.target = outFile;
+    ret = SftpOpenPath(ssh, ++rid, "g", WOLFSSH_FXF_READ, handle);
+    refused[2] = swap.swapped && ret != WS_SUCCESS;
+    SftpLinkSwapUndo(&swap);
+    swap.victim = NULL;
+
+    handles = wolfSSH_SFTP_TestFileHandleCount(ssh);
+#ifndef NO_WOLFSSH_DIR
+    handles += wolfSSH_SFTP_TestDirHandleCount(ssh);
+#endif
+    leakedFd = SftpLowestFreeFd() != freeFd;
+
+    (void)WREMOVE(ssh->fs, dirFile);
+    (void)WREMOVE(ssh->fs, leaf);
+    (void)WREMOVE(ssh->fs, outFile);
+    (void)WRMDIR(ssh->fs, dir);
+    (void)WRMDIR(ssh->fs, out);
+    (void)WRMDIR(ssh->fs, root);
+    (void)WRMDIR(ssh->fs, base);
+    AssertIntEQ(refused[0], 1);
+    AssertIntEQ(refused[1], 1);
+    AssertIntEQ(refused[2], 1);
+    AssertIntEQ(handles, 0);
+    AssertIntEQ(leakedFd, 0);
+    wolfSSH_SFTP_TestRecvStateFree(ssh);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+#endif /* !WOLFSSH_NO_SFTP_CONFINE */
 
 #endif /* !NO_WOLFSSH_SERVER && !USE_WINDOWS_API && !NO_FILESYSTEM */
 
@@ -24004,8 +24333,15 @@ int main(int argc, char** argv)
     #endif
     /* a failed close still drops the handle from the tracking list */
     TestSftpCloseFailureRemovesHandle();
+    #ifndef WOLFSSH_NO_SFTP_CONFINE
     /* confinement follows the confine root, not the start path */
     TestSftpStartPathInsideConfineRoot();
+    TestSftpStartPathOutsideConfineRoot();
+    /* a directory that may be searched but not read can be passed through */
+    TestSftpOpenThroughSearchOnlyDir();
+    /* a link swapped in after the check is refused by the open walk */
+    TestSftpOpenRefusesSwappedLink();
+    #endif
     /* SETSTAT/FSETSTAT apply the attributes they acknowledge */
     TestSftpSetStatAttributes();
     #endif

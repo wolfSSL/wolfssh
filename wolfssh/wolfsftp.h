@@ -244,22 +244,23 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* buf, word32 bufSz);
  * Paths are resolved lexically, which cannot prove a link stays in-jail, so
  * confinement rejects ALL symbolic links below the root - including ones
  * pointing back inside it (e.g. "current -> releases/v3"). Serve trees without
- * symlinks, or build with WOLFSSH_NO_SYMLINK_CHECK to drop the check, and the
- * escape protection with it.
+ * symlinks. REALPATH answers are confined the same way. A start path outside
+ * the root, or through a link below it, is replaced by the root.
  *
  * The root itself is trusted and never checked, so a root reached through a
  * symbolic link is as wide as that link's target. Give a root the server
  * controls, with no symlink components.
  *
- * That link check is defense in depth, not a boundary: it is a TOCTOU check,
- * inspecting each component before the operation later acts on the path by
- * name. A concurrent writer inside the jail, running as the user the server
- * does file operations as, could swap a checked component for a symlink in
- * that window; a session cannot race itself, since wolfSSH serves one
- * session's requests serially. The check reliably blocks static in-jail
- * symlinks, but closing the race portably needs *at/O_NOFOLLOW primitives some
- * supported filesystems lack. Hostile multi-tenant deployments want an
- * OS-level jail (chroot plus dropped privileges).
+ * Builds that cannot refuse a link (WOLFSSH_NO_SFTP_CONFINE: under
+ * WOLFSSH_NO_SYMLINK_CHECK, WOLFSSH_USER_FILESYSTEM, or POSIX without
+ * O_NOFOLLOW) return WS_NOT_COMPILED for any root but "/". The root is still
+ * stored and checked lexically, so links can escape it.
+ *
+ * A concurrent writer in the jail can swap in a link after the check. Where
+ * openat(), O_NOFOLLOW, and O_SEARCH or O_PATH exist, OPEN and OPENDIR walk
+ * from the root refusing links; other requests still act by name. Hostile
+ * multi-tenant deployments want an OS-level jail (chroot plus dropped
+ * privileges).
  */
 WOLFSSH_API int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path);
 WOLFSSH_API int wolfSSH_SFTP_SetConfinePath(WOLFSSH* ssh, const char* path);
@@ -377,6 +378,8 @@ WOLFSSH_LOCAL void wolfSSH_SFTP_ShowSizes(void);
                 word32* sz);
         WOLFSSH_API void wolfSSH_SFTP_TestRecvStateFree(WOLFSSH* ssh);
         WOLFSSH_API int wolfSSH_SFTP_TestFileHandleCount(WOLFSSH* ssh);
+        WOLFSSH_API int wolfSSH_SFTP_TestSetPreOpen(WOLFSSH* ssh,
+                void (*cb)(void* ctx), void* ctx);
         #ifndef NO_WOLFSSH_DIR
             WOLFSSH_API int wolfSSH_SFTP_TestDirHandleCount(WOLFSSH* ssh);
         #endif
