@@ -24548,6 +24548,17 @@ static int scpSendTestStatus(WOLFSSH* ssh, const char* fileName,
     return WS_SUCCESS;
 }
 
+/* moves idx past fileSz, as a buggy status callback could */
+static int scpSendTestStatusBadIdx(WOLFSSH* ssh, const char* fileName,
+        enum WS_ScpFileStates state, ScpBuffer* file)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(fileName);
+    if (state == WOLFSSH_SCP_SINGLE_FILE_REQUEST)
+        file->idx = 5;
+    return WS_SUCCESS;
+}
+
 static int scpSendTestStatusFail(WOLFSSH* ssh, const char* fileName,
         enum WS_ScpFileStates state, ScpBuffer* file)
 {
@@ -24722,10 +24733,11 @@ static int test_ScpSendCallback_ExactFitBuffer(void)
         sendBuf.fileSz = sendBuf.bufferSz;
     }
 
-    /* same underflow shape in the single file request state */
+    /* same underflow on a single file request; status moves idx */
     if (result == 0) {
-        sendBuf.idx    = 5;
+        sendBuf.idx    = 0;
         sendBuf.fileSz = 4;
+        sendBuf.status = scpSendTestStatusBadIdx;
         ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
                 "file.txt", fileName, (word32)sizeof(fileName), &mTime, &aTime,
                 &fileMode, 0, &totalSz, out, 10, &sendBuf);
@@ -24733,6 +24745,7 @@ static int test_ScpSendCallback_ExactFitBuffer(void)
             result = -1517;
         sendBuf.idx    = 0;
         sendBuf.fileSz = sendBuf.bufferSz;
+        sendBuf.status = scpSendTestStatus;
     }
 
     /* a failing status callback aborts the continue state even after a
@@ -24747,6 +24760,298 @@ static int test_ScpSendCallback_ExactFitBuffer(void)
             result = -1518;
         sendBuf.idx    = 0;
         sendBuf.status = scpSendTestStatus;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The no-filesystem send callback aborts on an unparsable file name, not
+ * matching a stale or empty one. aTime is reported as mTime. */
+static int test_ScpSendCallback_FileNameAndTimes(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpBuffer    sendBuf;
+    byte         data[16];
+    byte         out[64];
+    char         fileName[DEFAULT_SCP_FILE_NAME_SZ];
+    word64       mTime = 0;
+    word64       aTime = 0;
+    word32       totalSz = 0;
+    int          fileMode = 0;
+    int          result = 0;
+    int          ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1520;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1521;
+    }
+
+    WMEMSET(data, 0x5A, sizeof(data));
+    WMEMSET(&sendBuf, 0, sizeof(sendBuf));
+    WMEMCPY(sendBuf.name, "file.txt", WSTRLEN("file.txt") + 1);
+    sendBuf.nameSz   = (word32)WSTRLEN(sendBuf.name);
+    sendBuf.buffer   = data;
+    sendBuf.bufferSz = (word32)sizeof(data);
+    sendBuf.fileSz   = (word32)sizeof(data);
+    sendBuf.mTime    = 1234;
+    sendBuf.status   = scpSendTestStatus;
+
+    /* name too long for the output buffer: the stale matching name already
+     * in fileName must not let the transfer proceed */
+    WMEMCPY(fileName, "file.txt", WSTRLEN("file.txt") + 1);
+    ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+            "dir/file.txt", fileName, 4, &mTime, &aTime, &fileMode, 0,
+            &totalSz, out, (word32)sizeof(out), &sendBuf);
+    if (ret != WS_SCP_ABORT)
+        result = -1522;
+    if (result == 0 && sendBuf.idx != 0)
+        result = -1523;
+
+    /* empty peer request against an empty configured name */
+    if (result == 0) {
+        WMEMSET(sendBuf.name, 0, sizeof(sendBuf.name));
+        sendBuf.nameSz = 0;
+        WMEMSET(fileName, 0, sizeof(fileName));
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST, "",
+                fileName, (word32)sizeof(fileName), &mTime, &aTime,
+                &fileMode, 0, &totalSz, out, (word32)sizeof(out), &sendBuf);
+        if (ret != WS_SCP_ABORT)
+            result = -1524;
+        if (result == 0 && sendBuf.idx != 0)
+            result = -1525;
+        WMEMCPY(sendBuf.name, "file.txt", WSTRLEN("file.txt") + 1);
+        sendBuf.nameSz = (word32)WSTRLEN(sendBuf.name);
+    }
+
+    /* a good request reports mTime as both times */
+    if (result == 0) {
+        mTime = 0;
+        aTime = 0;
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "dir/file.txt", fileName, (word32)sizeof(fileName), &mTime,
+                &aTime, &fileMode, 0, &totalSz, out, (word32)sizeof(out),
+                &sendBuf);
+        if (ret != (int)sizeof(data))
+            result = -1526;
+        if (result == 0 && mTime != 1234)
+            result = -1527;
+        if (result == 0 && aTime != 1234)
+            result = -1528;
+    }
+
+    /* a reused ScpBuffer restarts at 0 */
+    if (result == 0) {
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_CONTINUE_FILE_TRANSFER,
+                "dir/file.txt", fileName, (word32)sizeof(fileName), &mTime,
+                &aTime, &fileMode, (word32)sizeof(data), &totalSz, out,
+                (word32)sizeof(out), &sendBuf);
+        if (ret != WS_EOF)
+            result = -1529;
+    }
+    if (result == 0) {
+        WMEMSET(out, 0, sizeof(out));
+        ret = wsScpSendCallback(ssh, WOLFSSH_SCP_SINGLE_FILE_REQUEST,
+                "dir/file.txt", fileName, (word32)sizeof(fileName), &mTime,
+                &aTime, &fileMode, 0, &totalSz, out, (word32)sizeof(out),
+                &sendBuf);
+        if (ret != (int)sizeof(data))
+            result = -1544;
+        if (result == 0 && (totalSz != sizeof(data) ||
+                sendBuf.idx != sizeof(data) ||
+                WMEMCMP(out, data, sizeof(data)) != 0))
+            result = -1545;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The default no-filesystem receive callback must start each new file with a
+ * terminated name and fresh size and index, even when the previous file was
+ * abandoned before FILE_DONE. */
+static int test_ScpRecvCallback_TwoFiles(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpBuffer    recvBuf;
+    byte         store[16];
+    byte         in[10];
+    int          result = 0;
+    int          ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1530;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1531;
+    }
+
+    WMEMSET(in, 0x11, sizeof(in));
+    WMEMSET(&recvBuf, 0, sizeof(recvBuf));
+    recvBuf.buffer   = store;
+    recvBuf.bufferSz = (word32)sizeof(store);
+    recvBuf.status   = scpSendTestStatus;
+
+    /* first file, received completely */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "first.txt",
+            0644, 0, 0, 10, NULL, 0, 0, &recvBuf);
+    if (ret != WS_SCP_CONTINUE)
+        result = -1532;
+    if (result == 0 && (recvBuf.nameSz != 9 ||
+            WSTRCMP(recvBuf.name, "first.txt") != 0))
+        result = -1533;
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL,
+                "first.txt", 0644, 0, 0, 10, in, 10, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE || recvBuf.fileSz != 10)
+            result = -1534;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, NULL,
+                "first.txt", 0644, 0, 0, 10, NULL, 0, 10, &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1535;
+    }
+
+    /* second, shorter name: no stale suffix, size starts over */
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "b", 0644,
+                0, 0, 4, NULL, 0, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1536;
+        if (result == 0 && (recvBuf.nameSz != 1 ||
+                WSTRCMP(recvBuf.name, "b") != 0))
+            result = -1537;
+        if (result == 0 && (recvBuf.fileSz != 0 || recvBuf.idx != 0))
+            result = -1538;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "b", 0644,
+                0, 0, 4, in, 4, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE || recvBuf.fileSz != 4 ||
+                recvBuf.idx != 4)
+            result = -1539;
+    }
+
+    /* third file after the second was abandoned without FILE_DONE */
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "c.bin",
+                0644, 0, 0, 16, NULL, 0, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1540;
+        if (result == 0 && (recvBuf.nameSz != 5 ||
+                WSTRCMP(recvBuf.name, "c.bin") != 0))
+            result = -1541;
+        if (result == 0 && (recvBuf.fileSz != 0 || recvBuf.idx != 0))
+            result = -1542;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "c.bin",
+                0644, 0, 0, 16, in, 10, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE || recvBuf.fileSz != 10)
+            result = -1543;
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* The no-filesystem receive callback aborts a file larger than the buffer. */
+static int test_ScpRecvCallback_Oversize(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    ScpBuffer    recvBuf;
+    byte         store[16];
+    byte         in[20];
+    int          result = 0;
+    int          ret;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1550;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1551;
+    }
+
+    WMEMSET(in, 0x33, sizeof(in));
+    WMEMSET(&recvBuf, 0, sizeof(recvBuf));
+    recvBuf.buffer   = store;
+    recvBuf.bufferSz = (word32)sizeof(store);
+    recvBuf.status   = scpSendTestStatus;
+
+    /* oversize announced: refused */
+    ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "big", 0644,
+            0, 0, (word32)sizeof(store) + 1, NULL, 0, 0, &recvBuf);
+    if (ret != WS_SCP_ABORT)
+        result = -1552;
+
+    /* overrunning part: abort, copy nothing */
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "fit", 0644,
+                0, 0, (word32)sizeof(store), NULL, 0, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1553;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "fit",
+                0644, 0, 0, (word32)sizeof(store), in, 10, 0, &recvBuf);
+        if (ret != WS_SCP_CONTINUE || recvBuf.fileSz != 10)
+            result = -1554;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "fit",
+                0644, 0, 0, (word32)sizeof(store), in, 7, 10, &recvBuf);
+        if (ret != WS_SCP_ABORT || recvBuf.fileSz != 10 ||
+                recvBuf.idx != 10)
+            result = -1555;
+    }
+
+    /* exact fit: accepted */
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "fit",
+                0644, 0, 0, (word32)sizeof(store), in, 6, 10, &recvBuf);
+        if (ret != WS_SCP_CONTINUE || recvBuf.fileSz != sizeof(store))
+            result = -1556;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "fit",
+                0644, 0, 0, (word32)sizeof(store), NULL, 0,
+                (word32)sizeof(store), &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1557;
+    }
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_DONE, NULL, "fit",
+                0644, 0, 0, (word32)sizeof(store), NULL, 0,
+                (word32)sizeof(store), &recvBuf);
+        if (ret != WS_SCP_CONTINUE)
+            result = -1558;
+    }
+
+    /* one byte over in one part: abort */
+    if (result == 0) {
+        ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_NEW_FILE, NULL, "fit", 0644,
+                0, 0, (word32)sizeof(store), NULL, 0, 0, &recvBuf);
+        if (ret == WS_SCP_CONTINUE)
+            ret = wsScpRecvCallback(ssh, WOLFSSH_SCP_FILE_PART, NULL, "fit",
+                    0644, 0, 0, (word32)sizeof(store), in,
+                    (word32)sizeof(store) + 1, 0, &recvBuf);
+        if (ret != WS_SCP_ABORT || recvBuf.fileSz != 0)
+            result = -1559;
     }
 
     wolfSSH_free(ssh);
@@ -29311,6 +29616,21 @@ int wolfSSH_UnitTest(int argc, char** argv)
     defined(NO_FILESYSTEM)
     unitResult = test_ScpSendCallback_ExactFitBuffer();
     printf("ScpSendCallback_ExactFitBuffer: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpSendCallback_FileNameAndTimes();
+    printf("ScpSendCallback_FileNameAndTimes: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpRecvCallback_TwoFiles();
+    printf("ScpRecvCallback_TwoFiles: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_ScpRecvCallback_Oversize();
+    printf("ScpRecvCallback_Oversize: %s\n",
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif
