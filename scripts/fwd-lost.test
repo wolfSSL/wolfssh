@@ -1,0 +1,206 @@
+#!/bin/sh
+
+# portfwd must exit with an error once the echoserver under its forward
+# is killed, not spin on the dead peer's readable socket.
+
+no_pid=-1
+server_pid=$no_pid
+portfwd_pid=$no_pid
+work_dir="`pwd`/wolfssh_fwd_lost$$"
+# Tenths of a second to wait for a ready file, and for portfwd to exit.
+ready_limit=100
+exit_limit=100
+# Pid-stamped ports, clear of the other forwarding scripts' ports.
+entry_port=`expr 13000 + \( $$ % 1000 \)`
+target_port=`expr 13000 + \( \( $$ + 500 \) % 1000 \)`
+
+[ ! -x ./examples/echoserver/echoserver ] \
+    && echo "echoserver doesn't exist, skipping" && exit 77
+./examples/echoserver/echoserver '-?' 2>&1 | grep -q "^echoserver " \
+    || { echo "echoserver doesn't run, skipping"; exit 77; }
+[ ! -x ./examples/portfwd/portfwd ] \
+    && echo "portfwd doesn't exist, skipping" && exit 77
+./examples/portfwd/portfwd '-?' 2>&1 | grep -q "does not exist" \
+    && { echo "forwarding not compiled in, skipping"; exit 77; }
+
+WOLFSSH_OPTIONS=`./apps/wolfssh-options` || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK" \
+    && { echo "portfwd does not support non-blocking mode, skipping test"
+         exit 77; }
+
+do_cleanup() {
+    for pid in $portfwd_pid $server_pid
+    do
+        if [ "$pid" != "$no_pid" ]
+        then
+            kill -9 "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+        fi
+    done
+    portfwd_pid=$no_pid
+    server_pid=$no_pid
+}
+
+do_fail() {
+    echo "$1"
+    for log in "$work_dir"/*.log
+    do
+        [ -f "$log" ] || continue
+        echo "--- `basename "$log"` ---"
+        cat "$log" 2>/dev/null
+    done
+    do_cleanup
+    rm -rf "$work_dir"
+    exit 1
+}
+
+do_trap() {
+    echo "got trap"
+    do_cleanup
+    rm -rf "$work_dir"
+    exit 1
+}
+
+trap do_trap INT TERM
+
+# $1 names the phase, $2 is the -f port, $3 is any extra portfwd flag.
+run_phase() {
+    ready_file="$work_dir/$1.ready"
+    fwd_ready_file="$work_dir/$1.fwd_ready"
+    server_log="$work_dir/$1.server.log"
+    portfwd_log="$work_dir/$1.portfwd.log"
+
+    ./examples/echoserver/echoserver -1 -f -F -R "$ready_file" \
+        > "$server_log" 2>&1 &
+    server_pid=$!
+
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt "$ready_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$ready_file" ] || do_fail "$1: no ready file, echoserver didn't start"
+
+    ./examples/portfwd/portfwd -u jill -P upthehill -p `cat "$ready_file"` \
+        $3 -f $2 -t $target_port -R "$fwd_ready_file" \
+        > "$portfwd_log" 2>&1 &
+    portfwd_pid=$!
+
+    counter=0
+    while [ ! -s "$fwd_ready_file" ] && [ "$counter" -lt "$ready_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$fwd_ready_file" ] || do_fail "$1: no ready file, portfwd didn't start"
+
+    kill -9 "$server_pid" 2>/dev/null
+    wait "$server_pid" 2>/dev/null
+    server_pid=$no_pid
+
+    counter=0
+    while kill -0 "$portfwd_pid" 2>/dev/null \
+            && [ "$counter" -lt "$exit_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    kill -0 "$portfwd_pid" 2>/dev/null \
+        && do_fail "$1: portfwd still running after the session was lost"
+
+    wait "$portfwd_pid"
+    rc=$?
+    portfwd_pid=$no_pid
+    [ "$rc" -ne 0 ] || do_fail "$1: portfwd exited 0 after the session was lost"
+
+    echo "$1: portfwd exited $rc after the session was lost"
+}
+
+# A refused open loses only the channel: portfwd must shut down cleanly
+# and exit 0. The echoserver refuses a non-loopback target by policy, so
+# nothing is ever dialed.
+run_refused() {
+    ready_file="$work_dir/refused.ready"
+    fwd_ready_file="$work_dir/refused.fwd_ready"
+    server_log="$work_dir/refused.server.log"
+    portfwd_log="$work_dir/refused.portfwd.log"
+
+    ./examples/echoserver/echoserver -1 -f -F -R "$ready_file" \
+        > "$server_log" 2>&1 &
+    server_pid=$!
+
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt "$ready_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$ready_file" ] || do_fail "refused: no ready file, echoserver didn't start"
+
+    ./examples/portfwd/portfwd -u jill -P upthehill -p `cat "$ready_file"` \
+        -f $entry_port -T 192.0.2.1 -t $target_port -R "$fwd_ready_file" \
+        > "$portfwd_log" 2>&1 &
+    portfwd_pid=$!
+
+    counter=0
+    while [ ! -s "$fwd_ready_file" ] && [ "$counter" -lt "$ready_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    [ -s "$fwd_ready_file" ] || do_fail "refused: no ready file, portfwd didn't start"
+
+    # Hold nc's input open: an end-of-input before the refusal arrives
+    # tests a different teardown.
+    nc_fifo="$work_dir/refused.fifo"
+    mkfifo "$nc_fifo" || do_fail "refused: couldn't make the fifo"
+    nc 127.0.0.1 $entry_port < "$nc_fifo" > /dev/null 2>&1 &
+    nc_pid=$!
+    exec 3> "$nc_fifo"
+
+    counter=0
+    while kill -0 "$portfwd_pid" 2>/dev/null \
+            && [ "$counter" -lt "$exit_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    exec 3>&-
+    kill -9 "$nc_pid" 2>/dev/null
+    wait "$nc_pid" 2>/dev/null
+    kill -0 "$portfwd_pid" 2>/dev/null \
+        && do_fail "refused: portfwd still running after the open was refused"
+
+    wait "$portfwd_pid"
+    rc=$?
+    portfwd_pid=$no_pid
+    [ "$rc" -eq 0 ] || do_fail "refused: portfwd exited $rc after a refused open"
+    grep -q "Lost the SSH session" "$portfwd_log" \
+        && do_fail "refused: portfwd reported a lost session"
+
+    # The disconnect lets the echoserver finish on its own.
+    counter=0
+    while kill -0 "$server_pid" 2>/dev/null \
+            && [ "$counter" -lt "$exit_limit" ]; do
+        sleep 0.1
+        counter=`expr $counter + 1`
+    done
+    kill -0 "$server_pid" 2>/dev/null \
+        && do_fail "refused: echoserver still running after the disconnect"
+    wait "$server_pid" 2>/dev/null
+    server_pid=$no_pid
+
+    echo "refused: portfwd exited 0 after a refused open"
+}
+
+mkdir -p "$work_dir" || { echo "couldn't make the work directory"; exit 1; }
+
+run_phase local $entry_port ""
+run_phase reverse 0 "-r"
+if [ -x "`command -v nc`" ]; then
+    run_refused
+else
+    echo "refused: nc doesn't exist, skipping"
+fi
+
+do_cleanup
+rm -rf "$work_dir"
+exit 0

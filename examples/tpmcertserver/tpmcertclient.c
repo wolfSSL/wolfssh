@@ -165,7 +165,7 @@ int main(int argc, char* argv[])
     if (ret == 0) {
         int txSz = (int)XSTRLEN((char*)txt);
         int sent = 0;
-        int rxSz;
+        int rxd = 0;
         int n;
 
         /* stream_send may transmit fewer bytes than requested; loop until the
@@ -180,14 +180,34 @@ int main(int argc, char* argv[])
             sent += n;
         }
 
+        /* stream_read may also return short; read all txSz bytes. */
+        while (ret == 0 && rxd < txSz) {
+            n = wolfSSH_stream_read(ssh, rxBuf + rxd, (word32)(txSz - rxd));
+            if (n > 0) {
+                rxd += n;
+            }
+            else if (n == WS_FATAL_ERROR
+                    && wolfSSH_get_error(ssh) == WS_REKEYING) {
+                /* stream_read does not receive mid-rekey; drive it. */
+                n = wolfSSH_worker(ssh, NULL);
+                if (n < 0 && n != WS_CHAN_RXD && n != WS_REKEYING) {
+                    fprintf(stderr, "rekey failed: %d\n", n);
+                    ret = -1;
+                }
+            }
+            else {
+                fprintf(stderr, "stream read failed: %d\n", n);
+                ret = -1;
+            }
+        }
+
         if (ret == 0) {
-            rxSz = wolfSSH_stream_read(ssh, rxBuf, sizeof(rxBuf) - 1);
-            if (rxSz <= 0) {
-                fprintf(stderr, "stream read failed: %d\n", rxSz);
+            rxBuf[rxd] = 0;
+            if (XMEMCMP(rxBuf, txt, (size_t)txSz) != 0) {
+                fprintf(stderr, "echo does not match what was sent\n");
                 ret = -1;
             }
             else {
-                rxBuf[rxSz] = 0;
                 printf("Echo from server: %s", (char*)rxBuf);
             }
         }

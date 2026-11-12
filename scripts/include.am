@@ -26,6 +26,7 @@ dist_noinst_SCRIPTS+= scripts/openssh-interop.test
 
 dist_noinst_SCRIPTS+= scripts/fwd.test
 dist_noinst_SCRIPTS+= scripts/fwd-bulk.test
+dist_noinst_SCRIPTS+= scripts/fwd-lost.test
 endif
 endif
 
