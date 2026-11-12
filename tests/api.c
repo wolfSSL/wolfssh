@@ -7965,8 +7965,83 @@ static void test_wolfSSH_SCP_SendZeroFirst(void)
     WREMOVE(NULL, fromName);
 }
 
+/* An exec command that only starts with "scp" is not a transfer: the
+ * echoserver serves it as a session and echoes the data back. */
+static void test_wolfSSH_SCP_ExecNotScp(void)
+{
+    func_args ser;
+    tcp_ready ready;
+    int argsCount;
+    int ret;
+    WS_SOCKET_T clientFd;
+#ifdef USE_WINDOWS_API
+    DWORD rcvTimeout = 20000;
+#else
+    struct timeval rcvTimeout;
+#endif
+    const char* args[6];
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH*     ssh = NULL;
+    byte msg[] = "scpbackup echo";
+    byte got[sizeof(msg)];
+    word32 gotSz = 0;
+    THREAD_TYPE serThread;
+
+    WMEMSET(&ser, 0, sizeof(func_args));
+    argsCount = 0;
+    args[argsCount++] = ".";
+    args[argsCount++] = "-1";
+    args[argsCount++] = "-f";
+    args[argsCount++] = "-p";
+    args[argsCount++] = "0";
+    ser.argv   = (char**)args;
+    ser.argc   = argsCount;
+    ser.signal = &ready;
+    InitTcpReady(ser.signal);
+    ThreadStart(echoserver_test, (void*)&ser, &serThread);
+    WaitTcpReady(&ready);
+
+    scp_client_connect(&ctx, &ssh, ready.port, "scpbackup");
+    AssertNotNull(ctx);
+    AssertNotNull(ssh);
+
+    clientFd = wolfSSH_get_fd(ssh);
+#ifdef USE_WINDOWS_API
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            (const char*)&rcvTimeout, sizeof(rcvTimeout));
+#else
+    rcvTimeout.tv_sec = 20;
+    rcvTimeout.tv_usec = 0;
+    (void)setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO,
+            &rcvTimeout, sizeof(rcvTimeout));
+#endif
+
+    ret = wolfSSH_stream_send(ssh, msg, (word32)sizeof(msg));
+    AssertIntEQ(ret, (int)sizeof(msg));
+    while (gotSz < (word32)sizeof(msg)) {
+        ret = wolfSSH_stream_read(ssh, got + gotSz,
+                (word32)sizeof(got) - gotSz);
+        if (ret <= 0)
+            break;
+        gotSz += (word32)ret;
+    }
+    AssertIntEQ(gotSz, (word32)sizeof(msg));
+    AssertIntEQ(XMEMCMP(got, msg, sizeof(msg)), 0);
+
+    ret = wolfSSH_shutdown(ssh);
+    (void)ret;
+
+    clientFd = wolfSSH_get_fd(ssh);
+    WCLOSESOCKET(clientFd);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    ThreadJoin(serThread);
+    FreeTcpReady(&ready);
+}
+
 #else /* WOLFSSH_SCP && !NO_WOLFSSH_CLIENT && !SINGLE_THREADED &&
        * !NO_FILESYSTEM && !WOLFSSH_SCP_USER_CALLBACKS && !WOLFSSH_ZEPHYR */
+static void test_wolfSSH_SCP_ExecNotScp(void) { ; }
 static void test_wolfSSH_SCP_ReKey(void) { ; }
 static void test_wolfSSH_SCP_ReKey_NonBlock(void) { ; }
 static void test_wolfSSH_SCP_ReKey_ToServer(void) { ; }
@@ -9594,6 +9669,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SCP_ReKey_ToServer_NonBlock();
     test_wolfSSH_SCP_SendZeroFirst();
     test_wolfSSH_SCP_RecursiveTwoFiles();
+    test_wolfSSH_SCP_ExecNotScp();
 
     /* SFTP tests */
     test_wolfSSH_SFTP_SendReadPacket();
