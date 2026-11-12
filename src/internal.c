@@ -7684,7 +7684,7 @@ static int CheckRsaKeyBits(RsaKey* key)
 
 
 #if !defined(WOLFSSH_NO_RSA) || !defined(WOLFSSH_NO_ED25519) \
-    || !defined(WOLFSSH_NO_MLDSA)
+    || !defined(WOLFSSH_NO_MLDSA) || defined(WOLFSSH_CERTS)
 /* Compare the format identifier at the start of a public key blob
  * against the expected name (RFC 4253 section 6.6). */
 static int GetPubKeyFormat(const char* expected, const byte* pubKey,
@@ -8092,8 +8092,16 @@ static int ParsePubKeyCert(WOLFSSH* ssh, byte* in, word32 inSz, byte** out,
     int ret;
     byte*  leaf   = NULL;
     word32 leafSz = 0;
+    word32 fmtIdx = 0;
+    const char* fmt = IdToName(ssh->handshake->pubKeyId);
 
-    ret = ParseCertChainVerify(ssh, in, inSz, &leaf, &leafSz);
+    /* The blob's name must be the negotiated algorithm, as for plain keys;
+     * the host key callback reads it to tell a certificate. */
+    if (fmt == NULL)
+        return WS_INVALID_ALGO_ID;
+    ret = GetPubKeyFormat(fmt, in, inSz, &fmtIdx);
+    if (ret == WS_SUCCESS)
+        ret = ParseCertChainVerify(ssh, in, inSz, &leaf, &leafSz);
     if (ret == WS_SUCCESS) {
         int error = 0;
         struct DecodedCert dCert;
