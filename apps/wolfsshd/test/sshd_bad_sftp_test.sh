@@ -28,9 +28,14 @@ mkdir test-$$
 mkdir test-$$/subfolder
 
 echo "$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h \"$1\" -p \"$2\""
-"$TEST_SFTP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -g -l configure -r `pwd`/test-$$/subfolder/ -h $1 -p $2"
+"$TEST_SFTP_CLIENT" -Y -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" -g \
+    -l configure -r "`pwd`/test-$$/subfolder/" -h "$1" -p "$2"
 
 RESULT=$?
+if [ "$RESULT" = "126" ] || [ "$RESULT" = "127" ]; then
+    echo "Couldn't run $TEST_SFTP_CLIENT"
+    exit 1
+fi
 if [ "$RESULT" = "0" ]; then
     echo "Expecting to fail transfer to folder"
     exit 1
