@@ -3133,12 +3133,24 @@ static ScpDir* ScpNewDir(void *fs, const char* path, void* heap)
     {
         char sPath[MAX_PATH];
         int isDir;
+        int sPathSz;
 
-        /* add wildcard to get full directory */
-        WSNPRINTF(sPath, MAX_PATH, "%s/*", path);
+        /* add wildcard; a truncated pattern finds the dir itself. The
+         * Windows WSNPRINTF returns -1 on truncation. */
+        sPathSz = -1;
+        if (WSTRLEN(path) + 3 <= MAX_PATH) {
+            sPathSz = WSNPRINTF(sPath, MAX_PATH, "%s/*", path);
+        }
+        if (sPathSz < 0 || sPathSz >= MAX_PATH) {
+            WFREE(entry, heap, DYNTYPE_SCPDIR);
+            WLOG(WS_LOG_ERROR, scpError, "directory path too long",
+                WS_INVALID_PATH_E);
+            return NULL;
+        }
 
+        entry->firstEntry[0] = '\0';
         entry->dir = (HANDLE)WS_FindFirstFileA(sPath,
-            sPath, sizeof(sPath), &isDir, heap);
+            entry->firstEntry, sizeof(entry->firstEntry), &isDir, heap);
         if (entry->dir == INVALID_HANDLE_VALUE) {
             WFREE(entry, heap, DYNTYPE_SCPDIR);
             WLOG(WS_LOG_ERROR, scpError, "opendir failed on directory",
@@ -3310,7 +3322,13 @@ static int FindNextDirEntry(void *fs, ScpSendCtx* ctx)
         int  sz;
         unsigned long lastError;
 
-        if (WS_FindNextFileA_ex(ctx->currentDir->dir,
+        if (ctx->currentDir->firstEntry[0] != '\0') {
+            /* consume the entry FindFirstFile returned in ScpNewDir */
+            sz = (int)WSTRLEN(ctx->currentDir->firstEntry);
+            WMEMCPY(realFileName, ctx->currentDir->firstEntry, sz + 1);
+            ctx->currentDir->firstEntry[0] = '\0';
+        }
+        else if (WS_FindNextFileA_ex(ctx->currentDir->dir,
             realFileName, sizeof(realFileName), &lastError) == 0) {
             if (lastError != ERROR_NO_MORE_FILES) {
                 return WS_FATAL_ERROR;
@@ -3429,12 +3447,7 @@ static int ScpProcessEntry(WOLFSSH* ssh, char* fileName, word64* mTime,
     #if defined(WOLFSSL_NUCLEUS)
         dNameLen = (int)WSTRLEN(sendCtx->currentDir->dir.lfname);
     #elif defined(USE_WINDOWS_API)
-        {
-            char path[MAX_PATH];
-
-            GetFullPathNameA(fileName, MAX_PATH, path, NULL);
-            dNameLen = (int)WSTRLEN(path);
-        }
+        dNameLen   = (int)WSTRLEN(sendCtx->entry);
     #elif defined(WOLFSSH_ZEPHYR)
         dNameLen   = (int)WSTRLEN(sendCtx->entry.name);
     #else
