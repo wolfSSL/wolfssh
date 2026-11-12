@@ -91,7 +91,7 @@ EOF
 check_forced_cmd() {
     start_wolfsshd "$1"
 
-    RESULT=$( $TEST_CLIENT -c 'echo overlap""_shell_ran' -u $USER \
+    RESULT=$( $TEST_CLIENT -Y -c 'echo overlap""_shell_ran' -u $USER \
         -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT )
     echo $RESULT
     echo $RESULT | grep overlap_shell_ran

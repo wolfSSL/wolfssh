@@ -42,6 +42,7 @@
 #include <wolfssh/test.h>
 #include "examples/echoserver/echoserver.h"
 #include "examples/client/client.h"
+#include "examples/client/common.h"
 #include "tests/testsuite.h"
 
 #if defined(WOLFSSH_SFTP) && !defined(SINGLE_THREADED)
@@ -90,7 +91,7 @@ static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
-#define NUMARGS 5
+#define NUMARGS 6
 #define ARGLEN 64
 
 static void wolfSSH_EchoTest(void)
@@ -104,7 +105,7 @@ static void wolfSSH_EchoTest(void)
         { sA[0], sA[1], sA[2], sA[3], sA[4] };
     char cA[NUMARGS][ARGLEN];
     char *clientArgv[NUMARGS] =
-        { cA[0], cA[1], cA[2], cA[3], cA[4] };
+        { cA[0], cA[1], cA[2], cA[3], cA[4], cA[5] };
     int serverArgc = 0;
     int clientArgc = 0;
 
@@ -128,6 +129,7 @@ static void wolfSSH_EchoTest(void)
     WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-Y", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "jill", ARGLEN);
     #if !defined(USE_WINDOWS_API) && !defined(WOLFSSH_ZEPHYR)
@@ -191,6 +193,7 @@ static void wolfSSH_EchoTest_MultiPubKey(void)
     WaitTcpReady(&ready);
 
     WSTRNCPY(cA[clientArgc++], "client", ARGLEN);
+    WSTRNCPY(cA[clientArgc++], "-Y", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-u", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "hansel", ARGLEN);
     WSTRNCPY(cA[clientArgc++], "-j", ARGLEN);
@@ -228,6 +231,95 @@ static void wolfSSH_EchoTest_MultiPubKey(void)
 #endif /* WOLFSSH_SHELL */
 
 
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+
+static void PutU32(word32 u32, byte* c)
+{
+    c[0] = (byte)(u32 >> 24);
+    c[1] = (byte)(u32 >> 16);
+    c[2] = (byte)(u32 >> 8);
+    c[3] = (byte)u32;
+}
+
+/* Checks an RFC 6187 blob of certName against host, expecting expect. */
+static void CertHostCheck(const char* certName, const char* host, int expect)
+{
+    static const char keyType[] = "x509v3-ecdsa-sha2-nistp256";
+    byte blob[2048];
+    byte cert[1536];
+    word32 certSz, typeSz = (word32)sizeof(keyType) - 1, idx = 0;
+    WFILE* f = WBADFILE;
+
+    if (WFOPEN(NULL, &f, certName, "rb") != 0 || f == WBADFILE)
+        err_sys("couldn't open the test certificate");
+    certSz = (word32)WFREAD(NULL, cert, 1, sizeof(cert), f);
+    WFCLOSE(NULL, f);
+    if (certSz == 0 || certSz == sizeof(cert))
+        err_sys("couldn't read the test certificate");
+
+    PutU32(typeSz, blob + idx);
+    idx += 4;
+    WMEMCPY(blob + idx, keyType, typeSz);
+    idx += typeSz;
+    PutU32(1, blob + idx); /* certificate count */
+    idx += 4;
+    PutU32(certSz, blob + idx);
+    idx += 4;
+    WMEMCPY(blob + idx, cert, certSz);
+    idx += certSz;
+    PutU32(0, blob + idx); /* OCSP response count */
+    idx += 4;
+
+    if (ClientPublicKeyCheck(blob, idx, (void*)host) != expect) {
+        printf("host certificate %s checked for %s, expected %d\n",
+                certName, host, expect);
+        err_sys("host certificate check failed");
+    }
+}
+
+/* The leaf certificate must name the host. */
+static void wolfSSH_CertHostTest(void)
+{
+    /* DNS:example, IP Address:127.0.0.1, CN=www.wolfssl.com */
+    const char* sanCert = "./keys/server-cert.der";
+    /* No subjectAltName, CN=www.wolfssl.com */
+    const char* cnCert = "./keys/ca-cert-ecc.der";
+    /* email:server@example.com only, CN=www.wolfssl.com */
+    const char* emailCert = "./keys/server-cert-email-san.der";
+
+    printf("testing host certificate names\n");
+    CertHostCheck(sanCert, "example", 0);
+    CertHostCheck(sanCert, "EXAMPLE", 0);
+#if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME) || \
+    (LIBWOLFSSL_VERSION_HEX >= 0x05009002)
+    /* Older wolfSSL drops an IP SAN unless asked to keep it. */
+    CertHostCheck(sanCert, "127.0.0.1", 0);
+#endif
+    CertHostCheck(sanCert, "127.0.0.2", -1);
+    CertHostCheck(sanCert, "::ffff:127.0.0.1", -1);
+    CertHostCheck(sanCert, "examples", -1);
+    CertHostCheck(sanCert, "exampl", -1);
+    /* A SAN rules out the CN. */
+    CertHostCheck(sanCert, "www.wolfssl.com", -1);
+    CertHostCheck(cnCert, "www.wolfssl.com", 0);
+    CertHostCheck(cnCert, "example", -1);
+    /* So does an email-only SAN. */
+    CertHostCheck(emailCert, "www.wolfssl.com", -1);
+
+    /* -X accepts a certificate for another host. */
+    ClientIPOverride(1);
+    CertHostCheck(sanCert, "127.0.0.2", 0);
+    ClientIPOverride(0);
+
+    /* -Y does not waive the certificate's name. */
+    ClientAcceptAnyHostKey(1);
+    CertHostCheck(sanCert, "127.0.0.2", -1);
+    ClientAcceptAnyHostKey(0);
+}
+#endif
+
+
 int wolfSSH_TestsuiteTest(int argc, char** argv)
 {
     (void)argc;
@@ -253,6 +345,11 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
     #if !defined(WOLFSSL_TIRTOS)
         ChangeToWolfSshRoot();
     #endif
+
+#if defined(WOLFSSH_CERTS) && !defined(NO_FILESYSTEM) && \
+    !defined(WOLFSSH_ZEPHYR)
+    wolfSSH_CertHostTest();
+#endif
 
 #ifdef WOLFSSH_SHELL
     wolfSSH_EchoTest();

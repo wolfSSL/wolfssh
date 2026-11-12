@@ -43,8 +43,8 @@ PRIVATE_KEY="./keys/$3-key.der"
 PUBLIC_KEY="./keys/$3-cert.der"
 CA_CERT="./keys/ca-cert-ecc.der"
 
-echo "$TEST_CLIENT -X -c 'pwd' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT -h \"$1\" -p \"$2\" (expecting rejection)"
-$TEST_CLIENT -X -c 'pwd' -u "$3" -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2"
+echo "$TEST_CLIENT -Y -X -c 'pwd' -u $3 -i $PRIVATE_KEY -J $PUBLIC_KEY -A $CA_CERT -h \"$1\" -p \"$2\" (expecting rejection)"
+$TEST_CLIENT -Y -X -c 'pwd' -u "$3" -i "$PRIVATE_KEY" -J "$PUBLIC_KEY" -A "$CA_CERT" -h "$1" -p "$2"
 RESULT=$?
 
 # Back to the test dir: the log counted below is the one here, so a failed cd

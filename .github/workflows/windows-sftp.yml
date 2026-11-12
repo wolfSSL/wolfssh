@@ -365,7 +365,7 @@ jobs:
         $getCommands | Out-File -FilePath sftp_get_nonexistent_commands.txt -Encoding ASCII
 
         $proc = Start-Process -FilePath $sftpPath `
-          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -ArgumentList "-Y", "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
           -RedirectStandardInput "sftp_get_nonexistent_commands.txt" `
           -RedirectStandardOutput "sftp_get_nonexistent_out.txt" `
           -RedirectStandardError "sftp_get_nonexistent_err.txt" `
@@ -415,7 +415,7 @@ jobs:
         }
 
         $proc = Start-Process -FilePath $env:CLIENT_PATH `
-          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}", "-c", "whoami" `
+          -ArgumentList "-Y", "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}", "-c", "whoami" `
           -RedirectStandardInput "exec_stdin.txt" `
           -RedirectStandardOutput "exec_out.txt" `
           -RedirectStandardError "exec_err.txt" `
@@ -500,7 +500,7 @@ jobs:
 
         function Start-Hold($script, $tag) {
           return Start-Process -FilePath $env:CLIENT_PATH -ArgumentList @(
-              "-u", "testuser2", "-P", $env:TESTUSER_PASSWORD,
+              "-Y", "-u", "testuser2", "-P", $env:TESTUSER_PASSWORD,
               "-h", "localhost", "-p", "${{env.TEST_PORT}}", "-c", $script) `
             -RedirectStandardInput "hold_stdin.txt" `
             -RedirectStandardOutput "hold_${tag}_out.txt" `
@@ -613,7 +613,7 @@ jobs:
         $testCommands | Out-File -FilePath sftp_commands.txt -Encoding ASCII
 
         $process = Start-Process -FilePath $sftpPath `
-          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -ArgumentList "-Y", "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
           -RedirectStandardInput "sftp_commands.txt" `
           -RedirectStandardOutput "sftp_output.txt" `
           -RedirectStandardError "sftp_error.txt" `
@@ -751,7 +751,7 @@ jobs:
         $putCommands = "put $largeFile large_test.dat`nquit"
         $putCommands | Out-File -FilePath (Join-Path $workDir "sftp_put_commands.txt") -Encoding ASCII
         $proc = Start-Process -FilePath $sftpPath `
-          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -ArgumentList "-Y", "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
           -WorkingDirectory $workDir `
           -RedirectStandardInput (Join-Path $workDir "sftp_put_commands.txt") `
           -RedirectStandardOutput (Join-Path $workDir "sftp_put_out.txt") `
@@ -774,7 +774,7 @@ jobs:
         $getCommands = "get large_test.dat large_test_copy.dat`nquit"
         $getCommands | Out-File -FilePath (Join-Path $workDir "sftp_get_commands.txt") -Encoding ASCII
         $proc2 = Start-Process -FilePath $sftpPath `
-          -ArgumentList "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
+          -ArgumentList "-Y", "-u", "testuser", "-P", $env:TESTUSER_PASSWORD, "-h", "localhost", "-p", "${{env.TEST_PORT}}" `
           -WorkingDirectory $workDir `
           -RedirectStandardInput (Join-Path $workDir "sftp_get_commands.txt") `
           -RedirectStandardOutput (Join-Path $workDir "sftp_get_out.txt") `

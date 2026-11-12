@@ -142,7 +142,8 @@ wait_for_output() {
 # echoserver only ends the session when it receives a 0x03, so every
 # session has to send one or both ends wait for the other forever.
 #
-# $1 - "confirm" when the client will ask about the unknown server key
+# $1 - "confirm" when the client will ask about the unknown server key,
+#      "eof" for an empty stdin
 # rest - client arguments
 run_client() {
     confirm=$1
@@ -150,22 +151,28 @@ run_client() {
 
     rm -f "$input_file" "$client_out"
     touch "$client_out"
-    mkfifo "$input_file" || fail "couldn't create the input fifo"
 
-    (
-        # GetConfirmation() reads a single character. A newline here would
-        # be left behind for the password prompt to read as an empty
-        # password.
-        [ "$confirm" = "confirm" ] && printf 'Y'
+    if [ "$confirm" = "eof" ]; then
+        client_in=/dev/null
+    else
+        client_in="$input_file"
+        mkfifo "$input_file" || fail "couldn't create the input fifo"
 
-        wait_for_output "Password:" || exit 1
-        printf 'upthehill\n'
-        printf 'hello\003'
-    ) > "$input_file" 2>/dev/null &
-    input_pid=$!
+        (
+            # GetConfirmation() reads a single character. A newline here
+            # would be left behind for the password prompt to read as an
+            # empty password.
+            [ "$confirm" = "confirm" ] && printf 'Y'
+
+            wait_for_output "Password:" || exit 1
+            printf 'upthehill\n'
+            printf 'hello\003'
+        ) > "$input_file" 2>/dev/null &
+        input_pid=$!
+    fi
 
     HOME="$work_dir" ./apps/wolfssh/wolfssh "$@" \
-        < "$input_file" > "$client_out" 2>&1 &
+        < "$client_in" > "$client_out" 2>&1 &
     client_pid=$!
 
     # Poll rather than sleep through the whole limit. Killing a subshell
@@ -189,19 +196,27 @@ run_client() {
 
     kill $killer_pid 2>/dev/null
     killer_pid=$no_pid
-    kill $input_pid 2>/dev/null
-    input_pid=$no_pid
+    if [ $input_pid != $no_pid ]; then
+        kill $input_pid 2>/dev/null
+        input_pid=$no_pid
+    fi
 
     cat "$client_out"
     return $client_status
 }
 
-mkdir -p "$work_dir/.ssh"
+mkdir -p "$work_dir"
 
-# The known hosts check rejects a missing or empty file without asking, so
-# seed the file with an entry for another host. The first connection then
-# gets the "server is unknown" prompt and answers it.
-echo "example.invalid ssh-rsa AAAA" > "$work_dir/.ssh/known_hosts"
+# HOME starts with no ~/.ssh, so the client asks about the server.
+echo "Test an unknown server with no terminal to ask"
+start_server
+run_client eof -p $port jill@127.0.0.1 "echo zero"
+RESULT=$?
+[ $RESULT -gt 128 ] && fail "the client had to be killed, prompt stuck"
+[ $RESULT -eq 0 ] && fail "the client accepted a key nobody confirmed"
+grep -q "Shall I add it to the known hosts?" "$client_out" \
+    || fail "the client didn't ask about the unknown server"
+[ -e "$work_dir/.ssh" ] && fail "a declined key created ~/.ssh"
 
 echo "Test learning the server's key"
 start_server
@@ -215,6 +230,19 @@ fi
 
 grep -q "^127.0.0.1 " "$work_dir/.ssh/known_hosts" \
     || fail "server key not added to the known hosts"
+grep -q "hello" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+ls -ld "$work_dir/.ssh" | grep -q "^drwx------" \
+    || fail "~/.ssh was not created with mode 0700"
+
+echo "Test a stale known hosts entry ahead of the right one"
+known_entry=`grep "^127.0.0.1 " "$work_dir/.ssh/known_hosts"`
+set -- $known_entry
+printf '%s %s AAAA%s\n%s\n' "$1" "$2" "$3" "$known_entry" \
+    > "$work_dir/.ssh/known_hosts"
+start_server
+run_client "" -p $port jill@127.0.0.1 "echo stale"
+[ $? -ne 0 ] && fail "a stale entry hid the server's key"
 grep -q "hello" "$client_out" \
     || fail "the echoserver's reply didn't make it back"
 
@@ -291,6 +319,41 @@ run_client "" -E "$work_dir/appcommand.log" -p $port jill@127.0.0.1 "echo three"
 
 grep -q "hello" "$client_out" \
     || fail "the app-driven echoserver's reply didn't make it back"
+
+# The host is known with another key type, so the client asks.
+echo "Test learning a large host key"
+rm -f "$ready_file"
+./examples/echoserver/echoserver -1 -f -k ssh-mldsa-87 -R "$ready_file" \
+    > "$work_dir/server.log" 2>&1 &
+server_pid=$!
+counter=0
+while [ ! -s "$ready_file" ] && kill -0 $server_pid 2>/dev/null \
+    && [ "$counter" -lt 100 ]; do
+    sleep 0.1
+    counter=$((counter + 1))
+done
+if [ -s "$ready_file" ]; then
+    port=`cat "$ready_file"`
+    run_client confirm -p $port jill@127.0.0.1 "echo mldsa"
+    [ $? -ne 0 ] && fail "failed to learn the ML-DSA host key"
+    grep -q "^127.0.0.1 ssh-mldsa-87 " "$work_dir/.ssh/known_hosts" \
+        || fail "ML-DSA host key not added to the known hosts"
+
+    start_server -k ssh-mldsa-87
+    run_client "" -p $port jill@127.0.0.1 "echo mldsa"
+    [ $? -ne 0 ] && fail "the learned ML-DSA host key didn't match"
+else
+    # Still running means slow, not missing the key type. Kill it so the
+    # wait can't block.
+    if kill -0 $server_pid 2>/dev/null; then
+        echo "echoserver didn't start with an ML-DSA host key, skipping"
+        kill -9 $server_pid 2>/dev/null
+    else
+        echo "echoserver has no ML-DSA host key, skipping"
+    fi
+    wait $server_pid 2>/dev/null
+    server_pid=$no_pid
+fi
 
 echo "Test the usage message"
 ./apps/wolfssh/wolfssh -Z 2>&1 | grep -q "usage:" \

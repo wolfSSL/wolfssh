@@ -62,7 +62,7 @@ cd ../../..
 # Positive control: the authorized key must work against this daemon, so the
 # failure below can be attributed to the key not being authorized rather than
 # to an unrelated connection or client problem.
-timeout 10 $TEST_CLIENT -c 'exit' -u "$TEST_USER" \
+timeout 10 $TEST_CLIENT -Y -c 'exit' -u "$TEST_USER" \
     -i "$GOOD_PRIVATE_KEY" -j "$GOOD_PUBLIC_KEY" \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 GOOD_RESULT=$?
@@ -73,9 +73,9 @@ if [ "$GOOD_RESULT" != 0 ]; then
     exit 1
 fi
 
-echo "$TEST_CLIENT -c 'exit' -u $TEST_USER -i $BAD_PRIVATE_KEY" \
+echo "$TEST_CLIENT -Y -c 'exit' -u $TEST_USER -i $BAD_PRIVATE_KEY" \
      "-j $BAD_PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT (expecting rejection)"
-timeout 10 $TEST_CLIENT -c 'exit' -u "$TEST_USER" \
+timeout 10 $TEST_CLIENT -Y -c 'exit' -u "$TEST_USER" \
     -i "$BAD_PRIVATE_KEY" -j "$BAD_PUBLIC_KEY" \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 BAD_RESULT=$?

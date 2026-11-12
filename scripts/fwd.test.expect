@@ -210,7 +210,7 @@ proc run_phase {label reverse entry_port target_port} {
         puts "\n\[3\] Starting wolfssh client (plain:$entry_port -> $target_port)..."
         set reverse_flag ""
     }
-    spawn sh -c "exec ./examples/portfwd/portfwd -u jill -P upthehill -p $ssh_port \
+    spawn sh -c "exec ./examples/portfwd/portfwd -Y -u jill -P upthehill -p $ssh_port \
             $reverse_flag -f $entry_port -t $target_port -R $clt_ready >$clt_log 2>&1"
     set wolfssh_clt_id  $spawn_id
     set wolfssh_clt_pid [exp_pid]

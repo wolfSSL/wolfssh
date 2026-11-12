@@ -138,7 +138,7 @@ jobs:
           set testfile [lindex $argv 0]
           set outfile [lindex $argv 1]
 
-          spawn ./examples/sftpclient/wolfsftp -N -h 127.0.0.1 -p 22222 -u jill
+          spawn ./examples/sftpclient/wolfsftp -Y -N -h 127.0.0.1 -p 22222 -u jill
           expect "Password:"
           send "upthehill\r"
           expect "wolfSSH sftp>"

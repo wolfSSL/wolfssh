@@ -107,7 +107,7 @@ echo "Test basic copy from server to local"
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 stop_server
@@ -125,7 +125,7 @@ echo "Test basic copy from local to server"
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 stop_server
@@ -148,7 +148,7 @@ echo "Test basic copy from server to local, app-driven server"
 ./examples/echoserver/echoserver -A -N -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 stop_server
@@ -166,7 +166,7 @@ echo "Test basic copy from local to server, app-driven server"
 ./examples/echoserver/echoserver -A -N -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -L $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 stop_server
@@ -186,7 +186,7 @@ echo "Test basic copy from server to local, blocking app-driven server"
 ./examples/echoserver/echoserver -A -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -S $PWD/scripts/scp.test:$PWD/scp.test
 RESULT=$?
 remove_ready_file
 stop_server
@@ -205,7 +205,7 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -S $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
 stop_server
@@ -225,7 +225,7 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -L $PWD/scripts/empty:$PWD/empty
 RESULT=$?
 remove_ready_file
 stop_server
@@ -245,7 +245,7 @@ touch $PWD/scripts/empty
 ./examples/echoserver/echoserver -1 -R $ready_file &
 server_pid=$!
 create_port
-$run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
+$run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -L $PWD/does-not-exist:$PWD/empty
 RESULT=$?
 remove_ready_file
 stop_server
@@ -287,7 +287,7 @@ else
         ./examples/echoserver/echoserver -1 -R $ready_file &
         server_pid=$!
         create_port
-        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -S "$scp_symlink:$scp_symlink_out"
+        $run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -S "$scp_symlink:$scp_symlink_out"
         RESULT=$?
         remove_ready_file
         stop_server
@@ -316,7 +316,7 @@ else
         ./examples/echoserver/echoserver -1 -R $ready_file &
         server_pid=$!
         create_port
-        $run_client ./examples/scpclient/wolfscp -u jill -P upthehill -p $port -L "$PWD/scripts/scp.test:$scp_symlink"
+        $run_client ./examples/scpclient/wolfscp -Y -u jill -P upthehill -p $port -L "$PWD/scripts/scp.test:$scp_symlink"
         RESULT=$?
         remove_ready_file
         stop_server

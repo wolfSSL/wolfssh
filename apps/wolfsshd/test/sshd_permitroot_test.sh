@@ -65,7 +65,7 @@ attempt_login() {
         echo "FAIL: could not start wolfsshd"
         exit 1
     fi
-    timeout 10 $TEST_CLIENT -u "$2" -P "wolfsshd-dummy-pw" -c 'true' \
+    timeout 10 $TEST_CLIENT -Y -u "$2" -P "wolfsshd-dummy-pw" -c 'true' \
         -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
     # Let wolfsshd flush the log before we stop it.
     sleep 1

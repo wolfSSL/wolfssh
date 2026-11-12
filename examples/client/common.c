@@ -26,6 +26,7 @@
 #define WOLFSSH_TEST_CLIENT
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <wolfssh/ssh.h>
 #include <wolfssh/internal.h>
 #include <wolfssh/wolfsftp.h>
@@ -46,8 +47,14 @@
     #include <termios.h>
 #endif
 
+#include <wolfssl/wolfcrypt/sha256.h>
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
+    #ifdef USE_WINDOWS_API
+        #include <ws2tcpip.h>
+    #else
+        #include <arpa/inet.h>
+    #endif
 #endif
 
 static byte userPublicKeyBuf[512];
@@ -293,15 +300,46 @@ static const unsigned int hanselPrivateEd25519Sz =
 #endif
 
 
-#if defined(WOLFSSH_CERTS)
-
-#if (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
-static inline void ato32(const byte* c, word32* u32)
+/* Parse a port number. Text that is not wholly a number in 1..65535 is
+ * rejected with WS_BAD_ARGUMENT rather than truncated, and *port is left
+ * untouched. */
+int ClientParsePort(const char* in, word16* port)
 {
-    *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+    char* endptr = NULL;
+    long portVal;
+
+    if (in == NULL || port == NULL) {
+        return WS_BAD_ARGUMENT;
+    }
+
+    portVal = strtol(in, &endptr, 10);
+    if (endptr == in || *endptr != '\0' || portVal < 1 || portVal > 65535) {
+        return WS_BAD_ARGUMENT;
+    }
+    *port = (word16)portVal;
+
+    return WS_SUCCESS;
 }
 
-/* when set as true then ignore miss matching IP addresses */
+
+static inline void ato32(const byte* c, word32* u32)
+{
+    *u32 = ((word32)c[0] << 24) | ((word32)c[1] << 16) |
+           ((word32)c[2] << 8) | c[3];
+}
+
+/* when set, accept a host key without checking known_hosts */
+static int acceptAnyHostKey = 0;
+
+void ClientAcceptAnyHostKey(int flag)
+{
+    acceptAnyHostKey = flag;
+}
+
+
+#if defined(WOLFSSH_CERTS)
+
+/* when set as true then ignore a host certificate that names another host */
 static int IPOverride = 0;
 
 static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
@@ -311,7 +349,7 @@ static int ParseRFC6187(const byte* in, word32 inSz, byte** leafOut,
     word32 l = 0, m = 0;
 
     if (inSz < sizeof(word32)) {
-        printf("inSz %d too small for holding cert name\n", inSz);
+        fprintf(stderr, "inSz %d too small for holding cert name\n", inSz);
         return WS_BUFFER_E;
     }
 
@@ -361,108 +399,372 @@ void ClientIPOverride(int flag)
 {
     IPOverride = flag;
 }
-#endif /* OPENSSL_ALL || WOLFSSL_IP_ALT_NAME */
+
+
+/* Returns 1 when name, len bytes long, is host, ignoring case. */
+static int CertNameMatch(const char* name, int len, const char* host)
+{
+    return name != NULL && len > 0 && (word32)len == WSTRLEN(host)
+        && WSTRNCASECMP(name, host, len) == 0;
+}
+
+
+/* Returns 1 when the IP SAN name, len raw address bytes, is host. */
+static int CertIpMatch(const char* name, int len, const char* host)
+{
+    byte addr[16];
+    int family = (len == 4) ? AF_INET : AF_INET6;
+
+    return name != NULL && (len == 4 || len == 16)
+        && inet_pton(family, host, addr) == 1
+        && WMEMCMP(name, addr, len) == 0;
+}
+
+
+/* Checks the leaf names host: a DNS or IP SAN, or the CN when it has no
+ * SAN. The library checks the chain. */
+static int ClientCertHostCheck(const byte* pubKey, word32 pubKeySz,
+        const char* host)
+{
+    DecodedCert dCert;
+    DNS_entry* current;
+    byte*  der   = NULL;
+    word32 derSz = 0;
+    int ret = 0, match = 0;
+
+    if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) != WS_SUCCESS) {
+        fprintf(stderr, "Couldn't parse the host certificate.\n");
+        return -1;
+    }
+
+    wc_InitDecodedCert(&dCert, der, derSz, NULL);
+    if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
+        fprintf(stderr, "Couldn't parse the host certificate.\n");
+        ret = -1;
+    }
+
+    if (ret == 0) {
+        for (current = dCert.altNames; current != NULL && !match;
+                current = current->next) {
+            if (current->type == ASN_DNS_TYPE) {
+                match = CertNameMatch(current->name, current->len, host);
+            }
+            else if (current->type == ASN_IP_TYPE) {
+                match = CertIpMatch(current->name, current->len, host);
+            }
+        }
+
+        if (!dCert.extSubjAltNameSet) {
+            match = CertNameMatch(dCert.subjectCN, dCert.subjectCNLen, host);
+        }
+
+        if (!match) {
+            fprintf(stderr, "The host certificate does not name %s", host);
+            if (!IPOverride) {
+                fprintf(stderr, "\n");
+                ret = -1;
+            }
+            else {
+                fprintf(stderr, "..overriding\n");
+            }
+        }
+    }
+    wc_FreeDecodedCert(&dCert);
+
+    return ret;
+}
 #endif /* WOLFSSH_CERTS */
 
 
-/* Parse a port number. Text that is not wholly a number in 1..65535 is
- * rejected with WS_BAD_ARGUMENT rather than truncated, and *port is left
- * untouched. */
-int ClientParsePort(const char* in, word16* port)
+#define WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE 54
+#define WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE 56
+
+#if !defined(NO_FILESYSTEM) && defined(WOLFSSL_BASE64_ENCODE)
+/* Reads filename into a nul terminated buffer the caller frees. Returns 0
+ * on success. */
+static int LoadTextFile(const char* filename, char** out)
 {
-    char* endptr = NULL;
-    long portVal;
+    WFILE* file;
+    char* in;
+    long inSz;
+    int ret;
 
-    if (in == NULL || port == NULL) {
-        return WS_BAD_ARGUMENT;
+    ret = WFOPEN(NULL, &file, filename, "rb");
+    if (ret != 0 || file == WBADFILE)
+        return -1;
+
+    if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
+        WFCLOSE(NULL, file);
+        return -1;
+    }
+    inSz = WFTELL(NULL, file);
+    WREWIND(NULL, file);
+
+    if (inSz <= 0) {
+        WFCLOSE(NULL, file);
+        return -1;
     }
 
-    portVal = strtol(in, &endptr, 10);
-    if (endptr == in || *endptr != '\0' || portVal < 1 || portVal > 65535) {
-        return WS_BAD_ARGUMENT;
+    in = (char*)WMALLOC(inSz + 1, NULL, 0);
+    if (in == NULL) {
+        WFCLOSE(NULL, file);
+        return -1;
     }
-    *port = (word16)portVal;
 
-    return WS_SUCCESS;
+    ret = (int)WFREAD(NULL, in, 1, inSz, file);
+    WFCLOSE(NULL, file);
+
+    if (ret <= 0 || (long)ret != inSz) {
+        WFREE(in, NULL, 0);
+        return -1;
+    }
+
+    in[inSz] = '\0';
+    *out = in;
+
+    return 0;
 }
+
+
+/* Writes the SHA256 fingerprint of the key blob to out, which must hold
+ * WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE bytes. */
+static int FingerprintKey(const byte* pubKey, word32 pubKeySz, char* out)
+{
+#ifdef NO_SHA256
+    (void)pubKey;
+    (void)pubKeySz;
+    WMEMCPY(out, "unavailable", sizeof("unavailable"));
+    return 0;
+#else
+    wc_Sha256 sha;
+    byte digest[WC_SHA256_DIGEST_SIZE];
+    word32 fpSz = WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE - 8;
+    int ret;
+
+    ret = wc_InitSha256(&sha);
+    if (ret == 0) {
+        ret = wc_Sha256Update(&sha, pubKey, pubKeySz);
+        if (ret == 0)
+            ret = wc_Sha256Final(&sha, digest);
+        wc_Sha256Free(&sha);
+    }
+
+    if (ret == 0) {
+        WMEMCPY(out, "SHA256:", 7);
+        ret = Base64_Encode_NoNl(digest, sizeof(digest), (byte*)out + 7,
+                &fpSz);
+    }
+
+    if (ret == 0) {
+        /* Like OpenSSH, drop the padding. */
+        while (fpSz > 0 && out[7 + fpSz - 1] == '=')
+            fpSz--;
+        out[7 + fpSz] = '\0';
+    }
+
+    return ret;
+#endif /* NO_SHA256 */
+}
+
+
+/* strsep() for one delimiter; not every C library has strsep(). */
+static char* NextField(char** s, char delim)
+{
+    char* start = *s;
+    char* p;
+
+    if (start != NULL) {
+        p = WSTRCHR(start, delim);
+        if (p != NULL)
+            *p++ = '\0';
+        *s = p;
+    }
+
+    return start;
+}
+
+
+/* Returns 0 when a known_hosts line holds the key, 1 when the host has
+ * only other keys of this type, else -1. */
+static int KnownHostsLookup(const char* host, const char* keyType,
+        const char* key, char** fileName)
+{
+    const char* defaultName = "/.ssh/known_hosts";
+    char* env;
+    char* knownHosts = NULL;
+    char* cursor;
+    char* line;
+    char* name;
+    char* type;
+    char* value;
+    word32 sz;
+    int ret = -1;
+
+    *fileName = NULL;
+#ifdef _MSC_VER
+    {
+        size_t envSz;
+
+        /* MSVC deprecates getenv() for _dupenv_s(), which allocates. */
+        if (_dupenv_s(&env, &envSz, "HOME") != 0 || env == NULL) {
+            env = NULL;
+            if (_dupenv_s(&env, &envSz, "USERPROFILE") != 0)
+                env = NULL;
+        }
+    }
+#elif defined(WOLFSSH_ZEPHYR)
+    env = NULL; /* no getenv() in the minimal libc */
+#else
+    env = getenv("HOME");
+    #ifdef USE_WINDOWS_API
+    if (env == NULL)
+        env = getenv("USERPROFILE");
+    #endif
+#endif
+    if (env != NULL) {
+        sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
+        *fileName = (char*)WMALLOC(sz, NULL, 0);
+        if (*fileName != NULL) {
+            WSNPRINTF(*fileName, sz, "%s%s", env, defaultName);
+            if (LoadTextFile(*fileName, &knownHosts) != 0)
+                knownHosts = NULL;
+        }
+    #ifdef _MSC_VER
+        free(env);
+    #endif
+    }
+
+    cursor = knownHosts;
+    while (cursor != NULL && ret != 0) {
+        line = NextField(&cursor, '\n');
+        if (line == NULL || *line == '\0')
+            continue;
+        sz = (word32)WSTRLEN(line);
+        if (line[sz - 1] == '\r')
+            line[sz - 1] = '\0';
+
+        name = NextField(&line, ' ');
+        type = NextField(&line, ' ');
+        value = NextField(&line, ' ');
+        if (name != NULL && type != NULL && value != NULL
+                && WSTRCMP(name, host) == 0 && WSTRCMP(type, keyType) == 0) {
+            /* Keep looking past a stale line: a later one may hold the key. */
+            ret = (WSTRCMP(value, key) == 0) ? 0 : 1;
+        }
+    }
+
+    if (knownHosts != NULL)
+        WFREE(knownHosts, NULL, 0);
+
+    return ret;
+}
+#endif /* !NO_FILESYSTEM && WOLFSSL_BASE64_ENCODE */
 
 
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
+    const char* host = (const char*)ctx;
+    char keyType[WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE];
+    word32 sz = 0, i;
     int ret = 0;
 
-    #ifdef DEBUG_WOLFSSH
-        printf("Sample public key check callback\n"
-               "  public key = %p\n"
-               "  public key size = %u\n"
-               "  ctx = %s\n", pubKey, pubKeySz, (const char*)ctx);
-    #else
-        (void)pubKey;
-        (void)pubKeySz;
-        (void)ctx;
-    #endif
+    if (pubKey == NULL || host == NULL || pubKeySz < sizeof(word32)) {
+        ret = -1;
+    }
 
-#ifdef WOLFSSH_CERTS
-#if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
-    /* try to parse the certificate and check it's IP address */
-    if (pubKeySz > 0) {
-        DecodedCert dCert;
-        byte*  der   = NULL;
-        word32 derSz = 0;
-
-        if (ParseRFC6187(pubKey, pubKeySz, &der, &derSz) == WS_SUCCESS) {
-            wc_InitDecodedCert(&dCert, der,  derSz, NULL);
-            if (wc_ParseCert(&dCert, CERT_TYPE, NO_VERIFY, NULL) != 0) {
-                WLOG(WS_LOG_DEBUG, "public key not a cert");
-            }
-            else {
-                int ipMatch = 0;
-                DNS_entry* current = dCert.altNames;
-
-                if (ctx == NULL) {
-                    WLOG(WS_LOG_ERROR, "No host IP set to check against!");
-                    ret = -1;
-                }
-
-                if (ret == 0) {
-                    while (current != NULL) {
-                        if (current->type == ASN_IP_TYPE) {
-                            WLOG(WS_LOG_DEBUG, "host cert alt. name IP : %s",
-                                current->ipString);
-                            WLOG(WS_LOG_DEBUG,
-                                "\texpecting host IP : %s", (char*)ctx);
-                            if (XSTRCMP((const char*)ctx,
-                                        current->ipString) == 0) {
-                                WLOG(WS_LOG_DEBUG, "\tmatched!");
-                                ipMatch = 1;
-                            }
-                        }
-                        current = current->next;
-                    }
-                }
-
-                if (ipMatch == 0) {
-                    printf("IP did not match expected IP");
-                    if (!IPOverride) {
-                        printf("\n");
-                        ret = -1;
-                    }
-                    else {
-                        ret = 0;
-                        printf("..overriding\n");
-                    }
-                }
-            }
-            FreeDecodedCert(&dCert);
+    /* The server's key type is printed, so require printable ASCII. */
+    if (ret == 0) {
+        ato32(pubKey, &sz);
+        if (sz == 0 || sz > pubKeySz - sizeof(word32)
+                || sz > sizeof(keyType) - 1) {
+            ret = -1;
         }
     }
-#else
-    WLOG(WS_LOG_DEBUG, "wolfSSL not built with OPENSSL_ALL or WOLFSSL_IP_ALT_NAME");
-    WLOG(WS_LOG_DEBUG, "\tnot checking IP address from peer's cert");
-#endif
+    if (ret == 0) {
+        WMEMCPY(keyType, pubKey + sizeof(word32), sz);
+        keyType[sz] = '\0';
+        for (i = 0; i < sz; i++) {
+            if ((byte)keyType[i] < 0x21 || (byte)keyType[i] > 0x7e)
+                ret = -1;
+        }
+    }
+    if (ret != 0) {
+        fprintf(stderr, "Rejecting a malformed host key.\n");
+        return ret;
+    }
+
+#ifdef WOLFSSH_CERTS
+    /* The library has already checked an x509v3 key's chain to the CA. */
+    if (WSTRNCMP(keyType, "x509v3-", 7) == 0) {
+        return ClientCertHostCheck(pubKey, pubKeySz, host);
+    }
 #endif
 
-    return ret;
+    if (acceptAnyHostKey) {
+        fprintf(stderr, "Warning: accepting the %s host key for %s "
+                "without checking it.\n", keyType, host);
+        return 0;
+    }
+
+#if !defined(NO_FILESYSTEM) && defined(WOLFSSL_BASE64_ENCODE)
+    {
+        char* encodedKey = NULL;
+        char* fileName = NULL;
+        char fp[WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE];
+        word32 encSz = 0;
+
+        /* Base64 size plus a nul */
+        if (pubKeySz > MAX_PACKET_SZ) {
+            ret = -1;
+        }
+        if (ret == 0) {
+            encSz = (pubKeySz + 2) / 3 * 4 + 1;
+            encodedKey = (char*)WMALLOC(encSz, NULL, 0);
+            if (encodedKey == NULL)
+                ret = -1;
+        }
+        if (ret == 0) {
+            ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey,
+                    &encSz);
+        }
+        if (ret == 0) {
+            encodedKey[encSz] = '\0';
+            ret = FingerprintKey(pubKey, pubKeySz, fp);
+        }
+        if (ret == 0) {
+            ret = KnownHostsLookup(host, keyType, encodedKey, &fileName);
+            if (ret == 1) {
+                fprintf(stderr, "The %s host key for %s has changed!\n"
+                        "Fingerprint: %s\n"
+                        "Rejecting the connection.\n", keyType, host, fp);
+            }
+            else if (ret != 0) {
+                fprintf(stderr, "The %s host key for %s is unknown.\n"
+                        "Fingerprint: %s\n"
+                        "To trust it, add this line to %s:\n"
+                        "%s %s %s\n"
+                        "Or use -Y to accept any host key, insecurely.\n",
+                        keyType, host, fp,
+                        fileName != NULL ? fileName : "~/.ssh/known_hosts",
+                        host, keyType, encodedKey);
+            }
+        }
+        else {
+            fprintf(stderr, "Couldn't encode the host key.\n");
+        }
+
+        if (encodedKey != NULL)
+            WFREE(encodedKey, NULL, 0);
+        if (fileName != NULL)
+            WFREE(fileName, NULL, 0);
+    }
+#else
+    fprintf(stderr, "No known_hosts support. Use -Y to accept any host "
+            "key, insecurely.\n");
+    ret = -1;
+#endif
+
+    return (ret == 0) ? 0 : -1;
 }
 
 

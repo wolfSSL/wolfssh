@@ -24965,9 +24965,23 @@ static int test_ParseECCPubKeyCert(void)
             result = -5;
         }
     }
-#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
-    /* P-256 leaf offered for a negotiated P-384 algorithm is rejected */
+    /* a chain not named for the negotiated algorithm is rejected: the
+     * host key callback reads the name to decide whether it is a cert */
     if (result == 0) {
+        WMEMCPY(blob + LENGTH_SZ, "X", 1);
+        ssh->handshake->pubKeyId = ID_X509V3_ECDSA_SHA2_NISTP256;
+        ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
+        if (ret != WS_INVALID_ALGO_ID) {
+            printf("ParseECCPubKeyCert: relabelled blob ret %d\n", ret);
+            result = -8;
+        }
+        WMEMCPY(blob + LENGTH_SZ, "x", 1);
+    }
+#ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+    /* P-256 leaf offered for a negotiated P-384 algorithm, and named for
+     * it, is rejected */
+    if (result == 0) {
+        WMEMCPY(blob + LENGTH_SZ + WSTRLEN(algoName) - 3, "384", 3);
         ssh->handshake->pubKeyId = ID_X509V3_ECDSA_SHA2_NISTP384;
         ret = wolfSSH_TestParseECCPubKeyCert(ssh, blob, blobSz);
         if (ret != WS_INVALID_PRIME_CURVE) {

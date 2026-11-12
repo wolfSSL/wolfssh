@@ -191,18 +191,18 @@ check_subsystem() {
 
 # SHELL_Subsystem, via an exec session.
 check_subsystem "exec" \
-    "$TEST_CLIENT" -c 'echo privdrop' -u "$USER" -i "$PRIVATE_KEY" \
+    "$TEST_CLIENT" -Y -c 'echo privdrop' -u "$USER" -i "$PRIVATE_KEY" \
     -j "$PUBLIC_KEY" -h "$TEST_HOST" -p "$TEST_PORT"
 
 # SFTP_Subsystem. -g is a one-shot put, so the client cannot sit at a prompt.
 check_subsystem "sftp" \
-    "$SFTP_CLIENT" -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
+    "$SFTP_CLIENT" -Y -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
     -g -l "$PAYLOAD" -r "/tmp/privdrop_remote_$$.txt" \
     -h "$TEST_HOST" -p "$TEST_PORT"
 
 # SCP_Subsystem.
 check_subsystem "scp" \
-    "$SCP_CLIENT" -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
+    "$SCP_CLIENT" -Y -u "$USER" -i "$PRIVATE_KEY" -j "$PUBLIC_KEY" \
     -S"$PAYLOAD:." -H "$TEST_HOST" -p "$TEST_PORT"
 
 rm -f "$TESTDIR"/privdrop_client_*.log

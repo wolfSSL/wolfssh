@@ -52,7 +52,7 @@ if [ -z "$PID" ]; then
     exit 1
 fi
 
-timeout 10 $TEST_CLIENT -u "$USER" -P "somepassword" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -P "somepassword" -c 'true' \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 PASS_RESULT=$?
 
@@ -61,7 +61,7 @@ if [ "$PASS_RESULT" = 0 ]; then
     exit 1
 fi
 
-timeout 10 $TEST_CLIENT -u "$USER" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -c 'true' \
     -i $PWD/../../../keys/hansel-key-ecc.der -j $PWD/../../../keys/hansel-key-ecc.pub \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 NOCMD_PUBKEY_RESULT=$?
@@ -114,7 +114,7 @@ if [ -z "$PID" ]; then
     exit 1
 fi
 
-timeout 10 $TEST_CLIENT -u "$USER" -c 'true' \
+timeout 10 $TEST_CLIENT -Y -u "$USER" -c 'true' \
     -i $PWD/../../../keys/hansel-key-ecc.der -j $PWD/../../../keys/hansel-key-ecc.pub \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 WITHCMD_PUBKEY_RESULT=$?

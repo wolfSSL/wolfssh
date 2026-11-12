@@ -23,6 +23,7 @@ EXTRA_DIST+= \
             keys/ca-cert-ecc.pem keys/ca-key-ecc.der keys/ca-key-ecc.pem \
             keys/server-cert.der keys/server-cert.pem \
             keys/server-cert-ed25519.der keys/server-cert-ed25519.pem \
+            keys/server-cert-email-san.der keys/server-cert-email-san.pem \
             keys/fred-cert.der keys/fred-cert.pem \
             keys/server-key.pem keys/fred-key.der keys/fred-key.pem \
             keys/id_ecdsa keys/id_ecdsa.pub keys/id_rsa keys/id_rsa.pub \

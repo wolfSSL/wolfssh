@@ -264,7 +264,7 @@ do_tail_attempt() {
     [ -s "$tail_ready_file" ] \
         || do_fail "no ready file, echoserver didn't start"
 
-    ./examples/portfwd/portfwd -u jill -P upthehill \
+    ./examples/portfwd/portfwd -Y -u jill -P upthehill \
         -p `cat "$tail_ready_file"` \
         -f $tail_entry_port -t $tail_target_port -R "$tail_fwd_ready_file" \
         > "$tail_portfwd_log" 2>&1 &
@@ -345,7 +345,7 @@ done
 [ -s "$ready_file" ] || do_fail "no ready file, echoserver didn't start"
 port=`cat "$ready_file"`
 
-./examples/portfwd/portfwd -u jill -P upthehill -p "$port" \
+./examples/portfwd/portfwd -Y -u jill -P upthehill -p "$port" \
     -f $entry_port -t $target_port -R "$fwd_ready_file" \
     > "$portfwd_log" 2>&1 &
 portfwd_pid=$!

@@ -119,7 +119,7 @@ jobs:
           cat > /tmp/sftp_test.exp << 'EOF'
           #!/usr/bin/expect -f
           set timeout 60
-          spawn ./examples/sftpclient/wolfsftp -N -h 127.0.0.1 -p 22222 -u jill
+          spawn ./examples/sftpclient/wolfsftp -Y -N -h 127.0.0.1 -p 22222 -u jill
           expect "Password:"
           send "upthehill\r"
           expect "wolfSSH sftp>"
@@ -209,7 +209,7 @@ jobs:
         working-directory: ./wolfssh/
         run: |
           port=$(cat /tmp/echoserver_ready)
-          ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port" \
+          ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port" \
             -G -l /tmp/large_test_copy.dat -r "$(pwd)/large_test.dat"
 
       - name: Verify file integrity
