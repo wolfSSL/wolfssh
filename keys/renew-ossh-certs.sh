@@ -97,6 +97,15 @@ gen_cert "$USER_NAME-ossh-srcok"          ossh-ca     "ossh-srcok" \
     "$USER_NAME" -O source-address="127.0.0.0/8,::1/128"
 gen_cert "$USER_NAME-ossh-srcbad"         ossh-ca     "ossh-srcbad" \
     "$USER_NAME" -O source-address="10.0.0.0/8"
+# permit-*: ssh-keygen sets all five by default; "clear" drops them all.
+gen_cert "$USER_NAME-ossh-clear"          ossh-ca     "ossh-clear" \
+    "$USER_NAME" -O clear
+gen_cert "$USER_NAME-ossh-nopty"          ossh-ca     "ossh-nopty" \
+    "$USER_NAME" -O no-pty
+gen_cert "$USER_NAME-ossh-noagent"        ossh-ca     "ossh-noagent" \
+    "$USER_NAME" -O no-agent-forwarding
+gen_cert "$USER_NAME-ossh-nox11"          ossh-ca     "ossh-nox11" \
+    "$USER_NAME" -O no-x11-forwarding
 # A validity window entirely in the past is always expired.
 gen_cert "$USER_NAME-ossh-expired"        ossh-ca     "ossh-expired" \
     "$USER_NAME" -V 20200101:20200102

@@ -12,6 +12,8 @@
 # Confirms a valid certificate is accepted and that an untrusted CA, a
 # non-matching principal, an unknown critical option and a source-address
 # mismatch are each rejected, and that force-command overrides the command.
+# The OpenSSH-client pass also checks that pty, X11 and agent requests are
+# refused without their permit-* extension, and port forwarding always is.
 #
 # Requires: ssh-keygen and the wolfSSH client. Skips cleanly (77) when either is
 # missing or wolfSSHd was not built with --enable-ossh-certs. The OpenSSH-client
@@ -178,9 +180,16 @@ start_daemon() {
     return 1
 }
 
+# ssh-agent for the agent forwarding cases.
+AGENT_PID=""
+stop_agent() {
+    [ -n "$AGENT_PID" ] && kill "$AGENT_PID" 2>/dev/null
+    AGENT_PID=""
+}
+
 # Stop by recorded pid rather than by command-line pattern: a pattern match can
 # reach another user's wolfsshd on a shared host.
-trap 'stop_daemon; rm -rf "$WORK"' EXIT
+trap 'stop_daemon; stop_agent; rm -rf "$WORK"' EXIT
 
 # Under sudo the daemon session runs as the login user: let it traverse $WORK
 # and own the marker dir (not world-writable, so no other user can fake a PASS).
@@ -442,6 +451,159 @@ scp_check() { # label  user-key  cert  expect(0=allowed,1=denied)
     fi
 }
 
+# OpenSSH client with extra options; output to $OUT (default permit.out).
+ssh_opts() { # user-key  cert  remote-command  [ssh options...]
+    local key=$1 cert=$2 cmd=$3 out=${OUT:-$WORK/permit.out}
+    shift 3
+    $TIMEOUT ssh -p $PORT -i "$key" -o CertificateFile="$cert" \
+        -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=publickey \
+        -o BatchMode=yes -o ConnectTimeout=5 "$@" \
+        "$LOGINUSER@127.0.0.1" "$cmd" > "$out" 2>&1 < /dev/null
+}
+
+# The sshd log line tells a refusal by certificate from one the daemon
+# makes anyway.
+permit_check() { # label user-key cert request expect(0=permit,1=refuse) cmd
+                 # [ssh options...]
+    local label=$1 key=$2 cert=$3 req=$4 expect=$5 cmd=$6
+    shift 6
+    start_daemon || { printf "  %-20s %s\n" "$label" \
+        "*** FAIL (no running daemon)"; FAIL=1; return; }
+    ssh_opts "$key" "$cert" "$cmd" "$@"
+    local rc=$?
+    if ! daemon_alive "$DPID"; then
+        printf "  %-20s %s\n" "$label" "*** FAIL (wolfsshd exited while serving)"
+        FAIL=1
+        stop_daemon
+        return
+    fi
+    stop_daemon
+    timed_out "$label" $rc && return
+    local got=0
+    grep -q "does not permit $req" "$WORK/sshd.log" 2>/dev/null && got=1
+    if [ $rc -eq 0 ] && [ $got -eq $expect ]; then
+        printf "  %-20s %s\n" "$label" "PASS"
+    else
+        printf "  %-20s %s (rc=%d refused=%d)\n" "$label" "*** FAIL" $rc $got
+        sed 's/^/      /' "$WORK/permit.out"
+        FAIL=1
+    fi
+}
+
+# Uses a shell: wolfSSHd runs exec commands on pipes even with a pty. The
+# split quotes keep the pty echo from matching; -tt makes a refusal fatal.
+pty_check() { # label user-key cert expect(0=permit,1=refuse)
+    local label=$1
+    start_daemon || { printf "  %-20s %s\n" "$label" \
+        "*** FAIL (no running daemon)"; FAIL=1; return; }
+    printf 'test -t 0 && echo "stdin""-is-a-tty"\nexit\n' | $TIMEOUT ssh -tt -p $PORT -i "$2" \
+        -o CertificateFile="$3" -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o PreferredAuthentications=publickey -o BatchMode=yes \
+        -o ConnectTimeout=5 "$LOGINUSER@127.0.0.1" > "$WORK/permit.out" 2>&1
+    local rc=$?
+    if ! daemon_alive "$DPID"; then
+        printf "  %-20s %s\n" "$label" "*** FAIL (wolfsshd exited while serving)"
+        FAIL=1
+        stop_daemon
+        return
+    fi
+    stop_daemon
+    timed_out "$label" $rc && return
+    local got=0 ok=0
+    grep -q "does not permit pty-req" "$WORK/sshd.log" 2>/dev/null && got=1
+    if [ "$4" -eq 0 ]; then
+        # Not anchored: the shell prompt may share the line.
+        [ $rc -eq 0 ] && grep -q "stdin-is-a-tty" "$WORK/permit.out" && ok=1
+    else
+        grep -q "PTY allocation request failed" "$WORK/permit.out" && ok=1
+    fi
+    if [ $ok -eq 1 ] && [ $got -eq "$4" ]; then
+        printf "  %-20s %s\n" "$label" "PASS"
+    else
+        printf "  %-20s %s (rc=%d refused=%d)\n" "$label" "*** FAIL" $rc $got
+        sed 's/^/      /' "$WORK/permit.out"
+        FAIL=1
+    fi
+}
+
+# wolfSSHd has no forwarding handler, so -W (direct-tcpip) and -R
+# (tcpip-forward) are refused for every certificate.
+fwd_refused_check() { # label user-key cert
+    local label=$1
+    start_daemon || { printf "  %-20s %s\n" "$label" \
+        "*** FAIL (no running daemon)"; FAIL=1; return; }
+    OUT="$WORK/fwd-W.out" ssh_opts "$2" "$3" true -W 127.0.0.1:$PORT
+    local rcW=$?
+    OUT="$WORK/fwd-R.out" ssh_opts "$2" "$3" true \
+        -o ExitOnForwardFailure=yes -R 127.0.0.1:0:127.0.0.1:$PORT
+    local rcR=$?
+    if ! daemon_alive "$DPID"; then
+        printf "  %-20s %s\n" "$label" "*** FAIL (wolfsshd exited while serving)"
+        FAIL=1
+        stop_daemon
+        return
+    fi
+    stop_daemon
+    timed_out "$label" $rcW && return
+    timed_out "$label" $rcR && return
+    local okW=0 okR=0
+    [ $rcW -ne 0 ] && grep -q "open failed: administratively prohibited" \
+        "$WORK/fwd-W.out" && okW=1
+    [ $rcR -ne 0 ] && grep -q "remote port forwarding failed" \
+        "$WORK/fwd-R.out" && okR=1
+    if [ $okW -eq 1 ] && [ $okR -eq 1 ]; then
+        printf "  %-20s %s\n" "$label" "PASS"
+    else
+        printf "  %-20s %s (-W rc=%d, -R rc=%d)\n" "$label" "*** FAIL" \
+            $rcW $rcR
+        sed 's/^/      -W: /' "$WORK/fwd-W.out"
+        sed 's/^/      -R: /' "$WORK/fwd-R.out"
+        FAIL=1
+    fi
+}
+
+permit_suite() {
+    local valid="$CERTS/$LOGINUSER-ossh-cert.pub"
+    local clear="$CERTS/$LOGINUSER-ossh-clear-cert.pub"
+
+    pty_check "pty permitted"      "$ED" "$valid"                              0
+    pty_check "pty no-pty"         "$ED" "$CERTS/$LOGINUSER-ossh-nopty-cert.pub" 1
+    pty_check "pty clear"          "$ED" "$clear"                              1
+
+    # Trusted X11 needs no xauth. wolfSSHd has no X11, so it fails either
+    # way; only the log shows a refusal by policy.
+    DISPLAY=:0 permit_check "x11 permitted" "$ED" "$valid" x11-req 0 true \
+        -Y -o XAuthLocation=/nonexistent
+    DISPLAY=:0 permit_check "x11 no-x11" "$ED" \
+        "$CERTS/$LOGINUSER-ossh-nox11-cert.pub" x11-req 1 true \
+        -Y -o XAuthLocation=/nonexistent
+    DISPLAY=:0 permit_check "x11 clear" "$ED" "$clear" x11-req 1 true \
+        -Y -o XAuthLocation=/nonexistent
+    if command -v ssh-agent >/dev/null 2>&1; then
+        local out
+        out=$(ssh-agent -a "$WORK/agent.sock" -s 2>/dev/null)
+        AGENT_PID=$(printf "%s\n" "$out" | sed -n 's/^SSH_AGENT_PID=\([0-9]*\);.*/\1/p')
+        if [ -n "$AGENT_PID" ]; then
+            SSH_AUTH_SOCK="$WORK/agent.sock" permit_check "agent permitted" \
+                "$ED" "$valid" auth-agent-req 0 true -A
+            SSH_AUTH_SOCK="$WORK/agent.sock" permit_check "agent no-agent" \
+                "$ED" "$CERTS/$LOGINUSER-ossh-noagent-cert.pub" \
+                auth-agent-req 1 true -A
+            SSH_AUTH_SOCK="$WORK/agent.sock" permit_check "agent clear" \
+                "$ED" "$clear" auth-agent-req 1 true -A
+        else
+            echo "  (ssh-agent failed to start, skipping agent cases)"
+        fi
+        stop_agent
+    else
+        echo "  (ssh-agent unavailable, skipping agent cases)"
+    fi
+    fwd_refused_check "fwd permitted" "$ED" "$valid"
+    fwd_refused_check "fwd clear"     "$ED" "$clear"
+}
+
 run_suite() { # driver
     DRIVER=$1
     echo "OpenSSH cert test via $DRIVER client (user=$LOGINUSER, port=$PORT):"
@@ -458,6 +620,9 @@ run_suite() { # driver
     check "source-addr deny"  "$ED"  "$CERTS/$LOGINUSER-ossh-srcbad-cert.pub"        1
     check "expired cert"      "$ED"  "$CERTS/$LOGINUSER-ossh-expired-cert.pub"       1
     force_command_check       "$ED"  "$CERTS/$LOGINUSER-ossh-forcecmd-cert.pub"
+    # A cert with no permit-* still runs a command.
+    check "no permit-* ext"   "$ED"  "$CERTS/$LOGINUSER-ossh-clear-cert.pub"         0
+    [ "$DRIVER" = ssh ] && permit_suite
 
     # A force-command must not be bypassed by requesting the SFTP subsystem.
     # "internal-sftp" still permits SFTP; any other force-command denies it.

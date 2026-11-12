@@ -12002,9 +12002,8 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     (int)cert.keyIdSz, cert.keyId,
                     (unsigned long long)cert.serial);
             }
-            /* Validate critical options + extensions. Unknown critical
-             * options are rejected; force-command and source-address are
-             * extracted for the application to enforce. */
+            /* Reject unknown critical options; extract force-command,
+             * source-address and permit-* for the application to enforce. */
             if (rc == WS_SUCCESS) {
                 rc = OsshCertCheckOptions(&cert);
             }
@@ -12044,6 +12043,7 @@ static int DoUserAuthRequestPublicKey(WOLFSSH* ssh, WS_UserAuthData* authData,
                     authData->sf.publicKey.sourceAddress = cert.sourceAddress;
                     authData->sf.publicKey.sourceAddressSz =
                             cert.sourceAddressSz;
+                    authData->sf.publicKey.permits = cert.permits;
 
                     /* Verify the user signature by its own algorithm (it
                      * carries the negotiated hash); the no-signature probe uses
