@@ -1437,6 +1437,7 @@ struct WOLFSSH {
     void* publicKeyCheckCtx;
     byte  sendTerminalRequest;
     byte userAuthPkDone;
+    byte pwAuthAttempts;
     byte sendExtInfo;
     byte extInfoSent; /* track if the ext info has already been sent */
     byte sendStrictKex; /* offer strict KEX on initial KEXINIT */
@@ -1537,9 +1538,6 @@ struct WOLFSSH {
     byte kbSetupPending; /* server sent INFO_REQUEST, awaiting a response */
     byte kbRequestSent;  /* client asked for keyboard-interactive, may be
                           * prompted until the server's SUCCESS or FAILURE */
-#endif
-#ifdef WOLFSSH_TPM
-    byte tpmPubkeyTried; /* client tried TPM publickey; allow auth fallback */
 #endif
 #ifdef WOLFSSH_TEST_INTERNAL
     word32 testSftpSendCap;      /* test hook: cap per-call SFTP buffer send */

@@ -2982,7 +2982,8 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         wolfSSHD_ConfigGetPubKeyAuth(usrConf) != 1) {
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key authentication not "
                     "allowed by configuration!");
-        ret = WOLFSSH_USERAUTH_REJECTED;
+        /* FAILURE, not REJECTED, so the client can try another method. */
+        ret = WOLFSSH_USERAUTH_FAILURE;
     }
 
     if (ret == WOLFSSH_USERAUTH_SUCCESS &&
@@ -2991,7 +2992,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
         /* Forced command required. */
         wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Public key login for root requires "
                     "a forced command by configuration!");
-        ret = WOLFSSH_USERAUTH_REJECTED;
+        ret = WOLFSSH_USERAUTH_FAILURE;
     }
 
     #if defined(WOLFSSH_CERTS) && (defined(WOLFSSL_FPKI) || defined(_WIN32))
@@ -3114,7 +3115,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Per-user TrustedUserCAKeys override is not enforced "
                     "for certificate authentication; rejecting (user=%.32s)",
                     usr);
-                ret = WOLFSSH_USERAUTH_REJECTED;
+                ret = WOLFSSH_USERAUTH_FAILURE;
             }
             else {
             #if defined(WOLFSSH_CERTS) && defined(_WIN32)
@@ -3152,7 +3153,7 @@ static int RequestAuthentication(WS_UserAuthData* authData,
                     "[SSHD] Certificate authentication cannot bind the requested "
                     "user without FPKI or AuthorizedKeysFile; rejecting "
                     "(user=%.32s)", usr);
-                ret = WOLFSSH_USERAUTH_REJECTED;
+                ret = WOLFSSH_USERAUTH_FAILURE;
             #endif
             }
         }

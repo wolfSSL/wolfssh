@@ -52,8 +52,11 @@ fi
 
 TEST_CLIENT="../../../examples/client/client"
 
-# Attempt password login as root, which should be rejected
+# Attempt password login as root, which should be rejected. The client
+# tries a key first, so offer one root does not authorize.
 timeout 10 $TEST_CLIENT -u "$USER" -P "somepassword" -c 'true' \
+    -i $PWD/../../../keys/gretel-key-ecc.der \
+    -j $PWD/../../../keys/gretel-key-ecc.pub \
     -h "$TEST_HOST" -p "$TEST_PORT" > /dev/null 2>&1
 PASS_RESULT=$?
 

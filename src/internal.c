@@ -12556,12 +12556,14 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
             for (j = 0; j < sizeof(ssh->supportedAuth); j++) {
                 if (authList[i] == ssh->supportedAuth[j]) {
                     switch(authList[i]) {
+                        /* As OpenSSH: the key once, the others thrice. */
                         case ID_USERAUTH_PASSWORD:
-                            authType |= WOLFSSH_USERAUTH_PASSWORD;
+                            if (ssh->pwAuthAttempts < 3) {
+                                authType |= WOLFSSH_USERAUTH_PASSWORD;
+                            }
                             break;
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                         case ID_USERAUTH_KEYBOARD:
-                            /* try a different auth method if failing */
                             if (ssh->kbAuthAttempts < 3) {
                                 authType |= WOLFSSH_USERAUTH_KEYBOARD;
                             }
@@ -12569,7 +12571,9 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
 #endif
 #ifndef WOLFSSH_NO_PUBKEY_AUTH
                         case ID_USERAUTH_PUBLICKEY:
-                            authType |= WOLFSSH_USERAUTH_PUBLICKEY;
+                            if (!ssh->userAuthPkDone) {
+                                authType |= WOLFSSH_USERAUTH_PUBLICKEY;
+                            }
                             break;
 #endif
                         default:
@@ -12579,9 +12583,9 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
             }
         }
 
-        /* the auth type attempted was not in the list */
+        /* nothing in the list is supported or left to try */
         if (authType == 0) {
-            WLOG(WS_LOG_DEBUG, "Did not match any auth IDs in peers list");
+            WLOG(WS_LOG_DEBUG, "No untried auth method in peer's list");
             ret = WS_USER_AUTH_E;
         }
     }
@@ -22981,6 +22985,43 @@ static int BuildUserAuthRequestMlDsa(WOLFSSH* ssh,
 
 
 #ifndef WOLFSSH_NO_PUBKEY_AUTH
+/* Returns the signature algorithm for keyId, or ID_UNKNOWN if the peer
+ * accepts none. */
+static byte UserAuthSigId(WOLFSSH* ssh, byte keyId)
+{
+    byte algoId[4];
+    word32 algoIdSz = 0;
+
+    /* Typically a 1:1 match of key type to signature type. RSA uses
+     * a key type of ssh-rsa, but different signature types. */
+    if (keyId == ID_SSH_RSA) {
+    #ifndef WOLFSSH_NO_RSA_SHA2_512
+        algoId[algoIdSz++] = ID_RSA_SHA2_512;
+    #endif
+    #ifndef WOLFSSH_NO_RSA_SHA2_256
+        algoId[algoIdSz++] = ID_RSA_SHA2_256;
+    #endif
+    #if !defined(WOLFSSH_NO_SSH_RSA_SHA1) \
+        && defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
+        algoId[algoIdSz++] = ID_SSH_RSA;
+    #endif
+    }
+    else {
+        algoId[algoIdSz++] = keyId;
+    }
+
+    /* Is that in the peerSigId list? With no server-sig-algs, RFC 8308
+     * section 2.2, use the canned order, which prefers rsa-sha2-* to
+     * ssh-rsa; RFC 8332 section 3.3 allows either. */
+    if (ssh->peerSigAlgsSeen) {
+        return MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
+                ssh->peerSigId, ssh->peerSigIdSz);
+    }
+    return MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
+            cannedKeyAlgoClient, cannedKeyAlgoClientSz);
+}
+
+
 static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
         WS_UserAuthData* authData, WS_KeySignature* keySig)
 {
@@ -22993,43 +23034,14 @@ static int PrepareUserAuthRequestPublicKey(WOLFSSH* ssh, word32* payloadSz,
     }
 
     if (ret == WS_SUCCESS) {
-        byte matchId, algoId[4];
-        word32 algoIdSz = 0;
+        byte matchId;
 
         keySig->keyId = NameToId(
                 (const char*)authData->sf.publicKey.publicKeyType,
                 authData->sf.publicKey.publicKeyTypeSz);
         keySig->keyName = (const char*)authData->sf.publicKey.publicKeyType;
         keySig->keyNameSz = authData->sf.publicKey.publicKeyTypeSz;
-        /* Typically a 1:1 match of key type to signature type. RSA uses
-         * a key type of ssh-rsa, but different signature types. */
-        if (keySig->keyId == ID_SSH_RSA) {
-        #ifndef WOLFSSH_NO_RSA_SHA2_512
-            algoId[algoIdSz++] = ID_RSA_SHA2_512;
-        #endif
-        #ifndef WOLFSSH_NO_RSA_SHA2_256
-            algoId[algoIdSz++] = ID_RSA_SHA2_256;
-        #endif
-        #if !defined(WOLFSSH_NO_SSH_RSA_SHA1) \
-            && defined(WOLFSSH_NO_SHA1_SOFT_DISABLE)
-            algoId[algoIdSz++] = ID_SSH_RSA;
-        #endif
-        }
-        else {
-            algoId[algoIdSz++] = keySig->keyId;
-        }
-
-        /* Is that in the peerSigId list? With no server-sig-algs, RFC 8308
-         * section 2.2, use the canned order, which prefers rsa-sha2-* to
-         * ssh-rsa; RFC 8332 section 3.3 allows either. */
-        if (ssh->peerSigAlgsSeen) {
-            matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
-                    ssh->peerSigId, ssh->peerSigIdSz);
-        }
-        else {
-            matchId = MatchIdLists(WOLFSSH_ENDPOINT_CLIENT, algoId, algoIdSz,
-                    cannedKeyAlgoClient, cannedKeyAlgoClientSz);
-        }
+        matchId = UserAuthSigId(ssh, keySig->keyId);
         if (matchId == ID_UNKNOWN) {
             ret = WS_MATCH_KEY_ALGO_E;
         }
@@ -23508,79 +23520,79 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         keySig_ptr->sigId = ID_NONE;
         keySig_ptr->heap = ssh->ctx->heap;
 
-#ifdef WOLFSSH_TPM
-        /* When the client has a TPM key configured, prefer publickey auth so
-         * the TPM key is used even if the server also offers password or
-         * keyboard-interactive. Only strip the other methods on the first
-         * attempt; once publickey has been tried and rejected, allow fallback
-         * to password/keyboard on the next DoUserAuthFailure() retry. */
-        if (ssh->ctx->tpmKey != NULL && !ssh->tpmPubkeyTried
-                && (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
-            ssh->tpmPubkeyTried = 1;
-            authType &= ~WOLFSSH_USERAUTH_PASSWORD;
-        #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-            authType &= ~WOLFSSH_USERAUTH_KEYBOARD;
-        #endif
-        }
-#endif
+        authData.type = authType;
+        authData.username = (const byte*)ssh->userName;
+        authData.usernameSz = ssh->userNameSz;
 
+        /* The client's order, as OpenSSH: publickey,
+         * keyboard-interactive, then password. */
+        if ((authType & WOLFSSH_USERAUTH_PUBLICKEY)
+                && ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback for key");
+            /* Success without a key is a decline. */
+            if (ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
+                        &authData, ssh->userAuthCtx)
+                    == WOLFSSH_USERAUTH_SUCCESS
+                    && authData.sf.publicKey.publicKeyType != NULL
+                    && authData.sf.publicKey.publicKeyTypeSz != 0
+                    && authData.sf.publicKey.publicKey != NULL
+                    && authData.sf.publicKey.publicKeySz != 0) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Callback successful public key");
+                authId = ID_USERAUTH_PUBLICKEY;
+            }
+            else {
+                WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
+                ssh->userAuthPkDone = 1; /* a decline is the one key try */
+            }
+        #ifndef WOLFSSH_NO_PUBKEY_AUTH
+            /* Skip a key the peer has no signature algorithm for. */
+            if (authId == ID_USERAUTH_PUBLICKEY
+                    && UserAuthSigId(ssh, NameToId(
+                        (const char*)authData.sf.publicKey.publicKeyType,
+                        authData.sf.publicKey.publicKeyTypeSz))
+                    == ID_UNKNOWN) {
+                WLOG(WS_LOG_DEBUG, "SUAR: No signature algorithm for key");
+                authId = ID_NONE;
+                ssh->userAuthPkDone = 1;
+            }
+        #endif
+            if (authId == ID_USERAUTH_PUBLICKEY) {
+                authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
+            }
+            else {
+                WMEMSET(&authData.sf, 0, sizeof(authData.sf));
+                authData.type = (byte)(authType & ~WOLFSSH_USERAUTH_PUBLICKEY);
+            }
+        }
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         /* Callback happens later for keyboard auth */
-        if (authType & WOLFSSH_USERAUTH_KEYBOARD) {
-                    authId = ID_USERAUTH_KEYBOARD;
+        if (authId == ID_NONE && (authType & WOLFSSH_USERAUTH_KEYBOARD)) {
+            authId = ID_USERAUTH_KEYBOARD;
         }
-        else
 #endif
-        if (ssh->ctx->userAuthCb != NULL) {
-            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback");
-
-            authData.type = authType;
-            authData.username = (const byte*)ssh->userName;
-            authData.usernameSz = ssh->userNameSz;
-
-            if (authType & WOLFSSH_USERAUTH_PASSWORD) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
-                        &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
-                    ret = WS_FATAL_ERROR;
-                    authType &= ~WOLFSSH_USERAUTH_PASSWORD;
-                }
-                else {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
-                    authId = ID_USERAUTH_PASSWORD;
-                    authType = WOLFSSH_USERAUTH_PASSWORD;
-                    authData.type = authType;
-                }
+        if (authId == ID_NONE && (authType & WOLFSSH_USERAUTH_PASSWORD)
+                && ssh->ctx->userAuthCb != NULL) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Calling the userauth callback for "
+                    "password");
+            if (ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PASSWORD,
+                        &authData, ssh->userAuthCtx)
+                    == WOLFSSH_USERAUTH_SUCCESS) {
+                WLOG(WS_LOG_DEBUG, "SUAR: Callback successful password");
+                authId = ID_USERAUTH_PASSWORD;
+                authData.type = WOLFSSH_USERAUTH_PASSWORD;
             }
-            /* fall into public key case if keyboard or password case was not
-             * successful */
-            if ((ret == WS_FATAL_ERROR ||
-
-#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
-                (!(authType & WOLFSSH_USERAUTH_PASSWORD) &&
-                !(authType & WOLFSSH_USERAUTH_KEYBOARD))) &&
-#else
-                !(authType & WOLFSSH_USERAUTH_PASSWORD)) &&
-#endif
-                (authType & WOLFSSH_USERAUTH_PUBLICKEY)) {
-                ret = ssh->ctx->userAuthCb(WOLFSSH_USERAUTH_PUBLICKEY,
-                        &authData, ssh->userAuthCtx);
-                if (ret != WOLFSSH_USERAUTH_SUCCESS) {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get key");
-                    ret = WS_FATAL_ERROR;
-                }
-                else {
-                    WLOG(WS_LOG_DEBUG, "SUAR: Callback successful public key");
-                    authData.type = WOLFSSH_USERAUTH_PUBLICKEY;
-                    authId = ID_USERAUTH_PUBLICKEY;
-                }
+            else {
+                WLOG(WS_LOG_DEBUG, "SUAR: Couldn't get password");
             }
-
         }
-        else {
+        /* authType 0 is the opening "none" probe. */
+        if (ssh->ctx->userAuthCb == NULL && authId == ID_NONE) {
             WLOG(WS_LOG_DEBUG, "SUAR: No user auth callback");
             ret = WS_FATAL_ERROR;
+        }
+        else if (authId == ID_NONE && authType != 0) {
+            WLOG(WS_LOG_DEBUG, "SUAR: Callback declined every method");
+            ret = WS_USER_AUTH_E;
         }
     }
 
@@ -23642,6 +23654,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             WOLFSSH_UNUSED(sigStartIdx);
 
             ret = BuildUserAuthRequestPassword(ssh, output, &idx, &authData);
+            ssh->pwAuthAttempts++;
         }
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
         else if (authId == ID_USERAUTH_KEYBOARD) {
