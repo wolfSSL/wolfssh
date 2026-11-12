@@ -8115,6 +8115,154 @@ static void test_wolfSSH_ConvertConsole(void)
 }
 
 
+#ifdef USE_WINDOWS_API
+/* Run seq on an 'x'-filled buffer; return the character at (x,y). */
+static char ConsoleCsiCellAt(HANDLE h, const char* seq, COORD cursor,
+        SHORT x, SHORT y)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    COORD origin = { 0, 0 };
+    COORD cell;
+    DWORD n = 0;
+    char c = 0;
+
+    AssertTrue(GetConsoleScreenBufferInfo(h, &info));
+    AssertTrue(FillConsoleOutputCharacterA(h, 'x',
+                (DWORD)info.dwSize.X * (DWORD)info.dwSize.Y, origin, &n));
+    AssertTrue(SetConsoleCursorPosition(h, cursor));
+
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, h, (byte*)seq,
+                (word32)WSTRLEN(seq)), WS_SUCCESS);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    cell.X = x;
+    cell.Y = y;
+    AssertTrue(ReadConsoleOutputCharacterA(h, &c, 1, cell, &n));
+    return c;
+}
+
+/* ConsoleCsiCellAt() with the cursor at (4,2). */
+static char ConsoleCsiCell(HANDLE h, const char* seq, SHORT x, SHORT y)
+{
+    COORD cursor = { 4, 2 };
+
+    return ConsoleCsiCellAt(h, seq, cursor, x, y);
+}
+
+/* Run seq from attributes start; return the resulting attributes. */
+static WORD ConsoleSgr(HANDLE h, WORD start, const char* seq)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    CONSOLE_SCREEN_BUFFER_INFO info;
+
+    AssertTrue(SetConsoleTextAttribute(h, start));
+    AssertNotNull(ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL));
+    AssertNotNull(ssh = wolfSSH_new(ctx));
+    /* the first call records start as the default attributes */
+    AssertIntEQ(wolfSSH_ConvertConsole(ssh, h, (byte*)seq,
+                (word32)WSTRLEN(seq)), WS_SUCCESS);
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+
+    AssertTrue(GetConsoleScreenBufferInfo(h, &info));
+    return info.wAttributes;
+}
+#endif /* USE_WINDOWS_API */
+
+
+static void test_wolfSSH_ConvertConsole_csi(void)
+{
+#ifdef USE_WINDOWS_API
+    HANDLE h;
+    SHORT w, wh;
+    COORD size;
+    SMALL_RECT win;
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    const WORD def = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+    const WORD red = FOREGROUND_RED;
+
+    h = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, 0, NULL,
+            CONSOLE_TEXTMODE_BUFFER, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        return; /* no console attached */
+    }
+    AssertTrue(GetConsoleScreenBufferInfo(h, &info));
+    w = info.dwSize.X;
+
+    /* erase display: omitted and 0 erase cursor to end */
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[J", 3, 2), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[J", 4, 2), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[J", 0, 3), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[0J", 3, 2), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[0J", 4, 2), ' ');
+    /* 1J erases the rows above and the line through the cursor */
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1J", 0, 0), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1J", w - 1, 1), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1J", 4, 2), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1J", 5, 2), 'x');
+
+    /* erase line */
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[K", 3, 2), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[K", w - 1, 2), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[K", 0, 3), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[0K", 4, 2), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[0K", 3, 2), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1K", 4, 2), ' ');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1K", 5, 2), 'x');
+    AssertIntEQ(ConsoleCsiCell(h, "\x1b[1K", w - 1, 1), 'x');
+
+    /* SGR arguments accumulate */
+    AssertIntEQ(ConsoleSgr(h, def, "\x1b[1;31m"), red | FOREGROUND_INTENSITY);
+    AssertIntEQ(ConsoleSgr(h, def, "\x1b[31;1m"), red | FOREGROUND_INTENSITY);
+    AssertIntEQ(ConsoleSgr(h, def, "\x1b[44;33m"),
+            BACKGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN);
+    AssertIntEQ(ConsoleSgr(h, def, "\x1b[31;0m"), def);
+    AssertIntEQ(ConsoleSgr(h, def, "\x1b[25m"), def);
+
+    /* window scrolled down two rows: erase display keeps rows above it */
+    wh = (SHORT)(info.srWindow.Bottom - info.srWindow.Top + 1);
+    size.X = w;
+    size.Y = (SHORT)(wh + 4);
+    win.Left = 0;
+    win.Top = 2;
+    win.Right = info.srWindow.Right;
+    win.Bottom = (SHORT)(wh + 1);
+    if (SetConsoleScreenBufferSize(h, size)
+            && SetConsoleWindowInfo(h, TRUE, &win)
+            && GetConsoleScreenBufferInfo(h, &info)
+            && info.srWindow.Top == 2) {
+        COORD cur = { 4, 3 };
+
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[1J", cur, w - 1, 1), 'x');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[1J", cur, 0, 2), ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[1J", cur, 4, 3), ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[1J", cur, 5, 3), 'x');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[0J", cur, 3, 3), 'x');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[0J", cur, w - 1, wh + 1),
+                ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[0J", cur, 0, wh + 2), ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[2J", cur, w - 1, 1), 'x');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[2J", cur, 0, 2), ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[2J", cur, w - 1, wh + 1),
+                ' ');
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[2J", cur, 0, wh + 2), ' ');
+        /* clear: H goes to buffer row 0, so 2J must reach the old rows */
+        cur.Y = (SHORT)(wh + 3);
+        AssertIntEQ(ConsoleCsiCellAt(h, "\x1b[H\x1b[2J", cur, 0, wh + 3),
+                ' ');
+    }
+
+    CloseHandle(h);
+#endif /* USE_WINDOWS_API */
+}
+
+
 static void test_wolfSSH_ConstantCompare(void)
 {
     const byte a[] = { 0x01, 0x02, 0x03, 0x04 };
@@ -9492,6 +9640,7 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_SetUsername();
     test_wolfSSH_SetChannelType();
     test_wolfSSH_ConvertConsole();
+    test_wolfSSH_ConvertConsole_csi();
     test_wolfSSH_DoModes();
     test_wolfSSH_CTX_UsePrivateKey_buffer();
     test_wolfSSH_CTX_UseCert_buffer();
