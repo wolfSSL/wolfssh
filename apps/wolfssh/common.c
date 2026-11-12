@@ -33,8 +33,12 @@
 #include <wolfssl/wolfcrypt/coding.h>
 #include <wolfssl/wolfcrypt/memory.h>
 #include "apps/wolfssh/common.h"
+#include <errno.h>
 #ifndef USE_WINDOWS_API
     #include <termios.h>
+    #include <sys/stat.h>
+#else
+    #include <direct.h>
 #endif
 
 #ifdef WOLFSSH_CERTS
@@ -68,11 +72,13 @@ static inline void ato32(const byte* c, word32* u32)
 }
 
 
-/* Reads the text file filename into a nul terminated buffer, so callers can
- * treat it as a C string. The caller frees out. Returns 0 on success. */
+#define LOAD_TEXT_NONE 1
+
+/* Reads the text file filename into a nul terminated buffer the caller
+ * frees. Returns 0, LOAD_TEXT_NONE if missing or empty, else -1. */
 static int load_text_file(const char* filename, char** out, word32* outSz)
 {
-    WFILE* file;
+    WFILE* file = WBADFILE;
     char* in;
     long inSz;
     int ret;
@@ -80,9 +86,10 @@ static int load_text_file(const char* filename, char** out, word32* outSz)
     if (filename == NULL || out == NULL || outSz == NULL)
         return -1;
 
+    errno = 0;
     ret = WFOPEN(NULL, &file, filename, "rb");
     if (ret != 0 || file == WBADFILE)
-        return -1;
+        return (errno == ENOENT) ? LOAD_TEXT_NONE : -1;
 
     if (!WFSEEK_SUCCESS(WFSEEK(NULL, file, 0, WSEEK_END))) {
         WFCLOSE(NULL, file);
@@ -93,7 +100,7 @@ static int load_text_file(const char* filename, char** out, word32* outSz)
 
     if (inSz <= 0) {
         WFCLOSE(NULL, file);
-        return -1;
+        return (inSz == 0) ? LOAD_TEXT_NONE : -1;
     }
 
     in = (char*)WMALLOC(inSz + 1, NULL, 0);
@@ -236,6 +243,37 @@ static int AppendNeedsNewline(const char* filename)
 }
 
 
+/* Creates only the last directory of filename, owner-only, like OpenSSH. */
+static void MakeParentDir(const char* filename)
+{
+    char* dir;
+    word32 len = 0, i;
+
+    for (i = 0; filename[i] != '\0'; i++) {
+        if (filename[i] == '/') {
+            len = i;
+        }
+    }
+
+    if (len > 0) {
+        dir = (char*)WMALLOC(len + 1, NULL, 0);
+        if (dir != NULL) {
+            WMEMCPY(dir, filename, len);
+            dir[len] = '\0';
+#ifdef USE_WINDOWS_API
+            if (_mkdir(dir) == 0)
+#else
+            if (mkdir(dir, 0700) == 0)
+#endif
+            {
+                printf("Created directory '%s'.\n", dir);
+            }
+            WFREE(dir, NULL, 0);
+        }
+    }
+}
+
+
 static int AppendKeyToFile(const char* filename, const char* name,
         const char* type, const char* key)
 {
@@ -261,6 +299,11 @@ static int AppendKeyToFile(const char* filename, const char* name,
          * and known_hosts is conventionally LF-terminated regardless of
          * platform. */
         ret = WFOPEN(NULL, &f, filename, "ab");
+        if (ret != 0 || f == WBADFILE) {
+            MakeParentDir(filename);
+            f = WBADFILE;
+            ret = WFOPEN(NULL, &f, filename, "ab");
+        }
         if (ret == 0 && f != WBADFILE) {
             /* Check the write and the close so a failed or truncated entry
              * (for example on a full disk) is reported rather than appearing
@@ -347,7 +390,6 @@ static int GetConfirmation(void)
 }
 
 
-#define WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE 1200
 #define WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE 54
 #define WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE 56
 
@@ -366,7 +408,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     char *fp = NULL;
     char *knownType = NULL;
     int ret = 0, found = 0, badMatch = 0, otherMatch = 0;
-    word32 sz, lineCount = 0, knownLine = 0;
+    word32 sz, encSz = 0, lineCount = 0, knownLine = 0;
 
     {
         const char *defaultName = "/.ssh/known_hosts";
@@ -380,26 +422,41 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                 WSTRCPY(knownHostsName, env);
                 WSTRCAT(knownHostsName, defaultName);
             }
+            else
+                ret = -1;
         }
         else
             ret = -1;
     }
 
     if (ret == 0) {
+        /* Missing or empty means no entries. Unreadable rejects: it may
+         * hold this host's key. */
         sz = 0;
         ret = load_text_file(knownHostsName, &knownHosts, &sz);
-    }
-
-    if (ret == 0) {
-        if (sz < sizeof(word32)) {
-            /* This file is too small. There must be at least a word32
-             * length size. */
-            ret = -1;
+        if (ret == LOAD_TEXT_NONE) {
+            knownHosts = NULL;
+            ret = 0;
+        }
+        else if (ret != 0) {
+            printf("Unable to read %s.\n", knownHostsName);
+            printf("Rejecting connection and closing.\n");
+            knownHosts = NULL;
         }
     }
 
     if (ret == 0) {
-        encodedKey = (char*)WMALLOC(WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE
+        /* Base64 size plus a nul */
+        if (pubKeySz > MAX_PACKET_SZ) {
+            ret = -1;
+        }
+        else {
+            encSz = (pubKeySz + 2) / 3 * 4 + 1;
+        }
+    }
+
+    if (ret == 0) {
+        encodedKey = (char*)WMALLOC(encSz
                 + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE
                 + WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE, NULL, 0);
         if (encodedKey == NULL) {
@@ -408,7 +465,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
-        pubKeyType = encodedKey + WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
+        pubKeyType = encodedKey + encSz;
         fp = pubKeyType + WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE;
 
         encodedKey[0] = 0;
@@ -447,7 +504,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
-        sz = WOLFSSH_CLIENT_ENCKEY_SIZE_ESTIMATE;
+        sz = encSz;
 #ifdef WOLFSSL_BASE64_ENCODE
         ret = Base64_Encode_NoNl(pubKey, pubKeySz, (byte*)encodedKey, &sz);
 #else
@@ -486,11 +543,10 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                     if (keyTypeMatch) {
                         if (keyMatch) {
                             found = 1;
+                            break;
                         }
-                        else {
-                            badMatch = 1;
-                        }
-                        break;
+                        /* Keep looking: a later line may hold this key. */
+                        badMatch = 1;
                     }
                     else if (knownType == NULL) {
                         /* Host is pinned with another key type. Keep
@@ -516,7 +572,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     }
 
     if (ret == 0) {
-        if (badMatch) {
+        if (badMatch && !found) {
             printf("That server is known, but that key is not.\n");
             printf("Rejecting connection and closing.\n");
             ret = -1;
@@ -577,8 +633,8 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 
 #ifdef WOLFSSH_CERTS
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
-    /* try to parse the certificate and check it's IP address */
-    if (pubKeySz > 0) {
+    /* Once known_hosts accepts the key, check a certificate's IP address. */
+    if (ret == 0 && pubKeySz > 0) {
         DecodedCert dCert;
         byte*  der   = NULL;
         word32 derSz = 0;
@@ -614,14 +670,13 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                     }
                 }
 
-                if (ipMatch == 0) {
+                if (ret == 0 && ipMatch == 0) {
                     printf("IP did not match expected IP");
                     if (!IPOverride) {
                         printf("\n");
                         ret = -1;
                     }
                     else {
-                        ret = 0;
                         printf("..overriding\n");
                     }
                 }

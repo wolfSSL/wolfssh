@@ -22925,10 +22925,9 @@ static void TestAppendKeyToFile(void)
     AssertTrue(readSz > 0);
     AssertIntEQ(WSTRCMP(buf, "h\xC3\xA9st ssh-rsa AAAA\n"), 0);
 
-    /* When the file cannot be opened (here, a path under a directory that does
-     * not exist), the function reports the failure rather than claiming
-     * success. */
-    AssertTrue(wolfSSH_TestAppendKeyToFile("regress_no_such_dir/known_hosts",
+    /* Two missing directories: only the last is created, so it fails. */
+    AssertTrue(wolfSSH_TestAppendKeyToFile(
+                "regress_no_such_dir/sub/known_hosts",
                 "host.example.com", "ssh-rsa", "AAAA") != WS_SUCCESS);
 
     (void)remove(path);
@@ -23399,6 +23398,317 @@ static void TestKnownHostsOtherType(void)
     (void)rmdir(sshDir);
     (void)rmdir(homeDir);
 }
+
+/* Points stdin at path and clears its EOF. Returns 1 on success. */
+static int KnownHostsStdinFrom(const char* path)
+{
+    int fd, ok;
+
+    fd = open(path, O_RDONLY);
+    ok = (fd >= 0) && (dup2(fd, STDIN_FILENO) >= 0);
+    if (fd >= 0) {
+        close(fd);
+    }
+    clearerr(stdin);
+
+    return ok;
+}
+
+
+/* Fill blob with string(type) followed by filler up to blobSz bytes. */
+static void KnownHostsMakeBlob(byte* blob, word32 blobSz, const char* type)
+{
+    word32 typeSz = (word32)WSTRLEN(type);
+    word32 i;
+
+    blob[0] = 0;
+    blob[1] = 0;
+    blob[2] = 0;
+    blob[3] = (byte)typeSz;
+    WMEMCPY(blob + 4, type, typeSz);
+    for (i = 4 + typeSz; i < blobSz; i++) {
+        blob[i] = (byte)(i * 7 + 1);
+    }
+}
+
+
+/* Base64 of blob into a new nul terminated buffer the caller frees. */
+static char* KnownHostsEncode(const byte* blob, word32 blobSz)
+{
+    word32 encSz = (blobSz + 2) / 3 * 4 + 1;
+    char* enc = (char*)WMALLOC(encSz, NULL, 0);
+
+    AssertNotNull(enc);
+    if (enc != NULL) {
+        AssertIntEQ(Base64_Encode_NoNl(blob, blobSz, (byte*)enc, &encSz), 0);
+        enc[encSz] = 0;
+    }
+
+    return enc;
+}
+
+
+/* known_hosts decisions match OpenSSH's StrictHostKeyChecking=ask. */
+static void TestKnownHostsAsk(void)
+{
+    char targetName[] = "ask.example.com";
+    char homeDir[64];
+    char sshDir[80];
+    char hostsPath[112];
+    char replyPath[80];
+    char captured[1024];
+    char* contents = NULL;
+    char* expected = NULL;
+    char* readBack = NULL;
+    char* goodKey = NULL;
+    char* bigKey = NULL;
+    char* staleKey;
+    char* savedHome = NULL;
+    const char* home;
+    byte blob[32];
+    byte bigBlob[2000];
+    word32 bigSz, readSz;
+    int savedStdin, ready;
+#ifndef _WIN32
+    struct stat st;
+#endif
+
+    WSNPRINTF(homeDir, sizeof(homeDir), "wolfssh_kha_%d.tmp", (int)getpid());
+    WSNPRINTF(sshDir, sizeof(sshDir), "%s/.ssh", homeDir);
+    WSNPRINTF(hostsPath, sizeof(hostsPath), "%s/known_hosts", sshDir);
+    WSNPRINTF(replyPath, sizeof(replyPath), "%s/reply", homeDir);
+
+    KnownHostsMakeBlob(blob, (word32)sizeof(blob), "ssh-ed25519");
+    /* Over 1200 bytes once base64 encoded */
+    KnownHostsMakeBlob(bigBlob, (word32)sizeof(bigBlob), "ssh-mldsa-87");
+    goodKey = KnownHostsEncode(blob, (word32)sizeof(blob));
+    bigKey = KnownHostsEncode(bigBlob, (word32)sizeof(bigBlob));
+    bigSz = (word32)WSTRLEN(bigKey) + 64;
+    contents = (char*)WMALLOC(bigSz * 2, NULL, 0);
+    expected = (char*)WMALLOC(bigSz * 2, NULL, 0);
+    readBack = (char*)WMALLOC(bigSz * 2, NULL, 0);
+    AssertNotNull(contents);
+    AssertNotNull(expected);
+    AssertNotNull(readBack);
+
+    home = getenv("HOME");
+    if (home != NULL) {
+        savedHome = (char*)WMALLOC(WSTRLEN(home) + 1, NULL, 0);
+        AssertNotNull(savedHome);
+        WSTRCPY(savedHome, home);
+    }
+
+    (void)remove(hostsPath);
+    (void)remove(replyPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+
+    /* No ~/.ssh at all to start with. */
+    ready = (goodKey != NULL) && (bigKey != NULL) && (contents != NULL)
+            && (expected != NULL) && (readBack != NULL)
+            && (TEST_MKDIR(homeDir, 0700) == 0)
+            && (TEST_SETENV("HOME", homeDir) == 0);
+    AssertTrue(ready);
+
+    savedStdin = dup(STDIN_FILENO);
+    ready = ready && (savedStdin >= 0);
+    AssertTrue(ready);
+    WriteTextFile(replyPath, "Y");
+
+    if (ready) {
+        /* Missing file, the prompt reads EOF: refused, nothing created. */
+        AssertTrue(KnownHostsStdinFrom(TEST_NULL_DEVICE));
+        AssertTrue(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured, "The server is unknown"));
+        AssertNotNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+        AssertIntEQ(LoadFileBuffer(hostsPath, (byte*)readBack, bigSz), 0);
+    #ifndef _WIN32
+        AssertTrue(stat(sshDir, &st) != 0);
+    #endif
+
+        /* Missing file, answered yes: ~/.ssh and the file are created. */
+        AssertTrue(KnownHostsStdinFrom(replyPath));
+        AssertIntEQ(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNotNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+        WSNPRINTF(expected, bigSz * 2, "%s ssh-ed25519 %s\n",
+                targetName, goodKey);
+        WMEMSET(readBack, 0, bigSz * 2);
+        readSz = LoadFileBuffer(hostsPath, (byte*)readBack, bigSz * 2 - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(readBack, expected);
+    #ifndef _WIN32
+        AssertIntEQ(stat(sshDir, &st), 0);
+        AssertIntEQ((int)(st.st_mode & 0777), 0700);
+    #endif
+
+        /* Empty file, the prompt reads EOF: asked, then refused. */
+        WriteTextFile(hostsPath, "");
+        AssertTrue(KnownHostsStdinFrom(TEST_NULL_DEVICE));
+        AssertTrue(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* A stale key for the host, then the right one: accepted. */
+        staleKey = expected;
+        WSTRCPY(staleKey, goodKey);
+        staleKey[0] = (goodKey[0] == 'A') ? 'B' : 'A';
+        WSNPRINTF(contents, bigSz * 2, "%s ssh-ed25519 %s\n%s ssh-ed25519 %s\n",
+                targetName, staleKey, targetName, goodKey);
+        WriteTextFile(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNull(WSTRSTR(captured, "That server is known, but"));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+        /* The right key, then a stale one: still accepted. */
+        WSNPRINTF(contents, bigSz * 2, "%s ssh-ed25519 %s\n%s ssh-ed25519 %s\n",
+                targetName, goodKey, targetName, staleKey);
+        WriteTextFile(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+
+        /* Only stale keys: rejected without a prompt. */
+        WSNPRINTF(contents, bigSz * 2, "%s ssh-ed25519 %s\n%s ssh-ed25519 %s\n",
+                targetName, staleKey, targetName, staleKey);
+        WriteTextFile(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                    targetName, captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "That server is known, but that key is not."));
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+
+    #ifndef _WIN32
+        /* Unreadable: rejected, not learned over. Root can read it. */
+        if (geteuid() != 0) {
+            AssertIntEQ(chmod(hostsPath, 0), 0);
+            AssertTrue(KnownHostsStdinFrom(replyPath));
+            AssertTrue(KnownHostsCheckCapture(blob, (word32)sizeof(blob),
+                        targetName, captured, (word32)sizeof(captured)) != 0);
+            AssertNotNull(WSTRSTR(captured, "Unable to read"));
+            AssertNull(WSTRSTR(captured,
+                        "Shall I add it to the known hosts?"));
+            AssertIntEQ(chmod(hostsPath, 0600), 0);
+            WMEMSET(readBack, 0, bigSz * 2);
+            readSz = LoadFileBuffer(hostsPath, (byte*)readBack,
+                    bigSz * 2 - 1);
+            AssertTrue(readSz > 0);
+            AssertStrEQ(readBack, contents);
+        }
+    #endif
+
+        /* A large host key blob is learned, then matched. */
+        (void)remove(hostsPath);
+        AssertTrue(KnownHostsStdinFrom(replyPath));
+        AssertIntEQ(KnownHostsCheckCapture(bigBlob, (word32)sizeof(bigBlob),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        WSNPRINTF(expected, bigSz * 2, "%s ssh-mldsa-87 %s\n",
+                targetName, bigKey);
+        WMEMSET(readBack, 0, bigSz * 2);
+        readSz = LoadFileBuffer(hostsPath, (byte*)readBack, bigSz * 2 - 1);
+        AssertTrue(readSz > 0);
+        AssertStrEQ(readBack, expected);
+        AssertTrue(KnownHostsStdinFrom(TEST_NULL_DEVICE));
+        AssertIntEQ(KnownHostsCheckCapture(bigBlob, (word32)sizeof(bigBlob),
+                    targetName, captured, (word32)sizeof(captured)), 0);
+        AssertNull(WSTRSTR(captured, "Shall I add it to the known hosts?"));
+    }
+
+#if defined(WOLFSSH_CERTS) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME))
+    if (ready) {
+        /* Cert with IP SAN 127.0.0.1, checked against another address
+         * with the IP override on. */
+        const char* certType = "x509v3-ecdsa-sha2-nistp256";
+        char certTarget[] = "192.0.2.1";
+        byte* certBlob;
+        char* certKey;
+        word32 certSz, typeSz, certBlobSz, i;
+
+        typeSz = (word32)WSTRLEN(certType);
+        certBlob = (byte*)WMALLOC(4096, NULL, 0);
+        AssertNotNull(certBlob);
+        certSz = LoadFileBuffer("keys/server-cert.der", certBlob + 12 + typeSz,
+                4096 - 16 - typeSz);
+        AssertTrue(certSz > 0);
+        /* string(type), cert count 1, string(cert), OCSP count 0 */
+        WMEMSET(certBlob, 0, 12 + typeSz);
+        certBlob[3] = (byte)typeSz;
+        WMEMCPY(certBlob + 4, certType, typeSz);
+        certBlob[7 + typeSz] = 1;
+        certBlob[10 + typeSz] = (byte)(certSz >> 8);
+        certBlob[11 + typeSz] = (byte)certSz;
+        i = 12 + typeSz + certSz;
+        WMEMSET(certBlob + i, 0, 4);
+        certBlobSz = i + 4;
+        certKey = KnownHostsEncode(certBlob, certBlobSz);
+        AssertNotNull(certKey);
+
+        ClientIPOverride(1);
+
+        /* Known host, wrong key: the override does not accept it. */
+        WSNPRINTF(contents, bigSz * 2, "%s %s AAAA\n", certTarget, certType);
+        WriteTextFile(hostsPath, contents);
+        AssertTrue(KnownHostsCheckCapture(certBlob, certBlobSz, certTarget,
+                    captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured,
+                    "That server is known, but that key is not."));
+
+        /* Unknown host, prompt declined: the override does not accept it. */
+        (void)remove(hostsPath);
+        AssertTrue(KnownHostsStdinFrom(TEST_NULL_DEVICE));
+        AssertTrue(KnownHostsCheckCapture(certBlob, certBlobSz, certTarget,
+                    captured, (word32)sizeof(captured)) != 0);
+
+        /* Known host and key: the override waives only the IP mismatch. */
+        WSNPRINTF(contents, bigSz * 2, "%s %s %s\n",
+                certTarget, certType, certKey);
+        WriteTextFile(hostsPath, contents);
+        AssertIntEQ(KnownHostsCheckCapture(certBlob, certBlobSz, certTarget,
+                    captured, (word32)sizeof(captured)), 0);
+        AssertNotNull(WSTRSTR(captured, "..overriding"));
+
+        ClientIPOverride(0);
+        AssertTrue(KnownHostsCheckCapture(certBlob, certBlobSz, certTarget,
+                    captured, (word32)sizeof(captured)) != 0);
+        AssertNotNull(WSTRSTR(captured, "IP did not match expected IP"));
+
+        WFREE(certKey, NULL, 0);
+        WFREE(certBlob, NULL, 0);
+    }
+#endif
+
+    if (savedStdin >= 0) {
+        AssertTrue(dup2(savedStdin, STDIN_FILENO) >= 0);
+        close(savedStdin);
+        clearerr(stdin);
+    }
+
+    if (savedHome != NULL) {
+        AssertIntEQ(TEST_SETENV("HOME", savedHome), 0);
+        WFREE(savedHome, NULL, 0);
+    }
+    else {
+        TEST_UNSETENV("HOME");
+    }
+
+    (void)remove(hostsPath);
+    (void)remove(replyPath);
+    (void)rmdir(sshDir);
+    (void)rmdir(homeDir);
+
+    if (readBack != NULL)
+        WFREE(readBack, NULL, 0);
+    if (expected != NULL)
+        WFREE(expected, NULL, 0);
+    if (contents != NULL)
+        WFREE(contents, NULL, 0);
+    if (bigKey != NULL)
+        WFREE(bigKey, NULL, 0);
+    if (goodKey != NULL)
+        WFREE(goodKey, NULL, 0);
+}
 #endif /* WOLFSSL_BASE64_ENCODE */
 
 
@@ -23440,6 +23750,7 @@ int main(int argc, char** argv)
 #ifdef WOLFSSL_BASE64_ENCODE
     TestKnownHostsLastEntry();
     TestKnownHostsOtherType();
+    TestKnownHostsAsk();
 #endif
 #ifndef NO_WOLFSSH_CLIENT
     TestAuthMessageBlockedDuringKeying(ssh);
