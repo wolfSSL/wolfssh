@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   create_matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
         versions: ${{ steps.json.outputs.versions }}
     steps:
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build and test wolfsftp
     runs-on: ${{ matrix.os }}
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Test wolfsftp large RW (10MB chunks, 3GB file)
     runs-on: ${{ matrix.os }}

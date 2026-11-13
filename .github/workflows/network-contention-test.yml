@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   create_matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
         versions: ${{ steps.json.outputs.versions }}
     steps:
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
     name: Build wolfssl
     runs-on: ${{ matrix.os }}
@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
         block_prob: [ 30, 50, 70 ]
     name: SFTP contention test (prob=${{ matrix.block_prob }}%)
