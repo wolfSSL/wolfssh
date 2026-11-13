@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   create_matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
         versions: ${{ steps.json.outputs.versions }}
     steps:
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
         mldsa: [ 'yes', 'no' ]
         include:
@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest ]
+        os: [ ubuntu-24.04 ]
         wolfssl: ${{ fromJson(needs.create_matrix.outputs['versions']) }}
         # The last two variants reuse the ML-DSA-enabled wolfSSL and build
         # wolfSSH with extra defines it has no configure option for: one

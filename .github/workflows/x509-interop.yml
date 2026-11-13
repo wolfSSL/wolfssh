@@ -17,7 +17,7 @@ env:
 jobs:
   build_wolfssl:
     name: Build wolfSSL
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checking cache for wolfSSL
@@ -25,7 +25,7 @@ jobs:
         id: cache-wolfssl
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-latest
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-24.04
           lookup-only: true
 
       - name: Checkout, build, and install wolfSSL
@@ -52,7 +52,7 @@ jobs:
 
   build_pkixssh:
     name: Build PKIX-SSH
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checking cache for PKIX-SSH
@@ -60,7 +60,7 @@ jobs:
         id: cache-pkixssh
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
+          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-24.04
           lookup-only: true
 
       - uses: actions/checkout@v6
@@ -96,21 +96,21 @@ jobs:
   x509_interop:
     name: Run x509 interop test
     needs: [build_wolfssl, build_pkixssh]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Restore wolfSSL cache
         uses: actions/cache@v5
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-latest
+          key: wolfssh-x509-interop-wolfssl-${{ env.WOLFSSL_REF }}-all-ubuntu-24.04
           fail-on-cache-miss: true
 
       - name: Restore PKIX-SSH cache
         uses: actions/cache@v5
         with:
           path: build-dir/
-          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-latest
+          key: wolfssh-x509-interop-pkixssh-${{ env.PKIXSSH_VERSION }}-ubuntu-24.04
           fail-on-cache-miss: true
 
       - uses: actions/checkout@v6
@@ -270,7 +270,7 @@ jobs:
     name: Open issue on scheduled failure
     needs: [build_wolfssl, build_pkixssh, x509_interop]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       issues: write

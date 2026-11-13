@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build_wolfssl:
     name: Build wolfSSL
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout wolfSSL
@@ -47,7 +47,7 @@ jobs:
   # Use clang to report line, branch, function and MC/DC coverage in one run.
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: build_wolfssl
     steps:

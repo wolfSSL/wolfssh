@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build_wolfssl:
     name: Build wolfSSL
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout wolfSSL
@@ -43,7 +43,7 @@ jobs:
 
   compiler_test:
     name: ${{ matrix.cc }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: build_wolfssl
     strategy:
