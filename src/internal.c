@@ -267,9 +267,12 @@ Flags:
   WOLFSSH_NO_AES_GCM
     Set when AES or AES-GCM are disabled. Set to disable use of AES-GCM
     encryption.
+  WOLFSSH_NO_CHACHA20_POLY1305
+    Set when ChaCha20 or Poly1305 are disabled. Set to disable use of
+    chacha20-poly1305 encryption.
   WOLFSSH_NO_AEAD
-    Set when AES-GCM is disabled. Set to disable use of AEAD ciphers for
-    encryption. Setting this will force all AEAD ciphers off.
+    Set when AES-GCM and ChaCha20/Poly1305 are disabled. Set to disable use of
+    AEAD ciphers for encryption. Setting this will force all AEAD ciphers off.
   WOLFSSH_NO_DH
     Set when all DH algorithms are disabled. Set to disable use of all DH
     algorithms for key agreement. Setting this will force all DH key agreement
@@ -1389,7 +1392,18 @@ static const char cannedKeyAlgoNamesHostKey[] =
 #define cannedKeyAlgoNamesHostKey cannedKeyAlgoNames
 #endif /* WOLFSSH_OSSH_CERTS */
 
+#if !defined(WOLFSSH_NO_CHACHA20_POLY1305)
+    #define CANNED_CHACHA_NAMES \
+        "chacha20-poly1305," \
+        "chacha20-poly1305@openssh.com,"
+#else
+    #define CANNED_CHACHA_NAMES ""
+#endif
+
+/* The chacha20-poly1305 names lead, so the list without them starts at
+ * cannedEncAlgoNamesNoChacha. */
 static const char cannedEncAlgoNames[] =
+    CANNED_CHACHA_NAMES
 #if !defined(WOLFSSH_NO_AES_GCM)
     "aes256-gcm@openssh.com,"
     "aes192-gcm@openssh.com,"
@@ -1406,6 +1420,9 @@ static const char cannedEncAlgoNames[] =
     "aes128-cbc,"
 #endif
     "";
+
+#define cannedEncAlgoNamesNoChacha \
+    (cannedEncAlgoNames + sizeof(CANNED_CHACHA_NAMES) - 1)
 
 static const char cannedMacAlgoNames[] =
 #if !defined(WOLFSSH_NO_HMAC_SHA2_256)
@@ -1652,7 +1669,7 @@ static void CipherClear(Ciphers* cipher)
             case ID_AES128_CBC:
             case ID_AES192_CBC:
             case ID_AES256_CBC:
-                wc_AesFree(&cipher->aes);
+                wc_AesFree(&cipher->cipher.aes);
                 break;
 #endif
 
@@ -1660,7 +1677,7 @@ static void CipherClear(Ciphers* cipher)
             case ID_AES128_CTR:
             case ID_AES192_CTR:
             case ID_AES256_CTR:
-                wc_AesFree(&cipher->aes);
+                wc_AesFree(&cipher->cipher.aes);
                 break;
 #endif
 
@@ -1668,7 +1685,15 @@ static void CipherClear(Ciphers* cipher)
             case ID_AES128_GCM:
             case ID_AES192_GCM:
             case ID_AES256_GCM:
-                wc_AesFree(&cipher->aes);
+                wc_AesFree(&cipher->cipher.aes);
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+            case ID_CHACHA20_POLY1305:
+            case ID_CHACHA20_POLY1305_OPENSSH:
+                WS_FORCEZERO(&cipher->cipher.chacha,
+                        sizeof(cipher->cipher.chacha));
                 break;
 #endif
 
@@ -1715,12 +1740,14 @@ static int CipherSetKey(Ciphers* cipher, byte cryptId, int isEnc,
                 WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
                         isEnc ? "" : " peer", "aes-cbc");
                 if (iv != NULL) {
-                    cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                    cryptErr = wc_AesInit(&cipher->cipher.aes, heap,
+                            INVALID_DEVID);
                     if (cryptErr == 0) {
                         cipher->isInit = 1;
                         cipher->cipherType = cryptId;
-                        cryptErr = wc_AesSetKey(&cipher->aes, key, keySz, iv,
-                                       isEnc ? AES_ENCRYPTION : AES_DECRYPTION);
+                        cryptErr = wc_AesSetKey(&cipher->cipher.aes, key,
+                                keySz, iv,
+                                isEnc ? AES_ENCRYPTION : AES_DECRYPTION);
                     }
                 }
                 else {
@@ -1736,12 +1763,13 @@ static int CipherSetKey(Ciphers* cipher, byte cryptId, int isEnc,
                 WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
                         isEnc ? "" : " peer", "aes-ctr");
                 if (iv != NULL) {
-                    cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                    cryptErr = wc_AesInit(&cipher->cipher.aes, heap,
+                            INVALID_DEVID);
                     if (cryptErr == 0) {
                         cipher->isInit = 1;
                         cipher->cipherType = cryptId;
-                        cryptErr = wc_AesSetKey(&cipher->aes, key, keySz, iv,
-                                AES_ENCRYPTION);
+                        cryptErr = wc_AesSetKey(&cipher->cipher.aes, key,
+                                keySz, iv, AES_ENCRYPTION);
                     }
                 }
                 else {
@@ -1757,11 +1785,34 @@ static int CipherSetKey(Ciphers* cipher, byte cryptId, int isEnc,
                 WOLFSSH_UNUSED(iv);
                 WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
                         isEnc ? "" : " peer", "aes-gcm");
-                cryptErr = wc_AesInit(&cipher->aes, heap, INVALID_DEVID);
+                cryptErr = wc_AesInit(&cipher->cipher.aes, heap, INVALID_DEVID);
                 if (cryptErr == 0) {
                     cipher->isInit = 1;
                     cipher->cipherType = cryptId;
-                    cryptErr = wc_AesGcmSetKey(&cipher->aes, key, keySz);
+                    cryptErr = wc_AesGcmSetKey(&cipher->cipher.aes, key, keySz);
+                }
+                break;
+#endif
+
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+            case ID_CHACHA20_POLY1305:
+            case ID_CHACHA20_POLY1305_OPENSSH:
+                WOLFSSH_UNUSED(iv);
+                WLOG(WS_LOG_DEBUG, "CSK:%s using cipher %s",
+                        isEnc ? "" : " peer", "chacha20-poly1305");
+                if (keySz == CHACHA_POLY_KEY_SZ) {
+                    cipher->isInit = 1;
+                    cipher->cipherType = cryptId;
+                    /* The first half keys the payload, the second half keys
+                     * the packet length. */
+                    cryptErr = wc_Chacha_SetKey(&cipher->cipher.chacha.main,
+                            key, CHACHA_MAX_KEY_SZ);
+                    if (cryptErr == 0)
+                        cryptErr = wc_Chacha_SetKey(&cipher->cipher.chacha.hdr,
+                                key + CHACHA_MAX_KEY_SZ, CHACHA_MAX_KEY_SZ);
+                }
+                else {
+                    ret = WS_BAD_ARGUMENT;
                 }
                 break;
 #endif
@@ -1888,6 +1939,12 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->algoListKex = ctx->algoListKex;
     ssh->algoListKey = ctx->algoListKey;
     ssh->algoListCipher = ctx->algoListCipher;
+    /* Without strict KEX, chacha20-poly1305 is open to Terrapin's
+     * truncation, so the default list leaves it out. */
+    if (!ssh->sendStrictKex && ssh->algoListCipher == cannedEncAlgoNames
+            && cannedEncAlgoNamesNoChacha[0] != '\0') {
+        ssh->algoListCipher = cannedEncAlgoNamesNoChacha;
+    }
     ssh->algoListMac = ctx->algoListMac;
     ssh->algoListKeyAccepted = ctx->algoListKeyAccepted;
 #ifdef WOLFSSH_SCP
@@ -3997,6 +4054,11 @@ static const NameIdPair NameIdMap[] = {
     { ID_AES128_GCM, TYPE_CIPHER, "aes128-gcm@openssh.com" },
     { ID_AES192_GCM, TYPE_CIPHER, "aes192-gcm@openssh.com" },
     { ID_AES256_GCM, TYPE_CIPHER, "aes256-gcm@openssh.com" },
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    { ID_CHACHA20_POLY1305, TYPE_CIPHER, "chacha20-poly1305" },
+    { ID_CHACHA20_POLY1305_OPENSSH,
+        TYPE_CIPHER, "chacha20-poly1305@openssh.com" },
 #endif
 
     /* Integrity IDs */
@@ -6430,6 +6492,11 @@ static INLINE byte BlockSzForId(byte id)
         case ID_AES256_GCM:
             return AES_BLOCK_SIZE;
 #endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return MIN_BLOCK_SZ;
+#endif
         default:
             return 0;
     }
@@ -6454,6 +6521,17 @@ static INLINE byte MacSzForId(byte id)
 #ifndef WOLFSSH_NO_HMAC_SHA2_512
         case ID_HMAC_SHA2_512:
             return WC_SHA512_DIGEST_SIZE;
+#endif
+#ifndef WOLFSSH_NO_AES_GCM
+        case ID_AES128_GCM:
+        case ID_AES192_GCM:
+        case ID_AES256_GCM:
+            return AES_BLOCK_SIZE;
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return POLY1305_DIGEST_SIZE;
 #endif
         default:
             return 0;
@@ -6503,6 +6581,11 @@ static INLINE byte KeySzForId(byte id)
             return AES_192_KEY_SIZE;
         case ID_AES256_GCM:
             return AES_256_KEY_SIZE;
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return CHACHA_POLY_KEY_SZ;
 #endif
         default:
             return 0;
@@ -6749,8 +6832,28 @@ static INLINE byte AeadModeForId(byte id)
         case ID_AES256_GCM:
             return 1;
 #endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return 1;
+#endif
         default:
             return 0;
+    }
+}
+
+
+/* chacha20-poly1305 takes its nonce from the sequence number, not the KDF. */
+static INLINE byte AeadIvSzForId(byte id)
+{
+    switch (id) {
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return 0;
+#endif
+        default:
+            return AEAD_NONCE_SZ;
     }
 }
 
@@ -6812,9 +6915,9 @@ static void SetLocalAlgoIds(HandshakeInfo* hs,
         hs->keys.macKeySz  = KeySzForId(macId);
     }
     else {
-        hs->keys.ivSz      = AEAD_NONCE_SZ;
+        hs->keys.ivSz      = AeadIvSzForId(encId);
         hs->macId          = ID_NONE;
-        hs->macSz          = blkSz;
+        hs->macSz          = MacSzForId(encId);
         hs->keys.macKeySz  = 0;
     }
 }
@@ -6835,9 +6938,9 @@ static void SetPeerAlgoIds(HandshakeInfo* hs,
         hs->peerKeys.macKeySz = KeySzForId(macId);
     }
     else {
-        hs->peerKeys.ivSz     = AEAD_NONCE_SZ;
+        hs->peerKeys.ivSz     = AeadIvSzForId(encId);
         hs->peerMacId         = ID_NONE;
-        hs->peerMacSz         = blkSz;
+        hs->peerMacSz         = MacSzForId(encId);
         hs->peerKeys.macKeySz = 0;
     }
 }
@@ -15071,8 +15174,9 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
         case ID_AES128_CBC:
         case ID_AES192_CBC:
         case ID_AES256_CBC:
-            if (sz % AES_BLOCK_SIZE || wc_AesCbcEncrypt(&ssh->encryptCipher.aes,
-                                 cipher, input, sz) < 0) {
+            if (sz % AES_BLOCK_SIZE ||
+                    wc_AesCbcEncrypt(&ssh->encryptCipher.cipher.aes,
+                            cipher, input, sz) < 0) {
 
                 ret = WS_ENCRYPT_E;
             }
@@ -15083,8 +15187,9 @@ static INLINE int Encrypt(WOLFSSH* ssh, byte* cipher, const byte* input,
         case ID_AES128_CTR:
         case ID_AES192_CTR:
         case ID_AES256_CTR:
-            if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->encryptCipher.aes,
-                                                       cipher, input, sz) < 0) {
+            if (sz % AES_BLOCK_SIZE ||
+                    AESCTRHELPER(&ssh->encryptCipher.cipher.aes,
+                            cipher, input, sz) < 0) {
 
                 ret = WS_ENCRYPT_E;
             }
@@ -15119,8 +15224,9 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
         case ID_AES128_CBC:
         case ID_AES192_CBC:
         case ID_AES256_CBC:
-            if (sz % AES_BLOCK_SIZE || wc_AesCbcDecrypt(&ssh->decryptCipher.aes,
-                                 plain, input, sz) < 0) {
+            if (sz % AES_BLOCK_SIZE ||
+                    wc_AesCbcDecrypt(&ssh->decryptCipher.cipher.aes,
+                            plain, input, sz) < 0) {
 
                 ret = WS_DECRYPT_E;
             }
@@ -15131,8 +15237,9 @@ static INLINE int Decrypt(WOLFSSH* ssh, byte* plain, const byte* input,
         case ID_AES128_CTR:
         case ID_AES192_CTR:
         case ID_AES256_CTR:
-            if (sz % AES_BLOCK_SIZE || AESCTRHELPER(&ssh->decryptCipher.aes,
-                                                        plain, input, sz) < 0) {
+            if (sz % AES_BLOCK_SIZE ||
+                    AESCTRHELPER(&ssh->decryptCipher.cipher.aes,
+                            plain, input, sz) < 0) {
 
                 ret = WS_DECRYPT_E;
             }
@@ -15346,7 +15453,7 @@ static INLINE int VerifyMac(WOLFSSH* ssh, const byte* in, word32 inSz,
 }
 
 
-#ifndef WOLFSSH_NO_AEAD
+#ifndef WOLFSSH_NO_AES_GCM
 /* Increment the explicit portion of the AEAD nonce. The carry runs the full
  * width with no early exit, so the timing doesn't depend on the counter,
  * which starts out as KDF output. */
@@ -15363,11 +15470,130 @@ static INLINE void AeadIncrementExpIv(byte* iv)
         carry = (sum >> 8) & 1u;
     }
 }
+#endif /* WOLFSSH_NO_AES_GCM */
 
 
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+/* chacha20-poly1305 as in OpenSSH's PROTOCOL.chacha20poly1305. Its 64-bit
+ * nonce is the sequence number with a 64-bit block counter. The 96-bit
+ * wolfCrypt nonce holds the counter's high word as zero, then the nonce. */
+static INLINE void ChachaPolySetNonce(byte* nonce, word32 seq)
+{
+    WMEMSET(nonce, 0, CHACHA_IV_BYTES);
+    c32toa(seq, nonce + CHACHA_IV_BYTES - UINT32_SZ);
+}
+
+
+/* The Poly1305 key is the first 32 bytes of the main keystream's block 0. The
+ * tag covers the encrypted length then the encrypted payload. */
+static int ChachaPolyTag(ChaCha* mainCtx, const byte* nonce,
+        const byte* len, word32 lenSz, const byte* data, word32 dataSz,
+        byte* tag)
+{
+    Poly1305 poly;
+    byte polyKey[CHACHA_CHUNK_BYTES];
+    int ret;
+
+    WMEMSET(polyKey, 0, sizeof(polyKey));
+    ret = wc_Chacha_SetIV(mainCtx, nonce, 0);
+    if (ret == 0)
+        ret = wc_Chacha_Process(mainCtx, polyKey, polyKey, sizeof(polyKey));
+    if (ret == 0)
+        ret = wc_Poly1305SetKey(&poly, polyKey, CHACHA_MAX_KEY_SZ);
+    if (ret == 0)
+        ret = wc_Poly1305Update(&poly, len, lenSz);
+    if (ret == 0)
+        ret = wc_Poly1305Update(&poly, data, dataSz);
+    if (ret == 0)
+        ret = wc_Poly1305Final(&poly, tag);
+
+    WS_FORCEZERO(polyKey, sizeof(polyKey));
+    WS_FORCEZERO(&poly, sizeof(poly));
+
+    return ret == 0 ? WS_SUCCESS : WS_CRYPTO_FAILED;
+}
+
+
+static int ChachaPolyEncrypt(Ciphers* cipher, word32 seq, byte* out,
+        const byte* in, word32 sz, byte* tag, byte* len, word32 lenSz)
+{
+    byte nonce[CHACHA_IV_BYTES];
+    int ret;
+
+    ChachaPolySetNonce(nonce, seq);
+    ret = wc_Chacha_SetIV(&cipher->cipher.chacha.hdr, nonce, 0);
+    if (ret == 0)
+        ret = wc_Chacha_Process(&cipher->cipher.chacha.hdr, len, len, lenSz);
+    if (ret == 0)
+        ret = wc_Chacha_SetIV(&cipher->cipher.chacha.main, nonce, 1);
+    if (ret == 0)
+        ret = wc_Chacha_Process(&cipher->cipher.chacha.main, out, in, sz);
+    if (ret == 0)
+        return ChachaPolyTag(&cipher->cipher.chacha.main, nonce, len, lenSz,
+                out, sz, tag);
+
+    return WS_CRYPTO_FAILED;
+}
+
+
+/* Checks the tag before decrypting. The length stays encrypted in len. */
+static int ChachaPolyDecrypt(Ciphers* cipher, word32 seq, byte* out,
+        const byte* in, word32 sz, const byte* tag,
+        const byte* len, word32 lenSz)
+{
+    byte nonce[CHACHA_IV_BYTES];
+    byte expected[POLY1305_DIGEST_SIZE];
+    int ret;
+
+    ChachaPolySetNonce(nonce, seq);
+    ret = ChachaPolyTag(&cipher->cipher.chacha.main, nonce, len, lenSz,
+            in, sz, expected);
+    if (ret == WS_SUCCESS &&
+            WS_CONSTANTCOMPARE(expected, tag, sizeof(expected)) != 0) {
+        ret = WS_VERIFY_MAC_E;
+    }
+    if (ret == WS_SUCCESS) {
+        if (wc_Chacha_SetIV(&cipher->cipher.chacha.main, nonce, 1) != 0 ||
+                wc_Chacha_Process(&cipher->cipher.chacha.main, out, in,
+                        sz) != 0) {
+            ret = WS_CRYPTO_FAILED;
+        }
+    }
+    WS_FORCEZERO(expected, sizeof(expected));
+
+    return ret;
+}
+
+
+/* Decrypts the packet length into lenOut, leaving the input encrypted for
+ * the tag. */
+static int ChachaPolyGetLength(Ciphers* cipher, word32 seq,
+        const byte* in, word32* lenOut)
+{
+    byte nonce[CHACHA_IV_BYTES];
+    byte len[UINT32_SZ];
+    int ret = WS_SUCCESS;
+
+    ChachaPolySetNonce(nonce, seq);
+    if (wc_Chacha_SetIV(&cipher->cipher.chacha.hdr, nonce, 0) != 0 ||
+            wc_Chacha_Process(&cipher->cipher.chacha.hdr, len, in,
+                    UINT32_SZ) != 0) {
+        ret = WS_CRYPTO_FAILED;
+    }
+    if (ret == WS_SUCCESS)
+        ato32(len, lenOut);
+    WS_FORCEZERO(len, sizeof(len));
+
+    return ret;
+}
+#endif /* WOLFSSH_NO_CHACHA20_POLY1305 */
+
+
+#ifndef WOLFSSH_NO_AEAD
+/* chacha20-poly1305 encrypts auth, the packet length, in place. */
 static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
                               const byte* input, word32 sz,
-                              byte* authTag, const byte* auth,
+                              byte* authTag, byte* auth,
                               word32 authSz)
 {
     int ret = WS_SUCCESS;
@@ -15383,9 +15609,18 @@ static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
         case ID_AES128_GCM:
         case ID_AES192_GCM:
         case ID_AES256_GCM:
-            ret = wc_AesGcmEncrypt(&ssh->encryptCipher.aes, cipher, input, sz,
+            ret = wc_AesGcmEncrypt(&ssh->encryptCipher.cipher.aes, cipher,
+                    input, sz,
                     ssh->keys.iv, ssh->keys.ivSz,
                     authTag, ssh->macSz, auth, authSz);
+            AeadIncrementExpIv(ssh->keys.iv);
+            break;
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            ret = ChachaPolyEncrypt(&ssh->encryptCipher, ssh->seq, cipher,
+                    input, sz, authTag, auth, authSz);
             break;
 #endif
 
@@ -15393,7 +15628,6 @@ static INLINE int EncryptAead(WOLFSSH* ssh, byte* cipher,
             ret = WS_INVALID_ALGO_ID;
     }
 
-    AeadIncrementExpIv(ssh->keys.iv);
     ssh->txCount += sz;
 
     return ret;
@@ -15418,9 +15652,18 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
         case ID_AES128_GCM:
         case ID_AES192_GCM:
         case ID_AES256_GCM:
-            ret = wc_AesGcmDecrypt(&ssh->decryptCipher.aes, plain, input, sz,
+            ret = wc_AesGcmDecrypt(&ssh->decryptCipher.cipher.aes, plain,
+                    input, sz,
                     ssh->peerKeys.iv, ssh->peerKeys.ivSz,
                     authTag, ssh->peerMacSz, auth, authSz);
+            AeadIncrementExpIv(ssh->peerKeys.iv);
+            break;
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            ret = ChachaPolyDecrypt(&ssh->decryptCipher, ssh->peerSeq, plain,
+                    input, sz, authTag, auth, authSz);
             break;
 #endif
 
@@ -15428,7 +15671,6 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
             ret = WS_INVALID_ALGO_ID;
     }
 
-    AeadIncrementExpIv(ssh->peerKeys.iv);
     ssh->rxCount += sz;
 
     return ret;
@@ -15561,7 +15803,23 @@ int DoReceive(WOLFSSH* ssh)
             }
 
             /* Peek at the packet_length field. */
-            ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx, &ssh->curSz);
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+            if (ssh->peerEncryptId == ID_CHACHA20_POLY1305
+                    || ssh->peerEncryptId == ID_CHACHA20_POLY1305_OPENSSH) {
+                ret = ChachaPolyGetLength(&ssh->decryptCipher, ssh->peerSeq,
+                        ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                        &ssh->curSz);
+                if (ret != WS_SUCCESS) {
+                    WLOG(WS_LOG_DEBUG, "PR: Length decrypt fail");
+                    return RejectPacket(ssh, peerBlockSz, ret);
+                }
+            }
+            else
+#endif
+            {
+                ato32(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                        &ssh->curSz);
+            }
             if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - UINT32_SZ) {
                 WLOG(WS_LOG_DEBUG, "Packet length overflow: size = %u",
                         ssh->curSz);
@@ -15570,7 +15828,8 @@ int DoReceive(WOLFSSH* ssh)
 
             /* RFC 4253 section 6 aligns packet_length through the padding
              * on the block size, or 8, whichever is larger. Under AES-GCM
-             * the length is AAD, so RFC 5647 section 7.2 aligns the body. */
+             * the length is AAD, so RFC 5647 section 7.2 aligns the body;
+             * chacha20-poly1305 does the same. */
             alignBlockSz = peerBlockSz < MIN_BLOCK_SZ ?
                     MIN_BLOCK_SZ : peerBlockSz;
             alignSz = aeadMode ? ssh->curSz : UINT32_SZ + ssh->curSz;
@@ -15649,6 +15908,9 @@ int DoReceive(WOLFSSH* ssh)
                         ssh->msgHighwaterFlag = 1;
                         return WS_FATAL_ERROR;
                     }
+                    /* chacha20-poly1305 left the length encrypted. */
+                    c32toa(ssh->curSz,
+                            ssh->inputBuffer.buffer + ssh->inputBuffer.idx);
 #endif
                 }
             }
@@ -27600,16 +27862,18 @@ WOLFSSH_API int wolfSSH_TestBuildUserAuthRequestMlDsa(WOLFSSH* ssh,
 
 #endif /* !WOLFSSH_NO_MLDSA */
 
-#ifndef WOLFSSH_NO_AEAD
-
+#ifndef WOLFSSH_NO_AES_GCM
 void wolfSSH_TestAeadIncrementExpIv(byte* iv)
 {
     AeadIncrementExpIv(iv);
 }
+#endif /* !WOLFSSH_NO_AES_GCM */
+
+#ifndef WOLFSSH_NO_AEAD
 
 int wolfSSH_TestEncryptAead(WOLFSSH* ssh, byte* cipher,
         const byte* input, word32 sz,
-        byte* authTag, const byte* auth, word32 authSz)
+        byte* authTag, byte* auth, word32 authSz)
 {
     return EncryptAead(ssh, cipher, input, sz, authTag, auth, authSz);
 }

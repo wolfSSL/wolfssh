@@ -219,9 +219,11 @@ WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
 /* Strict KEX (Terrapin mitigation, CVE-2023-48795), enabled by default.
  * wolfSSH_new() copies the CTX setting, so a change affects only later
- * sessions. The CTX calls return WS_BAD_ARGUMENT on NULL, else the getter
- * returns 1 or 0. wolfSSH_GetStrictKexNegotiated() returns 1 if the
- * session negotiated strict KEX, else 0, or WS_SSH_NULL_E on NULL. */
+ * sessions. With it off, a session given the default cipher list leaves
+ * chacha20-poly1305 out. The CTX calls return WS_BAD_ARGUMENT on NULL,
+ * else the getter returns 1 or 0. wolfSSH_GetStrictKexNegotiated() returns
+ * 1 if the session negotiated strict KEX, else 0, or WS_SSH_NULL_E on
+ * NULL. */
 WOLFSSH_API int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable);
 WOLFSSH_API int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_GetStrictKexNegotiated(WOLFSSH* ssh);

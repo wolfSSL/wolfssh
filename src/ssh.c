@@ -5722,6 +5722,10 @@ static const char* CipherNameForId(byte id)
 
         case ID_AES256_GCM:
             return "AES-256 GCM";
+
+        case ID_CHACHA20_POLY1305:
+        case ID_CHACHA20_POLY1305_OPENSSH:
+            return "ChaCha20-Poly1305";
     }
 
     return "";
@@ -5754,6 +5758,10 @@ static const char* MacNameForId(byte macid, byte cipherid)
 
             case ID_AES256_GCM:
                 return "AES256 GCM (in ETM mode)";
+
+            case ID_CHACHA20_POLY1305:
+            case ID_CHACHA20_POLY1305_OPENSSH:
+                return "Poly1305 (in ETM mode)";
         }
     }
 

@@ -1485,12 +1485,11 @@ static int FindPlainPacketOffset(const byte* packet, word32 packetSz,
  *
  * The published attack pairs that with deleting a packet after NEWKEYS to
  * put the counters back in step, silently truncating the stream. That step
- * only works when the cipher takes its nonce from the sequence number --
- * chacha20-poly1305@openssh.com or the *-etm@openssh.com MACs. wolfSSH
- * implements neither: its AES-GCM, CTR, and CBC modes all carry chained
- * cipher state, so a deletion breaks decryption outright. The injection
- * alone is what these tests exercise, and refusing it is what the
- * mitigation has to do. */
+ * only works when the cipher takes its nonce from the sequence number,
+ * as chacha20-poly1305@openssh.com does. wolfSSH's AES-GCM, CTR, and CBC
+ * modes carry chained cipher state, so a deletion breaks decryption
+ * outright. The injection alone is what these tests exercise, and refusing
+ * it is what the mitigation has to do. */
 static void TerrapinInject(DuplexEndpoint* endpoint,
         const byte** output, word32* outputSz)
 {
@@ -2948,17 +2947,19 @@ static void TestStrictKexResetsSequenceNumbers(void)
  * and finishes the handshake with its inbound counter one ahead of what
  * the server is sending against. Nothing notices, now or later -- the
  * harness negotiates aes256-gcm@openssh.com, and CreateMac()/VerifyMac()
- * are reached only on the non-AEAD paths, so under an AEAD cipher the
- * sequence number is not an authentication input at all. The counters
- * simply stay apart. That undetected shift is what Terrapin is built on.
- * Without GCM the harness negotiates an HMAC and the shift fails the MAC,
- * so the test needs GCM. */
+ * are reached only on the non-AEAD paths, so under AES-GCM the sequence
+ * number is not an authentication input at all. The counters simply stay
+ * apart. That undetected shift is what Terrapin is built on.
+ * The test requires aes256-gcm@openssh.com: an HMAC or chacha20-poly1305
+ * would authenticate the sequence number and fail on the shift. */
 static void TestTerrapinInjectionAcceptedWithoutStrictKex(void)
 {
     KexReplyHarness harness;
     KexReplyRunResult result;
 
     InitStrictKexHarness(&harness, MSGID_IGNORE, 0, 0);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(harness.client,
+            "aes256-gcm@openssh.com"), WS_SUCCESS);
     RunKexReplyHandshake(&harness, &result);
 
     AssertIntEQ(harness.mutator.injectedPackets, 1);
@@ -2980,6 +2981,38 @@ static void TestTerrapinInjectionAcceptedWithoutStrictKex(void)
     FreeKexReplyHarness(&harness);
 }
 #endif /* !WOLFSSH_NO_AES_GCM */
+
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+/* The same injection under chacha20-poly1305. The sequence number is the
+ * nonce, so the shift fails the first record after NEWKEYS. Only a matching
+ * deletion would put the counters back in step. The wrong nonce decrypts the
+ * length to noise, so the record is usually refused on its length before
+ * its tag is checked. */
+static void TestTerrapinInjectionBreaksChachaWithoutStrictKex(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, MSGID_IGNORE, 0, 0);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(harness.client,
+            "chacha20-poly1305@openssh.com"), WS_SUCCESS);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.client->useStrictKex, 0);
+    AssertIntEQ(harness.client->encryptId, ID_CHACHA20_POLY1305_OPENSSH);
+    AssertIntEQ(harness.client->peerEncryptId, ID_CHACHA20_POLY1305_OPENSSH);
+    AssertIntEQ(harness.client->initialKexDone, 1);
+
+    AssertFalse(result.clientSuccess);
+    AssertTrue(result.clientErr == WS_OVERFLOW_E ||
+            result.clientErr == WS_BUFFER_E ||
+            result.clientErr == WS_VERIFY_MAC_E);
+
+    FreeKexReplyHarness(&harness);
+}
+#endif /* !WOLFSSH_NO_CHACHA20_POLY1305 */
 
 /* The same injection with strict KEX negotiated, for each message a man in
  * the middle could reach for. All of them are refused for as long as the
@@ -3146,7 +3179,7 @@ static void TestPreKexInitInjectionRejectedWithStrictKex(void)
 }
 
 #ifndef WOLFSSH_NO_AES_GCM
-/* Without strict KEX the same splice is accepted. Needs GCM, as
+/* Without strict KEX the same splice is accepted. Requires GCM, as
  * TestTerrapinInjectionAcceptedWithoutStrictKex() does. */
 static void TestPreKexInitInjectionAcceptedWithoutStrictKex(void)
 {
@@ -3155,6 +3188,8 @@ static void TestPreKexInitInjectionAcceptedWithoutStrictKex(void)
 
     InitStrictKexHarnessMode(&harness, MSGID_IGNORE, 0, 0,
             REGRESS_MUTATE_TERRAPIN_PRE_KEXINIT);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(harness.client,
+            "aes256-gcm@openssh.com"), WS_SUCCESS);
     RunKexReplyHandshake(&harness, &result);
 
     AssertIntEQ(harness.mutator.injectedPackets, 1);
@@ -5336,7 +5371,8 @@ static int PadSecretUserAuthCb(byte authType, WS_UserAuthData* authData,
 enum {
     PAD_XPORT_NONE = 0,     /* null cipher, no MAC: a fresh session */
     PAD_XPORT_CTR,          /* aes256-ctr with hmac-sha2-256 */
-    PAD_XPORT_GCM           /* aes256-gcm, AEAD: length field in clear */
+    PAD_XPORT_GCM,          /* aes256-gcm, AEAD: length field in clear */
+    PAD_XPORT_CHACHA        /* chacha20-poly1305, AEAD, 8-byte block */
 };
 
 #if !defined(WOLFSSH_NO_AES_CTR) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
@@ -5344,6 +5380,12 @@ enum {
 #endif
 #if !defined(WOLFSSH_NO_AES_GCM) && !defined(WOLFSSH_NO_AEAD)
     #define PAD_TEST_GCM
+#endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    #define PAD_TEST_CHACHA
+#endif
+#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM) || defined(PAD_TEST_CHACHA)
+    #define PAD_TEST_KEYED
 #endif
 
 #if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
@@ -5365,18 +5407,50 @@ static const byte padTestMacKey[WC_SHA256_DIGEST_SIZE] = {
     0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B, 0x4B
 };
 #endif
+#endif /* PAD_TEST_CTR || PAD_TEST_GCM */
+
+#ifdef PAD_TEST_KEYED
+#ifdef PAD_TEST_CHACHA
+/* The main key, then the header key. */
+static const byte padTestChachaKey[CHACHA_POLY_KEY_SZ] = {
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A, 0x5A,
+    0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5,
+    0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5,
+    0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5,
+    0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5
+};
+#endif
 
 /* Sets the session's outbound direction as key exchange would leave it. */
 static void SetPadTestTransport(WOLFSSH* ssh, int xport)
 {
-    AssertIntEQ(wc_AesInit(&ssh->encryptCipher.aes, ssh->ctx->heap,
-                INVALID_DEVID), 0);
     ssh->encryptCipher.isInit = 1;
+#ifdef PAD_TEST_CHACHA
+    if (xport == PAD_XPORT_CHACHA) {
+        ssh->encryptCipher.cipherType = ID_CHACHA20_POLY1305_OPENSSH;
+        AssertIntEQ(wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.main,
+                    padTestChachaKey, CHACHA_MAX_KEY_SZ), 0);
+        AssertIntEQ(wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.hdr,
+                    padTestChachaKey + CHACHA_MAX_KEY_SZ,
+                    CHACHA_MAX_KEY_SZ), 0);
+        ssh->blockSz = MIN_BLOCK_SZ;
+        ssh->encryptId = ID_CHACHA20_POLY1305_OPENSSH;
+        ssh->aeadMode = 1;
+        ssh->macId = ID_NONE;
+        ssh->macSz = POLY1305_DIGEST_SIZE;
+        return;
+    }
+#endif
+    AssertIntEQ(wc_AesInit(&ssh->encryptCipher.cipher.aes, ssh->ctx->heap,
+                INVALID_DEVID), 0);
     ssh->blockSz = AES_BLOCK_SIZE;
 #ifdef PAD_TEST_CTR
     if (xport == PAD_XPORT_CTR) {
         ssh->encryptCipher.cipherType = ID_AES256_CTR;
-        AssertIntEQ(wc_AesSetKey(&ssh->encryptCipher.aes, padTestKey,
+        AssertIntEQ(wc_AesSetKey(&ssh->encryptCipher.cipher.aes, padTestKey,
                     sizeof(padTestKey), padTestIv, AES_ENCRYPTION), 0);
         ssh->encryptId = ID_AES256_CTR;
         ssh->aeadMode = 0;
@@ -5389,7 +5463,7 @@ static void SetPadTestTransport(WOLFSSH* ssh, int xport)
 #ifdef PAD_TEST_GCM
     if (xport == PAD_XPORT_GCM) {
         ssh->encryptCipher.cipherType = ID_AES256_GCM;
-        AssertIntEQ(wc_AesGcmSetKey(&ssh->encryptCipher.aes, padTestKey,
+        AssertIntEQ(wc_AesGcmSetKey(&ssh->encryptCipher.cipher.aes, padTestKey,
                     sizeof(padTestKey)), 0);
         ssh->encryptId = ID_AES256_GCM;
         ssh->aeadMode = 1;
@@ -5461,11 +5535,54 @@ static word32 OpenPadTestPacket(int xport, word32 seq, const byte* out,
                     out, UINT32_SZ), 0);
     }
 #endif
+#ifdef PAD_TEST_CHACHA
+    if (xport == PAD_XPORT_CHACHA) {
+        /* Opened with wolfCrypt directly, per PROTOCOL.chacha20poly1305. */
+        ChaCha mainCtx, hdrCtx;
+        Poly1305 poly;
+        byte nonce[CHACHA_IV_BYTES];
+        byte polyKey[CHACHA_CHUNK_BYTES];
+        byte tag[POLY1305_DIGEST_SIZE];
+
+        AssertTrue(outSz > UINT32_SZ + POLY1305_DIGEST_SIZE);
+        WMEMSET(nonce, 0, sizeof(nonce));
+        nonce[8] = (byte)(seq >> 24);
+        nonce[9] = (byte)(seq >> 16);
+        nonce[10] = (byte)(seq >> 8);
+        nonce[11] = (byte)seq;
+        AssertIntEQ(wc_Chacha_SetKey(&mainCtx, padTestChachaKey,
+                    CHACHA_MAX_KEY_SZ), 0);
+        AssertIntEQ(wc_Chacha_SetKey(&hdrCtx,
+                    padTestChachaKey + CHACHA_MAX_KEY_SZ,
+                    CHACHA_MAX_KEY_SZ), 0);
+
+        AssertIntEQ(wc_Chacha_SetIV(&hdrCtx, nonce, 0), 0);
+        AssertIntEQ(wc_Chacha_Process(&hdrCtx, plain, out, UINT32_SZ), 0);
+        packetLen = ReadUint32(plain);
+        AssertIntEQ(UINT32_SZ + packetLen + POLY1305_DIGEST_SIZE, outSz);
+        AssertTrue(UINT32_SZ + packetLen <= plainSz);
+        alignSz = packetLen;
+
+        WMEMSET(polyKey, 0, sizeof(polyKey));
+        AssertIntEQ(wc_Chacha_SetIV(&mainCtx, nonce, 0), 0);
+        AssertIntEQ(wc_Chacha_Process(&mainCtx, polyKey, polyKey,
+                    sizeof(polyKey)), 0);
+        AssertIntEQ(wc_Poly1305SetKey(&poly, polyKey, CHACHA_MAX_KEY_SZ), 0);
+        AssertIntEQ(wc_Poly1305Update(&poly, out, UINT32_SZ + packetLen), 0);
+        AssertIntEQ(wc_Poly1305Final(&poly, tag), 0);
+        AssertIntEQ(WMEMCMP(tag, out + UINT32_SZ + packetLen, sizeof(tag)),
+                0);
+
+        AssertIntEQ(wc_Chacha_SetIV(&mainCtx, nonce, 1), 0);
+        AssertIntEQ(wc_Chacha_Process(&mainCtx, plain + UINT32_SZ,
+                    out + UINT32_SZ, packetLen), 0);
+    }
+#endif
     wc_AesFree(&aes);
     (void)packetLen;
     return alignSz;
 }
-#endif /* PAD_TEST_CTR || PAD_TEST_GCM */
+#endif /* PAD_TEST_KEYED */
 
 /* Sends the client's password request, or its keyboard INFO_RESPONSE, with a
  * secret of secretSz bytes over the transport xport. With held, the packet is
@@ -5485,7 +5602,7 @@ static word32 SecretPacketSz(int xport, int keyboard, word32 secretSz,
     wolfSSH_SetUserAuth(harness.ctx, PadSecretUserAuthCb);
     AssertIntEQ(wolfSSH_SetUsername(harness.ssh, "user"), WS_SUCCESS);
     padSecretSz = secretSz;
-#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
+#ifdef PAD_TEST_KEYED
     if (xport != PAD_XPORT_NONE)
         SetPadTestTransport(harness.ssh, xport);
 #endif
@@ -5538,7 +5655,7 @@ static word32 SecretPacketSz(int xport, int keyboard, word32 secretSz,
         sz = harness.io.outSz;
     }
     else {
-#if defined(PAD_TEST_CTR) || defined(PAD_TEST_GCM)
+#ifdef PAD_TEST_KEYED
         sz = OpenPadTestPacket(xport, seq, harness.io.out, harness.io.outSz,
                 plain, (word32)sizeof(plain));
 #else
@@ -5577,13 +5694,17 @@ static void TestClientUserAuthSecretPadding(void)
     int keyboard, xport;
     word32 secretSz;
 
-    for (xport = PAD_XPORT_NONE; xport <= PAD_XPORT_GCM; xport++) {
+    for (xport = PAD_XPORT_NONE; xport <= PAD_XPORT_CHACHA; xport++) {
 #ifndef PAD_TEST_CTR
         if (xport == PAD_XPORT_CTR)
             continue;
 #endif
 #ifndef PAD_TEST_GCM
         if (xport == PAD_XPORT_GCM)
+            continue;
+#endif
+#ifndef PAD_TEST_CHACHA
+        if (xport == PAD_XPORT_CHACHA)
             continue;
 #endif
         for (keyboard = 0; keyboard < 2; keyboard++) {
@@ -5605,6 +5726,50 @@ static void TestClientUserAuthSecretPadding(void)
         }
     }
 }
+
+#if defined(WOLFSSH_KEYBOARD_INTERACTIVE) && defined(PAD_TEST_CHACHA)
+/* The keyboard-interactive request ends in an empty language tag and
+ * submethods. Under chacha20-poly1305's 8-byte block, the padding reserve
+ * no longer hides them if they go uncounted, so the request must frame for
+ * every username length across a block. */
+static void TestClientKbRequestSizing(void)
+{
+    static const char name[] = "abcdefghijklmnopqrstuvwx";
+    ChannelOpenHarness harness;
+    byte plain[256];
+    word32 nameSz, packetLen, payloadEnd;
+    byte padLen;
+
+    for (nameSz = 1; nameSz < sizeof(name); nameSz++) {
+        char user[sizeof(name)];
+
+        WMEMCPY(user, name, nameSz);
+        user[nameSz] = 0;
+        InitChannelOpenHarnessClient(&harness, NULL, 0);
+        AssertIntEQ(wolfSSH_SetUsername(harness.ssh, user), WS_SUCCESS);
+        SetPadTestTransport(harness.ssh, PAD_XPORT_CHACHA);
+
+        AssertIntEQ(SendUserAuthRequest(harness.ssh,
+                    WOLFSSH_USERAUTH_KEYBOARD, 0), WS_SUCCESS);
+        OpenPadTestPacket(PAD_XPORT_CHACHA, harness.ssh->seq - 1,
+                harness.io.out, harness.io.outSz, plain,
+                (word32)sizeof(plain));
+
+        packetLen = ReadUint32(plain);
+        padLen = plain[UINT32_SZ];
+        AssertIntEQ(plain[UINT32_SZ + PAD_LENGTH_SZ],
+                MSGID_USERAUTH_REQUEST);
+        payloadEnd = UINT32_SZ + packetLen - padLen;
+        AssertIntEQ(ReadUint32(plain + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ),
+                nameSz);
+        /* language tag and submethods, both empty */
+        AssertIntEQ(ReadUint32(plain + payloadEnd - LENGTH_SZ * 2), 0);
+        AssertIntEQ(ReadUint32(plain + payloadEnd - LENGTH_SZ), 0);
+
+        FreeChannelOpenHarness(&harness);
+    }
+}
+#endif
 
 
 /* Drive the whole receive path with a CHANNEL_OPEN sent from a pre-auth
@@ -22802,6 +22967,58 @@ static void TestGenerateKeysSplit(void)
     wolfSSH_free(ssh);
 #endif /* !WOLFSSH_NO_AES_GCM */
 
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    /* Sub-test E: chacha20-poly1305 both ways. It needs 64 bytes of key, more
+     * than one SHA-256 output, no IV, and no MAC key. */
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, FPF_KEX_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, FPF_KEY_GOOD), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListCipher(ssh,
+            "chacha20-poly1305@openssh.com"), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListMac(ssh, "hmac-sha1"), WS_SUCCESS);
+    idx = 0;
+    payloadSz = BuildKexInitPayloadFull(
+            FPF_KEX_GOOD, FPF_KEY_GOOD,
+            "chacha20-poly1305@openssh.com",
+            "chacha20-poly1305@openssh.com",
+            "hmac-sha1",
+            "hmac-sha1",
+            0, payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+    AssertNotNull(ssh->handshake);
+    AssertIntEQ(ssh->handshake->encryptId, ID_CHACHA20_POLY1305_OPENSSH);
+    AssertIntEQ(ssh->handshake->peerEncryptId, ID_CHACHA20_POLY1305_OPENSSH);
+    AssertIntEQ(ssh->handshake->aeadMode, 1);
+    AssertIntEQ(ssh->handshake->peerAeadMode, 1);
+    AssertIntEQ(ssh->handshake->blockSz, MIN_BLOCK_SZ);
+    AssertIntEQ(ssh->handshake->macSz, POLY1305_DIGEST_SIZE);
+    AssertIntEQ(ssh->handshake->peerMacSz, POLY1305_DIGEST_SIZE);
+
+    WMEMSET(ssh->k, 0xAA, WC_SHA256_DIGEST_SIZE);
+    ssh->kSz = WC_SHA256_DIGEST_SIZE;
+    WMEMSET(ssh->h, 0xBB, WC_SHA256_DIGEST_SIZE);
+    ssh->hSz = WC_SHA256_DIGEST_SIZE;
+    WMEMCPY(ssh->sessionId, ssh->h, ssh->hSz);
+    ssh->sessionIdSz = ssh->hSz;
+
+    AssertIntEQ(wolfSSH_TestGenerateKeys(ssh, ssh->handshake->kexHashId), WS_SUCCESS);
+
+    AssertIntEQ(ssh->handshake->keys.encKeySz, CHACHA_POLY_KEY_SZ);
+    AssertIntEQ(ssh->handshake->peerKeys.encKeySz, CHACHA_POLY_KEY_SZ);
+    AssertIntEQ(ssh->handshake->keys.ivSz, 0);
+    AssertIntEQ(ssh->handshake->peerKeys.ivSz, 0);
+    AssertIntEQ(ssh->handshake->keys.macKeySz, 0);
+    AssertIntEQ(ssh->handshake->peerKeys.macKeySz, 0);
+    /* The header key half was derived too. */
+    AssertTrue(WMEMCMP(ssh->handshake->keys.encKey + CHACHA_MAX_KEY_SZ,
+                       zeros, CHACHA_MAX_KEY_SZ) != 0);
+    AssertTrue(WMEMCMP(ssh->handshake->peerKeys.encKey + CHACHA_MAX_KEY_SZ,
+                       zeros, CHACHA_MAX_KEY_SZ) != 0);
+
+    wolfSSH_free(ssh);
+#endif /* !WOLFSSH_NO_CHACHA20_POLY1305 */
+
     wolfSSH_CTX_free(ctx);
 }
 
@@ -24446,6 +24663,9 @@ int main(int argc, char** argv)
     TestClientInfoRequestAfterHighwaterErrorAnswered();
 #endif
     TestClientUserAuthSecretPadding();
+#if defined(WOLFSSH_KEYBOARD_INTERACTIVE) && defined(PAD_TEST_CHACHA)
+    TestClientKbRequestSizing();
+#endif
     TestClientBannerBehindServiceAccept();
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXINIT_SENT);
     TestChannelOpenRejectedBeforeKex(CONNECT_CLIENT_KEXDH_INIT_SENT);
@@ -24934,6 +25154,9 @@ int main(int argc, char** argv)
     #endif
     #ifndef WOLFSSH_NO_AES_GCM
     TestTerrapinInjectionAcceptedWithoutStrictKex();
+    #endif
+    #ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    TestTerrapinInjectionBreaksChachaWithoutStrictKex();
     #endif
     TestTerrapinInjectionRejectedWithStrictKex();
     TestTerrapinInjectionRejectedByServer();
