@@ -559,7 +559,13 @@ AC_CONFIG_LINKS([keys/gretel-key-rsa.pub:keys/gretel-key-rsa.pub
                  keys/ca-key-ecc.der:keys/ca-key-ecc.der
                  keys/server-cert.der:keys/server-cert.der
                  keys/fred-cert.der:keys/fred-cert.der
-                 keys/fred-key.der:keys/fred-key.der])
+                 keys/fred-key.der:keys/fred-key.der
+                 keys/nc-root.der:keys/nc-root.der
+                 keys/nc-ca-a.der:keys/nc-ca-a.der
+                 keys/nc-ca-b.der:keys/nc-ca-b.der
+                 keys/nc-leaf-in.der:keys/nc-leaf-in.der
+                 keys/nc-leaf-out.der:keys/nc-leaf-out.der
+                 keys/nc-leaf-excl.der:keys/nc-leaf-excl.der])
 
 # Set the automake conditionals.
 AM_CONDITIONAL([BUILD_SERVER],[test "x$ENABLED_SERVER" = "xyes"])

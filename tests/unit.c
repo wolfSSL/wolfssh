@@ -91,6 +91,17 @@
     #define WOLFSSH_TEST_SET_CERTMAN
 #endif
 
+/* The name constraints test reads only the P-256 fixture certs in ./keys, so
+ * it needs no cert generation. wolfSSL applies every ancestor's name
+ * constraints to a cert only from 5.9.4 (bc26ce05c); earlier releases check
+ * just the immediate signer's. */
+#if defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS) && \
+    !defined(NO_FILESYSTEM) && !defined(WOLFSSH_NO_ECDSA_SHA2_NISTP256) && \
+    defined(WOLFSSL_V5_9_4) && (LIBWOLFSSL_VERSION_HEX >= WOLFSSL_V5_9_4) && \
+    !defined(IGNORE_NAME_CONSTRAINTS)
+    #define WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS
+#endif
+
 #ifdef WOLFSSH_CERTS
     #include <wolfssh/certman.h>
     #include <wolfssl/ssl.h>
@@ -20369,11 +20380,13 @@ done:
  * WOLFSSH_TEST_INTERNAL section. Each carries its own feature guard;
  * WOLFSSH_TEST_CERTMAN_PROMOTE still implies WOLFSSH_TEST_INTERNAL. */
 
-/* Guard by the actual users, to avoid -Wunused-function: the promote tests,
- * the root CA half of test_SetCertManager(), and test_ParseECCPubKeyCert().
+/* Guard by the actual users, to avoid -Wunused-function: the promote and
+ * name constraints tests, the root CA half of test_SetCertManager(), and
+ * test_ParseECCPubKeyCert().
  * That last one needs WOLFSSH_TEST_INTERNAL, which ide/winvs does not
  * define, so it does not build there. */
 #if defined(WOLFSSH_TEST_CERTMAN_PROMOTE) || \
+    defined(WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS) || \
     (defined(WOLFSSH_TEST_SET_CERTMAN) && \
      defined(WOLFSSH_TEST_CERTMAN_ROOTCA)) || \
     (defined(WOLFSSH_TEST_INTERNAL) && defined(WOLFSSH_CERTS) && \
@@ -20427,9 +20440,54 @@ static int certmanLoadFile(const char* fn, byte** buf, word32* bufSz)
 }
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE ||
+        * WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS ||
         * (WOLFSSH_TEST_SET_CERTMAN && WOLFSSH_TEST_CERTMAN_ROOTCA) ||
         * (WOLFSSH_TEST_INTERNAL && WOLFSSH_CERTS && !NO_FILESYSTEM &&
         *  !WOLFSSH_NO_ECDSA_SHA2_NISTP256) */
+
+#if defined(WOLFSSH_TEST_CERTMAN_PROMOTE) || \
+    defined(WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS)
+
+static void certmanPutU32(byte* p, word32 v)
+{
+    p[0] = (byte)(v >> 24);
+    p[1] = (byte)(v >> 16);
+    p[2] = (byte)(v >> 8);
+    p[3] = (byte)(v);
+}
+
+/* Append a length-prefixed cert (the framing VerifyCerts_buffer expects).
+ * chainCap is the capacity of chain; on insufficient space the chain is left
+ * unchanged so a cert-size regression surfaces as a failed assertion rather
+ * than memory corruption. The subtractions are ordered to avoid word32
+ * underflow. */
+static word32 certmanAppendCert(byte* chain, word32 chainCap, word32 chainSz,
+        const byte* cert, word32 certSz)
+{
+    if (chainSz > chainCap ||
+            certSz > chainCap - chainSz ||
+            UINT32_SZ > chainCap - chainSz - certSz) {
+        return chainSz;
+    }
+    certmanPutU32(chain + chainSz, certSz);
+    chainSz += UINT32_SZ;
+    WMEMCPY(chain + chainSz, cert, certSz);
+    chainSz += certSz;
+    return chainSz;
+}
+
+/* The FPKI profile check runs after the RFC 6187 usage check and never
+ * matches a test leaf, so in an FPKI build a leaf that passes the usage
+ * check surfaces as WS_CERT_PROFILE_E rather than WS_SUCCESS. Either way it
+ * is distinct from WS_CERT_KEY_USAGE_E. */
+#ifdef WOLFSSH_NO_FPKI
+    #define CERTMAN_LEAF_USAGE_OK WS_SUCCESS
+#else
+    #define CERTMAN_LEAF_USAGE_OK WS_CERT_PROFILE_E
+#endif
+
+#endif /* WOLFSSH_TEST_CERTMAN_PROMOTE ||
+        * WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS */
 
 #ifdef WOLFSSH_TEST_CERTMAN_PROMOTE
 
@@ -20619,34 +20677,6 @@ static int certmanForgeCert(const char* cn, int isCA, const char* keyUsage,
     return certmanForgeCertKeyIds(cn, isCA, keyUsage, extKeyUsage,
             issuerCert, issuerCertSz, issuerKey, subjectKey, 0, NULL,
             der, derSz);
-}
-
-static void certmanPutU32(byte* p, word32 v)
-{
-    p[0] = (byte)(v >> 24);
-    p[1] = (byte)(v >> 16);
-    p[2] = (byte)(v >> 8);
-    p[3] = (byte)(v);
-}
-
-/* Append a length-prefixed cert (the framing VerifyCerts_buffer expects).
- * chainCap is the capacity of chain; on insufficient space the chain is left
- * unchanged so a cert-size regression surfaces as a failed assertion rather
- * than memory corruption. The subtractions are ordered to avoid word32
- * underflow. */
-static word32 certmanAppendCert(byte* chain, word32 chainCap, word32 chainSz,
-        const byte* cert, word32 certSz)
-{
-    if (chainSz > chainCap ||
-            certSz > chainCap - chainSz ||
-            UINT32_SZ > chainCap - chainSz - certSz) {
-        return chainSz;
-    }
-    certmanPutU32(chain + chainSz, certSz);
-    chainSz += UINT32_SZ;
-    WMEMCPY(chain + chainSz, cert, certSz);
-    chainSz += certSz;
-    return chainSz;
 }
 
 /* Regression test: a peer-supplied end-entity (non-CA)
@@ -21666,16 +21696,6 @@ done:
 
 #ifdef WOLFSSL_CERT_EXT
 
-/* The FPKI profile check runs after the RFC 6187 usage check and never
- * matches a forged leaf, so in an FPKI build a leaf that passes the usage
- * check surfaces as WS_CERT_PROFILE_E rather than WS_SUCCESS. Either way it
- * is distinct from WS_CERT_KEY_USAGE_E. */
-#ifdef WOLFSSH_NO_FPKI
-    #define CERTMAN_LEAF_USAGE_OK WS_SUCCESS
-#else
-    #define CERTMAN_LEAF_USAGE_OK WS_CERT_PROFILE_E
-#endif
-
 /* Forges a leaf signed by the test root carrying the given KeyUsage and
  * ExtendedKeyUsage (NULL omits the extension), verifies it through a manager
  * owned by a CTX of the given endpoint, or a standalone manager when side is
@@ -22006,6 +22026,155 @@ done:
 #endif /* WOLFSSL_CERT_EXT */
 
 #endif /* WOLFSSH_TEST_CERTMAN_PROMOTE */
+
+#ifdef WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS
+
+#define CERTMAN_NC_LEAF_IN   0
+#define CERTMAN_NC_LEAF_OUT  1
+#define CERTMAN_NC_LEAF_EXCL 2
+
+/* Verifies leaf (one of CERTMAN_NC_LEAF_*) through a CTX of the given
+ * endpoint. The chain is [leaf, nc-ca-b, nc-ca-a] with only nc-root trusted.
+ * nc-root permits DNS example.com and nc-ca-a excludes bad.example.com;
+ * neither CA below them carries a constraint, so a leaf that breaks one is
+ * caught only by applying a constraint from an ancestor above the leaf's
+ * issuer. The leaf is then verified by itself against the intermediates the
+ * first pass left in the manager.
+ *
+ * wolfSSH reports a name constraint violation as the catch-all
+ * WS_CERT_OTHER_E, so the leaf is first verified with a wolfSSL cert manager
+ * holding the whole chain, which must return ASN_NAME_INVALID_E for a leaf
+ * outside the namespace. A broken fixture then fails rather than passing as
+ * a rejection. */
+static int certmanNameConstraintsCase(int side, int leaf)
+{
+    static const char* const leafFile[] = {
+        "./keys/nc-leaf-in.der", "./keys/nc-leaf-out.der",
+        "./keys/nc-leaf-excl.der"
+    };
+    int result = 0;
+    int ret;
+    int expected;
+    byte* root = NULL;
+    byte* caA = NULL;
+    byte* caB = NULL;
+    byte* lf = NULL;
+    word32 rootSz = 0, caASz = 0, caBSz = 0, lfSz = 0;
+    byte chain[4096];
+    word32 chainSz;
+    WOLFSSL_CERT_MANAGER* wcm = NULL;
+    WOLFSSH_CTX* ctx = NULL;
+
+    if (certmanLoadFile("./keys/nc-root.der", &root, &rootSz) != 0 ||
+            certmanLoadFile("./keys/nc-ca-a.der", &caA, &caASz) != 0 ||
+            certmanLoadFile("./keys/nc-ca-b.der", &caB, &caBSz) != 0 ||
+            certmanLoadFile(leafFile[leaf], &lf, &lfSz) != 0) {
+        printf("CertMan: can't load name constraint certs\n");
+        result = -1000; goto done;
+    }
+
+    wcm = wolfSSL_CertManagerNew();
+    if (wcm == NULL ||
+            wolfSSL_CertManagerLoadCABuffer(wcm, root, (long)rootSz,
+                WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS ||
+            wolfSSL_CertManagerLoadCABuffer(wcm, caA, (long)caASz,
+                WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS ||
+            wolfSSL_CertManagerLoadCABuffer(wcm, caB, (long)caBSz,
+                WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS) {
+        printf("CertMan: can't load the name constraint CAs\n");
+        result = -1006; goto done;
+    }
+    if (leaf == CERTMAN_NC_LEAF_IN)
+        expected = WOLFSSL_SUCCESS;
+    else
+        expected = ASN_NAME_INVALID_E;
+    ret = wolfSSL_CertManagerVerifyBuffer(wcm, lf, (long)lfSz,
+            WOLFSSL_FILETYPE_ASN1);
+    if (ret != expected) {
+        printf("CertMan: wolfSSL verify of name constraint leaf %d: got %d\n",
+                leaf, ret);
+        result = -1007; goto done;
+    }
+
+    ctx = wolfSSH_CTX_new(side, NULL);
+    if (ctx == NULL ||
+            wolfSSH_CTX_AddRootCert_buffer(ctx, root, rootSz,
+                WOLFSSH_FORMAT_ASN1) != WS_SUCCESS) {
+        result = -1001; goto done;
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0, lf, lfSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            caB, caBSz);
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), chainSz,
+            caA, caASz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ctx->certMan, chain, chainSz, 3);
+    if (leaf == CERTMAN_NC_LEAF_IN) {
+        if (ret != CERTMAN_LEAF_USAGE_OK) {
+            printf("CertMan: in-namespace leaf, side %d: got %d\n",
+                    side, ret);
+            result = -1002; goto done;
+        }
+    }
+    else if (ret != WS_CERT_OTHER_E) {
+        printf("CertMan: out-of-namespace leaf %d, side %d: got %d, "
+                "expected %d\n", leaf, side, ret, WS_CERT_OTHER_E);
+        result = -1003; goto done;
+    }
+
+    chainSz = certmanAppendCert(chain, (word32)sizeof(chain), 0, lf, lfSz);
+    ret = wolfSSH_CERTMAN_VerifyCerts_buffer(ctx->certMan, chain, chainSz, 1);
+    if (leaf == CERTMAN_NC_LEAF_IN) {
+        if (ret != CERTMAN_LEAF_USAGE_OK) {
+            printf("CertMan: lone in-namespace leaf, side %d: got %d\n",
+                    side, ret);
+            result = -1004; goto done;
+        }
+    }
+    else if (ret != WS_CERT_OTHER_E) {
+        printf("CertMan: lone out-of-namespace leaf %d, side %d: got %d, "
+                "expected %d\n", leaf, side, ret, WS_CERT_OTHER_E);
+        result = -1005; goto done;
+    }
+
+done:
+    if (ctx != NULL)
+        wolfSSH_CTX_free(ctx);
+    if (wcm != NULL)
+        wolfSSL_CertManagerFree(wcm);
+    free(root);
+    free(caA);
+    free(caB);
+    free(lf);
+    return result;
+}
+
+/* Regression test for Fenrir 13950: the chain verifier validates each cert
+ * on its own, so a leaf below a peer-supplied subordinate CA must still meet
+ * the name constraints of the configured root and of the CA between them.
+ * Runs the permitted-subtree and excluded-subtree violations, and a leaf
+ * inside the namespace so the failures cannot be a broken chain, as both the
+ * server (user certs) and the client (host certs). */
+static int test_CertMan_NameConstraints(void)
+{
+    static const int sides[] = {
+        WOLFSSH_ENDPOINT_SERVER, WOLFSSH_ENDPOINT_CLIENT
+    };
+    int result = 0;
+    word32 i;
+    int leaf;
+
+    for (i = 0; result == 0 && i < sizeof(sides) / sizeof(sides[0]); i++) {
+        for (leaf = CERTMAN_NC_LEAF_IN;
+                result == 0 && leaf <= CERTMAN_NC_LEAF_EXCL; leaf++) {
+            result = certmanNameConstraintsCase(sides[i], leaf);
+        }
+    }
+
+    return result;
+}
+
+#endif /* WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS */
 
 #ifdef WOLFSSH_TEST_SET_CERTMAN
 /* wolfSSH_SetCertManager imports a WOLFSSL_CERT_MANAGER by reference into
@@ -31089,6 +31258,13 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif
 #endif
+#endif
+
+#ifdef WOLFSSH_TEST_CERTMAN_NAMECONSTRAINTS
+    unitResult = test_CertMan_NameConstraints();
+    printf("CertMan_NameConstraints: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 #endif
 
 #ifdef WOLFSSH_KEYGEN
