@@ -126,6 +126,7 @@ extern "C" {
 #define WOLFSSL_V5_8_0 0x05008000
 #define WOLFSSL_V5_8_4 0x05008004
 #define WOLFSSL_V5_9_2 0x05009002
+#define WOLFSSL_V5_9_4 0x05009004
 
 /* wolfSSL 5.8.0 added the trusted-certificate PEM header, both the
  * TRUSTED_CERT_TYPE enum and PemToDer()'s fallback to it. */
