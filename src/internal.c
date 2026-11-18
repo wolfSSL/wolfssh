@@ -16103,14 +16103,17 @@ static int BundlePacketPad(WOLFSSH* ssh, word32 padBucket)
         else {
 #ifndef WOLFSSH_NO_AEAD
             idx += paddingSz;
-            ret = EncryptAead(ssh,
-                    ssh->outputBuffer.buffer + ssh->packetStartIdx + LENGTH_SZ,
-                    ssh->outputBuffer.buffer + ssh->packetStartIdx + LENGTH_SZ,
-                    ssh->outputBuffer.length - ssh->packetStartIdx + paddingSz
-                        - LENGTH_SZ,
-                    output + idx,
-                    ssh->outputBuffer.buffer + ssh->packetStartIdx,
-                    LENGTH_SZ);
+            if (idx + ssh->macSz > ssh->outputBuffer.bufferSz)
+                ret = WS_BUFFER_E;
+            else
+                ret = EncryptAead(ssh,
+                        output + ssh->packetStartIdx + LENGTH_SZ,
+                        output + ssh->packetStartIdx + LENGTH_SZ,
+                        ssh->outputBuffer.length - ssh->packetStartIdx
+                            + paddingSz - LENGTH_SZ,
+                        output + idx,
+                        output + ssh->packetStartIdx,
+                        LENGTH_SZ);
             idx += ssh->macSz;
 #else
             ret = WS_INVALID_ALGO_ID;
@@ -23699,6 +23702,12 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     keySig_ptr);
         }
+#ifdef WOLFSSH_KEYBOARD_INTERACTIVE
+        else if (authId == ID_USERAUTH_KEYBOARD) {
+            /* language tag and submethods */
+            payloadSz += LENGTH_SZ * 2;
+        }
+#endif
         else if (authId != ID_NONE &&
 #ifdef WOLFSSH_KEYBOARD_INTERACTIVE
                  authId != ID_USERAUTH_KEYBOARD &&
