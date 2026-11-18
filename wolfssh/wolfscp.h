@@ -130,13 +130,13 @@ typedef int (*WS_CallbackScpRecv)(WOLFSSH* ssh, int state,
  * "fileNameSz" is the capacity of the "fileName" buffer, not the length of any
  * name already in it.
  *
- * Returning 0 is only valid on the call that fills in metadata (file name,
- * mode, times, totalFileSz) and has no data ready yet; the library then sends
- * the file header and calls back with WOLFSSH_SCP_CONTINUE_FILE_TRANSFER. A
- * second 0 in a row while "fileOffset" is still short of "totalFileSz" is
- * treated as a stalled callback and aborts the transfer, since there is no
- * "no data right now" status in this API. Callbacks that can block should do
- * so rather than returning 0.
+ * Returning 0 while "fileOffset" is still short of "totalFileSz" makes the
+ * library call back once with WOLFSSH_SCP_CONTINUE_FILE_TRANSFER; on the call
+ * that fills in metadata (file name, mode, times, totalFileSz) it sends the
+ * file header first. A second 0 in a row aborts the transfer as stalled, and
+ * any return that hands back data resets that count. There is no "no data
+ * right now" status in this API, so callbacks that can block should do so
+ * rather than returning 0.
  *
  * Returning WS_SCP_CONTINUE in place of an entry skips it: the message set
  * with wolfSSH_SetScpErrorMsg() goes to the peer as a warning record. A

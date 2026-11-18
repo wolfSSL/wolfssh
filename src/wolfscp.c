@@ -960,11 +960,12 @@ int DoScpSource(WOLFSSH* ssh)
                     continue;
                 }
                 else if (ssh->scpFileOffset < ssh->scpFileSz) {
-                    /* A send callback may hand back 0 bytes once, on the call
-                     * that only fills in metadata. Twice running with file
-                     * data still outstanding means it cannot make progress,
-                     * and looping back to SCP_TRANSFER would spin here with no
-                     * socket I/O at all, so fail instead. */
+                    /* A send callback may hand back 0 bytes once in a row,
+                     * after metadata or after data; sending data resets the
+                     * count. Twice running with file data still outstanding
+                     * means it cannot make progress, and looping back to
+                     * SCP_TRANSFER would spin here with no socket I/O at all,
+                     * so fail instead. */
                     if (ssh->scpNoProgress) {
                         WLOG(WS_LOG_ERROR, scpError,
                              "send callback made no progress", WS_SCP_ABORT);
