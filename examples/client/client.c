@@ -676,8 +676,19 @@ static THREAD_RET readPeer(void* in)
                     }
                     #endif /* WOLFSSH_AGENT */
                     else if (ret == WS_REKEYING) {
-                        wolfSSH_worker(args->ssh, NULL);
-                        ret = 0;
+                        /* Drive the key exchange. A read keeps answering
+                         * WS_REKEYING while it runs, so a transport failure
+                         * shows up only here; end the session on it. */
+                        ret = wolfSSH_worker(args->ssh, NULL);
+                        if (ret == WS_FATAL_ERROR) {
+                            ret = wolfSSH_get_error(args->ssh);
+                        }
+                        if (ret == WS_SUCCESS || ret == WS_WANT_READ
+                                || ret == WS_WANT_WRITE || ret == WS_REKEYING
+                                || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+                                || ret == WS_EOF || ret == WS_CHANNEL_CLOSED) {
+                            ret = 0;
+                        }
                     }
                 }
                 else if (ret != WS_EOF) {
