@@ -9066,9 +9066,18 @@ int wolfSSH_SFTP_SendReadPacket(WOLFSSH* ssh, byte* handle, word32 handleSz,
                         break;
                     }
 
+                    /* A count over the request wraps to a growth, which
+                     * set_size refuses. */
+                    if (wolfSSH_SFTP_buffer_set_size(&state->buffer,
+                                wolfSSH_SFTP_buffer_size(&state->buffer)
+                                - (word32)ret) != WS_SUCCESS) {
+                        WLOG(WS_LOG_SFTP, "Read more data than requested");
+                        ssh->error = WS_BUFFER_E;
+                        ret = WS_FATAL_ERROR;
+                        state->state = STATE_SEND_READ_CLEANUP;
+                        break;
+                    }
                     state->recvSz += ret;
-                    wolfSSH_SFTP_buffer_set_size(&state->buffer,
-                            wolfSSH_SFTP_buffer_size(&state->buffer) - ret);
                 } while (wolfSSH_SFTP_buffer_size(&state->buffer) != 0);
 
                 if (ret < 0) {
