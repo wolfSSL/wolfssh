@@ -751,7 +751,7 @@ int wolfSSH_TestSftpSendPacketType(WOLFSSH* ssh, byte type, byte* buf,
 
 /* returns the amount read on success */
 static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
-        int readSz)
+        word32 readSz)
 {
     int ret;
     int polled;
@@ -764,6 +764,11 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
 
     if (readSz == 0) {
         return 0;
+    }
+
+    /* The size is returned as an int. */
+    if (readSz > (word32)0x7FFFFFFF || buffer->sz > (word32)0x7FFFFFFF) {
+        return WS_BUFFER_E;
     }
 
     if (buffer->data == NULL) {
@@ -842,7 +847,7 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
             buffer->sz);
     } while (buffer->idx < buffer->sz);
 
-    return buffer->sz;
+    return (int)buffer->sz;
 }
 
 
@@ -1424,7 +1429,7 @@ static int SFTP_ServerRecvInit(WOLFSSH* ssh) {
             /* silently ignore extensions if not supported */
             if (state->extSz > 0) {
                 ret = wolfSSH_SFTP_buffer_read(ssh,
-                        &state->buffer, (int)state->extSz);
+                        &state->buffer, state->extSz);
                 if (ret < 0) {
                     return WS_FATAL_ERROR;
                 }
@@ -6921,7 +6926,7 @@ static int SFTP_ClientRecvInit(WOLFSSH* ssh) {
             /* silently ignore extensions if not supported */
             if (state->extSz > 0) {
                 ret = wolfSSH_SFTP_buffer_read(ssh,
-                        &state->buffer, (int)state->extSz);
+                        &state->buffer, state->extSz);
                 if (ret < 0) {
                     return WS_FATAL_ERROR;
                 }
@@ -7620,6 +7625,12 @@ static WS_SFTPNAME* wolfSSH_SFTP_DoName(WOLFSSH* ssh)
         case SFTP_NAME_GET_PACKET:
             /* get number of files */
             /* using idx as an offset for partial reads */
+            if (wolfSSH_SFTP_buffer_idx(&state->buffer) >
+                    wolfSSH_SFTP_buffer_size(&state->buffer)) {
+                ssh->error = WS_BUFFER_E;
+                wolfSSH_SFTP_ClearState(ssh, STATE_ID_NAME);
+                return NULL;
+            }
             ret = wolfSSH_SFTP_buffer_read(ssh, &state->buffer,
                     wolfSSH_SFTP_buffer_size(&state->buffer) -
                     wolfSSH_SFTP_buffer_idx(&state->buffer));
