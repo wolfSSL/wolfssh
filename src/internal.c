@@ -712,6 +712,11 @@ static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
     if (fire && ssh->ctx->highwaterCb)
         ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
 
+    /* The result travels back through calls that return byte counts, such
+     * as wolfSSH_stream_read(), so a positive one would read as data. */
+    if (ret > 0)
+        ret = WS_SUCCESS;
+
     return ret;
 }
 
