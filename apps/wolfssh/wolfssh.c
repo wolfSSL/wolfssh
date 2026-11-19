@@ -201,15 +201,21 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
 
 #if defined(HAVE_TERMIOS_H) && defined(WOLFSSH_TERM)
 WOLFSSH_TERMIOS oldTerm;
+/* Set while oldTerm holds the stdin modes and stdin may be in raw mode. */
+static int termSaved = 0;
 
 static void modes_store(void)
 {
-    tcgetattr(STDIN_FILENO, &oldTerm);
+    termSaved = (tcgetattr(STDIN_FILENO, &oldTerm) == 0);
 }
 
 static void modes_clear(void)
 {
     WOLFSSH_TERMIOS term = oldTerm;
+
+    if (!termSaved) {
+        return;
+    }
 
     term.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO | ECHOE
         | ECHOK | ECHONL | NOFLSH | TOSTOP);
@@ -245,12 +251,16 @@ static void modes_clear(void)
 #ifdef CRTSCTS
     term.c_cflag &= ~(CRTSCTS);
 #endif
-    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &term) != 0) {
+        termSaved = 0;
+    }
 }
 
 static void modes_reset(void)
 {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerm);
+    if (termSaved) {
+        (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldTerm);
+    }
 }
 
 #define MODES_STORE() modes_store()
