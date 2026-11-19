@@ -135,9 +135,8 @@ static int ConfigLoad(WOLFSSHD_CONFIG* conf, const char* filename, int depth);
 static int CountWhitespace(const char* in, int inSz, byte inv);
 static int SetFileString(char** dst, const char* src, void* heap);
 
-/* Largest value GetConfigInt returns, before and after a time multiplier. It
- * fits in a long on every target. */
-#define CONFIG_INT_MAX 0x7FFFFFFFL
+/* Largest value GetConfigInt returns, before and after a time multiplier. */
+#define CONFIG_INT_MAX 0x7FFFFFFF
 
 /* Convert a decimal string into a number. With isTime, the string is the
  * sshd_config(5) time format: one or more groups of a number and a unit
@@ -148,7 +147,7 @@ static int SetFileString(char** dst, const char* src, void* heap);
  * Returns the value on success and negative value on failure */
 static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
 {
-    long total = 0;
+    int total = 0;
     int i = 0;
 
     (void)heap;
@@ -158,8 +157,8 @@ static long GetConfigInt(const char* in, int inSz, int isTime, void* heap)
     }
 
     do {
-        long val = 0;
-        long mult = 1; /* multiplier */
+        int val = 0;
+        int mult = 1; /* multiplier */
         int start = i;
 
         for (; i < inSz && in[i] >= '0' && in[i] <= '9'; i++) {
