@@ -712,8 +712,12 @@ static INLINE int HighwaterCheck(WOLFSSH* ssh, byte side)
     if (fire && ssh->disconnected)
         fire = 0;
 
-    if (fire && ssh->ctx->highwaterCb)
-        ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+    if (fire) {
+        if (ssh->ctx->highwaterCb != NULL)
+            ret = ssh->ctx->highwaterCb(side, ssh->highwaterCtx);
+        else
+            ret = wsHighwater(side, ssh);
+    }
 
     return ret;
 }

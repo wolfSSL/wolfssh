@@ -3595,6 +3595,40 @@ static void TestSecondHighwaterSendsNoKexInit(void)
     FreeKexReplyHarness(&harness);
 }
 
+/* A NULL highwater callback still rekeys: the mark falls back to the
+ * default callback rather than firing into nothing. */
+static void TestNullHighwaterCbRekeys(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+    WOLFSSH* ssh;
+    int clientErr, serverErr;
+
+    InitKexReplyHarness(&harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, 0, NULL);
+    RunKexReplyHandshake(&harness, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    ssh = harness.server;
+    wolfSSH_SetHighwaterCb(ssh->ctx, ssh->ctx->highwaterMark, NULL);
+    AssertIntEQ(ssh->isKeying, 0);
+    ssh->highwaterMark = ssh->txCount + 1;
+
+    AssertIntEQ(wolfSSH_SendIgnore(ssh, NULL, 0), WS_SUCCESS);
+    AssertIntEQ(ssh->highwaterFlag, 1);
+    AssertTrue((ssh->isKeying & WOLFSSH_SELF_IS_KEYING) != 0);
+
+    PumpDuplexPairNoAssert(&harness, &clientErr, &serverErr);
+    AssertIntEQ(clientErr, WS_SUCCESS);
+    AssertIntEQ(serverErr, WS_SUCCESS);
+    AssertIntEQ(harness.client->isKeying, 0);
+    AssertIntEQ(harness.server->isKeying, 0);
+    AssertIntEQ(ssh->highwaterFlag, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
 /* SendNewKeys() clears the self-keying flag as soon as this side's NEWKEYS
  * goes out, while the peer's NEWKEYS is still to come and the handshake is
  * still live. A rekey request in that window must not send a KEXINIT or
@@ -25141,6 +25175,7 @@ int main(int argc, char** argv)
     TestStrictKexResetsSequenceNumbersOnRekey();
     TestSecondTriggerSendsNoKexInit();
     TestSecondHighwaterSendsNoKexInit();
+    TestNullHighwaterCbRekeys();
     TestTriggerAfterNewKeysSendsNoKexInit();
     TestRekeyHoldsNonTransport();
     TestRekeyHoldCapped();

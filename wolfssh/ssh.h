@@ -135,7 +135,8 @@ WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SetFilesystemHandle(WOLFSSH* ssh, void* handle);
 WOLFSSH_API void* wolfSSH_GetFilesystemHandle(WOLFSSH* ssh);
 
-/* data high water mark functions (RFC 4253 Sec 9) */
+/* data high water mark functions (RFC 4253 Sec 9). A NULL callback uses
+ * the default, which starts a key exchange. */
 typedef int (*WS_CallbackHighwater)(byte side, void* ctx);
 WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 level,
         WS_CallbackHighwater cb);
