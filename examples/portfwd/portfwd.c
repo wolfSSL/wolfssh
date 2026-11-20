@@ -193,7 +193,10 @@ static int wsUserAuth(byte authType,
     word32 passwordSz = 0;
     int ret = WOLFSSH_USERAUTH_SUCCESS;
 
-    (void)authType;
+    /* Password only, so it is asked for once. */
+    if (authType != WOLFSSH_USERAUTH_PASSWORD)
+        return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
+
     if (defaultPassword != NULL) {
         passwordSz = (word32)strlen(defaultPassword);
         if (passwordSz > (word32)sizeof(userPassword))
