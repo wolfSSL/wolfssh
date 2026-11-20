@@ -84,6 +84,16 @@
 
 #ifdef WOLFSSH_CERTS
 
+/* configure warns on its own and builds with -Werror */
+#if defined(WOLFSSH_CERTS_OLD_NAME_CONSTRAINTS) && !defined(HAVE_CONFIG_H)
+    #ifdef _MSC_VER
+        #pragma message("warning: wolfSSL older than 5.9.4 does not apply " \
+            "ancestor CA name constraints (CVE-2026-89133); upgrade wolfSSL")
+    #else
+        #warning "wolfSSL older than 5.9.4 does not apply ancestor CA name constraints (CVE-2026-89133); upgrade wolfSSL"
+    #endif
+#endif
+
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
 #else
