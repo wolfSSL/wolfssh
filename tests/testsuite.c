@@ -250,6 +250,7 @@ static void CertHostCheck(const char* certName, const char* host, int expect)
     byte cert[1536];
     word32 certSz, typeSz = (word32)sizeof(keyType) - 1, idx = 0;
     WFILE* f = WBADFILE;
+    ClientHostCtx hostCtx;
 
     if (WFOPEN(NULL, &f, certName, "rb") != 0 || f == WBADFILE)
         err_sys("couldn't open the test certificate");
@@ -271,7 +272,9 @@ static void CertHostCheck(const char* certName, const char* host, int expect)
     PutU32(0, blob + idx); /* OCSP response count */
     idx += 4;
 
-    if (ClientPublicKeyCheck(blob, idx, (void*)host) != expect) {
+    hostCtx.host = host;
+    hostCtx.port = 22;
+    if (ClientPublicKeyCheck(blob, idx, &hostCtx) != expect) {
         printf("host certificate %s checked for %s, expected %d\n",
                 certName, host, expect);
         err_sys("host certificate check failed");

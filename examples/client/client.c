@@ -861,6 +861,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     int userEcc = 0;
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
+    ClientHostCtx hostCtx;
     const char* username = NULL;
     const char* password = NULL;
     const char* tpmKeyAuth = NULL;
@@ -1124,7 +1125,9 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
         wolfSSH_set_agent_cb_ctx(ssh, &agentCbCtx);
     }
 #endif
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+    hostCtx.host = host;
+    hostCtx.port = port;
+    wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)

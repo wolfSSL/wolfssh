@@ -109,6 +109,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     const char* username = NULL;
     const char* password = NULL;
     char* host = (char*)wolfSshIp;
+    ClientHostCtx hostCtx;
     char* path1 = NULL;
     char* path2 = NULL;
     word16 port = wolfSshPort;
@@ -271,7 +272,9 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     if (ssh == NULL)
         err_sys("Couldn't create wolfSSH session.");
 
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+    hostCtx.host = host;
+    hostCtx.port = port;
+    wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
 
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);

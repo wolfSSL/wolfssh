@@ -48,6 +48,7 @@
 #endif
 
 #include <wolfssl/wolfcrypt/sha256.h>
+#include <wolfssl/wolfcrypt/hmac.h>
 #ifdef WOLFSSH_CERTS
     #include <wolfssl/wolfcrypt/asn.h>
     #ifdef USE_WINDOWS_API
@@ -584,6 +585,69 @@ static char* NextField(char** s, char delim)
 }
 
 
+#if !defined(NO_HMAC) && !defined(NO_SHA)
+/* Returns 1 when a hashed name's "salt|hash" is HMAC-SHA1(salt, host). */
+static int KnownHostsHashMatch(char* saltHash, const char* host)
+{
+    Hmac hmac;
+    byte salt[WC_SHA_DIGEST_SIZE];
+    byte hash[WC_SHA_DIGEST_SIZE];
+    byte digest[WC_SHA_DIGEST_SIZE];
+    word32 saltSz = (word32)sizeof(salt);
+    word32 hashSz = (word32)sizeof(hash);
+    char* saltStr;
+    char* hashStr;
+    int ret;
+
+    saltStr = NextField(&saltHash, '|');
+    hashStr = saltHash;
+    if (saltStr == NULL || hashStr == NULL
+            || Base64_Decode((byte*)saltStr, (word32)WSTRLEN(saltStr),
+                    salt, &saltSz) != 0
+            || Base64_Decode((byte*)hashStr, (word32)WSTRLEN(hashStr),
+                    hash, &hashSz) != 0
+            || saltSz != sizeof(salt) || hashSz != sizeof(hash)) {
+        return 0;
+    }
+
+    ret = wc_HmacInit(&hmac, NULL, INVALID_DEVID);
+    if (ret == 0) {
+        ret = wc_HmacSetKey(&hmac, WC_SHA, salt, saltSz);
+        if (ret == 0)
+            ret = wc_HmacUpdate(&hmac, (const byte*)host,
+                    (word32)WSTRLEN(host));
+        if (ret == 0)
+            ret = wc_HmacFinal(&hmac, digest);
+        wc_HmacFree(&hmac);
+    }
+
+    return ret == 0 && WMEMCMP(digest, hash, sizeof(hash)) == 0;
+}
+#endif
+
+
+/* Returns 1 when a known_hosts name field, a comma list of names or a
+ * hashed "|1|salt|hash" name, holds host. */
+static int KnownHostsNameMatch(char* names, const char* host)
+{
+    char* entry;
+
+    while ((entry = NextField(&names, ',')) != NULL) {
+        if (WSTRNCMP(entry, "|1|", 3) == 0) {
+        #if !defined(NO_HMAC) && !defined(NO_SHA)
+            if (KnownHostsHashMatch(entry + 3, host))
+                return 1;
+        #endif
+        }
+        else if (WSTRCMP(entry, host) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+
 /* Returns 0 when a known_hosts line holds the key, 1 when the host has
  * only other keys of this type, else -1. */
 static int KnownHostsLookup(const char* host, const char* keyType,
@@ -647,7 +711,8 @@ static int KnownHostsLookup(const char* host, const char* keyType,
         type = NextField(&line, ' ');
         value = NextField(&line, ' ');
         if (name != NULL && type != NULL && value != NULL
-                && WSTRCMP(name, host) == 0 && WSTRCMP(type, keyType) == 0) {
+                && WSTRCMP(type, keyType) == 0
+                && KnownHostsNameMatch(name, host)) {
             /* Keep looking past a stale line: a later one may hold the key. */
             ret = (WSTRCMP(value, key) == 0) ? 0 : 1;
         }
@@ -663,7 +728,8 @@ static int KnownHostsLookup(const char* host, const char* keyType,
 
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
-    const char* host = (const char*)ctx;
+    const ClientHostCtx* hostCtx = (const ClientHostCtx*)ctx;
+    const char* host = (hostCtx != NULL) ? hostCtx->host : NULL;
     char keyType[WOLFSSH_CLIENT_PUBKEYTYPE_SIZE_ESTIMATE];
     word32 sz = 0, i;
     int ret = 0;
@@ -710,8 +776,24 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
     {
         char* encodedKey = NULL;
         char* fileName = NULL;
+        char* portName = NULL;
+        char* otherName = NULL;
+        const char* name = host;
         char fp[WOLFSSH_CLIENT_FINGERPRINT_SIZE_ESTIMATE];
         word32 encSz = 0;
+
+        /* OpenSSH names a host on any port but 22 as [host]:port. */
+        if (hostCtx->port != 22) {
+            sz = (word32)WSTRLEN(host) + 9;
+            portName = (char*)WMALLOC(sz, NULL, 0);
+            if (portName == NULL)
+                ret = -1;
+            else {
+                WSNPRINTF(portName, sz, "[%s]:%u", host,
+                        (unsigned int)hostCtx->port);
+                name = portName;
+            }
+        }
 
         /* Base64 size plus a nul */
         if (pubKeySz > MAX_PACKET_SZ) {
@@ -732,7 +814,14 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             ret = FingerprintKey(pubKey, pubKeySz, fp);
         }
         if (ret == 0) {
-            ret = KnownHostsLookup(host, keyType, encodedKey, &fileName);
+            ret = KnownHostsLookup(name, keyType, encodedKey, &fileName);
+            /* As OpenSSH does, take a bare host line when no [host]:port
+             * line has a key of this type. */
+            if (ret < 0 && portName != NULL
+                    && KnownHostsLookup(host, keyType, encodedKey,
+                            &otherName) == 0) {
+                ret = 0;
+            }
             if (ret == 1) {
                 fprintf(stderr, "The %s host key for %s has changed!\n"
                         "Fingerprint: %s\n"
@@ -746,7 +835,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
                         "Or use -Y to accept any host key, insecurely.\n",
                         keyType, host, fp,
                         fileName != NULL ? fileName : "~/.ssh/known_hosts",
-                        host, keyType, encodedKey);
+                        name, keyType, encodedKey);
             }
         }
         else {
@@ -757,6 +846,10 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
             WFREE(encodedKey, NULL, 0);
         if (fileName != NULL)
             WFREE(fileName, NULL, 0);
+        if (otherName != NULL)
+            WFREE(otherName, NULL, 0);
+        if (portName != NULL)
+            WFREE(portName, NULL, 0);
     }
 #else
     fprintf(stderr, "No known_hosts support. Use -Y to accept any host "

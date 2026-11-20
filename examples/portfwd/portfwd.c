@@ -232,7 +232,7 @@ static int wsUserAuth(byte authType,
 }
 
 
-/* ctx is the host connected to, checked against known_hosts. */
+/* ctx is the ClientHostCtx connected to, checked against known_hosts. */
 static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     return ClientPublicKeyCheck(pubKey, pubKeySz, ctx);
@@ -448,6 +448,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     WOLFSSH* ssh;
     WOLFSSH_CTX* ctx;
     char* host = (char*)wolfSshIp;
+    ClientHostCtx hostCtx;
     word16 port = wolfSshPort;
     word16 fwdFromPort = INVALID_FWD_PORT;
     word16 fwdToPort = INVALID_FWD_PORT;
@@ -625,7 +626,9 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
     wolfSSH_CTX_SetPublicKeyCheck(ctx, wsPublicKeyCheck);
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+    hostCtx.host = host;
+    hostCtx.port = port;
+    wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
     wolfSSH_CTX_SetChannelOpenRespCb(ctx,
             wsChannelOpenConfCb, wsChannelOpenFailCb);
     wolfSSH_SetChannelOpenCtx(ssh, (void*)"port forward");

@@ -1604,6 +1604,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     /* int peerEcc = 0; */
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
+    ClientHostCtx hostCtx;
     const char* username = NULL;
     const char* password = NULL;
     const char* defaultSftpPath = NULL;
@@ -1878,7 +1879,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+    hostCtx.host = host;
+    hostCtx.port = port;
+    wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)
