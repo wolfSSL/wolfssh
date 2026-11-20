@@ -142,6 +142,11 @@ extern "C" {
     #define WOLFSSH_CERTMAN_CHAIN_CA
 #endif
 
+/* wolfSSL before 5.9.4 skips ancestor name constraints (CVE-2026-89133). */
+#if defined(WOLFSSH_CERTS) && (LIBWOLFSSL_VERSION_HEX < WOLFSSL_V5_9_4)
+    #define WOLFSSH_CERTS_OLD_NAME_CONSTRAINTS
+#endif
+
 /* wc_MlDsaKey_* / WC_MLDSA_* naming replaced the wc_Dilithium_* API in
  * wolfSSL 5.9.2. HAVE_DILITHIUM alone doesn't distinguish the two, so
  * require the version that has the new API too. */

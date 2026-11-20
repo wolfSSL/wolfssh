@@ -431,6 +431,25 @@ AS_IF([test "x$ENABLED_AGENT" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
 AS_IF([test "x$ENABLED_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
+
+# wolfSSL before 5.9.4 skips ancestor name constraints (CVE-2026-89133).
+CERTS_OLD_WOLFSSL=no
+AS_IF([test "x$ENABLED_CERTS" = "xyes"],[
+  AC_MSG_CHECKING([whether wolfSSL applies every CA's name constraints])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                       #include <wolfssl/wolfcrypt/settings.h>
+                       #else
+                       #include <wolfssl/options.h>
+                       #endif
+                       #include <wolfssl/version.h>]],
+                     [[#if LIBWOLFSSL_VERSION_HEX < 0x05009004
+                       #error "older than 5.9.4"
+                       #endif]])],
+    [AC_MSG_RESULT([yes])],
+    [AC_MSG_RESULT([no])
+     CERTS_OLD_WOLFSSL=yes])])
+
 AS_IF([test "x$ENABLED_OSSH_CERTS" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_OSSH_CERTS"])
 dnl Initialize before the feature block so a stray WINCERT_LIBS value in the
@@ -655,3 +674,7 @@ AS_ECHO(["   * X.509 Certs:               $ENABLED_CERTS"])
 AS_ECHO(["   * OpenSSH Certs:             $ENABLED_OSSH_CERTS"])
 AS_ECHO(["   * Windows cert store:        $ENABLED_WINDOWS_CERT_STORE"])
 AS_ECHO(["   * Examples:                  $ENABLED_EXAMPLES"])
+
+AS_IF([test "x$CERTS_OLD_WOLFSSL" = "xyes"],
+      [AC_MSG_WARN([X.509 certs are on, but this wolfSSL is older than 5.9.4 and does not apply the name constraints of CAs above a cert's issuer (CVE-2026-89133). A peer-supplied CA can authenticate a name outside its namespace. Upgrade wolfSSL to 5.9.4 or later.])],
+      [:])
