@@ -22960,6 +22960,7 @@ static int PrepareUserAuthRequestMlDsaCert(WOLFSSH* ssh, word32* payloadSz,
 
     if (ret == WS_SUCCESS) {
         *payloadSz += (LENGTH_SZ + authData->sf.publicKey.publicKeyTypeSz) +
+                LENGTH_SZ + /* certificate length */
                 (UINT32_SZ * 2); /* certificate and ocsp counts */
 
         if (authData->sf.publicKey.hasSignature) {
