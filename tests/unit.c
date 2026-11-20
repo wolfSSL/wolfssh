@@ -5316,18 +5316,22 @@ typedef struct HwTestCtx {
     WOLFSSH* ssh;
     int  count;
     int  keying;
+    int  ret;
     byte lastSide;
 } HwTestCtx;
 
 static int HwTestCb(byte side, void* ctx)
 {
     HwTestCtx* hc = (HwTestCtx*)ctx;
+    int ret = WS_SUCCESS;
+
     if (hc != NULL) {
         hc->count++;
         hc->lastSide = side;
         hc->keying = wolfSSH_RekeyPending(hc->ssh);
+        ret = hc->ret;
     }
-    return WS_SUCCESS;
+    return ret;
 }
 
 /* Exercise the wolfSSH_*MsgHighwater APIs and the per-key packet-count
@@ -5530,6 +5534,29 @@ static int test_ByteHighwater(void)
     if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
             || hc.count != 2) {
         result = -828;
+        goto done;
+    }
+
+    /* A positive callback result is not a status: it would reach callers
+     * that return byte counts, so it comes back as WS_SUCCESS. A negative
+     * one passes through. */
+    if (wolfSSH_SetHighwater(ssh, 1024) != WS_SUCCESS) {
+        result = -829;
+        goto done;
+    }
+    hc.ret = 4096;
+    ssh->highwaterFlag = 0;
+    ssh->txCount = 1024;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT) != WS_SUCCESS
+            || hc.count != 3) {
+        result = -830;
+        goto done;
+    }
+    hc.ret = WS_WANT_WRITE;
+    ssh->highwaterFlag = 0;
+    if (wolfSSH_TestHighwaterCheck(ssh, WOLFSSH_HWSIDE_TRANSMIT)
+            != WS_WANT_WRITE || hc.count != 4) {
+        result = -831;
         goto done;
     }
 

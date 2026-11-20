@@ -1987,7 +1987,6 @@ int ReceiveScpMessage(WOLFSSH* ssh)
             if (sz <= 0)
                 return sz;
             ssh->scpRecvMsgSz += sz;
-            sz = ssh->scpRecvMsgSz;
             continue;
         }
 
@@ -2004,7 +2003,6 @@ int ReceiveScpMessage(WOLFSSH* ssh)
                         return sz;
                     }
                     ssh->scpRecvMsgSz += sz;
-                    sz = ssh->scpRecvMsgSz;
                     break;
 
                 case WS_EXTDATA:
