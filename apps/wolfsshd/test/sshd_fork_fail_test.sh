@@ -115,7 +115,7 @@ fi
 # Runs one exec session; output in $CLIENT_LOG, exit status in $CLIENT_RET.
 run_client() {
     CLIENT_LOG="$TESTDIR/fork_client_$1.log"
-    $TIMEOUT "$TEST_CLIENT" -q -c "echo $TOKEN" -u "$USER" -i "$PRIVATE_KEY" \
+    $TIMEOUT "$TEST_CLIENT" -Y -q -c "echo $TOKEN" -u "$USER" -i "$PRIVATE_KEY" \
         -j "$PUBLIC_KEY" -h "$TEST_HOST" -p "$TEST_PORT" \
         > "$CLIENT_LOG" 2>&1
     CLIENT_RET=$?

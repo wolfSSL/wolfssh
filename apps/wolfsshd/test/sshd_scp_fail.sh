@@ -30,8 +30,8 @@ OUTDIR="`pwd`/test-$$"
 
 dd if=/dev/random of=$OUTDIR/test.dat bs=1024 count=512
 
-echo "$TEST_SCP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -S$OUTDIR/test.dat:. -H $1 -p $2"
-$TEST_SCP_CLIENT -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -S$OUTDIR/test.dat:. -H $1 -p $2
+echo "$TEST_SCP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -S$OUTDIR/test.dat:. -H $1 -p $2"
+$TEST_SCP_CLIENT -Y -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -S$OUTDIR/test.dat:. -H $1 -p $2
 
 RESULT=$?
 if [ "$RESULT" != "0" ]; then

@@ -44,6 +44,13 @@ openssl x509 -req -in server-cert-ed25519.csr -days 3650 -extfile "$CONFIG" -ext
 openssl x509 -in server-cert-ed25519.pem -outform DER -out server-cert-ed25519.der
 rm -f server-cert-ed25519-key.pem server-cert-ed25519.csr
 
+# renew server-cert-email-san, whose only subjectAltName is an email
+openssl req -subj '/C=US/ST=Washington/L=Seattle/O=Eliptic/OU=ECC/CN=www.wolfssl.com/emailAddress=server@example.com' -key server-key.pem -out server-cert-email-san.csr -config "$CONFIG" -new -nodes
+
+openssl x509 -req -in server-cert-email-san.csr -days 3650 -extfile "$CONFIG" -extensions v3_server_email -CA ca-cert-ecc.pem -CAkey ca-key-ecc.pem -text -out server-cert-email-san.pem -set_serial 10
+openssl x509 -in server-cert-email-san.pem -outform DER -out server-cert-email-san.der
+rm -f server-cert-email-san.csr
+
 rm index.*
 if [ -n "$1" ]; then
     rm -f "$CONFIG"

@@ -86,7 +86,7 @@ if [ "$nonblockingOnly" = 0 ]; then
     ./examples/echoserver/echoserver -1 -R "$ready_file" &
     server_pid=$!
     create_port
-    echo "exit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$port"
+    echo "exit" | ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$port"
     RESULT=$?
     remove_ready_file
     if [ $RESULT -ne 0 ]; then
@@ -102,7 +102,7 @@ echo "Test non blocking connection"
 ./examples/echoserver/echoserver -N -1 -R "$ready_file" &
 server_pid=$!
 create_port
-echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
+echo "exit" | ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port"
 RESULT=$?
 remove_ready_file
 if [ $RESULT -ne 0 ]; then
@@ -120,7 +120,7 @@ if [ "$nonblockingOnly" = 0 ]; then
     ./examples/echoserver/echoserver -A -1 -R "$ready_file" &
     server_pid=$!
     create_port
-    echo "exit" | ./examples/sftpclient/wolfsftp -u jill -P upthehill -p "$port"
+    echo "exit" | ./examples/sftpclient/wolfsftp -Y -u jill -P upthehill -p "$port"
     RESULT=$?
     remove_ready_file
     if [ $RESULT -ne 0 ]; then
@@ -137,7 +137,7 @@ echo "Test non blocking connection to an app-driven server"
 ./examples/echoserver/echoserver -A -N -1 -R "$ready_file" &
 server_pid=$!
 create_port
-echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
+echo "exit" | ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port"
 RESULT=$?
 remove_ready_file
 if [ $RESULT -ne 0 ]; then
@@ -153,7 +153,7 @@ if [ "$nonblockingOnly" = 0 ]; then
     ./examples/echoserver/echoserver -H -N -1 -R "$ready_file" &
     server_pid=$!
     create_port
-    ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port" -g -r "$PWD/README.md-2" -l "$PWD/README.md"
+    ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port" -g -r "$PWD/README.md-2" -l "$PWD/README.md"
     RESULT=$?
     remove_ready_file
     rm -f "$PWD/README.md-2"
@@ -171,7 +171,7 @@ if [ "$nonblockingOnly" = 0 ]; then
     ./examples/echoserver/echoserver -d "$PWD/examples" -1 -R "$ready_file" &
     server_pid=$!
     create_port
-    echo "exit" | ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port"
+    echo "exit" | ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port"
     RESULT=$?
     remove_ready_file
     if [ $RESULT -ne 0 ]; then
@@ -188,7 +188,7 @@ if [ "$nonblockingOnly" = 0 ]; then
     ./examples/echoserver/echoserver -N -1 -R "$ready_file" &
     server_pid=$!
     create_port
-    ./examples/sftpclient/wolfsftp -N -u jill -P upthehill -p "$port" -G -r "$PWD/this_file_does_not_exist_12345.txt" -l "$PWD/test_output.txt" > sftp_status_failure.log 2>&1
+    ./examples/sftpclient/wolfsftp -Y -N -u jill -P upthehill -p "$port" -G -r "$PWD/this_file_does_not_exist_12345.txt" -l "$PWD/test_output.txt" > sftp_status_failure.log 2>&1
     RESULT=$?
     grep -q "Unable to copy remote file" sftp_status_failure.log
     RESULT_MSG=$?

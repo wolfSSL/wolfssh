@@ -1,0 +1,216 @@
+#!/bin/sh
+
+# Example client host key check test
+#
+# HOME is a scratch dir. An unknown or changed host key must be refused
+# unless -Y. The echoserver never listens on 22, so the client looks up
+# [host]:port first, then the bare host.
+
+no_pid=-1
+server_pid=$no_pid
+work_dir="`pwd`/client_hostkey_test$$"
+ready_file="$work_dir/ready"
+known_hosts="$work_dir/.ssh/known_hosts"
+client_out="$work_dir/client.out"
+port=0
+
+[ ! -x ./examples/client/client ] \
+    && echo "example client doesn't exist, skipping" && exit 77
+[ ! -x ./examples/echoserver/echoserver ] \
+    && echo "echoserver doesn't exist, skipping" && exit 77
+
+WOLFSSH_OPTIONS=`./apps/wolfssh-options` || {
+    echo "fail: could not run ./apps/wolfssh-options"
+    exit 1
+}
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_BLOCK" \
+    && echo "WOLFSSH_TEST_BLOCK build, skipping" && exit 77
+
+# The address the examples connect to by default.
+host="127.0.0.1"
+echo "$WOLFSSH_OPTIONS" | grep -qx "TEST_IPV6" && host="::1"
+
+do_cleanup() {
+    if [ $server_pid != $no_pid ]; then
+        kill -9 $server_pid 2>/dev/null
+        wait $server_pid 2>/dev/null
+        server_pid=$no_pid
+    fi
+    rm -rf "$work_dir"
+}
+
+do_trap() {
+    do_cleanup
+    exit 1
+}
+
+trap do_trap INT TERM
+
+fail() {
+    echo "FAIL: $1"
+    [ -f "$client_out" ] && cat "$client_out"
+    do_cleanup
+    exit 1
+}
+
+start_server() {
+    rm -f "$ready_file"
+    ./examples/echoserver/echoserver -1 -f -R "$ready_file" \
+        > "$work_dir/server.log" 2>&1 &
+    server_pid=$!
+    counter=0
+    while [ ! -s "$ready_file" ] && [ "$counter" -lt 100 ]; do
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+    [ -s "$ready_file" ] || fail "echoserver never started"
+    port=`cat "$ready_file"`
+}
+
+# kh_lines - when set, written to known_hosts once the server is up, with
+#            @PORT@ replaced by its port
+# kh_hash  - when set, the known_hosts names are hashed after that
+# $@ - extra client arguments
+run_client() {
+    start_server
+    if [ -n "$kh_lines" ]; then
+        printf '%s\n' "$kh_lines" | sed "s/@PORT@/$port/g" > "$known_hosts"
+        if [ -n "$kh_hash" ]; then
+            ssh-keygen -H -f "$known_hosts" > /dev/null 2>&1 \
+                || fail "ssh-keygen couldn't hash known_hosts"
+            rm -f "$known_hosts.old"
+        fi
+    fi
+    HOME="$work_dir" ./examples/client/client -u jill -P upthehill \
+        -p $port "$@" < /dev/null > "$client_out" 2>&1
+    status=$?
+    kill -9 $server_pid 2>/dev/null
+    wait $server_pid 2>/dev/null
+    server_pid=$no_pid
+    return $status
+}
+
+mkdir -p "$work_dir/.ssh" || fail "couldn't make the work dir"
+
+echo "Test an unknown host key is refused"
+run_client && fail "the client accepted an unknown host key"
+if grep -q "No known_hosts support" "$client_out"; then
+    echo "client built without known_hosts support, skipping"
+    do_cleanup
+    exit 77
+fi
+grep -qF "host key for $host is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+grep -q "Server said" "$client_out" \
+    && fail "the client talked to an unknown server"
+
+# The refusal prints the line that trusts the key, named [host]:port.
+entry=`awk -v h="[$host]:$port" '$1 == h' "$client_out"`
+[ -n "$entry" ] || fail "the client didn't print a [host]:port line"
+set -- $entry
+type="$2"
+key="$3"
+pkey="[$host]:@PORT@ $type $key"
+
+echo "Test -Y accepts an unknown host key with a warning"
+run_client -Y || fail "the client refused the host key with -Y"
+grep -q "Warning: accepting the" "$client_out" \
+    || fail "the client didn't warn about -Y"
+grep -q "Server said" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+echo "Test a known [host]:port host key is accepted"
+kh_lines="$pkey"
+run_client || fail "the client refused a known host key"
+grep -q "Server said" "$client_out" \
+    || fail "the echoserver's reply didn't make it back"
+
+echo "Test a known bare host key is accepted on another port"
+kh_lines="$host $type $key"
+run_client || fail "the client refused a bare host line"
+
+echo "Test a name in a comma list is accepted"
+kh_lines="example.invalid,[$host]:@PORT@ $type $key"
+run_client || fail "the client refused a name in a comma list"
+
+if command -v ssh-keygen > /dev/null 2>&1; then
+    echo "Test a hashed [host]:port name is accepted"
+    kh_lines="$pkey"
+    kh_hash=1
+    run_client || fail "the client refused a hashed name"
+    grep -q '^|1|' "$known_hosts" || fail "ssh-keygen didn't hash the name"
+
+    echo "Test a hashed name for another port is refused"
+    kh_lines="[$host]:1 $type $key"
+    run_client && fail "the client accepted a hashed name for another port"
+    kh_hash=
+fi
+
+if [ "`id -u`" != 0 ]; then
+    echo "Test an unreadable known_hosts is refused"
+    kh_lines=
+    chmod 000 "$known_hosts"
+    run_client && fail "the client accepted a host it couldn't look up"
+    chmod 600 "$known_hosts"
+fi
+
+echo "Test a stale entry ahead of the right one"
+kh_lines="[$host]:@PORT@ $type AAAA$key
+$pkey"
+run_client || fail "a stale entry hid the host key"
+
+echo "Test a changed host key is refused"
+kh_lines="[$host]:@PORT@ $type AAAA$key"
+run_client && fail "the client accepted a changed host key"
+grep -qF "host key for $host has changed" "$client_out" \
+    || fail "the client didn't report the changed host key"
+
+echo "Test a changed [host]:port key is not masked by a bare host line"
+kh_lines="[$host]:@PORT@ $type AAAA$key
+$host $type $key"
+run_client && fail "a bare host line masked a changed host key"
+grep -qF "host key for $host has changed" "$client_out" \
+    || fail "the client didn't report the changed host key"
+
+echo "Test a changed bare host key is unknown on another port"
+kh_lines="$host $type AAAA$key"
+run_client && fail "the client accepted a changed bare host key"
+grep -qF "host key for $host is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+
+echo "Test a key known only for another port is refused"
+kh_lines="[$host]:1 $type $key"
+run_client && fail "the client accepted another port's key"
+grep -q "is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+
+echo "Test a key known only for another host is refused"
+kh_lines="example.invalid $type $key"
+run_client && fail "the client accepted another host's key"
+grep -q "is unknown" "$client_out" \
+    || fail "the client didn't report the unknown host key"
+kh_lines=
+
+if [ -x ./examples/portfwd/portfwd ] \
+    && ! ./examples/portfwd/portfwd '-?' 2>&1 | grep -q "does not exist"
+then
+    echo "Test portfwd refuses an unknown host key"
+    rm -f "$known_hosts"
+    start_server
+    HOME="$work_dir" ./examples/portfwd/portfwd -u jill -P upthehill \
+        -p $port -f 0 -r -t 1 < /dev/null > "$client_out" 2>&1 &
+    fwd_pid=$!
+    counter=0
+    while kill -0 $fwd_pid 2>/dev/null && [ "$counter" -lt 100 ]; do
+        sleep 0.1
+        counter=$((counter + 1))
+    done
+    kill -9 $fwd_pid 2>/dev/null && fail "portfwd kept an unknown host"
+    wait $fwd_pid && fail "portfwd accepted an unknown host key"
+    grep -qF "host key for $host is unknown" "$client_out" \
+        || fail "portfwd didn't report the unknown host key"
+fi
+
+do_cleanup
+echo "All tests passed"
+exit 0

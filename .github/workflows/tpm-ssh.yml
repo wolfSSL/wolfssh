@@ -216,6 +216,29 @@ jobs:
         grep -q "Listening on port" tpmcert_server_neg.txt
         grep -q "wolfSSH_connect failed" tpmcert_client_neg.txt
 
+    # Negative test: the trusted certificate names 127.0.0.1, not localhost.
+    - name: Test TPM X.509 host certificate rejects another host (${{ matrix.keytype }})
+      if: matrix.hostkey == 'x509'
+      run: |
+        cd wolfssh
+        ./examples/tpmcertserver/tpmcertserver -k ${{ matrix.keytype }} \
+            -p 22227 > tpmcert_server_host.txt 2>&1 &
+        echo "tpmcertserver (X.509 host ${{ matrix.keytype }}) PID: $!"
+        for i in $(seq 1 40); do
+            if ss -ltn 2>/dev/null | grep -q ':22227'; then break; fi
+            sleep 1
+        done
+        if ./examples/tpmcertserver/tpmcertclient -A tpm-server-cert.der \
+            -p 22227 -h localhost > tpmcert_client_host.txt 2>&1; then
+            echo "ERROR: client accepted a certificate for another host"
+            cat tpmcert_client_host.txt
+            exit 1
+        fi
+        echo "----- server -----"; cat tpmcert_server_host.txt
+        echo "----- client -----"; cat tpmcert_client_host.txt
+        grep -q "The host certificate does not name localhost" \
+            tpmcert_client_host.txt
+
     # Client public-key authentication with a TPM-resident key (RSA only).
     - name: Test TPM client public-key auth
       if: matrix.keytype == 'rsa' && matrix.hostkey == 'raw'
@@ -227,7 +250,7 @@ jobs:
         ./examples/echoserver/echoserver -1 -s key.ssh &
         echo "Echoserver (authorized TPM client key) PID: $!"
         sleep 2
-        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth
 
     # The same TPM key offered as an OpenSSH user certificate. The certificate
@@ -244,7 +267,7 @@ jobs:
         SERVER_PID=$!
         echo "Echoserver (TPM key behind an OpenSSH certificate) PID: $SERVER_PID"
         sleep 2
-        timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth -j tpmkey-cert.pub -p 22225 -x \
             < /dev/null > ossh_cert_client.txt 2>&1 || {
             cat ossh_cert_client.txt
@@ -271,7 +294,7 @@ jobs:
         SERVER_PID=$!
         echo "Echoserver (another key's certificate) PID: $SERVER_PID"
         sleep 2
-        if timeout 20 ./examples/client/client -i ../wolftpm/keyblob.bin \
+        if timeout 20 ./examples/client/client -Y -i ../wolftpm/keyblob.bin \
             -u hansel -K ThisIsMyKeyAuth -j other-cert.pub -p 22226 -x \
             < /dev/null > ossh_cert_client_neg.txt 2>&1; then
             echo "ERROR: a certificate for another key authenticated"
@@ -309,7 +332,7 @@ jobs:
         # $1 blob, $2 expected client output, $3 optional key auth.
         reject() {
             echo "----- $1 -----"
-            if timeout 20 ./examples/client/client -i "$1" -u hansel \
+            if timeout 20 ./examples/client/client -Y -i "$1" -u hansel \
                 -K "${3:-ThisIsMyKeyAuth}" < /dev/null > reject.txt 2>&1; then
                 echo "ERROR: the client accepted $1"
                 cat reject.txt

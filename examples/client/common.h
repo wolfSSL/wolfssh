@@ -38,7 +38,18 @@ int ClientSetEcho(int type);
 void ClientUnbufferStdin(void);
 int ClientUserAuth(byte authType,
         WS_UserAuthData* authData, void* ctx);
+/* The host and port connected to, the ClientPublicKeyCheck() ctx. */
+typedef struct ClientHostCtx {
+    const char* host;
+    word16 port;
+} ClientHostCtx;
+/* Host key check callback; ctx is a ClientHostCtx. A plain key must be in
+ * ~/.ssh/known_hosts, under [host]:port when the port is not 22, else
+ * under the bare host; a certificate must name the host. */
 int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx);
+/* A nonzero flag accepts any plain host key, insecurely, with a warning. */
+void ClientAcceptAnyHostKey(int flag);
+/* A nonzero flag accepts a host certificate that names another host. */
 void ClientIPOverride(int flag);
 int ClientParsePort(const char* in, word16* port);
 /* Wipes the password and keyboard-interactive responses ClientUserAuth()

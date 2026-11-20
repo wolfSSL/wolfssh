@@ -121,7 +121,7 @@ jobs:
           cat > /tmp/sftp_test.exp << EOF
           #!/usr/bin/expect -f
           set timeout 60
-          spawn ./wolfsftp -N -h localhost -p 22 -u testuser
+          spawn ./wolfsftp -Y -N -h localhost -p 22 -u testuser
           expect "Password:"
           send "password123\r"
           expect "wolfSSH sftp>"

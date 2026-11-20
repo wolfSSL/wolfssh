@@ -42,9 +42,9 @@ PUBLIC_KEY="./keys/hansel-key-ecc.pub"
 head -c 1G /dev/urandom > random-test.txt
 
 PWD=`pwd`
-echo "$TEST_CLIENT -q -c \"cd $PWD; $TEST_CLIENT -q -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt"
+echo "$TEST_CLIENT -Y -q -c \"cd $PWD; $TEST_CLIENT -Y -q -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt"
 
-$TEST_CLIENT -q -c "cd $PWD; $TEST_CLIENT -q -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt
+$TEST_CLIENT -Y -q -c "cd $PWD; $TEST_CLIENT -Y -q -c \"cat $PWD/random-test.txt\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT > random-test-result.txt
 
 ls -la random-test*
 

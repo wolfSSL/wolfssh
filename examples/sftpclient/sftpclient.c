@@ -57,7 +57,7 @@
 #else
     #define SFTPC_OPTLIST_STORE ""
 #endif
-#define SFTPC_OPTLIST "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:X" SFTPC_OPTLIST_STORE
+#define SFTPC_OPTLIST "?d:gh:i:j:k:l:p:r:u:EGNP:J:A:XY" SFTPC_OPTLIST_STORE
 
 #if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_CLIENT)
 
@@ -431,8 +431,11 @@ static void ShowUsage(void)
     printf("               Certificate example : client -u orange \\\n");
     printf("               -J orange-cert.der -i orange-key.der\n");
     printf(" -A <filename> filename for DER CA certificate to verify host\n");
-    printf(" -X            Ignore IP checks on peer vs peer certificate\n");
+    printf(" -X            accept a host certificate for another host\n");
 #endif
+    printf(" -Y            accept any host key, insecure; otherwise it must "
+           "be in\n"
+           "               ~/.ssh/known_hosts\n");
 
     ShowCommands();
 }
@@ -1601,6 +1604,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     /* int peerEcc = 0; */
     word16 port = wolfSshPort;
     char* host = (char*)wolfSshIp;
+    ClientHostCtx hostCtx;
     const char* username = NULL;
     const char* password = NULL;
     const char* defaultSftpPath = NULL;
@@ -1622,6 +1626,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     char**  argv = ((func_args*)args)->argv;
     ((func_args*)args)->return_code = 0;
 
+    ClientAcceptAnyHostKey(0);
     while ((ch = mygetopt(argc, argv, SFTPC_OPTLIST)) != -1) {
         switch (ch) {
             case 'd':
@@ -1694,12 +1699,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 caCert = myoptarg;
                 break;
 
-            #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
             case 'X':
                 ClientIPOverride(1);
                 break;
-            #endif
         #endif
+
+            case 'Y':
+                ClientAcceptAnyHostKey(1);
+                break;
 
 #ifdef WOLFSSH_WINDOWS_CERT_STORE
             case 'W':
@@ -1872,7 +1879,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
     if (password != NULL)
         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
 
-    wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+    hostCtx.host = host;
+    hostCtx.port = port;
+    wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
 
     ret = wolfSSH_SetUsername(ssh, username);
     if (ret != WS_SUCCESS)

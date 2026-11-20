@@ -71,8 +71,8 @@ get_size_line() {
 }
 
 echo "Creating tmux session at $PWD with command :"
-echo "tmux new-session -d -s $TMUX_SESSION \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
-tmux new-session -d -s "$TMUX_SESSION" "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+echo "tmux new-session -d -s $TMUX_SESSION \"$TEST_CLIENT -Y -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
+tmux new-session -d -s "$TMUX_SESSION" "$TEST_CLIENT -Y -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
 echo "Result of tmux new-session = $?"
 
 wait_for_session || exit 1
@@ -112,8 +112,8 @@ tmux kill-session -t "$TMUX_SESSION"
 set -e
 
 echo "Starting another session with a smaller window size"
-echo "tmux new-session -d -x 50 -y 10 -s $TMUX_SESSION \"$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
-tmux new-session -d -x 50 -y 10 -s "$TMUX_SESSION" "$TEST_CLIENT -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
+echo "tmux new-session -d -x 50 -y 10 -s $TMUX_SESSION \"$TEST_CLIENT -Y -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\"\""
+tmux new-session -d -x 50 -y 10 -s "$TMUX_SESSION" "$TEST_CLIENT -Y -q -t -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h \"$1\" -p \"$2\""
 
 wait_for_session || exit 1
 

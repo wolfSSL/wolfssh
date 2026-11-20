@@ -103,7 +103,7 @@ for i in `seq 1 $TEST_ITERS`; do
     # The inner client cats the file through the outer session, so the shell
     # loop is the one relaying it. Stalling the outer client's reader fills
     # the window and leaves the loop holding a backlog.
-    $TIMEOUT $TEST_CLIENT -q -c "cd $PWD; $TEST_CLIENT -q -c \"cat $TEST_FILE\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" \
+    $TIMEOUT $TEST_CLIENT -Y -q -c "cd $PWD; $TEST_CLIENT -Y -q -c \"cat $TEST_FILE\" -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT" \
         -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT 2>/dev/null \
         | { sleep $TEST_STALL; cat; } > "$TEST_RESULT_FILE"
     # The client's own status, not the reader's. 124 is the deadline above,

@@ -15,7 +15,7 @@
 # A pty session has no stderr pipe; the last check covers its exit.
 #
 # The client's own "Error reading stdin" lands in the same capture, possibly
-# mid-line, so it is cut out before the compare.
+# mid-line, so it is cut out before the compare, as is the -Y warning.
 
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "expecting host and port as arguments"
@@ -123,7 +123,7 @@ RESULT=0
 for i in `seq 1 $TEST_ITERS`; do
     # The child exits with its output still queued and nothing slows the
     # peer, so the loop has to relay the rest on its own.
-    $TIMEOUT $TEST_CLIENT -q -c "perl $TEST_CHILD $TEST_FILE" \
+    $TIMEOUT $TEST_CLIENT -Y -q -c "perl $TEST_CHILD $TEST_FILE" \
         -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT \
         < /dev/null > /dev/null 2> "$TEST_RESULT_FILE"
     CLIENT_RESULT=$?
@@ -144,8 +144,9 @@ for i in `seq 1 $TEST_ITERS`; do
         break
     fi
 
-    perl -0777 -pe 's/Error reading stdin\n//g' "$TEST_RESULT_FILE" \
-        > "$TEST_STRIPPED_FILE"
+    perl -0777 -pe 's/Error reading stdin\n//g;
+            s/^Warning: accepting the \S+ host key for .*\n//mg' \
+        "$TEST_RESULT_FILE" > "$TEST_STRIPPED_FILE"
     if ! cmp -s "$TEST_STRIPPED_FILE" "$TEST_FILE"; then
         GOT=`grep -c "^$TEST_LINE\$" "$TEST_STRIPPED_FILE"`
         echo "pass $i of $TEST_ITERS lost or altered the child's stderr"
@@ -160,7 +161,7 @@ done
 # exit never ends the session. The exit status proves the session ended and
 # carried the shell's own code back.
 if [ "$RESULT" = 0 ]; then
-    printf 'exit 3\n' | $PTY_TIMEOUT $TEST_CLIENT -t \
+    printf 'exit 3\n' | $PTY_TIMEOUT $TEST_CLIENT -Y -t \
         -u $USER -i $PRIVATE_KEY -j $PUBLIC_KEY -h $TEST_HOST -p $TEST_PORT \
         > /dev/null 2>&1
     CLIENT_RESULT=$?

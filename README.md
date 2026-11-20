@@ -180,6 +180,17 @@ The client tool accepts the following command line options:
     -t             use pseudo terminal
     -c <command>   executes remote command and pipe stdin/stdout
     -a             Attempt to use SSH-AGENT
+    -Y             accept any host key, insecure
+
+The client, scpclient and sftpclient refuse a server whose host key is not
+on a `host type key` line of `~/.ssh/known_hosts`, and print the line to
+add. As with OpenSSH, a server on a port other than 22 is named
+`[host]:port`, with the bare host as a fallback when no `[host]:port` line
+has a key of that type; a line may list several names separated by commas,
+and hashed `|1|` names match. `-Y` skips that check, with a warning. A server's X.509 host
+certificate must chain to the CA given with `-A` and name the host in a
+subjectAltName, or its common name when it has none; `-X` accepts one
+that names another host.
 
 
 portfwd
@@ -199,6 +210,8 @@ The portfwd tool accepts the following command line options:
     -f <num>       host port to forward from (REQUIRED)
     -T <host>      host to forward to, default to host
     -t <num>       port to forward to (REQUIRED)
+    -Y             accept any host key, insecure; otherwise it must be in
+                   ~/.ssh/known_hosts
 
 
 scpclient
@@ -215,6 +228,7 @@ The scpclient tool accepts the following command line options:
     -P <password>  password for username, prompted if omitted
     -L <from>:<to> copy from local to server
     -S <from>:<to> copy from server to local
+    -Y             accept any host key, insecure
 
 
 sftpclient
@@ -237,6 +251,7 @@ The sftpclient tool accepts the following command line options:
     -r <filename>  remote filename
     -g             put local filename as remote filename
     -G             get remote filename as local filename
+    -Y             accept any host key, insecure
 
 
 SCP
