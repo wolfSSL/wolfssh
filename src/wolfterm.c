@@ -100,7 +100,7 @@ static void wolfSSH_CursorMove(WOLFSSH_HANDLE h, word32 x, word32 y, byte stomp)
 }
 
 
-/* clear screen (put ' ' chars) from (x1,y1) to (x2,y2) */
+/* clear screen (put ' ' chars) from (x1,y1) up to, not including, (x2,y2) */
 static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, word32 x2, word32 y2)
 {
         CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
@@ -110,7 +110,7 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
         word32 maxX = 0;
 
         GetConsoleScreenBufferInfo(handle, &info);
-        maxX = info.dwMaximumWindowSize.X;
+        maxX = info.dwSize.X; /* fills wrap at the buffer width */
         start.X = x1;
         start.Y = y1;
 
@@ -130,6 +130,24 @@ static void wolfSSH_ClearScreen(WOLFSSH_HANDLE handle, word32 x1, word32 y1, wor
 }
 
 
+/* Top row of the display: the window, moved to hold the cursor. */
+static word32 wolfSSH_DisplayTop(const CONSOLE_SCREEN_BUFFER_INFO* info)
+{
+    word32 y = (word32)info->dwCursorPosition.Y;
+    word32 top = (word32)info->srWindow.Top;
+    word32 bottom = (word32)info->srWindow.Bottom;
+
+    if (y > bottom) {
+        top = y - (bottom - top);
+    }
+    else if (y < top) {
+        top = y;
+    }
+
+    return top;
+}
+
+
 static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* args, word32 numArgs)
 {
     word32 i = 0;
@@ -145,133 +163,126 @@ static void doDisplayAttributes(WOLFSSH* ssh, WOLFSSH_HANDLE handle, word32* arg
         numArgs = 1;
     }
 
+    /* attributes accumulate across the arguments */
     for (i = 0; i < numArgs; i++) {
         switch (args[i]) {
             case 0: /* reset all to defaults */
-                SetConsoleTextAttribute(handle, ssh->defaultAttr);
+                atr = ssh->defaultAttr;
                 break;
 
             case 1: /* set bold */
-                SetConsoleTextAttribute(handle, (atr | FOREGROUND_INTENSITY));
+                atr |= FOREGROUND_INTENSITY;
                 break;
 
             case 2: /* set half-bright */
                 break;
 
             case 4: /* set undersocre */
-                SetConsoleTextAttribute(handle, atr | BACKGROUND_INTENSITY);
+                atr |= BACKGROUND_INTENSITY;
                 break;
 
             case 10: /* reset mapping and display control flag */
                 break;
 
             case 24: /* turn off underline */
-                SetConsoleTextAttribute(handle, atr & ~BACKGROUND_INTENSITY);
+                atr &= ~BACKGROUND_INTENSITY;
                 break;
 
             case 21:
             case 22: /* normal intensity */
                 atr &= ~BACKGROUND_INTENSITY;
                 atr &= ~FOREGROUND_INTENSITY;
-                SetConsoleTextAttribute(handle, atr);
                 break;
 
-            case 25: /* blink off */
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_INTENSITY));
+            case 25: /* blink off, blink is not supported */
                 break;
 
             case 30: /* set black foreground */
-                SetConsoleTextAttribute(handle, (atr & ~(WS_MASK_RBGFG)));
+                atr &= ~WS_MASK_RBGFG;
                 break;
 
             case 31: /* red foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_RED);
+                atr |= FOREGROUND_RED;
                 break;
 
             case 32: /* green foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_GREEN);
+                atr |= FOREGROUND_GREEN;
                 break;
 
             case 33: /* brown foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_GREEN |
-                        FOREGROUND_RED);
+                atr |= FOREGROUND_GREEN | FOREGROUND_RED;
                 break;
 
             case 34: /* blue foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_BLUE);
+                atr |= FOREGROUND_BLUE;
                 break;
 
             case 35: /* magenta foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, (atr | FOREGROUND_RED |
-                            FOREGROUND_BLUE));
+                atr |= FOREGROUND_RED | FOREGROUND_BLUE;
                 break;
 
             case 36: /* cyan foreground */
                 atr &= ~WS_MASK_RBGFG;
-                SetConsoleTextAttribute(handle, atr | FOREGROUND_BLUE |
-                        FOREGROUND_GREEN);
+                atr |= FOREGROUND_BLUE | FOREGROUND_GREEN;
                 break;
 
             case 37: /* white foreground */
-                SetConsoleTextAttribute(handle, (atr | WS_MASK_RBGFG));
+                atr |= WS_MASK_RBGFG;
                 break;
 
             case 40: /* black background */
-                SetConsoleTextAttribute(handle, atr &= ~WS_MASK_RBGBG);
+                atr &= ~WS_MASK_RBGBG;
                 break;
 
             case 41: /* red background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED));
+                atr |= BACKGROUND_RED;
                 break;
 
             case 42: /* green background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_GREEN));
+                atr |= BACKGROUND_GREEN;
                 break;
 
             case 43: /* brown background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED |
-                            BACKGROUND_GREEN));
+                atr |= BACKGROUND_RED | BACKGROUND_GREEN;
                 break;
 
             case 44: /* blue background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_BLUE));
+                atr |= BACKGROUND_BLUE;
                 break;
 
             case 45: /* magenta background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_RED |
-                            BACKGROUND_BLUE));
+                atr |= BACKGROUND_RED | BACKGROUND_BLUE;
                 break;
 
             case 46: /* cyan background */
                 atr &= ~WS_MASK_RBGBG;
-                SetConsoleTextAttribute(handle, (atr | BACKGROUND_BLUE |
-                            BACKGROUND_GREEN));
+                atr |= BACKGROUND_BLUE | BACKGROUND_GREEN;
                 break;
 
             case 47: /* white background */
-                SetConsoleTextAttribute(handle, (atr | WS_MASK_RBGBG));
+                atr |= WS_MASK_RBGBG;
                 break;
 
             case 49: /* default background */
                 atr &= ~WS_MASK_BG;
                 atr |= (ssh->defaultAttr & WS_MASK_BG);
-                SetConsoleTextAttribute(handle, atr);
                 break;
 
             default:
                WLOG(WS_LOG_DEBUG, "Unknown display attribute %d", args[i]);
         }
     }
+    SetConsoleTextAttribute(handle, (WORD)atr);
 }
 
 
@@ -533,78 +544,72 @@ static int wolfSSH_DoControlSeq(WOLFSSH* ssh, WOLFSSH_HANDLE handle, byte* buf, 
             wolfSSH_CursorMove(handle, args[0], 0, 0);
             break;
 
-        case 'J': /* erase display */
-            if (numArgs == 0) {
-                WLOG(WS_LOG_DEBUG, "CSI 'J' expects an argument");
-                args[0] = 2; /* default to erase screen */
-            }
+        case 'J': /* erase display; an omitted mode is 0 */
+        {
+            CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
+            word32 x, y, top, end;
+
+            GetConsoleScreenBufferInfo(handle, &info);
+            x = (word32)info.dwCursorPosition.X;
+            y = (word32)info.dwCursorPosition.Y;
+            /* Modes 0-2 spare the scrollback above the display. They clear
+             * to the buffer end, as CSI H addresses buffer rows. */
+            top = wolfSSH_DisplayTop(&info);
+            end = (word32)info.dwSize.Y;
 
             switch (args[0]) {
-                case 1: /* erase from start to cursor */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                            info.dwCursorPosition.X, info.dwCursorPosition.Y);
-                }
+                case 0: /* erase from cursor to end of buffer */
+                    wolfSSH_ClearScreen(handle, x, y, 0, end);
                     break;
 
-                case 2: /* erase whole display */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, 0, info.dwSize.X, info.dwSize.Y);
-                }
+                case 1: /* erase from start of display through cursor */
+                    wolfSSH_ClearScreen(handle, 0, top, x + 1, y);
+                    break;
+
+                case 2: /* erase display through end of buffer */
+                    wolfSSH_ClearScreen(handle, 0, top, 0, end);
                     break;
 
                 case 3: /* erase whole display + */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, 0, 0, info.dwMaximumWindowSize.X,
+                    wolfSSH_ClearScreen(handle, 0, 0,
+                            info.dwMaximumWindowSize.X,
                             info.dwMaximumWindowSize.Y);
                     wolfSSH_CursorMove(handle, 0, 0, 1);
-                }
                     break;
 
                 default:
                     WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
             break;
+        }
 
-        case 'K':
-            if (numArgs == 0) { /* erase start of cursor to end of line */
-                {
-                    CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                    GetConsoleScreenBufferInfo(handle, &info);
-                    wolfSSH_ClearScreen(handle, info.dwCursorPosition.X,
-                            info.dwCursorPosition.Y, info.dwMaximumWindowSize.X,
-                            info.dwCursorPosition.Y);
-                }
-                break;
-            }
-            else {
-                switch (args[0]) {
-                    case 1: /* erase start of line to cursor */
-                    {
-                        CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                        GetConsoleScreenBufferInfo(handle, &info);
-                        wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                              info.dwCursorPosition.X, info.dwCursorPosition.Y);
-                    }
+        case 'K': /* erase line; an omitted mode is 0 */
+        {
+            CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
+            word32 x, y;
+
+            GetConsoleScreenBufferInfo(handle, &info);
+            x = (word32)info.dwCursorPosition.X;
+            y = (word32)info.dwCursorPosition.Y;
+
+            switch (args[0]) {
+                case 0: /* erase from cursor to end of line */
+                    wolfSSH_ClearScreen(handle, x, y, info.dwSize.X, y);
                     break;
 
-                    case 2: /* erase whole line */
-                    {
-                        CONSOLE_SCREEN_BUFFER_INFO info = { 0 };
-                        GetConsoleScreenBufferInfo(handle, &info);
-                        wolfSSH_ClearScreen(handle, 0, info.dwCursorPosition.Y,
-                           info.dwMaximumWindowSize.X, info.dwCursorPosition.Y);
-                    }
+                case 1: /* erase from start of line through cursor */
+                    wolfSSH_ClearScreen(handle, 0, y, x + 1, y);
                     break;
-                }
+
+                case 2: /* erase whole line */
+                    wolfSSH_ClearScreen(handle, 0, y, info.dwSize.X, y);
+                    break;
+
+                default:
+                    WLOG(WS_LOG_DEBUG, "Unexpected erase value %d", args[0]);
             }
             break;
+        }
 
         case 'm':
             /* set display attributes */
