@@ -1892,16 +1892,23 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL && !NO_WOLFSSH_SERVER */
 
 
-/* Returns 1 when all sz bytes at p are zero. */
-static WS_MAYBE_UNUSED int IsZeroed(const byte* p, word32 sz)
+/* Returns 1 when all sz bytes at p are fill. */
+static WS_MAYBE_UNUSED int IsFilled(const byte* p, word32 sz, byte fill)
 {
     word32 i;
 
     for (i = 0; i < sz; i++) {
-        if (p[i] != 0)
+        if (p[i] != fill)
             return 0;
     }
     return 1;
+}
+
+
+/* Returns 1 when all sz bytes at p are zero. */
+static WS_MAYBE_UNUSED int IsZeroed(const byte* p, word32 sz)
+{
+    return IsFilled(p, sz, 0);
 }
 
 
@@ -2109,7 +2116,7 @@ static int test_DoReceive_AeadTagFailure(void)
     /* Tamper with a ciphertext byte so the tag check must fail. */
     record[UINT32_SZ] ^= 0x01;
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+    if (wc_AesInit(&ssh->decryptCipher.cipher.aes, ssh->ctx->heap,
             INVALID_DEVID) != 0) {
         result = -226;
         goto done;
@@ -2118,7 +2125,8 @@ static int test_DoReceive_AeadTagFailure(void)
      * even if the key set fails */
     ssh->decryptCipher.isInit = 1;
     ssh->decryptCipher.cipherType = ID_AES256_GCM;
-    if (wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesGcmSetKey(&ssh->decryptCipher.cipher.aes, key,
+                sizeof(key)) != 0) {
         result = -230;
         goto done;
     }
@@ -2246,7 +2254,7 @@ done:
 #endif /* WOLFSSH_TEST_INTERNAL */
 
 
-#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
 /* The explicit half of the AES-GCM nonce (RFC 5647) is a big-endian counter
  * bumped after every record. The implicit half must never move. */
 static int test_AeadIncrementExpIv(void)
@@ -2291,7 +2299,7 @@ static int test_AeadIncrementExpIv(void)
 
     return 0;
 }
-#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AEAD */
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
 
 
 #if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
@@ -2305,7 +2313,7 @@ static int test_AeadNoncePerPacket(void)
     byte key[AES_256_KEY_SIZE];
     byte iv[AEAD_NONCE_SZ];
     byte expIv[AEAD_NONCE_SZ];
-    const byte auth[UINT32_SZ] = { 0x00, 0x00, 0x00, 0x10 };
+    byte auth[UINT32_SZ] = { 0x00, 0x00, 0x00, 0x10 };
     byte plain[AES_BLOCK_SIZE];
     byte first[AES_BLOCK_SIZE], second[AES_BLOCK_SIZE];
     byte firstTag[AES_BLOCK_SIZE], secondTag[AES_BLOCK_SIZE];
@@ -2324,7 +2332,7 @@ static int test_AeadNoncePerPacket(void)
     WMEMSET(iv, 0x31, sizeof(iv));
     WMEMSET(plain, 0x7E, sizeof(plain));
 
-    if (wc_AesInit(&ssh->encryptCipher.aes, ssh->ctx->heap,
+    if (wc_AesInit(&ssh->encryptCipher.cipher.aes, ssh->ctx->heap,
             INVALID_DEVID) != 0) {
         result = -1022;
         goto done;
@@ -2333,7 +2341,8 @@ static int test_AeadNoncePerPacket(void)
      * even if the key set fails */
     ssh->encryptCipher.isInit = 1;
     ssh->encryptCipher.cipherType = ID_AES256_GCM;
-    if (wc_AesGcmSetKey(&ssh->encryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesGcmSetKey(&ssh->encryptCipher.cipher.aes, key,
+                sizeof(key)) != 0) {
         result = -1022;
         goto done;
     }
@@ -2369,14 +2378,15 @@ static int test_AeadNoncePerPacket(void)
         goto done;
     }
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+    if (wc_AesInit(&ssh->decryptCipher.cipher.aes, ssh->ctx->heap,
             INVALID_DEVID) != 0) {
         result = -1028;
         goto done;
     }
     ssh->decryptCipher.isInit = 1;
     ssh->decryptCipher.cipherType = ID_AES256_GCM;
-    if (wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesGcmSetKey(&ssh->decryptCipher.cipher.aes, key,
+                sizeof(key)) != 0) {
         result = -1028;
         goto done;
     }
@@ -2414,6 +2424,290 @@ done:
     return result;
 }
 #endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_AES_GCM */
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_CHACHA20_POLY1305)
+/* chacha20-poly1305 known answer: key bytes 0x00..0x3F, sequence number 7,
+ * length 16, payload bytes 0xA0..0xAF. The expected values come from the
+ * OpenSSL command line ChaCha20 and Poly1305. */
+static int test_ChachaPolyKat(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int result = 0;
+    word32 i;
+    byte key[CHACHA_POLY_KEY_SZ];
+    byte plain[16];
+    byte len[UINT32_SZ] = { 0x00, 0x00, 0x00, 0x10 };
+    byte cipher[sizeof(plain)];
+    byte tag[POLY1305_DIGEST_SIZE];
+    byte out[sizeof(plain)];
+    const byte expLen[UINT32_SZ] = { 0xA3, 0x9A, 0xFC, 0xBA };
+    const byte expCipher[sizeof(plain)] = {
+        0x88, 0xE7, 0xB7, 0xE0, 0xEA, 0x26, 0x8C, 0xF9,
+        0xC4, 0xC4, 0x11, 0x5B, 0x7B, 0x22, 0x7D, 0x83
+    };
+    const byte expTag[POLY1305_DIGEST_SIZE] = {
+        0xFC, 0x12, 0xF6, 0x9E, 0x1D, 0x56, 0x80, 0xB8,
+        0x25, 0x99, 0xD6, 0x80, 0x66, 0x7A, 0xAA, 0x32
+    };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1040;
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) {
+        wolfSSH_CTX_free(ctx);
+        return -1041;
+    }
+
+    for (i = 0; i < sizeof(key); i++)
+        key[i] = (byte)i;
+    for (i = 0; i < sizeof(plain); i++)
+        plain[i] = (byte)(0xA0 + i);
+
+    ssh->encryptCipher.isInit = 1;
+    ssh->encryptCipher.cipherType = ID_CHACHA20_POLY1305_OPENSSH;
+    ssh->decryptCipher.isInit = 1;
+    ssh->decryptCipher.cipherType = ID_CHACHA20_POLY1305_OPENSSH;
+    if (wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.main,
+                key, CHACHA_MAX_KEY_SZ) != 0
+            || wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.hdr,
+                key + CHACHA_MAX_KEY_SZ, CHACHA_MAX_KEY_SZ) != 0
+            || wc_Chacha_SetKey(&ssh->decryptCipher.cipher.chacha.main,
+                key, CHACHA_MAX_KEY_SZ) != 0
+            || wc_Chacha_SetKey(&ssh->decryptCipher.cipher.chacha.hdr,
+                key + CHACHA_MAX_KEY_SZ, CHACHA_MAX_KEY_SZ) != 0) {
+        result = -1042;
+        goto done;
+    }
+    ssh->encryptId = ID_CHACHA20_POLY1305_OPENSSH;
+    ssh->aeadMode = 1;
+    ssh->macSz = POLY1305_DIGEST_SIZE;
+    ssh->seq = 7;
+    ssh->peerEncryptId = ID_CHACHA20_POLY1305_OPENSSH;
+    ssh->peerAeadMode = 1;
+    ssh->peerMacSz = POLY1305_DIGEST_SIZE;
+    ssh->peerSeq = 7;
+
+    if (wolfSSH_TestEncryptAead(ssh, cipher, plain, sizeof(plain), tag,
+            len, sizeof(len)) != WS_SUCCESS) {
+        result = -1043;
+        goto done;
+    }
+    if (WMEMCMP(len, expLen, sizeof(len)) != 0) {
+        result = -1044;
+        goto done;
+    }
+    if (WMEMCMP(cipher, expCipher, sizeof(cipher)) != 0) {
+        result = -1045;
+        goto done;
+    }
+    if (WMEMCMP(tag, expTag, sizeof(tag)) != 0) {
+        result = -1046;
+        goto done;
+    }
+
+    if (wolfSSH_TestDecryptAead(ssh, out, cipher, sizeof(cipher), tag,
+            len, sizeof(len)) != WS_SUCCESS
+            || WMEMCMP(out, plain, sizeof(plain)) != 0) {
+        result = -1047;
+        goto done;
+    }
+
+    /* Each rejected record leaves out untouched: the tag is checked
+     * before anything is decrypted. */
+
+    /* The sequence number is the nonce. */
+    ssh->peerSeq = 8;
+    WMEMSET(out, 0xEE, sizeof(out));
+    if (wolfSSH_TestDecryptAead(ssh, out, cipher, sizeof(cipher), tag,
+            len, sizeof(len)) != WS_VERIFY_MAC_E
+            || !IsFilled(out, sizeof(out), 0xEE)) {
+        result = -1048;
+        goto done;
+    }
+    ssh->peerSeq = 7;
+
+    /* The tag covers the encrypted length. */
+    len[0] ^= 0x01;
+    if (wolfSSH_TestDecryptAead(ssh, out, cipher, sizeof(cipher), tag,
+            len, sizeof(len)) != WS_VERIFY_MAC_E
+            || !IsFilled(out, sizeof(out), 0xEE)) {
+        result = -1049;
+        goto done;
+    }
+    len[0] ^= 0x01;
+
+    cipher[sizeof(cipher) - 1] ^= 0x80;
+    if (wolfSSH_TestDecryptAead(ssh, out, cipher, sizeof(cipher), tag,
+            len, sizeof(len)) != WS_VERIFY_MAC_E
+            || !IsFilled(out, sizeof(out), 0xEE)) {
+        result = -1050;
+        goto done;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+
+/* Ways test_DoReceive_ChachaPoly() damages its record. */
+enum {
+    CHACHA_RX_GOOD = 0,
+    CHACHA_RX_BODY,         /* a ciphertext byte */
+    CHACHA_RX_TAG,          /* a tag byte */
+    CHACHA_RX_LENGTH,       /* the encrypted length's top bit */
+    CHACHA_RX_MISALIGNED    /* intact, but a 12-byte body */
+};
+
+/* Verify DoReceive on a chacha20-poly1305 record: an intact one is taken,
+ * a tampered body or tag fails the tag and is wiped, and a length that
+ * decrypts oversize or misaligned is refused before the tag is read. */
+static int test_DoReceive_ChachaPoly(void)
+{
+    WOLFSSH_CTX* ctx = NULL;
+    WOLFSSH* ssh = NULL;
+    int ret;
+    int result = 0;
+    word32 i, c;
+    byte key[CHACHA_POLY_KEY_SZ];
+    byte pkt[UINT32_SZ + 16];
+    byte record[UINT32_SZ + 16 + POLY1305_DIGEST_SIZE];
+    word32 prefixLen, payloadSz, totalLen;
+    const word32 seq = 3;
+    static const struct {
+        byte tamper;
+        byte bodySz;
+        int error;
+    } cases[] = {
+        { CHACHA_RX_GOOD, 16, WS_SUCCESS },
+        { CHACHA_RX_BODY, 16, WS_VERIFY_MAC_E },
+        { CHACHA_RX_TAG, 16, WS_VERIFY_MAC_E },
+        { CHACHA_RX_LENGTH, 16, WS_OVERFLOW_E },
+        { CHACHA_RX_MISALIGNED, 12, WS_BUFFER_E }
+    };
+
+    for (i = 0; i < sizeof(key); i++)
+        key[i] = (byte)(0x40 + i);
+
+    /* The intact IGNORE must pass the message filter, which has no branch
+     * for a side that is compiled out. */
+#ifndef NO_WOLFSSH_CLIENT
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+#else
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+#endif
+    if (ctx == NULL)
+        return -1060;
+
+    for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        ssh = wolfSSH_new(ctx);
+        if (ssh == NULL) {
+            result = -1061;
+            goto done;
+        }
+
+        /* MSGID_IGNORE carrying an empty string, then padding. */
+        payloadSz = cases[c].bodySz;
+        prefixLen = UINT32_SZ + payloadSz;
+        WMEMSET(pkt, 0, sizeof(pkt));
+        pkt[3] = (byte)payloadSz;
+        pkt[4] = (byte)(payloadSz - PAD_LENGTH_SZ - MSG_ID_SZ - UINT32_SZ);
+        pkt[5] = MSGID_IGNORE;
+        totalLen = prefixLen + POLY1305_DIGEST_SIZE;
+
+        /* Both directions share the key, so the session seals its own
+         * record. */
+        ssh->encryptCipher.isInit = 1;
+        ssh->encryptCipher.cipherType = ID_CHACHA20_POLY1305_OPENSSH;
+        ssh->decryptCipher.isInit = 1;
+        ssh->decryptCipher.cipherType = ID_CHACHA20_POLY1305_OPENSSH;
+        if (wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.main,
+                    key, CHACHA_MAX_KEY_SZ) != 0
+                || wc_Chacha_SetKey(&ssh->encryptCipher.cipher.chacha.hdr,
+                    key + CHACHA_MAX_KEY_SZ, CHACHA_MAX_KEY_SZ) != 0
+                || wc_Chacha_SetKey(&ssh->decryptCipher.cipher.chacha.main,
+                    key, CHACHA_MAX_KEY_SZ) != 0
+                || wc_Chacha_SetKey(&ssh->decryptCipher.cipher.chacha.hdr,
+                    key + CHACHA_MAX_KEY_SZ, CHACHA_MAX_KEY_SZ) != 0) {
+            result = -1063;
+            goto done;
+        }
+        ssh->encryptId = ID_CHACHA20_POLY1305_OPENSSH;
+        ssh->aeadMode = 1;
+        ssh->macSz = POLY1305_DIGEST_SIZE;
+        ssh->seq = seq;
+        ssh->peerEncryptId = ID_CHACHA20_POLY1305_OPENSSH;
+        ssh->peerAeadMode = 1;
+        ssh->peerBlockSz = MIN_BLOCK_SZ;
+        ssh->peerMacSz = POLY1305_DIGEST_SIZE;
+        ssh->peerSeq = seq;
+        ssh->curSz = 0;
+        ssh->processReplyState = PROCESS_INIT;
+        ssh->error = 0;
+
+        WMEMCPY(record, pkt, UINT32_SZ);
+        if (wolfSSH_TestEncryptAead(ssh, record + UINT32_SZ,
+                pkt + UINT32_SZ, payloadSz, record + prefixLen,
+                record, UINT32_SZ) != WS_SUCCESS) {
+            result = -1064;
+            goto done;
+        }
+
+        if (cases[c].tamper == CHACHA_RX_BODY)
+            record[UINT32_SZ] ^= 0x01;
+        else if (cases[c].tamper == CHACHA_RX_TAG)
+            record[totalLen - 1] ^= 0x01;
+        else if (cases[c].tamper == CHACHA_RX_LENGTH)
+            record[0] ^= 0x80;
+
+        ShrinkBuffer(&ssh->inputBuffer, 1);
+        if (GrowBuffer(&ssh->inputBuffer, totalLen) != WS_SUCCESS) {
+            result = -1065;
+            goto done;
+        }
+        WMEMCPY(ssh->inputBuffer.buffer, record, totalLen);
+        ssh->inputBuffer.length = totalLen;
+        ssh->inputBuffer.idx = 0;
+
+        ret = wolfSSH_TestDoReceive(ssh);
+        if (cases[c].error == WS_SUCCESS) {
+            if (ret != WS_SUCCESS || ssh->peerSeq != seq + 1) {
+                result = -1066;
+                goto done;
+            }
+        }
+        else {
+            if (ret != WS_FATAL_ERROR || ssh->error != cases[c].error) {
+                result = -1067;
+                goto done;
+            }
+            if (!ssh->highwaterFlag || !ssh->msgHighwaterFlag) {
+                result = -1068;
+                goto done;
+            }
+            /* A failed tag wipes the packet; a refused length wipes the
+             * first block, all that was read. */
+            if (!IsZeroed(ssh->inputBuffer.buffer + ssh->inputBuffer.idx,
+                    cases[c].error == WS_VERIFY_MAC_E ?
+                        prefixLen : MIN_BLOCK_SZ)) {
+                result = -1069;
+                goto done;
+            }
+        }
+
+        wolfSSH_free(ssh);
+        ssh = NULL;
+    }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+#endif /* WOLFSSH_TEST_INTERNAL && !WOLFSSH_NO_CHACHA20_POLY1305 */
 
 
 #ifdef WOLFSSH_TEST_INTERNAL
@@ -2683,9 +2977,10 @@ static int test_DoReceive_RejectsMisalignedCtr(void)
         goto done5;
     }
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
-            || wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key), iv,
-                AES_ENCRYPTION) != 0) {
+    if (wc_AesInit(&ssh->decryptCipher.cipher.aes, ssh->ctx->heap,
+                INVALID_DEVID) != 0
+            || wc_AesSetKey(&ssh->decryptCipher.cipher.aes, key, sizeof(key),
+                iv, AES_ENCRYPTION) != 0) {
         result = -805;
         goto done5;
     }
@@ -2840,10 +3135,10 @@ static int test_DoReceive_CbcRejectDiscards(void)
         /* The MAC is zeros, which is wrong for any key. */
         WMEMSET(record + sizeof(pkt), 0, WC_SHA256_DIGEST_SIZE);
 
-        if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+        if (wc_AesInit(&ssh->decryptCipher.cipher.aes, ssh->ctx->heap,
                     INVALID_DEVID) != 0
-                || wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key),
-                    iv, AES_DECRYPTION) != 0) {
+                || wc_AesSetKey(&ssh->decryptCipher.cipher.aes, key,
+                    sizeof(key), iv, AES_DECRYPTION) != 0) {
             result = -844;
             goto done6;
         }
@@ -3124,8 +3419,10 @@ static int test_DoReceive_RejectsMisalignedAead(void)
     }
     totalLen = UINT32_SZ + payloadSz + AES_BLOCK_SIZE;
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
-            || wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesInit(&ssh->decryptCipher.cipher.aes, ssh->ctx->heap,
+                INVALID_DEVID) != 0
+            || wc_AesGcmSetKey(&ssh->decryptCipher.cipher.aes, key,
+                sizeof(key)) != 0) {
         result = -786;
         goto done4;
     }
@@ -29988,7 +30285,19 @@ int wolfSSH_UnitTest(int argc, char** argv)
     testResult = testResult || unitResult;
 #endif
 
-#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AEAD)
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_CHACHA20_POLY1305)
+    unitResult = test_ChachaPolyKat();
+    printf("ChachaPolyKat: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_DoReceive_ChachaPoly();
+    printf("DoReceive_ChachaPoly: %s\n",
+            (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+#endif
+
+#if defined(WOLFSSH_TEST_INTERNAL) && !defined(WOLFSSH_NO_AES_GCM)
     unitResult = test_AeadIncrementExpIv();
     printf("AeadIncrementExpIv: %s\n",
             (unitResult == 0 ? "SUCCESS" : "FAILED"));

@@ -35,6 +35,8 @@
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/random.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/chacha.h>
+#include <wolfssl/wolfcrypt/poly1305.h>
 #include <wolfssl/wolfcrypt/dh.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/rsa.h>
@@ -483,6 +485,8 @@ extern "C" {
 #ifdef WOLFSSH_NO_AEAD
     #undef WOLFSSH_NO_AES_GCM
     #define WOLFSSH_NO_AES_GCM
+    #undef WOLFSSH_NO_CHACHA20_POLY1305
+    #define WOLFSSH_NO_CHACHA20_POLY1305
 #endif
 
 #if defined(NO_AES) || !defined(HAVE_AES_CBC)
@@ -497,21 +501,31 @@ extern "C" {
     #undef WOLFSSH_NO_AES_GCM
     #define WOLFSSH_NO_AES_GCM
 #endif
+#if !defined(HAVE_POLY1305) || !defined(HAVE_CHACHA)
+    #undef WOLFSSH_NO_CHACHA20_POLY1305
+    #define WOLFSSH_NO_CHACHA20_POLY1305
+#endif
 
 #if defined(WOLFSSH_NO_AES_CBC) && \
     defined(WOLFSSH_NO_AES_CTR) && \
-    defined(WOLFSSH_NO_AES_GCM)
+    defined(WOLFSSH_NO_AES_GCM) && \
+    defined(WOLFSSH_NO_CHACHA20_POLY1305)
     #error "You need at least one encryption algorithm."
+#endif
+/* The cipher state and transport buffers are sized from wolfCrypt's AES. */
+#if defined(NO_AES)
+    #error "wolfSSH needs AES in wolfSSL, even with only chacha20-poly1305."
 #endif
 /* AES-CBC is the only soft-disabled cipher. */
 #if defined(WOLFSSH_NO_AES_CTR) && \
     defined(WOLFSSH_NO_AES_GCM) && \
+    defined(WOLFSSH_NO_CHACHA20_POLY1305) && \
     !defined(WOLFSSH_NO_AES_CBC_SOFT_DISABLE)
     #error "The only encryption algorithms left are soft-disabled. Define " \
            "WOLFSSH_NO_AES_CBC_SOFT_DISABLE to offer them."
 #endif
 
-#if defined(WOLFSSH_NO_AES_GCM)
+#if defined(WOLFSSH_NO_AES_GCM) && defined(WOLFSSH_NO_CHACHA20_POLY1305)
     #undef WOLFSSH_NO_AEAD
     #define WOLFSSH_NO_AEAD
 #endif
@@ -540,6 +554,8 @@ enum {
     ID_AES128_GCM,
     ID_AES192_GCM,
     ID_AES256_GCM,
+    ID_CHACHA20_POLY1305,
+    ID_CHACHA20_POLY1305_OPENSSH,
 
     /* Integrity IDs */
     ID_HMAC_SHA1,
@@ -664,6 +680,13 @@ enum NameIdType {
 #define MAX_KEY_EXCHANGE 2
 #define MAX_PUBLIC_KEY 1
 #define MIN_RSA_SIG_SZ 2
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    /* chacha20-poly1305 keys a main and a header ChaCha20 instance. */
+    #define CHACHA_POLY_KEY_SZ (CHACHA_MAX_KEY_SZ * 2)
+    #define MAX_ENC_KEY_SZ CHACHA_POLY_KEY_SZ
+#else
+    #define MAX_ENC_KEY_SZ AES_256_KEY_SIZE
+#endif
 #define MAX_HMAC_SZ WC_MAX_DIGEST_SIZE
 #define MIN_BLOCK_SZ 8
 #define COOKIE_SZ 16
@@ -1050,7 +1073,15 @@ struct WOLFSSH_CTX {
 
 
 typedef struct Ciphers {
-    Aes aes;
+    union {
+        Aes aes;
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+        struct {
+            ChaCha main;
+            ChaCha hdr;
+        } chacha;
+#endif
+    } cipher; /* cipherType picks the member */
     byte cipherType;
     byte isInit;
 } Ciphers;
@@ -1059,7 +1090,7 @@ typedef struct Ciphers {
 typedef struct Keys {
     byte iv[AES_BLOCK_SIZE];
     byte ivSz;
-    byte encKey[AES_256_KEY_SIZE];
+    byte encKey[MAX_ENC_KEY_SZ];
     byte encKeySz;
     byte macKey[MAX_HMAC_SZ];
     byte macKeySz;
@@ -2359,11 +2390,13 @@ enum WS_MessageIdLimits {
     WOLFSSH_API int wolfSSH_TestScpExtractFileName(const char* filePath,
             char* fileName, word32 fileNameSz);
 #endif /* WOLFSSH_SCP && !WOLFSSH_SCP_USER_CALLBACKS */
-#ifndef WOLFSSH_NO_AEAD
+#ifndef WOLFSSH_NO_AES_GCM
     WOLFSSH_API void wolfSSH_TestAeadIncrementExpIv(byte* iv);
+#endif
+#ifndef WOLFSSH_NO_AEAD
     WOLFSSH_API int wolfSSH_TestEncryptAead(WOLFSSH* ssh, byte* cipher,
             const byte* input, word32 sz,
-            byte* authTag, const byte* auth, word32 authSz);
+            byte* authTag, byte* auth, word32 authSz);
     WOLFSSH_API int wolfSSH_TestDecryptAead(WOLFSSH* ssh, byte* plain,
             const byte* input, word32 sz,
             const byte* authTag, const byte* auth, word32 authSz);

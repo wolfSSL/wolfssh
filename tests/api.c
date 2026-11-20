@@ -10366,6 +10366,9 @@ static void test_wolfSSH_DefaultAlgoListsExcludeWeak(void)
 #ifndef WOLFSSH_NO_AES_GCM
     AssertIntEQ(AlgoListHas(cipher, "aes256-gcm@openssh.com"), 1);
 #endif
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    AssertIntEQ(AlgoListHas(cipher, "chacha20-poly1305@openssh.com"), 1);
+#endif
 #ifndef WOLFSSH_NO_DH_GROUP14_SHA256
     AssertIntEQ(AlgoListHas(kex, "diffie-hellman-group14-sha256"), 1);
 #endif
@@ -10413,6 +10416,51 @@ static void test_wolfSSH_DefaultAlgoListsExcludeWeak(void)
 
     wolfSSH_CTX_free(ctx);
 }
+
+
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+/* With strict KEX off on the context, a session given the default cipher
+ * list leaves chacha20-poly1305 out. A list the caller set is kept. */
+static void test_wolfSSH_DefaultCipherListStrictKex(void)
+{
+    static const char custom[] = "chacha20-poly1305@openssh.com";
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    const char* cipher;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    cipher = wolfSSH_GetAlgoListCipher(ssh);
+    AssertIntEQ(AlgoListHas(cipher, "chacha20-poly1305"), 1);
+    AssertIntEQ(AlgoListHas(cipher, "chacha20-poly1305@openssh.com"), 1);
+    wolfSSH_free(ssh);
+
+    AssertIntEQ(wolfSSH_CTX_SetStrictKex(ctx, 0), WS_SUCCESS);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    cipher = wolfSSH_GetAlgoListCipher(ssh);
+    AssertIntEQ(AlgoListHas(cipher, "chacha20-poly1305"), 0);
+    AssertIntEQ(AlgoListHas(cipher, "chacha20-poly1305@openssh.com"), 0);
+#ifndef WOLFSSH_NO_AES_GCM
+    AssertIntEQ(AlgoListHas(cipher, "aes256-gcm@openssh.com"), 1);
+#endif
+#ifndef WOLFSSH_NO_AES_CTR
+    AssertIntEQ(AlgoListHas(cipher, "aes256-ctr"), 1);
+#endif
+    wolfSSH_free(ssh);
+
+    AssertIntEQ(wolfSSH_CTX_SetAlgoListCipher(ctx, custom), WS_SUCCESS);
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+    AssertPtrEq(wolfSSH_GetAlgoListCipher(ssh), custom);
+    wolfSSH_free(ssh);
+
+    wolfSSH_CTX_free(ctx);
+}
+#endif
 
 
 /* Exercise CheckAlgoList()'s rejection paths through the public setters. */
@@ -11552,6 +11600,9 @@ int wolfSSH_ApiTest(int argc, char** argv)
     test_wolfSSH_AlgoListKeyInSync();
     test_wolfSSH_SetAlgoList();
     test_wolfSSH_DefaultAlgoListsExcludeWeak();
+#ifndef WOLFSSH_NO_CHACHA20_POLY1305
+    test_wolfSSH_DefaultCipherListStrictKex();
+#endif
     test_wolfSSH_CheckAlgoList();
 #ifdef WOLFSSH_FWD
     test_wolfSSH_FwdRemote_badArgs();
