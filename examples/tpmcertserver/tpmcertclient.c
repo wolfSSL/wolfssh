@@ -55,8 +55,8 @@ static int TpmCcUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 }
 
 
-/* ctx is the host. wolfSSH verifies the chain to the root CA; this checks
- * the certificate names the host. */
+/* ctx is the ClientHostCtx. wolfSSH verifies the chain to the root CA; this
+ * checks the certificate names the host. */
 static int TpmCcHostKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 {
     return ClientPublicKeyCheck(pubKey, pubKeySz, ctx);
@@ -69,6 +69,7 @@ int main(int argc, char* argv[])
     int i;
     word16 port = TPMCC_DEFAULT_PORT;
     const char* host = "127.0.0.1";
+    ClientHostCtx hostCtx;
     const char* caFile = "tpm-server-cert.der";
     WOLFSSH_CTX* ctx = NULL;
     WOLFSSH* ssh = NULL;
@@ -128,8 +129,11 @@ int main(int argc, char* argv[])
         ssh = wolfSSH_new(ctx);
         if (ssh == NULL)
             ret = -1;
-        else
-            wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+        else {
+            hostCtx.host = host;
+            hostCtx.port = port;
+            wolfSSH_SetPublicKeyCheckCtx(ssh, &hostCtx);
+        }
     }
 
     if (ret == 0)

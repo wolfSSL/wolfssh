@@ -184,7 +184,10 @@ The client tool accepts the following command line options:
 
 The client, scpclient and sftpclient refuse a server whose host key is not
 on a `host type key` line of `~/.ssh/known_hosts`, and print the line to
-add. `-Y` skips that check, with a warning. A server's X.509 host
+add. As with OpenSSH, a server on a port other than 22 is named
+`[host]:port`, with the bare host as a fallback when no `[host]:port` line
+has a key of that type; a line may list several names separated by commas,
+and hashed `|1|` names match. `-Y` skips that check, with a warning. A server's X.509 host
 certificate must chain to the CA given with `-A` and name the host in a
 subjectAltName, or its common name when it has none; `-X` accepts one
 that names another host.
