@@ -575,6 +575,49 @@ static int SessionRequestCb(WOLFSSH_CHANNEL* channel, void* vCtx)
 }
 
 
+#if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+/* Rejects requests the user's OpenSSH cert does not permit. wolfsshd has no
+ * port forwarding or ~/.ssh/rc, so those two permits gate nothing. */
+static int CertPermitRequestCb(WOLFSSH_CHANNEL* channel, const byte* type,
+        word32 typeSz, const byte* data, word32 dataSz, int wantReply,
+        void* vCtx)
+{
+    static const struct {
+        const char* name;
+        byte permit;
+    } gated[] = {
+        { "pty-req", WOLFSSH_OSSH_PERMIT_PTY },
+        { "x11-req", WOLFSSH_OSSH_PERMIT_X11_FWD },
+        { "auth-agent-req@openssh.com", WOLFSSH_OSSH_PERMIT_AGENT_FWD }
+    };
+    WOLFSSHD_CONNECTION* conn = (WOLFSSHD_CONNECTION*)vCtx;
+    word32 i;
+
+    (void)channel;
+    (void)data;
+    (void)dataSz;
+    (void)wantReply;
+
+    for (i = 0; i < (word32)(sizeof(gated) / sizeof(gated[0])); i++) {
+        if (typeSz == (word32)WSTRLEN(gated[i].name) &&
+                WMEMCMP(type, gated[i].name, typeSz) == 0) {
+            if (!wolfSSHD_AuthCertPermits(conn != NULL ? conn->auth : NULL,
+                        gated[i].permit)) {
+                wolfSSH_Log(WS_LOG_ERROR,
+                    "[SSHD] Certificate does not permit %s from %s, "
+                    "refusing", gated[i].name,
+                    conn != NULL ? conn->ip : "");
+                return WOLFSSH_REQ_REJECT;
+            }
+            break;
+        }
+    }
+
+    return WOLFSSH_REQ_UNHANDLED;
+}
+#endif /* WOLFSSH_OSSH_CERTS && !_WIN32 */
+
+
 #if defined(WOLFSSH_CERTS) && defined(WOLFSSH_WINDOWS_CERT_STORE)
 /* Returns 1 only for the store hives that need elevation to write: the three
  * LOCAL_MACHINE locations. Every other hive (per-user, per-service,
@@ -1000,6 +1043,9 @@ static int SetupCTX(WOLFSSHD_CONFIG* conf, WOLFSSH_CTX** ctx,
         wolfSSH_CTX_SetChannelReqShellCb(*ctx, SessionRequestCb);
         wolfSSH_CTX_SetChannelReqExecCb(*ctx, SessionRequestCb);
         wolfSSH_CTX_SetChannelReqSubsysCb(*ctx, SessionRequestCb);
+    #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
+        wolfSSH_CTX_SetChannelReqAnyCb(*ctx, CertPermitRequestCb);
+    #endif
     }
 
     /* set banner to display on connection */
@@ -3910,14 +3956,12 @@ static int UserAuthResult(byte result,
     #endif
     #if defined(WOLFSSH_OSSH_CERTS) && !defined(_WIN32)
         /* Auth (incl. the user signature) has verified, so stash the cert's
-         * force-command now, bound to the authenticated credential. Fail closed
-         * if the copy fails so the session cannot run unrestricted. */
+         * permits and force-command now. Fail closed if the copy fails. */
         if (conn != NULL && authData != NULL &&
                 authData->type == WOLFSSH_USERAUTH_PUBLICKEY &&
-                authData->sf.publicKey.isOsshCert &&
-                authData->sf.publicKey.forceCommand != NULL &&
-                authData->sf.publicKey.forceCommandSz > 0) {
-            ret = wolfSSHD_AuthSetCertForcedCmd(conn->auth,
+                authData->sf.publicKey.isOsshCert) {
+            ret = wolfSSHD_AuthSetCert(conn->auth,
+                    authData->sf.publicKey.permits,
                     authData->sf.publicKey.forceCommand,
                     authData->sf.publicKey.forceCommandSz);
         }
