@@ -141,18 +141,17 @@ static int TpmCsMakeKeyAndCert(WOLFTPM2_DEV* dev, WOLFTPM2_KEY* key,
         rc = wolfTPM2_CSR_Generate_ex(dev, key, subject, keyUsage,
                 ENCODING_TYPE_ASN1, certDer, (int)*certDerSz, sigType,
                 1, devId);
-    }
 
-    if (rc >= 0) {
-        /* wolfTPM2_CSR_Generate_ex returns the generated DER length on
-         * success; sanity-check it against the output buffer capacity
-         * before trusting it as the certificate size. */
-        if (rc == 0 || (word32)rc > *certDerSz) {
-            rc = BUFFER_E;
-        }
-        else {
-            *certDerSz = (word32)rc;
-            rc = 0;
+        /* Only this call returns a DER length; a positive rc from an
+         * earlier step is a TPM_RC failure. */
+        if (rc >= 0) {
+            if (rc == 0 || (word32)rc > *certDerSz) {
+                rc = BUFFER_E;
+            }
+            else {
+                *certDerSz = (word32)rc;
+                rc = 0;
+            }
         }
     }
 
