@@ -849,16 +849,29 @@ attacker splicing packets into the unauthenticated initial exchange to shift
 the sequence numbers. A message that arrives out of turn ends the connection
 with SSH_MSG_DISCONNECT rather than being ignored.
 
-Note that wolfSSH offers neither `chacha20-poly1305@openssh.com` nor the
-`*-etm@openssh.com` MACs, the modes whose nonce comes from the sequence
-number. The full silent-truncation form of Terrapin needs one of those, so it
-was never reachable here; strict KEX closes the sequence-number shift the
-attack is built on.
+The full silent-truncation form of Terrapin needs a mode whose nonce comes
+from the sequence number, such as chacha20-poly1305, which wolfSSH offers
+first by default as both `chacha20-poly1305` and
+`chacha20-poly1305@openssh.com`. Strict KEX is what stops it: it closes the
+sequence-number shift the attack is built on. The AES modes carry chained
+cipher state, so a deletion there breaks decryption instead.
+
+Strict KEX is only in force when both sides offer it. A chacha20-poly1305
+session without it can have the first packet after SSH_MSG_NEWKEYS deleted
+unnoticed. That happens with a peer that never sends the marker, such as
+OpenSSH before 9.6, and when the caller turns strict KEX off. An application
+that has to talk to such peers can take chacha20-poly1305 out of the cipher
+list:
+
+    wolfSSH_CTX_SetAlgoListCipher(ctx, "aes256-gcm@openssh.com,aes256-ctr");
 
 A caller that has to interoperate with a peer that mishandles the marker can
 turn it off on the context:
 
     wolfSSH_CTX_SetStrictKex(ctx, 0);
+
+Sessions made from that context leave chacha20-poly1305 out of the default
+cipher list. A cipher list the caller set is used as given.
 
 Each session copies the setting when it is made, so the change affects only
 later sessions; to opt out one connection, turn it off, make that session,

@@ -135,7 +135,8 @@ WOLFSSH_API WS_SOCKET_T wolfSSH_get_fd(const WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_SetFilesystemHandle(WOLFSSH* ssh, void* handle);
 WOLFSSH_API void* wolfSSH_GetFilesystemHandle(WOLFSSH* ssh);
 
-/* data high water mark functions (RFC 4253 Sec 9) */
+/* data high water mark functions (RFC 4253 Sec 9). A NULL callback uses
+ * the default, which starts a key exchange. */
 typedef int (*WS_CallbackHighwater)(byte side, void* ctx);
 WOLFSSH_API void wolfSSH_SetHighwaterCb(WOLFSSH_CTX* ctx, word32 level,
         WS_CallbackHighwater cb);
@@ -219,9 +220,11 @@ WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
 /* Strict KEX (Terrapin mitigation, CVE-2023-48795), enabled by default.
  * wolfSSH_new() copies the CTX setting, so a change affects only later
- * sessions. The CTX calls return WS_BAD_ARGUMENT on NULL, else the getter
- * returns 1 or 0. wolfSSH_GetStrictKexNegotiated() returns 1 if the
- * session negotiated strict KEX, else 0, or WS_SSH_NULL_E on NULL. */
+ * sessions. With it off, a session given the default cipher list leaves
+ * chacha20-poly1305 out. The CTX calls return WS_BAD_ARGUMENT on NULL,
+ * else the getter returns 1 or 0. wolfSSH_GetStrictKexNegotiated() returns
+ * 1 if the session negotiated strict KEX, else 0, or WS_SSH_NULL_E on
+ * NULL. */
 WOLFSSH_API int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable);
 WOLFSSH_API int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_GetStrictKexNegotiated(WOLFSSH* ssh);

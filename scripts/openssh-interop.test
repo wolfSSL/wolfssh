@@ -14,6 +14,10 @@
 # ssh-agent through it, 1c checks that it forwards ports only with -F and
 # connects only to allowed destinations.
 #
+# Parts 1 and 2 also check that chacha20-poly1305@openssh.com is the cipher
+# negotiated. It is the AEAD whose tag covers the sequence number, so it is
+# the one a counter disagreement fails on.
+#
 # Part 3 has the wolfSSH client authenticate to sshd with an RSA key held
 # by OpenSSH's ssh-agent. The client has only the public half; the agent
 # makes the signature.
@@ -184,6 +188,72 @@ esac
 
 mkdir -p "$work_dir" || exit 1
 
+# Whether this wolfSSH build has chacha20-poly1305; -E lists the algorithms
+# without connecting.
+wolfssh_chacha=0
+if ./examples/client/client -E -u x 2>&1 | \
+    grep -q ': chacha20-poly1305@openssh.com$'; then
+    wolfssh_chacha=1
+fi
+
+# The cipher list one side proposed, from the OpenSSH debug log $1. $2 is
+# local for OpenSSH's own proposal, peer for wolfSSH's.
+cipher_proposal() {
+    grep -A 4 "$2 .* KEXINIT proposal" "$1" | grep -m 1 'ciphers ctos:' | \
+        sed 's/.*ciphers ctos: //; s/ .*//'
+}
+
+# Check the OpenSSH debug log $1 for chacha20-poly1305@openssh.com in both
+# directions. $2 names the OpenSSH end for the messages, and $3 is the
+# proposal the client made: local when OpenSSH is the client, peer when
+# wolfSSH is. The client's first choice that the server offers is what the
+# KEX picks, so chacha20-poly1305 is required only when that is it. wolfSSH
+# lists it first; an OpenSSH under a crypto policy or a ssh_config may not.
+check_chacha() {
+    [ $wolfssh_chacha -eq 1 ] || {
+        echo "this wolfSSH build has no chacha20-poly1305, not checking it"
+        return 0
+    }
+
+    cc_client=`cipher_proposal "$1" $3`
+    if [ "$3" = local ]; then
+        cc_server=`cipher_proposal "$1" peer`
+    else
+        cc_server=`cipher_proposal "$1" local`
+    fi
+
+    case ",`cipher_proposal "$1" peer`," in
+        *,chacha20-poly1305@openssh.com,*) ;;
+        *) fail "wolfSSH didn't offer chacha20-poly1305@openssh.com" ;;
+    esac
+
+    cc_expect=
+    for cc_alg in `echo "$cc_client" | tr ',' ' '`; do
+        case ",$cc_server," in
+            *,"$cc_alg",*) cc_expect=$cc_alg; break ;;
+        esac
+    done
+
+    if [ "$cc_expect" != chacha20-poly1305@openssh.com ]; then
+        case "$3,$cc_server," in
+            peer,*chacha20-poly1305@openssh.com,*) fail \
+                "wolfSSH preferred ${cc_expect:-no cipher} to chacha20-poly1305"
+                ;;
+        esac
+        echo "note: the $2 prefers ${cc_expect:-no shared cipher}," \
+            "not checking chacha20-poly1305"
+        return 0
+    fi
+
+    for cc_dir in 'client->server' 'server->client'; do
+        if ! grep -q "kex: $cc_dir cipher: $cc_expect " "$1"; then
+            grep -E 'ciphers ctos:|kex: .* cipher:' "$1"
+            fail "the $2 didn't negotiate chacha20-poly1305 $cc_dir"
+        fi
+    done
+    echo "the $2 negotiated chacha20-poly1305@openssh.com"
+}
+
 # The echoserver is one shot, so start a new one per connection. It picks
 # an ephemeral port and writes it to the ready file.
 #
@@ -298,6 +368,8 @@ else
 fi
 
 echo "the OpenSSH client negotiated strict KEX with the echoserver"
+
+check_chacha "$client_log" "OpenSSH client" local
 
 # Part 1b forwards OpenSSH's ssh-agent through the echoserver. A local agent
 # client on the echoserver's side lists the forwarded key over the socket
@@ -764,6 +836,8 @@ else
 fi
 
 echo "the wolfSSH client negotiated strict KEX with sshd"
+
+check_chacha "$sshd_log" "sshd" peer
 
 # Part 3 needs the client's agent support and OpenSSH's agent tools.
 if ! ./examples/client/client '-?' 2>&1 | grep -q 'SSH-AGENT'; then
