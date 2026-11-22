@@ -114,6 +114,12 @@ const char* wolfSSHD_AuthMergeForcedCmd(const char* configCmd,
         const char* certCmd);
 int wolfSSHD_AuthSetCertForcedCmd(WOLFSSHD_AUTH* auth, const byte* cmd,
         word32 cmdSz);
+/* Record the auth cert's permit-* bits and optional force-command. Records
+ * nothing on failure; until it succeeds every feature is permitted. */
+int wolfSSHD_AuthSetCert(WOLFSSHD_AUTH* auth, byte permits, const byte* cmd,
+        word32 cmdSz);
+/* 1 if no cert was used or the cert carries the permit bit. */
+int wolfSSHD_AuthCertPermits(const WOLFSSHD_AUTH* auth, byte permit);
 #endif
 /* Wraps wolfSSHD_GetUserConf with this user's resolved group set. The result is
  * a newly allocated config the caller frees with wolfSSHD_ConfigFree(). */
